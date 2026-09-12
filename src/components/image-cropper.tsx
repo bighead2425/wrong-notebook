@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import ReactCrop, { Crop, PixelCrop, centerCrop, makeAspectCrop } from "react-image-crop";
-import "react-image-crop/dist/ReactCrop.css";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -40,27 +38,6 @@ const QUESTION_COLOR = "#e50000"; // 红 = 题干
 const ANSWER_COLOR = "#0055ff";   // 蓝 = 手写答案
 const BRUSH_SIZES = [10, 20, 40, 80];
 const BRUSH_LABELS = ["小", "中", "大", "特大"];
-
-// Helper to center the crop initially
-function centerAspectCrop(
-    mediaWidth: number,
-    mediaHeight: number,
-    aspect: number,
-) {
-    return centerCrop(
-        makeAspectCrop(
-            {
-                unit: '%',
-                width: 90,
-            },
-            aspect,
-            mediaWidth,
-            mediaHeight,
-        ),
-        mediaWidth,
-        mediaHeight,
-    )
-}
 
 function normalizeRect(r: { x: number; y: number; w: number; h: number }) {
     return {
@@ -102,20 +79,17 @@ function drawCircledNumber(
 }
 
 export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageCropperProps) {
-    const { t, language } = useLanguage();
-    const [crop, setCrop] = useState<Crop>();
-    const [completedCrop, setCompletedCrop] = useState<Crop>(); // 存百分比 crop，避免 object-fit 显示尺寸换算偏差
-    const imgRef = useRef<HTMLImageElement>(null);
+    const { t } = useLanguage();
 
     // ===== 新增状态 =====
     const [mode, setMode] = useState<Mode>("crop");
     const [eraseTool, setEraseTool] = useState<EraseTool>("brush");
-    const [displaySrc, setDisplaySrc] = useState<string>(imageSrc);
     const [brushIdx, setBrushIdx] = useState(1);
     const [labelKind, setLabelKind] = useState<LabelKind>("question");
     const [boxes, setBoxes] = useState<Box[]>([]);
     const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null);
     const [pendingRect, setPendingRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+    const [cropRect, setCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
     const [cropToRegions, setCropToRegions] = useState(false);
     const [hasShapes, setHasShapes] = useState(false);
     const [ready, setReady] = useState(false);
@@ -129,7 +103,6 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null); // 可见层：标注框 + 绘制预览
     const drawingRef = useRef<Shape | null>(null);
     const displayRectRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
-    const imgDispRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
     const isCroppedRef = useRef(false); // 已经过“裁剪即提取”，工作画布已是裁剪后的图
 
     // ============================================================
@@ -139,10 +112,10 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         if (!open) return;
         setMode("crop");
         setEraseTool("brush");
-        setDisplaySrc(imageSrc);
         setBoxes([]);
         setSelectedBoxId(null);
         setPendingRect(null);
+        setCropRect(null);
         setCropToRegions(false);
         setHasShapes(false);
         setReady(false);
@@ -151,14 +124,27 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         origCanvasRef.current = null;
         workCanvasRef.current = null;
         isCroppedRef.current = false;
-        setCrop(undefined);
-        setCompletedCrop(undefined);
+    }, [open, imageSrc]);
+
+    // 对话框打开后加载原图并初始化画布（不再依赖 <img> 的 onLoad）
+    useEffect(() => {
+        if (!open) return;
+        const img = new Image();
+        img.onload = () => {
+            ensureCanvases(img);
+            redrawWork();
+            syncBase();
+            redrawOverlay();
+            setReady(true);
+        };
+        img.src = imageSrc;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, imageSrc]);
 
     const ensureCanvases = useCallback((img: HTMLImageElement) => {
         const nw = img.naturalWidth;
         const nh = img.naturalHeight;
-        // 原图只建立一次；后续 displaySrc 变更（含擦除结果）绝不能覆盖它
+        // 原图只建立一次；后续擦除结果不会覆盖它
         if (!origCanvasRef.current) {
             const oc = document.createElement("canvas");
             oc.width = nw;
@@ -285,6 +271,18 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
             drawEraseFrame(pendingRect.x, pendingRect.y, pendingRect.w, pendingRect.h, true);
         }
 
+        // 裁剪模式：已确认的裁剪框（白框 + 外部暗色遮罩，和 ReactCrop 一样直观）
+        if (mode === "crop" && cropRect) {
+            ctx.save();
+            ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+            ctx.fillRect(0, 0, ov.width, ov.height);
+            ctx.clearRect(cropRect.x, cropRect.y, cropRect.w, cropRect.h);
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = Math.max(1.5, 2);
+            ctx.strokeRect(cropRect.x, cropRect.y, cropRect.w, cropRect.h);
+            ctx.restore();
+        }
+
         // 正在绘制的形状预览
         const d = drawingRef.current;
         if (d) {
@@ -292,6 +290,16 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                 if (mode === "label") {
                     const color = labelKind === "question" ? QUESTION_COLOR : ANSWER_COLOR;
                     drawFrame(d.x, d.y, d.w, d.h, color, true);
+                } else if (mode === "crop") {
+                    // 裁剪拖拽预览：暗色外部 + 亮框
+                    ctx.save();
+                    ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+                    ctx.fillRect(0, 0, ov.width, ov.height);
+                    ctx.clearRect(d.x, d.y, d.w, d.h);
+                    ctx.strokeStyle = "#ffffff";
+                    ctx.lineWidth = Math.max(1.5, 2);
+                    ctx.strokeRect(d.x, d.y, d.w, d.h);
+                    ctx.restore();
                 } else {
                     drawEraseFrame(d.x, d.y, d.w, d.h, true);
                 }
@@ -314,44 +322,20 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                 ctx.restore();
             }
         }
-    }, [boxes, selectedBoxId, pendingRect, mode, labelKind]);
+    }, [boxes, selectedBoxId, pendingRect, mode, labelKind, cropRect]);
 
-    // 切到非裁剪模式时画布刚挂载，需要同步一次
+    // 模式切换或画布初次就绪时，把 workCanvas 同步到 baseCanvas 并重绘 overlay
     useEffect(() => {
-        if (!open || mode === "crop") return;
+        if (!open) return;
         if (!workCanvasRef.current) return;
         syncBase();
         redrawOverlay();
     }, [mode, open, ready, syncBase, redrawOverlay]);
 
     useEffect(() => {
-        if (!open || mode === "crop") return;
+        if (!open) return;
         redrawOverlay();
-    }, [boxes, selectedBoxId, pendingRect, mode, labelKind, open, redrawOverlay]);
-
-    // ============================================================
-    //  图片加载
-    // ============================================================
-    function onImageLoad(e: React.SyntheticEvent<HTMLImageElement>) {
-        const img = e.currentTarget;
-        const { width, height } = img;
-        imgDispRef.current = { w: width, h: height };
-        ensureCanvases(img);
-        redrawWork();
-        setReady(true);
-
-        // 必改点4：displaySrc 变更会重新触发 onLoad，
-        // 已有裁剪框时不再重置，避免用户调好的框被冲掉；
-        // 若已经烘焙过裁剪结果，也不再设默认框，防止对已经裁剪过的图二次误裁。
-        if (!crop && !isCroppedRef.current) {
-            const initialCrop = centerCrop(
-                { unit: '%', width: 80, height: 50, x: 10, y: 25 },
-                width,
-                height
-            );
-            setCrop(initialCrop);
-        }
-    }
+    }, [boxes, selectedBoxId, pendingRect, cropRect, mode, labelKind, open, redrawOverlay]);
 
     // ============================================================
     //  模式切换
@@ -360,10 +344,10 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     function bakeCropIntoBase() {
         const oc = origCanvasRef.current;
         if (!oc) return;
-        // 仅在用户确实完成过拖拽裁剪（completedCrop 有值）才烘焙，避免把默认 80% 框误裁掉
-        if (!completedCrop) return;
-        const r = resolveCropRect();
-        if (!r || r.w < 5 || r.h < 5) return;
+        // 仅在用户确实拖出过裁剪框（cropRect 有值）才烘焙，避免无框时误裁
+        if (!cropRect) return;
+        const r = cropRect;
+        if (r.w < 5 || r.h < 5) return;
 
         const cropped = document.createElement("canvas");
         cropped.width = Math.max(1, Math.round(r.w));
@@ -384,9 +368,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         setHasShapes(false);
         isCroppedRef.current = true;
         // 裁剪已烘焙进工作画布，旧的 crop 坐标不再适用，清空防止二次误裁
-        setCrop(undefined);
-        setCompletedCrop(undefined);
-        setDisplaySrc(cropped.toDataURL("image/jpeg", 0.92));
+        setCropRect(null);
         syncBase();
     }
 
@@ -395,14 +377,9 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         if (mode === "crop" && m !== "crop") {
             bakeCropIntoBase();
         }
-        // 离开橡皮擦时，把擦除结果同步进裁剪视图（仅在确有擦除时）
-        else if (mode === "erase" && m !== "erase" && hasShapes && workCanvasRef.current) {
-            setDisplaySrc(workCanvasRef.current.toDataURL("image/jpeg", 0.92));
-        }
         // 切回裁剪：重置裁剪框（基准图可能已变），让用户重新框选
         if (m === "crop") {
-            setCrop(undefined);
-            setCompletedCrop(undefined);
+            setCropRect(null);
         }
         setMode(m);
         setPendingRect(null);
@@ -492,7 +469,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     };
 
     const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-        if (mode === "crop" || !workCanvasRef.current) return;
+        if (!workCanvasRef.current) return;
         e.preventDefault();
         try { (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
         const p = toNatural(e);
@@ -506,6 +483,9 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                 return;
             }
             setSelectedBoxId(null);
+            drawingRef.current = { kind: "rect", x: p.x, y: p.y, w: 0, h: 0 };
+        } else if (mode === "crop") {
+            setCropRect(null);
             drawingRef.current = { kind: "rect", x: p.x, y: p.y, w: 0, h: 0 };
         } else if (mode === "erase") {
             if (eraseTool === "brush") {
@@ -570,6 +550,8 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
             if (r.w > 10 && r.h > 10) {
                 if (mode === "label") {
                     setBoxes((prev) => [...prev, { id: `${Date.now()}-${Math.random()}`, ...r, kind: labelKind }]);
+                } else if (mode === "crop") {
+                    setCropRect(r);
                 } else {
                     setPendingRect(r);
                 }
@@ -583,40 +565,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     //  必改点1/2：一律从工作画布导出，不再取 <img>、也不再 fetch 原图
     // ============================================================
     function resolveCropRect(): { x: number; y: number; w: number; h: number } | null {
-        const wc = workCanvasRef.current;
-        if (!wc) return null;
-
-        // 优先用百分比 crop：不依赖显示尺寸 / object-fit letterbox，换算最稳
-        if (crop && crop.width > 0 && crop.height > 0 && crop.unit === "%") {
-            return {
-                x: (crop.x / 100) * wc.width,
-                y: (crop.y / 100) * wc.height,
-                w: (crop.width / 100) * wc.width,
-                h: (crop.height / 100) * wc.height,
-            };
-        }
-
-        if (completedCrop && completedCrop.width > 0 && completedCrop.height > 0) {
-            if (completedCrop.unit === "%") {
-                return {
-                    x: (completedCrop.x / 100) * wc.width,
-                    y: (completedCrop.y / 100) * wc.height,
-                    w: (completedCrop.width / 100) * wc.width,
-                    h: (completedCrop.height / 100) * wc.height,
-                };
-            }
-            const dispW = imgDispRef.current.w || 1;
-            const dispH = imgDispRef.current.h || 1;
-            const sx = wc.width / dispW;
-            const sy = wc.height / dispH;
-            return {
-                x: completedCrop.x * sx,
-                y: completedCrop.y * sy,
-                w: completedCrop.width * sx,
-                h: completedCrop.height * sy,
-            };
-        }
-        return null;
+        return cropRect;
     }
 
     /**
@@ -900,75 +849,54 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                     )}
                 </div>
 
-                {/* ===== 图片区 ===== */}
+                {/* ===== 图片区：裁剪/橡皮擦/标注全部共用同一套 canvas，坐标完全一致 ===== */}
                 <div className="flex-1 bg-black w-full overflow-auto flex items-center justify-center p-4">
-                    {mode === "crop" ? (
-                        // 裁剪模式：沿用 react-image-crop
-                        <ReactCrop
-                            crop={crop}
-                            onChange={(_, percentCrop) => setCrop(percentCrop)}
-                            onComplete={(_, percentCrop) => setCompletedCrop(percentCrop)}
-                            className="max-h-full"
-                        >
-                            <img
-                                ref={imgRef}
-                                alt="Crop me"
-                                src={displaySrc}
-                                onLoad={onImageLoad}
-                                style={{ maxHeight: '70vh', maxWidth: '100%', objectFit: 'contain' }}
-                            />
-                        </ReactCrop>
-                    ) : (
-                        // 橡皮擦 / 标注模式：不套 ReactCrop（它会拦截指针事件）
-                        <div style={{ position: "relative", display: "inline-block", lineHeight: 0, maxHeight: "70vh" }}>
-                            <canvas
-                                ref={baseCanvasRef}
-                                style={{ display: "block", maxHeight: "70vh", maxWidth: "100%" }}
-                            />
-                            <canvas
-                                ref={overlayCanvasRef}
-                                onPointerDown={onPointerDown}
-                                onPointerMove={onPointerMove}
-                                onPointerEnter={onPointerEnter}
-                                onPointerLeave={onPointerLeave}
-                                onPointerUp={onPointerUp}
-                                onPointerCancel={onPointerUp}
-                                style={{
-                                    position: "absolute",
-                                    top: 0,
-                                    left: 0,
-                                    width: "100%",
-                                    height: "100%",
-                                    cursor: mode === "erase" && eraseTool === "brush" ? "none" : "crosshair",
-                                    touchAction: "none",
-                                }}
-                            />
-                            {/* 笔刷光标预览圈：跟随鼠标，大小随粗细变化 */}
-                            {mode === "erase" && eraseTool === "brush" && cursorPos && (() => {
-                                const ov = overlayCanvasRef.current;
-                                const dispW = ov ? ov.getBoundingClientRect().width : 0;
-                                // BRUSH_SIZES 表示“显示像素直径”，光标直接用该大小，
-                                // 实际涂抹按同尺寸换算成自然坐标，保证光标与擦除范围一致
-                                const brushSizePx = BRUSH_SIZES[brushIdx];
-                                return (
-                                    <div
-                                        style={{
-                                            position: "absolute",
-                                            left: cursorPos.x,
-                                            top: cursorPos.y,
-                                            width: brushSizePx,
-                                            height: brushSizePx,
-                                            transform: "translate(-50%, -50%)",
-                                            border: "1.5px solid #00c853",
-                                            borderRadius: "50%",
-                                            pointerEvents: "none",
-                                            boxSizing: "border-box",
-                                        }}
-                                    />
-                                );
-                            })()}
-                        </div>
-                    )}
+                    <div style={{ position: "relative", display: "inline-block", lineHeight: 0, maxHeight: "70vh" }}>
+                        <canvas
+                            ref={baseCanvasRef}
+                            style={{ display: "block", maxHeight: "70vh", maxWidth: "100%" }}
+                        />
+                        <canvas
+                            ref={overlayCanvasRef}
+                            onPointerDown={onPointerDown}
+                            onPointerMove={onPointerMove}
+                            onPointerEnter={onPointerEnter}
+                            onPointerLeave={onPointerLeave}
+                            onPointerUp={onPointerUp}
+                            onPointerCancel={onPointerUp}
+                            style={{
+                                position: "absolute",
+                                top: 0,
+                                left: 0,
+                                width: "100%",
+                                height: "100%",
+                                cursor: mode === "erase" && eraseTool === "brush" ? "none" : "crosshair",
+                                touchAction: "none",
+                            }}
+                        />
+                        {/* 笔刷光标预览圈：跟随鼠标，大小随粗细变化 */}
+                        {mode === "erase" && eraseTool === "brush" && cursorPos && (() => {
+                            // BRUSH_SIZES 表示“显示像素直径”，光标直接用该大小，
+                            // 实际涂抹按同尺寸换算成自然坐标，保证光标与擦除范围一致
+                            const brushSizePx = BRUSH_SIZES[brushIdx];
+                            return (
+                                <div
+                                    style={{
+                                        position: "absolute",
+                                        left: cursorPos.x,
+                                        top: cursorPos.y,
+                                        width: brushSizePx,
+                                        height: brushSizePx,
+                                        transform: "translate(-50%, -50%)",
+                                        border: "1.5px solid #00c853",
+                                        borderRadius: "50%",
+                                        pointerEvents: "none",
+                                        boxSizing: "border-box",
+                                    }}
+                                />
+                            );
+                        })()}
+                    </div>
                 </div>
 
                 {/* ===== 底部 ===== */}
@@ -976,7 +904,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                     <div className="flex justify-between items-center gap-4">
                         <p className="text-sm text-muted-foreground">
                             {mode === "crop"
-                                ? (t.common.cropper?.hint || "💡 Drag to adjust crop area")
+                                ? (t.common.cropper?.hint || "💡 在图片上拖拽框选要保留的区域，再切橡皮擦/标注；不框则保留整图")
                                 : mode === "erase"
                                     ? (t.common.cropper?.hintErase ||
                                         "🧽 笔刷：按住涂抹即擦掉（涂白）；矩形选区：拖框后按 Delete 或点“擦除选区”。Ctrl+Z 撤销")

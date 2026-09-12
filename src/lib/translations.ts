@@ -21,7 +21,7 @@ export const translations = {
             collapse: "Collapse",
             cropper: {
                 title: "Crop Image",
-                hint: "💡 Drag to adjust crop area",
+                hint: "💡 Drag on the image to select the area to keep, then switch to Eraser/Label; leave empty to keep the whole image",
                 mode: "Mode",
                 modeCrop: "Crop",
                 modeErase: "Eraser",
@@ -678,7 +678,7 @@ export const translations = {
             collapse: "收起",
             cropper: {
                 title: "裁剪图片",
-                hint: "💡 拖动选框调整裁剪区域",
+                hint: "💡 在图片上拖拽框选要保留的区域，再切橡皮擦/标注；不框则保留整图",
                 mode: "模式",
                 modeCrop: "裁剪",
                 modeErase: "橡皮擦",
