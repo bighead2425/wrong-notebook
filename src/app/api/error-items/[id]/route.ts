@@ -7,6 +7,7 @@ import { unauthorized, forbidden, notFound, internalError } from "@/lib/api-erro
 import { createLogger } from "@/lib/logger";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
+import { exportErrorItemToObsidian, parseTags } from "@/lib/obsidian-export";
 
 const logger = createLogger('api:error-items:id');
 
@@ -180,8 +181,33 @@ export async function PUT(
         const updated = await prisma.errorItem.update({
             where: { id },
             data: updateData,
-            include: { tags: true },
+            include: { tags: true, subject: true },
         });
+
+        // 同步导出到 Obsidian 仓库（覆盖写；失败仅记录，不影响更新结果）
+        try {
+            const qNo = updated.source || "";
+            if (qNo) {
+                const exp = await exportErrorItemToObsidian({
+                    questionNo: qNo,
+                    subjectName: updated.subject?.name || "",
+                    gradeSemester: updated.gradeSemester || "",
+                    tags: parseTags(updated.knowledgePoints),
+                    questionText: updated.questionText,
+                    originalImageUrl: updated.originalImageUrl,
+                    analysis: updated.analysis,
+                    answerText: updated.answerText,
+                    mistakeAnalysis: updated.mistakeAnalysis,
+                });
+                if (exp.ok) {
+                    logger.info({ notePath: exp.notePath }, 'Exported to Obsidian on update');
+                } else {
+                    logger.warn({ error: exp.error }, 'Obsidian export failed on update (non-fatal)');
+                }
+            }
+        } catch (expErr) {
+            logger.warn({ error: expErr }, 'Obsidian export threw on update (non-fatal)');
+        }
 
         return NextResponse.json(updated);
     } catch (error) {

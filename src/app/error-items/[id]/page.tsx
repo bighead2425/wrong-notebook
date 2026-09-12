@@ -59,6 +59,7 @@ export default function ErrorDetailPage() {
     const [isEditingTags, setIsEditingTags] = useState(false);
     const [tagsInput, setTagsInput] = useState<string[]>([]);
     const [isEditingMetadata, setIsEditingMetadata] = useState(false);
+    const [exportState, setExportState] = useState<"idle" | "doing" | "ok" | "err">("idle");
     const [gradeSemesterInput, setGradeSemesterInput] = useState("");
     const [paperLevelInput, setPaperLevelInput] = useState("a");
     const [notebookInput, setNotebookInput] = useState<string | null>(null);
@@ -125,6 +126,25 @@ export default function ErrorDetailPage() {
         } catch (error) {
             console.error(error);
             alert(t.common?.messages?.deleteFailed || 'Delete failed');
+        }
+    };
+
+    const exportToObsidian = async () => {
+        if (!item) return;
+        if (!item.source) {
+            setExportState("err");
+            setTimeout(() => setExportState("idle"), 4000);
+            return;
+        }
+        setExportState("doing");
+        try {
+            await apiClient.post(`/api/error-items/${item.id}/export-obsidian`, {});
+            setExportState("ok");
+            setTimeout(() => setExportState("idle"), 3000);
+        } catch (error) {
+            console.error(error);
+            setExportState("err");
+            setTimeout(() => setExportState("idle"), 4000);
         }
     };
 
@@ -389,6 +409,21 @@ export default function ErrorDetailPage() {
                     </div>
 
                     <div className="flex gap-2">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={exportToObsidian}
+                            disabled={exportState === "doing"}
+                            title="导出到 Obsidian 仓库"
+                        >
+                            {exportState === "doing" ? "导出中…" : "导出到ob"}
+                        </Button>
+                        {exportState === "ok" && (
+                            <span className="self-center text-green-600 text-sm">已导出</span>
+                        )}
+                        {exportState === "err" && (
+                            <span className="self-center text-red-600 text-sm">导出失败</span>
+                        )}
                         <Link href={`/practice?id=${item.id}`}>
                             <Button variant="outline" size="sm">
                                 <RefreshCw className="mr-2 h-4 w-4" />

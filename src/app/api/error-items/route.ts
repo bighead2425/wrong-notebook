@@ -9,6 +9,7 @@ import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { inferSubjectFromName } from "@/lib/knowledge-tags";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { subjectKeyToCode, formatDateStamp, formatQuestionNo, startOfToday } from "@/lib/question-no";
+import { exportErrorItemToObsidian, parseTags } from "@/lib/obsidian-export";
 
 const logger = createLogger('api:error-items');
 
@@ -202,6 +203,32 @@ export async function POST(req: Request) {
             });
 
             logger.info({ errorItemId: errorItem.id, tagsCount: errorItem.tags?.length || 0 }, 'ErrorItem created successfully');
+
+            // 同步导出到 Obsidian 仓库（非阻塞式容错：失败仅记录，不影响保存结果）
+            try {
+                const qNo = errorItem.source || "";
+                if (qNo) {
+                    const exp = await exportErrorItemToObsidian({
+                        questionNo: qNo,
+                        subjectName: subject?.name || "",
+                        gradeSemester: finalGradeSemester || "",
+                        tags: parseTags(errorItem.knowledgePoints),
+                        questionText,
+                        originalImageUrl,
+                        analysis,
+                        answerText,
+                        mistakeAnalysis,
+                    });
+                    if (exp.ok) {
+                        logger.info({ notePath: exp.notePath }, 'Exported to Obsidian on create');
+                    } else {
+                        logger.warn({ error: exp.error }, 'Obsidian export failed on create (non-fatal)');
+                    }
+                }
+            } catch (expErr) {
+                logger.warn({ error: expErr }, 'Obsidian export threw on create (non-fatal)');
+            }
+
             return NextResponse.json(errorItem, { status: 201 });
         } catch (dbError) {
             logger.error({
