@@ -71,6 +71,36 @@ function normalizeRect(r: { x: number; y: number; w: number; h: number }) {
     };
 }
 
+/** 两矩形是否相交（边界接触也算） */
+function rectsIntersect(
+    a: { x: number; y: number; w: number; h: number },
+    b: { x: number; y: number; w: number; h: number },
+) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+/** 在 canvas 上画一个带圈数字（分图序号水印），中心 (cx,cy)，半径 r */
+function drawCircledNumber(
+    ctx: CanvasRenderingContext2D,
+    n: number,
+    cx: number,
+    cy: number,
+    r: number,
+) {
+    ctx.save();
+    ctx.strokeStyle = "#00c853";
+    ctx.fillStyle = "#00c853";
+    ctx.lineWidth = Math.max(1.5, r * 0.18);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.font = `bold ${Math.round(r * 1.1)}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(n), cx, cy + r * 0.04);
+    ctx.restore();
+}
+
 export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageCropperProps) {
     const { t, language } = useLanguage();
     const [crop, setCrop] = useState<Crop>();
@@ -89,6 +119,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     const [cropToRegions, setCropToRegions] = useState(false);
     const [hasShapes, setHasShapes] = useState(false);
     const [ready, setReady] = useState(false);
+    const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
 
     // ===== 画布引用 =====
     const origCanvasRef = useRef<HTMLCanvasElement | null>(null);   // 原始图（撤销重放的基准）
@@ -199,39 +230,31 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         if (!ctx) return;
         ctx.clearRect(0, 0, ov.width, ov.height);
 
-        const scale = displayRectRef.current.w ? wc.width / displayRectRef.current.w : 1;
-        const lw = Math.max(2, 5 * scale);
-        const fs = Math.max(12, 26 * scale);
+        // 框线固定为自然坐标下的细线：最终烘焙到原图时只有 2px，既可见又不挡内容
+        const lw = Math.max(1.5, 2);
 
         const drawFrame = (
             x: number, y: number, w: number, h: number,
-            color: string, text: string, dashed: boolean
+            color: string, dashed: boolean
         ) => {
             ctx.save();
             ctx.strokeStyle = color;
-            ctx.fillStyle = color;
             ctx.lineWidth = lw;
-            if (dashed) ctx.setLineDash([lw * 2, lw * 2]);
+            if (dashed) ctx.setLineDash([lw * 3, lw * 3]);
             ctx.strokeRect(x, y, w, h);
             ctx.setLineDash([]);
-            if (text) {
-                ctx.font = `bold ${fs}px sans-serif`;
-                ctx.textBaseline = "bottom";
-                const ty = y - lw;
-                ctx.fillText(text, x, ty > fs ? ty : y + h + fs + lw);
-            }
             ctx.restore();
         };
 
         // 已确认的标注框
         for (const b of boxes) {
             const color = b.kind === "question" ? QUESTION_COLOR : ANSWER_COLOR;
-            const text = b.kind === "question" ? "题干" : "手写答案";
-            drawFrame(b.x, b.y, b.w, b.h, color, text, false);
+            drawFrame(b.x, b.y, b.w, b.h, color, false);
             if (b.id === selectedBoxId) {
                 ctx.save();
                 ctx.strokeStyle = "#00c853";
-                ctx.lineWidth = lw * 1.6;
+                ctx.lineWidth = Math.max(1.5, lw * 1.2);
+                ctx.setLineDash([lw * 2, lw * 2]);
                 ctx.strokeRect(b.x - lw, b.y - lw, b.w + lw * 2, b.h + lw * 2);
                 ctx.restore();
             }
@@ -239,7 +262,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
 
         // 待清除的矩形选区（橡皮擦-矩形）
         if (mode === "erase" && pendingRect) {
-            drawFrame(pendingRect.x, pendingRect.y, pendingRect.w, pendingRect.h, "#ffffff", "", true);
+            drawFrame(pendingRect.x, pendingRect.y, pendingRect.w, pendingRect.h, "#ffffff", true);
         }
 
         // 正在绘制的形状预览
@@ -248,10 +271,9 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
             if (d.kind === "rect") {
                 if (mode === "label") {
                     const color = labelKind === "question" ? QUESTION_COLOR : ANSWER_COLOR;
-                    const text = labelKind === "question" ? "题干" : "手写答案";
-                    drawFrame(d.x, d.y, d.w, d.h, color, text, true);
+                    drawFrame(d.x, d.y, d.w, d.h, color, true);
                 } else {
-                    drawFrame(d.x, d.y, d.w, d.h, "#ffffff", "", true);
+                    drawFrame(d.x, d.y, d.w, d.h, "#ffffff", true);
                 }
             } else {
                 ctx.save();
@@ -313,10 +335,48 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     // ============================================================
     //  模式切换
     // ============================================================
+    /** 把当前裁剪区域提取成新图，写回 origCanvas/workCanvas，作为后续操作的基准（裁剪即提取） */
+    function bakeCropIntoBase() {
+        const wc = workCanvasRef.current;
+        if (!wc) return;
+        const r = resolveCropRect();
+        // 仅在用户确实完成过拖拽裁剪（completedCrop 有值）才烘焙，避免把默认 80% 框误裁掉
+        if (!completedCrop || !r || r.w < 5 || r.h < 5) return;
+
+        const cropped = document.createElement("canvas");
+        cropped.width = Math.max(1, Math.round(r.w));
+        cropped.height = Math.max(1, Math.round(r.h));
+        const cctx = cropped.getContext("2d");
+        if (!cctx) return;
+        cctx.drawImage(wc, r.x, r.y, r.w, r.h, 0, 0, cropped.width, cropped.height);
+
+        // 重置基准：原图与工作画布都换成裁剪图，擦除记录清空（基准变了）
+        origCanvasRef.current = cropped;
+        const newWc = document.createElement("canvas");
+        newWc.width = cropped.width;
+        newWc.height = cropped.height;
+        newWc.getContext("2d")?.drawImage(cropped, 0, 0);
+        workCanvasRef.current = newWc;
+        shapesRef.current = [];
+        setHasShapes(false);
+        setDisplaySrc(cropped.toDataURL("image/jpeg", 0.92));
+        redrawWork();
+        syncBase();
+    }
+
     const switchMode = (m: Mode) => {
+        // 从裁剪切到橡皮擦/标注：把裁剪结果"提取"为新基准，后续操作都基于它（裁剪即提取）
+        if (mode === "crop" && m !== "crop") {
+            bakeCropIntoBase();
+        }
         // 离开橡皮擦时，把擦除结果同步进裁剪视图（仅在确有擦除时）
-        if (mode === "erase" && m !== "erase" && hasShapes && workCanvasRef.current) {
+        else if (mode === "erase" && m !== "erase" && hasShapes && workCanvasRef.current) {
             setDisplaySrc(workCanvasRef.current.toDataURL("image/jpeg", 0.92));
+        }
+        // 切回裁剪：重置裁剪框（基准图可能已变），让用户重新框选
+        if (m === "crop") {
+            setCrop(undefined);
+            setCompletedCrop(undefined);
         }
         setMode(m);
         setPendingRect(null);
@@ -440,6 +500,12 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     };
 
     const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+        // 笔刷模式：实时更新跟随光标的圆形预览圈（即使未按下）
+        if (mode === "erase" && eraseTool === "brush") {
+            const ov = overlayCanvasRef.current;
+            const r = ov?.getBoundingClientRect();
+            if (r) setCursorPos({ x: e.clientX - r.left, y: e.clientY - r.top });
+        }
         const d = drawingRef.current;
         if (!d) return;
         const p = toNatural(e);
@@ -451,6 +517,18 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
             d.h = p.y - d.y;
         }
         redrawOverlay();
+    };
+
+    const onPointerEnter = (e: React.PointerEvent<HTMLCanvasElement>) => {
+        if (mode === "erase" && eraseTool === "brush") {
+            const ov = overlayCanvasRef.current;
+            const r = ov?.getBoundingClientRect();
+            if (r) setCursorPos({ x: e.clientX - r.left, y: e.clientY - r.top });
+        }
+    };
+
+    const onPointerLeave = () => {
+        setCursorPos(null);
     };
 
     const onPointerUp = () => {
@@ -477,7 +555,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     //  确认：烘焙标注框 → 计算导出区 → 输出 JPEG
     //  必改点1/2：一律从工作画布导出，不再取 <img>、也不再 fetch 原图
     // ============================================================
-    const resolveCropRect = (): { x: number; y: number; w: number; h: number } | null => {
+    function resolveCropRect(): { x: number; y: number; w: number; h: number } | null {
         const wc = workCanvasRef.current;
         if (!wc) return null;
         const dispW = imgDispRef.current.w || 1;
@@ -505,7 +583,85 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
             return { x: crop.x * sx, y: crop.y * sy, w: crop.width * sx, h: crop.height * sy };
         }
         return null;
-    };
+    }
+
+    /**
+     * 重叠分图：题干图（红框∪蓝框范围，蓝框涂白 + 序号）在上，
+     * 答案图（每个蓝框原样 + 同序号）在下，上下拼接为一张图。
+     * 序号按蓝框阅读顺序（上→下、左→右）自动编排，与题干预留白块对应，避免错乱。
+     */
+    function buildSplitCanvas(
+        source: HTMLCanvasElement,
+        questions: Box[],
+        answers: Box[],
+    ): HTMLCanvasElement {
+        // 题目范围 = 红框 ∪ 蓝框 并集（用户没画大红框时也能自动兜住所有手写部分）
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (const b of [...questions, ...answers]) {
+            x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y);
+            x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h);
+        }
+        const pad = Math.max(4, (y1 - y0) * 0.01);
+        const tx = Math.max(0, Math.floor(x0 - pad));
+        const ty = Math.max(0, Math.floor(y0 - pad));
+        const tw = Math.min(source.width - tx, Math.ceil((x1 - x0) + pad * 2));
+        const th = Math.min(source.height - ty, Math.ceil((y1 - y0) + pad * 2));
+
+        // 题干图：提取题目范围，再把所有蓝框涂白
+        const stem = document.createElement("canvas");
+        stem.width = tw; stem.height = th;
+        const sctx = stem.getContext("2d");
+        if (!sctx) return source;
+        sctx.fillStyle = "#ffffff";
+        sctx.fillRect(0, 0, tw, th);
+        sctx.drawImage(source, tx, ty, tw, th, 0, 0, tw, th);
+        sctx.fillStyle = "#ffffff";
+        for (const a of answers) {
+            sctx.fillRect(a.x - tx, a.y - ty, a.w, a.h);
+        }
+
+        // 答案图：每个蓝框原样，按阅读顺序排序
+        const sorted = [...answers].sort((p, q) => p.y - q.y || p.x - q.x);
+        const ansCanvases = sorted.map((a) => {
+            const c = document.createElement("canvas");
+            c.width = Math.max(1, Math.round(a.w));
+            c.height = Math.max(1, Math.round(a.h));
+            c.getContext("2d")?.drawImage(source, a.x, a.y, a.w, a.h, 0, 0, c.width, c.height);
+            return c;
+        });
+
+        // 序号水印：题干白块中心 + 答案图左上角，小圈不挡内容
+        sorted.forEach((a, i) => {
+            const n = i + 1;
+            const cxr = a.x - tx + a.w / 2;
+            const cyr = a.y - ty + a.h / 2;
+            const r = Math.max(8, Math.min(16, Math.min(a.w, a.h) * 0.4));
+            drawCircledNumber(sctx, n, cxr, cyr, r);
+        });
+        ansCanvases.forEach((c, i) => {
+            const n = i + 1;
+            const r = Math.max(8, Math.min(16, Math.min(c.width, c.height) * 0.4));
+            const actx = c.getContext("2d");
+            if (actx) drawCircledNumber(actx, n, Math.min(r, c.width - 2), Math.min(r, c.height - 2), r);
+        });
+
+        // 拼接：题干在上、答案在下
+        const gap = 24;
+        const maxAnsW = ansCanvases.reduce((m, c) => Math.max(m, c.width), 0);
+        const totalW = Math.max(stem.width, maxAnsW);
+        const totalH = stem.height + gap + ansCanvases.reduce((s, c) => s + c.height, 0);
+        const out = document.createElement("canvas");
+        out.width = Math.max(1, totalW);
+        out.height = Math.max(1, totalH);
+        const octx = out.getContext("2d");
+        if (!octx) return source;
+        octx.fillStyle = "#ffffff";
+        octx.fillRect(0, 0, out.width, out.height);
+        octx.drawImage(stem, 0, 0);
+        let yy = stem.height + gap;
+        for (const c of ansCanvases) { octx.drawImage(c, 0, yy); yy += c.height; }
+        return out;
+    }
 
     const handleConfirm = async () => {
         const wc = workCanvasRef.current;
@@ -521,7 +677,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
             return;
         }
 
-        // 1) 复制工作画布（已含擦除），再烘焙标注框
+        // 1) 复制工作画布（已含擦除 + 裁剪提取结果）
         const baked = document.createElement("canvas");
         baked.width = wc.width;
         baked.height = wc.height;
@@ -529,27 +685,36 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         if (!bctx) return;
         bctx.drawImage(wc, 0, 0);
 
+        const questions = boxes.filter((b) => b.kind === "question");
+        const answers = boxes.filter((b) => b.kind === "answer");
+        const overlaps =
+            questions.length > 0 &&
+            answers.length > 0 &&
+            answers.some((a) => questions.some((q) => rectsIntersect(a, q)));
+
+        // 2) 红框与蓝框重叠/包含 → 分图（题干涂白 + 答案 + 序号），根治"答案混进题干"
+        if (cropToRegions && boxes.length > 0 && overlaps) {
+            const out = buildSplitCanvas(baked, questions, answers);
+            out.toBlob((blob) => {
+                if (blob) onCropComplete(blob);
+            }, "image/jpeg", 0.92);
+            return;
+        }
+
+        // 3) 非重叠：烘焙框线 + 决定导出区（原逻辑）
         if (boxes.length > 0) {
-            const scale = displayRectRef.current.w ? wc.width / displayRectRef.current.w : 1;
-            const lw = Math.max(2, 5 * scale);
-            const fs = Math.max(12, 26 * scale);
+            // 烘焙到原图分辨率：2px 细线，不写字，避免遮挡表格/填空题
+            const lw = Math.max(1.5, 2);
             for (const b of boxes) {
                 const color = b.kind === "question" ? QUESTION_COLOR : ANSWER_COLOR;
-                const text = b.kind === "question" ? "题干" : "手写答案";
                 bctx.save();
                 bctx.strokeStyle = color;
-                bctx.fillStyle = color;
                 bctx.lineWidth = lw;
                 bctx.strokeRect(b.x, b.y, b.w, b.h);
-                bctx.font = `bold ${fs}px sans-serif`;
-                bctx.textBaseline = "bottom";
-                const ty = b.y - lw;
-                bctx.fillText(text, b.x, ty > fs ? ty : b.y + b.h + fs + lw * 2);
                 bctx.restore();
             }
         }
 
-        // 2) 决定导出区域
         let sx = 0, sy = 0, sw = baked.width, sh = baked.height;
         if (cropToRegions && boxes.length > 0) {
             let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -570,7 +735,6 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
             if (r) { sx = r.x; sy = r.y; sw = r.w; sh = r.h; }
         }
 
-        // 3) 导出
         const out = document.createElement("canvas");
         out.width = Math.max(1, Math.round(sw));
         out.height = Math.max(1, Math.round(sh));
@@ -728,6 +892,8 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                                 ref={overlayCanvasRef}
                                 onPointerDown={onPointerDown}
                                 onPointerMove={onPointerMove}
+                                onPointerEnter={onPointerEnter}
+                                onPointerLeave={onPointerLeave}
                                 onPointerUp={onPointerUp}
                                 onPointerCancel={onPointerUp}
                                 style={{
@@ -736,10 +902,35 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                                     left: 0,
                                     width: "100%",
                                     height: "100%",
-                                    cursor: "crosshair",
+                                    cursor: mode === "erase" && eraseTool === "brush" ? "none" : "crosshair",
                                     touchAction: "none",
                                 }}
                             />
+                            {/* 笔刷光标预览圈：跟随鼠标，大小随粗细变化 */}
+                            {mode === "erase" && eraseTool === "brush" && cursorPos && (() => {
+                                const ov = overlayCanvasRef.current;
+                                const dispW = ov ? ov.getBoundingClientRect().width : 0;
+                                const showScale = workCanvasRef.current && dispW
+                                    ? workCanvasRef.current.width / dispW
+                                    : 1;
+                                const brushSizePx = BRUSH_SIZES[brushIdx] / showScale;
+                                return (
+                                    <div
+                                        style={{
+                                            position: "absolute",
+                                            left: cursorPos.x,
+                                            top: cursorPos.y,
+                                            width: brushSizePx,
+                                            height: brushSizePx,
+                                            transform: "translate(-50%, -50%)",
+                                            border: "1.5px solid #00c853",
+                                            borderRadius: "50%",
+                                            pointerEvents: "none",
+                                            boxSizing: "border-box",
+                                        }}
+                                    />
+                                );
+                            })()}
                         </div>
                     )}
                 </div>
