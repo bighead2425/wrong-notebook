@@ -44,6 +44,7 @@ interface ErrorItemDetail {
     } | null;
     gradeSemester?: string | null;
     paperLevel?: string | null;
+    source?: string | null;
 }
 
 export default function ErrorDetailPage() {
@@ -624,6 +625,12 @@ export default function ErrorDetailPage() {
                                                 <span className="text-muted-foreground">{t.filter.paperLevel}:</span>
                                                 <span className="font-medium">
                                                     {item.paperLevel ? (t.editor.paperLevels?.[item.paperLevel as 'a' | 'b' | 'other'] || item.paperLevel) : (t.common?.notSet || 'Not set')}
+                                                </span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span className="text-muted-foreground">题号:</span>
+                                                <span className="font-medium font-mono">
+                                                    {item.source || (t.common?.notSet || 'Not set')}
                                                 </span>
                                             </div>
                                         </div>

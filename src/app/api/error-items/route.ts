@@ -8,6 +8,7 @@ import { createLogger } from "@/lib/logger";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { inferSubjectFromName } from "@/lib/knowledge-tags";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
+import { subjectKeyToCode, formatDateStamp, formatQuestionNo, startOfToday } from "@/lib/question-no";
 
 const logger = createLogger('api:error-items');
 
@@ -30,6 +31,7 @@ export async function POST(req: Request) {
             subjectId,
             gradeSemester,
             paperLevel,
+            source,
         } = body;
 
         // 记录请求参数（不记录完整图片数据）
@@ -47,6 +49,7 @@ export async function POST(req: Request) {
             subjectId,
             gradeSemester,
             paperLevel,
+            source,
         }, 'Request parameters received');
 
         // 查找用户
@@ -155,6 +158,22 @@ export async function POST(req: Request) {
 
         logger.info({ tagNames, tagConnectionsCount: tagConnections.length }, 'Creating ErrorItem with tags');
 
+        // 生成题号（source）：若客户端未提供，则自动生成
+        // 格式：<学科2字简拼> + <8位日期 YYYYMMDD> + <3位当日流水>
+        let finalSource = typeof source === 'string' && source.trim() ? source.trim() : '';
+        if (!finalSource) {
+            const code = subjectKeyToCode(subjectKey);
+            const dateStamp = formatDateStamp(new Date());
+            const todayCount = await prisma.errorItem.count({
+                where: {
+                    userId: user.id,
+                    createdAt: { gte: startOfToday() },
+                },
+            });
+            finalSource = formatQuestionNo(code, dateStamp, todayCount + 1);
+            logger.debug({ finalSource, code, dateStamp, todayCount }, 'Auto-generated question number (source)');
+        }
+
         // 创建错题记录
         try {
             const errorItem = await prisma.errorItem.create({
@@ -171,6 +190,7 @@ export async function POST(req: Request) {
                     knowledgePoints: JSON.stringify(tagNames),
                     gradeSemester: finalGradeSemester,
                     paperLevel: paperLevel,
+                    source: finalSource,
                     masteryLevel: 0,
                     tags: {
                         connect: tagConnections,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ParsedQuestion } from "@/lib/ai";
 import { calculateGrade } from "@/lib/grade-calculator";
 import { Input } from "@/components/ui/input";
@@ -26,6 +26,7 @@ interface ParsedQuestionWithSubject extends ParsedQuestion {
     subjectId?: string;
     gradeSemester?: string;
     paperLevel?: string;
+    source?: string;
 }
 
 interface CorrectionEditorProps {
@@ -52,7 +53,8 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
         mistakeStatus: initialData.mistakeStatus || "unknown",
         subjectId: initialSubjectId,
         gradeSemester: "",
-        paperLevel: "a"
+        paperLevel: "a",
+        source: ""
     });
     const { t, language } = useLanguage();
     const [isReanswering, setIsReanswering] = useState(false);
@@ -60,6 +62,9 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
 
     const [educationStage, setEducationStage] = useState<string | undefined>(undefined);
     const [notebooks, setNotebooks] = useState<Notebook[]>([]);
+
+    // 标记题号是否被用户手动改过；手动改过则不再自动覆盖（即使切换学科）
+    const sourceEditedRef = useRef(false);
 
 
 
@@ -72,14 +77,41 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
 
         apiClient.get<UserProfile>("/api/user")
             .then(user => {
-                if (user && user.educationStage && user.enrollmentYear) {
+                // 年级学期缺省：优先用 localStorage 记忆值（填一次后续自动沿用），
+                // 否则回退到根据教育阶段/入学年份自动推算
+                const savedGrade = typeof window !== 'undefined'
+                    ? localStorage.getItem('wn_default_gradeSemester')
+                    : null;
+                if (savedGrade) {
+                    setData(prev => ({ ...prev, gradeSemester: savedGrade }));
+                } else if (user && user.educationStage && user.enrollmentYear) {
                     const grade = calculateGrade(user.educationStage, user.enrollmentYear, new Date(), language);
                     setData(prev => ({ ...prev, gradeSemester: grade }));
-                    setEducationStage(user.educationStage);
                 }
+                if (user?.educationStage) setEducationStage(user.educationStage);
             })
             .catch(err => console.error("Failed to fetch user info for grade calculation:", err));
     }, [language]);
+
+    // 题号自动填充：学科(subjectId)确定且用户未手动改过时，向后台取下一个题号预览
+    useEffect(() => {
+        if (!data.subjectId) return;
+        if (sourceEditedRef.current) return; // 用户已手动填写则不覆盖
+        const notebook = notebooks.find(n => n.id === data.subjectId);
+        const subjectKey = inferSubjectFromName(notebook?.name || null)
+            || inferSubjectFromName(data.subject || null)
+            || undefined;
+        const subjectName = notebook?.name || undefined;
+        const qs = new URLSearchParams();
+        if (subjectKey) qs.set("subjectKey", subjectKey);
+        if (subjectName) qs.set("subjectName", subjectName);
+        apiClient.get<{ questionNo: string }>(`/api/error-items/next-question-no?${qs.toString()}`)
+            .then(res => {
+                if (res?.questionNo) setData(prev => ({ ...prev, source: res.questionNo }));
+            })
+            .catch(() => { /* 预览失败不影响保存，后端会兜底生成 */ });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [data.subjectId, notebooks]);
 
     // 重新解题函数
     const handleReanswer = async () => {
@@ -163,6 +195,10 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                             if (isSaving) return; // 防止重复点击
                             setIsSaving(true);
                             try {
+                                // 记忆年级学期：保存一次后成为缺省，下次自动沿用，直到再次修改
+                                if (typeof window !== 'undefined') {
+                                    localStorage.setItem('wn_default_gradeSemester', data.gradeSemester || "");
+                                }
                                 await onSave({
                                     ...data,
                                     mistakeStatus: normalizeMistakeStatusForSave(
@@ -229,11 +265,26 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                                     <SelectItem value="other">{t.editor.paperLevels?.other || "Other"}</SelectItem>
                                 </SelectContent>
                             </Select>
-                        </div>
                     </div>
+                </div>
 
-                    <div className="space-y-2">
-                        <Label>{t.editor.question}</Label>
+                <div className="space-y-2">
+                    <Label>题号（自动生成，可手动修改）</Label>
+                    <Input
+                        value={data.source || ""}
+                        onChange={(e) => {
+                            sourceEditedRef.current = true;
+                            setData({ ...data, source: e.target.value });
+                        }}
+                        placeholder="如 sx20260912001"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                        格式：学科简拼 + 8位日期 + 3位当日流水；将用作二维码 / 文件名跳转错题页。
+                    </p>
+                </div>
+
+                <div className="space-y-2">
+                    <Label>{t.editor.question}</Label>
                         <Textarea
                             value={data.questionText}
                             onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setData({ ...data, questionText: e.target.value })}
