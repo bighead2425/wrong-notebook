@@ -168,6 +168,8 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
             const wc = document.createElement("canvas");
             wc.width = nw;
             wc.height = nh;
+            // 初始化即画原图，避免从 crop 切出时 workCanvas 是空的（黑屏）
+            wc.getContext("2d")?.drawImage(origCanvasRef.current, 0, 0);
             workCanvasRef.current = wc;
         }
         return workCanvasRef.current;
@@ -337,8 +339,8 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     // ============================================================
     /** 把当前裁剪区域提取成新图，写回 origCanvas/workCanvas，作为后续操作的基准（裁剪即提取） */
     function bakeCropIntoBase() {
-        const wc = workCanvasRef.current;
-        if (!wc) return;
+        const oc = origCanvasRef.current;
+        if (!oc) return;
         const r = resolveCropRect();
         // 仅在用户确实完成过拖拽裁剪（completedCrop 有值）才烘焙，避免把默认 80% 框误裁掉
         if (!completedCrop || !r || r.w < 5 || r.h < 5) return;
@@ -348,7 +350,8 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         cropped.height = Math.max(1, Math.round(r.h));
         const cctx = cropped.getContext("2d");
         if (!cctx) return;
-        cctx.drawImage(wc, r.x, r.y, r.w, r.h, 0, 0, cropped.width, cropped.height);
+        // 从原始基准图提取，确保 crop 模式下 workCanvas 尚未重绘也不会拿到黑图
+        cctx.drawImage(oc, r.x, r.y, r.w, r.h, 0, 0, cropped.width, cropped.height);
 
         // 重置基准：原图与工作画布都换成裁剪图，擦除记录清空（基准变了）
         origCanvasRef.current = cropped;
@@ -360,7 +363,6 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         shapesRef.current = [];
         setHasShapes(false);
         setDisplaySrc(cropped.toDataURL("image/jpeg", 0.92));
-        redrawWork();
         syncBase();
     }
 
@@ -483,8 +485,9 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
             drawingRef.current = { kind: "rect", x: p.x, y: p.y, w: 0, h: 0 };
         } else if (mode === "erase") {
             if (eraseTool === "brush") {
-                const scale = displayRectRef.current.w
-                    ? workCanvasRef.current.width / displayRectRef.current.w
+                const ovRect = overlayCanvasRef.current?.getBoundingClientRect();
+                const scale = ovRect && ovRect.width
+                    ? workCanvasRef.current.width / ovRect.width
                     : 1;
                 drawingRef.current = {
                     kind: "stroke",
@@ -910,10 +913,9 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                             {mode === "erase" && eraseTool === "brush" && cursorPos && (() => {
                                 const ov = overlayCanvasRef.current;
                                 const dispW = ov ? ov.getBoundingClientRect().width : 0;
-                                const showScale = workCanvasRef.current && dispW
-                                    ? workCanvasRef.current.width / dispW
-                                    : 1;
-                                const brushSizePx = BRUSH_SIZES[brushIdx] / showScale;
+                                // BRUSH_SIZES 表示“显示像素直径”，光标直接用该大小，
+                                // 实际涂抹按同尺寸换算成自然坐标，保证光标与擦除范围一致
+                                const brushSizePx = BRUSH_SIZES[brushIdx];
                                 return (
                                     <div
                                         style={{
