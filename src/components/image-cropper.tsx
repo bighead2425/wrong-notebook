@@ -104,7 +104,7 @@ function drawCircledNumber(
 export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageCropperProps) {
     const { t, language } = useLanguage();
     const [crop, setCrop] = useState<Crop>();
-    const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
+    const [completedCrop, setCompletedCrop] = useState<Crop>(); // 存百分比 crop，避免 object-fit 显示尺寸换算偏差
     const imgRef = useRef<HTMLImageElement>(null);
 
     // ===== 新增状态 =====
@@ -130,6 +130,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     const drawingRef = useRef<Shape | null>(null);
     const displayRectRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
     const imgDispRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
+    const isCroppedRef = useRef(false); // 已经过“裁剪即提取”，工作画布已是裁剪后的图
 
     // ============================================================
     //  初始化 / 重置
@@ -149,6 +150,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         drawingRef.current = null;
         origCanvasRef.current = null;
         workCanvasRef.current = null;
+        isCroppedRef.current = false;
         setCrop(undefined);
         setCompletedCrop(undefined);
     }, [open, imageSrc]);
@@ -248,6 +250,22 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
             ctx.restore();
         };
 
+        // 橡皮擦矩形预览：白底半透明填充 + 深色虚线边框，白纸上也能看清
+        const drawEraseFrame = (
+            x: number, y: number, w: number, h: number,
+            dashed: boolean
+        ) => {
+            ctx.save();
+            ctx.fillStyle = "rgba(255, 255, 255, 0.45)";
+            ctx.fillRect(x, y, w, h);
+            ctx.strokeStyle = "#1f2937";
+            ctx.lineWidth = lw;
+            if (dashed) ctx.setLineDash([lw * 3, lw * 3]);
+            ctx.strokeRect(x, y, w, h);
+            ctx.setLineDash([]);
+            ctx.restore();
+        };
+
         // 已确认的标注框
         for (const b of boxes) {
             const color = b.kind === "question" ? QUESTION_COLOR : ANSWER_COLOR;
@@ -264,7 +282,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
 
         // 待清除的矩形选区（橡皮擦-矩形）
         if (mode === "erase" && pendingRect) {
-            drawFrame(pendingRect.x, pendingRect.y, pendingRect.w, pendingRect.h, "#ffffff", true);
+            drawEraseFrame(pendingRect.x, pendingRect.y, pendingRect.w, pendingRect.h, true);
         }
 
         // 正在绘制的形状预览
@@ -275,7 +293,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                     const color = labelKind === "question" ? QUESTION_COLOR : ANSWER_COLOR;
                     drawFrame(d.x, d.y, d.w, d.h, color, true);
                 } else {
-                    drawFrame(d.x, d.y, d.w, d.h, "#ffffff", true);
+                    drawEraseFrame(d.x, d.y, d.w, d.h, true);
                 }
             } else {
                 ctx.save();
@@ -323,8 +341,9 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         setReady(true);
 
         // 必改点4：displaySrc 变更会重新触发 onLoad，
-        // 已有裁剪框时不再重置，避免用户调好的框被冲掉
-        if (!crop) {
+        // 已有裁剪框时不再重置，避免用户调好的框被冲掉；
+        // 若已经烘焙过裁剪结果，也不再设默认框，防止对已经裁剪过的图二次误裁。
+        if (!crop && !isCroppedRef.current) {
             const initialCrop = centerCrop(
                 { unit: '%', width: 80, height: 50, x: 10, y: 25 },
                 width,
@@ -341,9 +360,10 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     function bakeCropIntoBase() {
         const oc = origCanvasRef.current;
         if (!oc) return;
-        const r = resolveCropRect();
         // 仅在用户确实完成过拖拽裁剪（completedCrop 有值）才烘焙，避免把默认 80% 框误裁掉
-        if (!completedCrop || !r || r.w < 5 || r.h < 5) return;
+        if (!completedCrop) return;
+        const r = resolveCropRect();
+        if (!r || r.w < 5 || r.h < 5) return;
 
         const cropped = document.createElement("canvas");
         cropped.width = Math.max(1, Math.round(r.w));
@@ -362,6 +382,10 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         workCanvasRef.current = newWc;
         shapesRef.current = [];
         setHasShapes(false);
+        isCroppedRef.current = true;
+        // 裁剪已烘焙进工作画布，旧的 crop 坐标不再适用，清空防止二次误裁
+        setCrop(undefined);
+        setCompletedCrop(undefined);
         setDisplaySrc(cropped.toDataURL("image/jpeg", 0.92));
         syncBase();
     }
@@ -561,29 +585,36 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     function resolveCropRect(): { x: number; y: number; w: number; h: number } | null {
         const wc = workCanvasRef.current;
         if (!wc) return null;
-        const dispW = imgDispRef.current.w || 1;
-        const dispH = imgDispRef.current.h || 1;
-        const sx = wc.width / dispW;
-        const sy = wc.height / dispH;
+
+        // 优先用百分比 crop：不依赖显示尺寸 / object-fit letterbox，换算最稳
+        if (crop && crop.width > 0 && crop.height > 0 && crop.unit === "%") {
+            return {
+                x: (crop.x / 100) * wc.width,
+                y: (crop.y / 100) * wc.height,
+                w: (crop.width / 100) * wc.width,
+                h: (crop.height / 100) * wc.height,
+            };
+        }
 
         if (completedCrop && completedCrop.width > 0 && completedCrop.height > 0) {
+            if (completedCrop.unit === "%") {
+                return {
+                    x: (completedCrop.x / 100) * wc.width,
+                    y: (completedCrop.y / 100) * wc.height,
+                    w: (completedCrop.width / 100) * wc.width,
+                    h: (completedCrop.height / 100) * wc.height,
+                };
+            }
+            const dispW = imgDispRef.current.w || 1;
+            const dispH = imgDispRef.current.h || 1;
+            const sx = wc.width / dispW;
+            const sy = wc.height / dispH;
             return {
                 x: completedCrop.x * sx,
                 y: completedCrop.y * sy,
                 w: completedCrop.width * sx,
                 h: completedCrop.height * sy,
             };
-        }
-        if (crop && crop.width > 0 && crop.height > 0) {
-            if (crop.unit === "%") {
-                return {
-                    x: (crop.x / 100) * wc.width,
-                    y: (crop.y / 100) * wc.height,
-                    w: (crop.width / 100) * wc.width,
-                    h: (crop.height / 100) * wc.height,
-                };
-            }
-            return { x: crop.x * sx, y: crop.y * sy, w: crop.width * sx, h: crop.height * sy };
         }
         return null;
     }
@@ -734,8 +765,11 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
             sw = Math.min(baked.width - sx, x1 - x0 + padW * 2);
             sh = Math.min(baked.height - sy, y1 - y0 + padH * 2);
         } else {
-            const r = resolveCropRect();
-            if (r) { sx = r.x; sy = r.y; sw = r.w; sh = r.h; }
+            // 若已经烘焙过裁剪结果，工作画布本身就是目标区域，不要再按旧 crop 二次裁剪
+            if (!isCroppedRef.current) {
+                const r = resolveCropRect();
+                if (r) { sx = r.x; sy = r.y; sw = r.w; sh = r.h; }
+            }
         }
 
         const out = document.createElement("canvas");
@@ -873,7 +907,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                         <ReactCrop
                             crop={crop}
                             onChange={(_, percentCrop) => setCrop(percentCrop)}
-                            onComplete={(c) => setCompletedCrop(c)}
+                            onComplete={(_, percentCrop) => setCompletedCrop(percentCrop)}
                             className="max-h-full"
                         >
                             <img
