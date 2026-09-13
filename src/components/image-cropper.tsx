@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, type CSSProperties } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -38,6 +38,20 @@ const QUESTION_COLOR = "#e50000"; // 红 = 题干
 const ANSWER_COLOR = "#0055ff";   // 蓝 = 手写答案
 const BRUSH_SIZES = [10, 20, 40, 80];
 const BRUSH_LABELS = ["小", "中", "大", "特大"];
+
+/** 缩放控制条上的小按钮样式（深色底上高对比，避免白底白字看不清） */
+const zoomBtnStyle: CSSProperties = {
+    color: "#fff",
+    background: "transparent",
+    border: "1px solid rgba(255, 255, 255, 0.45)",
+    borderRadius: 6,
+    width: 26,
+    height: 24,
+    lineHeight: "22px",
+    cursor: "pointer",
+    fontSize: 14,
+    padding: 0,
+};
 
 function normalizeRect(r: { x: number; y: number; w: number; h: number }) {
     return {
@@ -104,6 +118,18 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     const drawingRef = useRef<Shape | null>(null);
     const displayRectRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
     const isCroppedRef = useRef(false); // 已经过“裁剪即提取”，工作画布已是裁剪后的图
+
+    // ===== 缩放 / 平移视图（手机双指捏合 + 电脑滚轮） =====
+    const [zoom, setZoom] = useState(1);
+    const [pan, setPan] = useState({ x: 0, y: 0 });
+    const viewportRef = useRef<HTMLDivElement | null>(null);
+    const wrapRef = useRef<HTMLDivElement | null>(null);
+    const zoomRef = useRef(1);
+    const panRef = useRef({ x: 0, y: 0 });
+    const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+    const pinchRef = useRef<{ dist: number; midX: number; midY: number } | null>(null);
+    const panDragRef = useRef<{ sx: number; sy: number; px: number; py: number } | null>(null);
+    const spaceRef = useRef(false);
 
     // ============================================================
     //  初始化 / 重置
@@ -454,6 +480,117 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     }, [open, mode, pendingRect, selectedBoxId, erasePendingRect, removeSelectedBox, redrawOverlay]);
 
     // ============================================================
+    //  缩放 / 平移视图（手机双指捏合 + 电脑滚轮）
+    //  关键：canvas 的坐标换算走 getBoundingClientRect，天然包含 CSS transform，
+    //        所以加上缩放/平移后「屏幕坐标 → 图片自然坐标」的换算一行都不用改。
+    // ============================================================
+    const resetView = useCallback(() => {
+        zoomRef.current = 1;
+        panRef.current = { x: 0, y: 0 };
+        setZoom(1);
+        setPan({ x: 0, y: 0 });
+        pointersRef.current.clear();
+        pinchRef.current = null;
+        panDragRef.current = null;
+    }, []);
+
+    /** 取 wrapper 在视口中的「未变换」布局位置（视觉位置减去当前 pan 即为布局位置） */
+    const getLayoutOffset = useCallback(() => {
+        const vp = viewportRef.current;
+        const wr = wrapRef.current;
+        if (!vp || !wr) return { lx: 0, ly: 0, vw: 0, vh: 0 };
+        const vpR = vp.getBoundingClientRect();
+        const wrR = wr.getBoundingClientRect();
+        return {
+            lx: wrR.left - vpR.left - panRef.current.x,
+            ly: wrR.top - vpR.top - panRef.current.y,
+            vw: vp.clientWidth,
+            vh: vp.clientHeight,
+        };
+    }, []);
+
+    /** 应用缩放与平移，并把画面限制在视口内（至少露出一角，不会飞走） */
+    const applyView = useCallback((zRaw: number, p: { x: number; y: number }) => {
+        const z = Math.min(5, Math.max(1, zRaw));
+        if (z <= 1.0001) {
+            zoomRef.current = 1;
+            panRef.current = { x: 0, y: 0 };
+            setZoom(1);
+            setPan({ x: 0, y: 0 });
+            return;
+        }
+        const { lx, ly, vw, vh } = getLayoutOffset();
+        const sw = (wrapRef.current?.offsetWidth || 0) * z;
+        const sh = (wrapRef.current?.offsetHeight || 0) * z;
+        const M = 60; // 视口内至少保留的可见像素
+        const minX = M - lx - sw, maxX = vw - M - lx;
+        const minY = M - ly - sh, maxY = vh - M - ly;
+        const nx = maxX >= minX ? Math.min(maxX, Math.max(minX, p.x)) : 0;
+        const ny = maxY >= minY ? Math.min(maxY, Math.max(minY, p.y)) : 0;
+        zoomRef.current = z;
+        panRef.current = { x: nx, y: ny };
+        setZoom(z);
+        setPan({ x: nx, y: ny });
+    }, [getLayoutOffset]);
+
+    /** 以屏幕上某点 (cx,cy) 为焦点缩放：该点下的画面内容保持不动 */
+    const zoomAt = useCallback((zRaw: number, cx: number, cy: number) => {
+        const vp = viewportRef.current;
+        if (!vp) return;
+        const vpR = vp.getBoundingClientRect();
+        const px = cx - vpR.left;
+        const py = cy - vpR.top;
+        const { lx, ly } = getLayoutOffset();
+        const z = zoomRef.current;
+        const cur = panRef.current;
+        const nz = Math.min(5, Math.max(1, zRaw));
+        const k = nz / z;
+        const nx = (px - lx) - ((px - lx) - cur.x) * k;
+        const ny = (py - ly) - ((py - ly) - cur.y) * k;
+        applyView(nz, { x: nx, y: ny });
+    }, [applyView, getLayoutOffset]);
+
+    /** 以视口中心缩放（按钮 / 滑条用） */
+    const zoomByCenter = useCallback((zRaw: number) => {
+        const vp = viewportRef.current;
+        if (!vp) return;
+        const r = vp.getBoundingClientRect();
+        zoomAt(zRaw, r.left + r.width / 2, r.top + r.height / 2);
+    }, [zoomAt]);
+
+    // 打开/换图/切模式时复位视图（裁剪烘焙后图像尺寸会变，必须复位）
+    useEffect(() => {
+        if (open) resetView();
+    }, [open, imageSrc, mode, resetView]);
+
+    // 电脑端：滚轮缩放，必须以鼠标所在位置为中心，否则一滚画面就“跑飞”
+    useEffect(() => {
+        const vp = viewportRef.current;
+        if (!open || !vp) return;
+        const onWheel = (e: WheelEvent) => {
+            e.preventDefault();
+            const factor = Math.exp(-e.deltaY * 0.0015);
+            zoomAt(zoomRef.current * factor, e.clientX, e.clientY);
+        };
+        vp.addEventListener("wheel", onWheel, { passive: false });
+        return () => vp.removeEventListener("wheel", onWheel);
+    }, [open, zoomAt]);
+
+    // 电脑端：按住空格 + 拖拽 = 平移（与 Photoshop 习惯一致）
+    useEffect(() => {
+        if (!open) return;
+        const down = (e: KeyboardEvent) => { if (e.code === "Space") spaceRef.current = true; };
+        const up = (e: KeyboardEvent) => { if (e.code === "Space") spaceRef.current = false; };
+        window.addEventListener("keydown", down);
+        window.addEventListener("keyup", up);
+        return () => {
+            window.removeEventListener("keydown", down);
+            window.removeEventListener("keyup", up);
+            spaceRef.current = false;
+        };
+    }, [open]);
+
+    // ============================================================
     //  指针交互（橡皮擦 / 标注）
     // ============================================================
     const toNatural = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -472,6 +609,34 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         if (!workCanvasRef.current) return;
         e.preventDefault();
         try { (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
+        pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+        // 双指落下：进入捏合缩放/平移手势，并中断当前绘制，避免手指落下瞬间误画
+        if (pointersRef.current.size >= 2) {
+            drawingRef.current = null;
+            setPendingRect(null);
+            const pts = [...pointersRef.current.values()];
+            pinchRef.current = {
+                dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
+                midX: (pts[0].x + pts[1].x) / 2,
+                midY: (pts[0].y + pts[1].y) / 2,
+            };
+            panDragRef.current = null;
+            redrawOverlay();
+            return;
+        }
+
+        // 空格 + 拖拽 或 鼠标中键拖拽：平移视图（不绘制）
+        if (spaceRef.current || e.button === 1) {
+            panDragRef.current = {
+                sx: e.clientX,
+                sy: e.clientY,
+                px: panRef.current.x,
+                py: panRef.current.y,
+            };
+            return;
+        }
+
         const p = toNatural(e);
 
         if (mode === "label") {
@@ -507,11 +672,44 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     };
 
     const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+        if (pointersRef.current.has(e.pointerId)) {
+            pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        }
+
+        // 双指手势：捏合缩放（以两指中点为焦点）+ 中点位移平移
+        const pts = [...pointersRef.current.values()];
+        if (pts.length >= 2 && pinchRef.current) {
+            const g = pinchRef.current;
+            const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+            const mx = (pts[0].x + pts[1].x) / 2;
+            const my = (pts[0].y + pts[1].y) / 2;
+            if (g.dist > 0) zoomAt(zoomRef.current * (d / g.dist), g.midX, g.midY);
+            applyView(zoomRef.current, {
+                x: panRef.current.x + (mx - g.midX),
+                y: panRef.current.y + (my - g.midY),
+            });
+            g.dist = d;
+            g.midX = mx;
+            g.midY = my;
+            return;
+        }
+
+        // 单指/鼠标平移（空格 + 拖拽 或 中键拖拽）
+        if (panDragRef.current) {
+            const pd = panDragRef.current;
+            applyView(zoomRef.current, {
+                x: pd.px + (e.clientX - pd.sx),
+                y: pd.py + (e.clientY - pd.sy),
+            });
+            return;
+        }
+
         // 笔刷模式：实时更新跟随光标的圆形预览圈（即使未按下）
         if (mode === "erase" && eraseTool === "brush") {
             const ov = overlayCanvasRef.current;
             const r = ov?.getBoundingClientRect();
-            if (r) setCursorPos({ x: e.clientX - r.left, y: e.clientY - r.top });
+            // 预览圈在被缩放的容器内，需换算回容器自身的坐标（除以 zoom）
+            if (r) setCursorPos({ x: (e.clientX - r.left) / zoomRef.current, y: (e.clientY - r.top) / zoomRef.current });
         }
         const d = drawingRef.current;
         if (!d) return;
@@ -530,7 +728,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         if (mode === "erase" && eraseTool === "brush") {
             const ov = overlayCanvasRef.current;
             const r = ov?.getBoundingClientRect();
-            if (r) setCursorPos({ x: e.clientX - r.left, y: e.clientY - r.top });
+            if (r) setCursorPos({ x: (e.clientX - r.left) / zoomRef.current, y: (e.clientY - r.top) / zoomRef.current });
         }
     };
 
@@ -538,7 +736,10 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         setCursorPos(null);
     };
 
-    const onPointerUp = () => {
+    const onPointerUp = (e?: React.PointerEvent<HTMLCanvasElement>) => {
+        if (e) pointersRef.current.delete(e.pointerId);
+        if (pointersRef.current.size < 2) pinchRef.current = null;
+        panDragRef.current = null;
         const d = drawingRef.current;
         drawingRef.current = null;
         if (!d) return;
@@ -850,8 +1051,26 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                 </div>
 
                 {/* ===== 图片区：裁剪/橡皮擦/标注全部共用同一套 canvas，坐标完全一致 ===== */}
-                <div className="flex-1 bg-black w-full overflow-auto flex items-center justify-center p-4">
-                    <div style={{ position: "relative", display: "inline-block", lineHeight: 0, maxHeight: "70vh" }}>
+                <div
+                    ref={viewportRef}
+                    onDoubleClick={(e) => {
+                        if (zoom > 1.05) resetView();
+                        else zoomAt(2.5, e.clientX, e.clientY);
+                    }}
+                    className="flex-1 bg-black w-full flex items-center justify-center p-4"
+                    style={{ position: "relative", overflow: "hidden" }}
+                >
+                    <div
+                        ref={wrapRef}
+                        style={{
+                            position: "relative",
+                            display: "inline-block",
+                            lineHeight: 0,
+                            maxHeight: "70vh",
+                            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                            transformOrigin: "0 0",
+                        }}
+                    >
                         <canvas
                             ref={baseCanvasRef}
                             style={{ display: "block", maxHeight: "70vh", maxWidth: "100%" }}
@@ -878,7 +1097,8 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                         {mode === "erase" && eraseTool === "brush" && cursorPos && (() => {
                             // BRUSH_SIZES 表示“显示像素直径”，光标直接用该大小，
                             // 实际涂抹按同尺寸换算成自然坐标，保证光标与擦除范围一致
-                            const brushSizePx = BRUSH_SIZES[brushIdx];
+                            // 预览圈位于被缩放的容器内，尺寸需除以 zoom 才能在屏幕上保持原大小
+                            const brushSizePx = BRUSH_SIZES[brushIdx] / zoom;
                             return (
                                 <div
                                     style={{
@@ -888,7 +1108,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                                         width: brushSizePx,
                                         height: brushSizePx,
                                         transform: "translate(-50%, -50%)",
-                                        border: "1.5px solid #00c853",
+                                        border: `${1.5 / zoom}px solid #00c853`,
                                         borderRadius: "50%",
                                         pointerEvents: "none",
                                         boxSizing: "border-box",
@@ -896,6 +1116,44 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                                 />
                             );
                         })()}
+                    </div>
+
+                    {/* 缩放控制条：手机双指 / 电脑滚轮之外，给一个显式可见的入口 */}
+                    <div
+                        style={{
+                            position: "absolute",
+                            right: 12,
+                            bottom: 12,
+                            zIndex: 20,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            background: "rgba(0, 0, 0, 0.6)",
+                            borderRadius: 999,
+                            padding: "4px 10px",
+                        }}
+                    >
+                        <button type="button" onClick={() => zoomByCenter(zoom - 0.5)} style={zoomBtnStyle}>−</button>
+                        <input
+                            type="range"
+                            min={1}
+                            max={5}
+                            step={0.1}
+                            value={zoom}
+                            onChange={(e) => zoomByCenter(Number(e.target.value))}
+                            style={{ width: 90 }}
+                        />
+                        <button type="button" onClick={() => zoomByCenter(zoom + 0.5)} style={zoomBtnStyle}>＋</button>
+                        <span style={{ color: "#fff", fontSize: 12, minWidth: 42, textAlign: "center" }}>
+                            {Math.round(zoom * 100)}%
+                        </span>
+                        <button
+                            type="button"
+                            onClick={resetView}
+                            style={{ ...zoomBtnStyle, width: "auto", padding: "0 8px", fontSize: 12 }}
+                        >
+                            适应
+                        </button>
                     </div>
                 </div>
 
@@ -920,6 +1178,9 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                             </Button>
                         </div>
                     </div>
+                    <p className="text-xs text-muted-foreground mt-2">
+                        🔍 手机：双指捏合缩放、双指拖动平移 ｜ 电脑：滚轮以鼠标为中心缩放、按住空格拖拽平移、双击放大/复位
+                    </p>
                 </div>
             </DialogContent>
         </Dialog>
