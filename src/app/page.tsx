@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, Suspense, useEffect, useRef } from "react";
+import { useState, Suspense, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { UploadZone } from "@/components/upload-zone";
-import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
 import { CorrectionEditor } from "@/components/correction-editor";
 import { ImageCropper } from "@/components/image-cropper";
 import { ParsedQuestion } from "@/lib/ai";
@@ -14,7 +13,7 @@ import { AnalyzeResponse, Notebook, AppConfig } from "@/types/api";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { processImageFile } from "@/lib/image-utils";
-import { Upload, BookOpen, Tags, LogOut, BarChart3, Camera } from "lucide-react";
+import { Upload, BookOpen, Tags, LogOut, BarChart3 } from "lucide-react";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { BroadcastNotification } from "@/components/broadcast-notification";
 import { signOut } from "next-auth/react";
@@ -98,10 +97,7 @@ function HomeContent() {
         };
     }, [analysisStep, safetyTimeout]);
 
-    const scannerRef = useRef<DocScannerHandle>(null);
-
-    const handleScanComplete = (blob: Blob) => {
-        const file = new File([blob], "scanned.jpg", { type: "image/jpeg" });
+    const onImageSelect = (file: File) => {
         const imageUrl = URL.createObjectURL(file);
         setCroppingImage(imageUrl);
         setIsCropperOpen(true);
@@ -389,20 +385,7 @@ function HomeContent() {
                 </div>
 
                 {step === "upload" && (
-                    <div className="space-y-3">
-                        <Button
-                            size="lg"
-                            className="w-full"
-                            onClick={() => scannerRef.current?.openCamera()}
-                            disabled={analysisStep !== 'idle'}
-                        >
-                            <Camera className="mr-2 h-5 w-5" /> 相机扫描（拍照自动校正）
-                        </Button>
-                        <UploadZone
-                            onImageSelect={(file) => scannerRef.current?.openWithFile(file)}
-                            isAnalyzing={analysisStep !== 'idle'}
-                        />
-                    </div>
+                    <UploadZone onImageSelect={onImageSelect} isAnalyzing={analysisStep !== 'idle'} />
                 )}
 
                 {croppingImage && (
@@ -414,7 +397,6 @@ function HomeContent() {
                     />
                 )}
 
-                <DocScanner ref={scannerRef} onScanComplete={handleScanComplete} onClose={() => {}} />
 
                 {step === "review" && parsedData && (
                     <CorrectionEditor
