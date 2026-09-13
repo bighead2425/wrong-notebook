@@ -45,6 +45,12 @@ jobs:
           push: true
           # NAS(xuanwu1) 是 amd64；arm64 走 QEMU 模拟极慢，故只构建 amd64
           platforms: linux/amd64
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
+          # 同时打两个标签：
+          #   1) 输入的具体版本号（custom-v10 等）—— 保留版本历史，可回退
+          #   2) custom-latest —— 固定标签，NAS 上的自动更新程序监控它，
+          #      这样在无法 SSH 到 NAS 的网络环境下（如外出办公）也能完成部署
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:custom-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
