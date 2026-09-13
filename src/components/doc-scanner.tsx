@@ -431,10 +431,20 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
               <p className="text-red-300 text-sm text-center px-4">{camError}</p>
             )}
             <div className="flex gap-3">
-              <Button size="lg" onClick={captureFrame} disabled={!!camError || !videoReady || busy}>
+              <Button
+                size="lg"
+                onClick={captureFrame}
+                disabled={!!camError || !videoReady || busy}
+                className="bg-[#00D4FF] text-slate-900 border-0 hover:bg-[#00D4FF]/90"
+              >
                 <Camera className="mr-2 h-5 w-5" /> 拍摄
               </Button>
-              <Button size="lg" variant="outline" className="text-white border-white/40" onClick={() => fileInputRef.current?.click()}>
+              <Button
+                size="lg"
+                variant="outline"
+                className="text-[#00D4FF] border-[#00D4FF]/60"
+                onClick={() => fileInputRef.current?.click()}
+              >
                 <ImageIcon className="mr-2 h-5 w-5" /> 相册
               </Button>
             </div>
@@ -492,7 +502,11 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
                   key={m}
                   size="sm"
                   variant={enhance === m ? "default" : "outline"}
-                  className={enhance === m ? "" : "text-white border-white/40"}
+                  className={
+                    enhance === m
+                      ? "bg-[#00D4FF] text-slate-900 border-0 hover:bg-[#00D4FF]/90"
+                      : "text-white border-white/40"
+                  }
                   onClick={() => setEnhance(m)}
                 >
                   {m === "original" ? "原色" : m === "gray" ? "灰度" : "黑白"}
@@ -502,13 +516,13 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
 
             {/* 操作 */}
             <div className="flex gap-2 justify-center pb-4">
-              <Button variant="outline" className="text-white border-white/40" onClick={() => { setMode("camera"); startCamera(); }}>
+              <Button variant="outline" className="text-[#00D4FF] border-[#00D4FF]/60" onClick={() => { setMode("camera"); startCamera(); }}>
                 <RotateCcw className="mr-1 h-4 w-4" /> 重拍
               </Button>
-              <Button onClick={() => finalize(true)} disabled={busy}>
+              <Button variant="outline" className="text-[#00D4FF] border-[#00D4FF]/60" onClick={() => finalize(true)} disabled={busy}>
                 用原图
               </Button>
-              <Button onClick={() => finalize(false)} disabled={busy || !!cvError}>
+              <Button onClick={() => finalize(false)} disabled={busy || !!cvError} className="bg-[#00D4FF] text-slate-900 border-0 hover:bg-[#00D4FF]/90">
                 <Check className="mr-1 h-4 w-4" /> 确认
               </Button>
             </div>
