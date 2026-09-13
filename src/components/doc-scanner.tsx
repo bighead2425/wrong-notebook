@@ -65,6 +65,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
     const [corners, setCorners] = useState<Corners | null>(null);
     const [detectFail, setDetectFail] = useState(false);
     const [busy, setBusy] = useState(false);
+    const [videoReady, setVideoReady] = useState(false);
     const dragRef = useRef<keyof Corners | null>(null);
 
     const stopCamera = useCallback(() => {
@@ -74,6 +75,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
 
     const startCamera = useCallback(async () => {
       setCamError(null);
+      setVideoReady(false);
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "environment" },
@@ -82,9 +84,11 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
         streamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => {});
+          await videoRef.current.play();
+          setVideoReady(true);
         }
       } catch (e: any) {
+        setVideoReady(false);
         setCamError(
           "无法打开相机：" +
             (e?.message || "需通过 HTTPS 访问并授予相机权限，或改用相册。")
@@ -135,6 +139,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
     const openCamera = useCallback(() => {
       setOpen(true);
       setMode("camera");
+      setVideoReady(false);
       startCamera();
     }, [startCamera]);
 
@@ -160,7 +165,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
 
     const captureFrame = useCallback(() => {
       const v = videoRef.current;
-      if (!v || !v.videoWidth) return;
+      if (!v || !v.videoWidth || !videoReady) return;
       const canvas = document.createElement("canvas");
       canvas.width = v.videoWidth;
       canvas.height = v.videoHeight;
@@ -168,7 +173,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
       const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
       stopCamera();
       loadImgAndReview(dataUrl);
-    }, [loadImgAndReview, stopCamera]);
+    }, [loadImgAndReview, stopCamera, videoReady]);
 
     // 画原图 + 四角把手
     const drawSrc = useCallback(() => {
@@ -416,14 +421,17 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
               ref={videoRef}
               playsInline
               muted
+              autoPlay
               className="w-full max-w-md rounded-lg bg-black"
               style={{ maxHeight: "60vh" }}
+              onLoadedMetadata={() => setVideoReady(true)}
+              onCanPlay={() => setVideoReady(true)}
             />
             {camError && (
               <p className="text-red-300 text-sm text-center px-4">{camError}</p>
             )}
             <div className="flex gap-3">
-              <Button size="lg" onClick={captureFrame} disabled={!!camError}>
+              <Button size="lg" onClick={captureFrame} disabled={!!camError || !videoReady || busy}>
                 <Camera className="mr-2 h-5 w-5" /> 拍摄
               </Button>
               <Button size="lg" variant="outline" className="text-white border-white/40" onClick={() => fileInputRef.current?.click()}>
