@@ -43,7 +43,7 @@ export async function POST(req: Request) {
         let associationsRestored = 0;
         let customTagsCreated = 0;
 
-        await prisma.$transaction(async (tx) => {
+        await prisma.$transaction(async (tx: any) => {
             // ========== STEP 1: 备份现有关联关系 ==========
             logger.info('Step 1: Backing up tag associations...');
             const associations: TagAssociation[] = [];

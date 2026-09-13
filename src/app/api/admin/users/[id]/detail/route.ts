@@ -81,7 +81,7 @@ export async function GET(
             _count: { id: true }
         })
         const masteryDistribution = {
-            new: masteryStats.find(m => m.masteryLevel === 0)?._count.id || 0,
+            new: masteryStats.find((m: any) => m.masteryLevel === 0)?._count.id || 0,
             reviewing: masteryStats.find(m => m.masteryLevel === 1)?._count.id || 0,
             mastered: masteryStats.find(m => m.masteryLevel === 2)?._count.id || 0,
         }
@@ -92,7 +92,7 @@ export async function GET(
             where: { userId: id },
             _count: { id: true }
         })
-        const subjectIds = subjectErrorCounts.map(s => s.subjectId).filter(Boolean) as string[]
+        const subjectIds = subjectErrorCounts.map((s: any) => s.subjectId).filter(Boolean) as string[]
         const subjectNames = await prisma.subject.findMany({
             where: { id: { in: subjectIds } },
             select: { id: true, name: true }

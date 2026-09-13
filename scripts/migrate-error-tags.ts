@@ -46,7 +46,7 @@ async function main() {
             }
         } catch {
             // 尝试逗号分隔
-            tags = item.knowledgePoints.split(',').map(t => t.trim()).filter(Boolean);
+            tags = item.knowledgePoints.split(',').map((t: string) => t.trim()).filter(Boolean);
         }
 
         if (tags.length === 0) continue;

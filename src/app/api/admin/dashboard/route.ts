@@ -107,9 +107,9 @@ export async function GET() {
             }
         })
         const masteryDistribution = {
-            new: masteryStats.find(m => m.masteryLevel === 0)?._count.id || 0,
+            new: masteryStats.find((m: any) => m.masteryLevel === 0)?._count.id || 0,
             reviewing: masteryStats.find(m => m.masteryLevel === 1)?._count.id || 0,
-            mastered: masteryStats.find(m => m.masteryLevel === 2)?._count.id || 0,
+            mastered: masteryStats.find((m: any) => m.masteryLevel === 2)?._count.id || 0,
         }
 
         return NextResponse.json({
@@ -119,7 +119,7 @@ export async function GET() {
                 totalPracticeRecords,
                 totalSubjects,
             },
-            userStats: userStats.map(u => ({
+            userStats: userStats.map((u: any) => ({
                 id: u.id,
                 name: u.name,
                 email: u.email,

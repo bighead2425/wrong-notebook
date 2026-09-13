@@ -36,7 +36,7 @@ export async function POST(req: Request) {
     try {
         logger.info({ email: session.user.email }, 'System reset initiated');
 
-        await prisma.$transaction(async (tx) => {
+        await prisma.$transaction(async (tx: any) => {
             // 1. Delete Practice Records (dependent on nothing usually, or User/ErrorItem)
             await tx.practiceRecord.deleteMany({});
 
