@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, type CSSProperties } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -40,19 +40,12 @@ const ANSWER_COLOR = "#0055ff";   // 蓝 = 手写答案
 const BRUSH_SIZES = [10, 20, 40, 80];
 const BRUSH_LABELS = ["小", "中", "大", "特大"];
 
-/** 缩放控制条上的小按钮样式（深色底上高对比，避免白底白字看不清） */
-const zoomBtnStyle: CSSProperties = {
-    color: "#fff",
-    background: "transparent",
-    border: "1px solid rgba(255, 255, 255, 0.45)",
-    borderRadius: 6,
-    width: 26,
-    height: 24,
-    lineHeight: "22px",
-    cursor: "pointer",
-    fontSize: 14,
-    padding: 0,
-};
+// ===== 缩放模型常量 =====
+// zoom 语义：1 = 图片自然像素 1:1（不再靠 CSS 百分比偶然适配）
+const MIN_ZOOM = 0.05;  // 下限：超大图也能整体看清
+const MAX_ZOOM = 8;     // 上限：看手写字够用
+const FIT_PAD = 16;     // 「适应窗口」时四周留白（px）
+const FIT_MAX = 2;      // 「适应窗口」最多放大到 2 倍，避免小图被放大到糊
 
 function normalizeRect(r: { x: number; y: number; w: number; h: number }) {
     return {
@@ -117,16 +110,21 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);   // 可见层：工作画布内容
     const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null); // 可见层：标注框 + 绘制预览
     const drawingRef = useRef<Shape | null>(null);
-    const displayRectRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
     const isCroppedRef = useRef(false); // 已经过“裁剪即提取”，工作画布已是裁剪后的图
 
-    // ===== 缩放 / 平移视图（手机双指捏合 + 电脑滚轮） =====
+    // ===== 缩放 / 平移视图（手机双指捏合 + 电脑滚轮 + 双击） =====
+    // zoom：1 = 图片自然像素 1:1；view：图片左上角在视口内的绝对位移（渲染用）
+    // pan：相对「居中位置」的偏移（手势用，钳制到 ±(显示尺寸-视口)/2）
     const [zoom, setZoom] = useState(1);
-    const [pan, setPan] = useState({ x: 0, y: 0 });
+    const [view, setView] = useState({ x: 0, y: 0 });
+    const [natSize, setNatSize] = useState({ w: 0, h: 0 }); // 画布自然像素，供 wrapper/overlay 定尺
     const viewportRef = useRef<HTMLDivElement | null>(null);
     const wrapRef = useRef<HTMLDivElement | null>(null);
     const zoomRef = useRef(1);
     const panRef = useRef({ x: 0, y: 0 });
+    const viewRef = useRef({ x: 0, y: 0 });
+    const natSizeRef = useRef({ w: 0, h: 0 });
+    const autoFitRef = useRef(true); // 是否仍处于「自动适应窗口」状态（用户一缩放/平移即为 false）
     const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
     const pinchRef = useRef<{ dist: number; midX: number; midY: number } | null>(null);
     const panDragRef = useRef<{ sx: number; sy: number; px: number; py: number } | null>(null);
@@ -221,6 +219,8 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
             syncBase();
             redrawOverlay();
             setReady(true);
+            // 画布就绪后让整图适应窗口（大图默认看全貌，不再只露中间）
+            requestAnimationFrame(() => fitView());
         };
         img.src = imageSrc;
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -291,6 +291,12 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         if (!ctx) return;
         ctx.clearRect(0, 0, base.width, base.height);
         ctx.drawImage(wc, 0, 0);
+        // 同步自然尺寸：wrapper / overlay canvas 靠它定尺，fitView 也靠它算比例
+        if (natSizeRef.current.w !== wc.width || natSizeRef.current.h !== wc.height) {
+            const s = { w: wc.width, h: wc.height };
+            natSizeRef.current = s;
+            setNatSize(s);
+        }
     }, []);
 
     const redrawOverlay = useCallback(() => {
@@ -455,6 +461,8 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         // 裁剪已烘焙进工作画布，旧的 crop 坐标不再适用，清空防止二次误裁
         setCropRect(null);
         syncBase();
+        // 图变小了（如裁成窄条），让它在固定大窗口里重新适应，不留下拥挤的小画面
+        fitView();
     }
 
     const switchMode = (m: Mode) => {
@@ -551,19 +559,70 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     }, [showHelp]);
 
     // ============================================================
-    //  缩放 / 平移视图（手机双指捏合 + 电脑滚轮）
-    //  关键：canvas 的坐标换算走 getBoundingClientRect，天然包含 CSS transform，
-    //        所以加上缩放/平移后「屏幕坐标 → 图片自然坐标」的换算一行都不用改。
+    //  缩放 / 平移视图（手机双指捏合 + 电脑滚轮 + 双击）
+    //  模型：zoom=1 即图片自然像素 1:1（不再靠 CSS 百分比偶然适配）；
+    //        view = 图片左上角在视口内的绝对位移（渲染用）；
+    //        pan  = 相对「居中位置」的偏移，钳制在 ±(显示尺寸-视口)/2
+    //               → 图片比视口大就能拖动，比视口小则该轴锁死居中，不会拖乱。
+    //  canvas 坐标换算仍走 getBoundingClientRect（天然含 transform），故屏幕→自然
+    //  坐标的换算一行都不用改。
     // ============================================================
-    const resetView = useCallback(() => {
-        zoomRef.current = 1;
-        panRef.current = { x: 0, y: 0 };
-        setZoom(1);
-        setPan({ x: 0, y: 0 });
-        pointersRef.current.clear();
-        pinchRef.current = null;
-        panDragRef.current = null;
+    /** 应用缩放与平移：唯一的写入口，缩放区间与平移边界都收在这里 */
+    const applyView = useCallback((zRaw: number, p: { x: number; y: number }) => {
+        const vp = viewportRef.current;
+        const { w: nw, h: nh } = natSizeRef.current;
+        if (!vp || !nw || !nh) return;
+        if (!Number.isFinite(zRaw)) return; // 画布尺寸异常时防 NaN 扩散
+        const vw = vp.clientWidth, vh = vp.clientHeight;
+        const z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zRaw));
+        const sw = nw * z, sh = nh * z;
+        const mx = Math.max(0, (sw - vw) / 2);
+        const my = Math.max(0, (sh - vh) / 2);
+        const px = Number.isFinite(p.x) ? Math.min(mx, Math.max(-mx, p.x)) : 0;
+        const py = Number.isFinite(p.y) ? Math.min(my, Math.max(-my, p.y)) : 0;
+        const vx = (vw - sw) / 2 + px;
+        const vy = (vh - sh) / 2 + py;
+        zoomRef.current = z;
+        panRef.current = { x: px, y: py };
+        viewRef.current = { x: vx, y: vy };
+        setZoom(z);
+        setView({ x: vx, y: vy });
     }, []);
+
+    /** 以屏幕上某点 (cx,cy) 为焦点缩放：该点下的画面内容保持不动（滚轮/双指用） */
+    const zoomAt = useCallback((zRaw: number, cx: number, cy: number) => {
+        const vp = viewportRef.current;
+        const { w: nw, h: nh } = natSizeRef.current;
+        if (!vp || !nw || !nh) return;
+        const r = vp.getBoundingClientRect();
+        const sx = cx - r.left, sy = cy - r.top; // 视口内坐标
+        const z = zoomRef.current;
+        // 光标下方的图片自然坐标：缩放前后必须保持不变
+        const nx = (sx - viewRef.current.x) / z;
+        const ny = (sy - viewRef.current.y) / z;
+        const nz = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zRaw));
+        const sw = nw * nz, sh = nh * nz;
+        autoFitRef.current = false; // 用户手动缩放，退出「自动适应」
+        applyView(nz, {
+            x: sx - (vp.clientWidth - sw) / 2 - nx * nz,
+            y: sy - (vp.clientHeight - sh) / 2 - ny * nz,
+        });
+    }, [applyView]);
+
+    /** 计算「整图适应窗口」应有的比例（四周留白；上限 FIT_MAX 避免小图被放大到糊） */
+    const computeFitZoom = useCallback(() => {
+        const vp = viewportRef.current;
+        const { w: nw, h: nh } = natSizeRef.current;
+        if (!vp || !nw || !nh) return 1;
+        const z = Math.min((vp.clientWidth - FIT_PAD * 2) / nw, (vp.clientHeight - FIT_PAD * 2) / nh);
+        return Math.min(FIT_MAX, Math.max(MIN_ZOOM, z));
+    }, []);
+
+    /** 整图适应窗口并居中（原「适应」按钮的真身；pan=0 时钳制会自动居中） */
+    const fitView = useCallback(() => {
+        autoFitRef.current = true;
+        applyView(computeFitZoom(), { x: 0, y: 0 });
+    }, [applyView, computeFitZoom]);
 
     /** 「原图」键：一键恢复到刚上传时的整图状态（清空裁剪/橡皮/标注、复位缩放），仍留在编辑器内 */
     const resetToOriginal = useCallback(() => {
@@ -587,79 +646,30 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         setPendingRect(null);
         setCropRect(null);
         setMode("crop");
-        resetView();
+        pointersRef.current.clear();
+        pinchRef.current = null;
+        panDragRef.current = null;
         syncBase();
         redrawOverlay();
-    }, [resetView, syncBase, redrawOverlay]);
+        fitView();
+    }, [fitView, syncBase, redrawOverlay]);
 
-    /** 取 wrapper 在视口中的「未变换」布局位置（视觉位置减去当前 pan 即为布局位置） */
-    const getLayoutOffset = useCallback(() => {
-        const vp = viewportRef.current;
-        const wr = wrapRef.current;
-        if (!vp || !wr) return { lx: 0, ly: 0, vw: 0, vh: 0 };
-        const vpR = vp.getBoundingClientRect();
-        const wrR = wr.getBoundingClientRect();
-        return {
-            lx: wrR.left - vpR.left - panRef.current.x,
-            ly: wrR.top - vpR.top - panRef.current.y,
-            vw: vp.clientWidth,
-            vh: vp.clientHeight,
-        };
-    }, []);
-
-    /** 应用缩放与平移，并把画面限制在视口内（至少露出一角，不会飞走） */
-    const applyView = useCallback((zRaw: number, p: { x: number; y: number }) => {
-        const z = Math.min(5, Math.max(1, zRaw));
-        if (z <= 1.0001) {
-            zoomRef.current = 1;
-            panRef.current = { x: 0, y: 0 };
-            setZoom(1);
-            setPan({ x: 0, y: 0 });
-            return;
-        }
-        const { lx, ly, vw, vh } = getLayoutOffset();
-        const sw = (wrapRef.current?.offsetWidth || 0) * z;
-        const sh = (wrapRef.current?.offsetHeight || 0) * z;
-        const M = 60; // 视口内至少保留的可见像素
-        const minX = M - lx - sw, maxX = vw - M - lx;
-        const minY = M - ly - sh, maxY = vh - M - ly;
-        const nx = maxX >= minX ? Math.min(maxX, Math.max(minX, p.x)) : 0;
-        const ny = maxY >= minY ? Math.min(maxY, Math.max(minY, p.y)) : 0;
-        zoomRef.current = z;
-        panRef.current = { x: nx, y: ny };
-        setZoom(z);
-        setPan({ x: nx, y: ny });
-    }, [getLayoutOffset]);
-
-    /** 以屏幕上某点 (cx,cy) 为焦点缩放：该点下的画面内容保持不动 */
-    const zoomAt = useCallback((zRaw: number, cx: number, cy: number) => {
-        const vp = viewportRef.current;
-        if (!vp) return;
-        const vpR = vp.getBoundingClientRect();
-        const px = cx - vpR.left;
-        const py = cy - vpR.top;
-        const { lx, ly } = getLayoutOffset();
-        const z = zoomRef.current;
-        const cur = panRef.current;
-        const nz = Math.min(5, Math.max(1, zRaw));
-        const k = nz / z;
-        const nx = (px - lx) - ((px - lx) - cur.x) * k;
-        const ny = (py - ly) - ((py - ly) - cur.y) * k;
-        applyView(nz, { x: nx, y: ny });
-    }, [applyView, getLayoutOffset]);
-
-    /** 以视口中心缩放（按钮 / 滑条用） */
-    const zoomByCenter = useCallback((zRaw: number) => {
-        const vp = viewportRef.current;
-        if (!vp) return;
-        const r = vp.getBoundingClientRect();
-        zoomAt(zRaw, r.left + r.width / 2, r.top + r.height / 2);
-    }, [zoomAt]);
-
-    // 打开/换图/切模式时复位视图（裁剪烘焙后图像尺寸会变，必须复位）
+    // 打开/换图/切模式时让画面适应窗口（裁剪烘焙后图像尺寸会变，必须重算）
     useEffect(() => {
-        if (open) resetView();
-    }, [open, imageSrc, mode, resetView]);
+        if (open) fitView();
+    }, [open, imageSrc, mode, fitView]);
+
+    // 视口尺寸变化（拖大窗口 / 手机横竖屏）：仍在自动适应则重新适应，否则只重新钳制
+    useEffect(() => {
+        const vp = viewportRef.current;
+        if (!open || !vp) return;
+        const ro = new ResizeObserver(() => {
+            if (autoFitRef.current) fitView();
+            else applyView(zoomRef.current, panRef.current);
+        });
+        ro.observe(vp);
+        return () => ro.disconnect();
+    }, [open, fitView, applyView]);
 
     // 电脑端：滚轮缩放，必须以鼠标所在位置为中心，否则一滚画面就“跑飞”
     useEffect(() => {
@@ -707,7 +717,6 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         const wc = workCanvasRef.current;
         if (!ov || !wc) return { x: 0, y: 0 };
         const r = ov.getBoundingClientRect();
-        displayRectRef.current = { w: r.width, h: r.height };
         return {
             x: (e.clientX - r.left) * (wc.width / r.width),
             y: (e.clientY - r.top) * (wc.height / r.height),
@@ -724,6 +733,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         if (pointersRef.current.size >= 2) {
             drawingRef.current = null;
             setPendingRect(null);
+            autoFitRef.current = false; // 用户手动缩放/平移，退出「自动适应」
             const pts = [...pointersRef.current.values()];
             pinchRef.current = {
                 dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
@@ -737,6 +747,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
 
         // 空格 + 拖拽 / 鼠标中键 / 鼠标右键 / 平移开关开启：平移视图（不绘制）
         if (spaceRef.current || e.button === 1 || e.button === 2 || panMode) {
+            autoFitRef.current = false; // 用户手动平移，退出「自动适应」
             panDragRef.current = {
                 sx: e.clientX,
                 sy: e.clientY,
@@ -1066,7 +1077,10 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                     // relative 与基类的 fixed 同组冲突，会把 fixed 挤掉，
                     // 导致对话框掉进文档流被排到页面下方（「偏下且拖不上来」的根因）。
                     // 需要绝对定位基准时，基类的 fixed 本身就已提供。
-                    "max-w-3xl max-h-[90vh] h-auto flex flex-col p-0 gap-0 overflow-hidden",
+                    // 固定窗口：高度恒为 90dvh、宽度上限 1024px（max-w-5xl）。
+                    // 基类自带 w-full，所以手机上宽度仍是全屏，只有桌面才被 1024px 封顶。
+                    // 图片区是 flex-1，窗口不会随图片大小（尤其裁剪后的窄条）变化。
+                    "max-w-5xl h-[90dvh] flex flex-col p-0 gap-0 overflow-hidden",
                     dragOffset && "translate-x-0 translate-y-0",
                 )}
                 style={
@@ -1198,8 +1212,15 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                 <div
                     ref={viewportRef}
                     onDoubleClick={(e) => {
-                        if (zoom > 1.05) resetView();
-                        else zoomAt(2.5, e.clientX, e.clientY);
+                        // 双击 = 「适应窗口」↔「100%」；若两者本就一样（小图），改用「适应」↔「200%」
+                        const fitZ = computeFitZoom();
+                        const cur = zoomRef.current;
+                        const target = Math.abs(fitZ - 1) < 0.05 ? 2 : 1;
+                        if (Math.abs(cur - fitZ) < 0.02 * Math.max(1, fitZ)) {
+                            zoomAt(target, e.clientX, e.clientY);
+                        } else {
+                            fitView();
+                        }
                     }}
                     onPointerDown={onPointerDown}
                     onPointerMove={onPointerMove}
@@ -1208,23 +1229,27 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                     onPointerUp={onPointerUp}
                     onPointerCancel={onPointerUp}
                     onContextMenu={(e) => e.preventDefault()}
-                    className="flex-1 min-h-0 bg-black w-full flex items-center justify-center p-4"
+                    className="flex-1 min-h-0 bg-black w-full"
                     style={{ position: "relative", overflow: "hidden", touchAction: "none" }}
                 >
                     <div
                         ref={wrapRef}
                         style={{
-                            position: "relative",
-                            display: "inline-block",
+                            position: "absolute",
+                            top: 0,
+                            left: 0,
+                            // 显式定尺 = 图片自然像素：绝对定位元素若不设宽高，
+                            // shrink-to-fit 会把盒宽截断成包含块宽度，导致 overlay 尺寸算错、坐标错位
+                            width: natSize.w || undefined,
+                            height: natSize.h || undefined,
                             lineHeight: 0,
-                            maxHeight: "100%",
-                            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                            transform: `translate(${view.x}px, ${view.y}px) scale(${zoom})`,
                             transformOrigin: "0 0",
                         }}
                     >
                         <canvas
                             ref={baseCanvasRef}
-                            style={{ display: "block", maxHeight: "100%", maxWidth: "100%" }}
+                            style={{ display: "block" }}
                         />
                         <canvas
                             ref={overlayCanvasRef}
@@ -1232,8 +1257,8 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                                 position: "absolute",
                                 top: 0,
                                 left: 0,
-                                width: "100%",
-                                height: "100%",
+                                width: natSize.w || undefined,
+                                height: natSize.h || undefined,
                                 cursor: panMode
                                     ? "grab"
                                     : mode === "erase" && eraseTool === "brush"
@@ -1265,44 +1290,6 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                                 />
                             );
                         })()}
-                    </div>
-
-                    {/* 缩放控制条：手机双指 / 电脑滚轮之外，给一个显式可见的入口 */}
-                    <div
-                        style={{
-                            position: "absolute",
-                            right: 12,
-                            bottom: 12,
-                            zIndex: 20,
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                            background: "rgba(0, 0, 0, 0.6)",
-                            borderRadius: 999,
-                            padding: "4px 10px",
-                        }}
-                    >
-                        <button type="button" onClick={() => zoomByCenter(zoom - 0.5)} style={zoomBtnStyle}>−</button>
-                        <input
-                            type="range"
-                            min={1}
-                            max={5}
-                            step={0.1}
-                            value={zoom}
-                            onChange={(e) => zoomByCenter(Number(e.target.value))}
-                            style={{ width: 90 }}
-                        />
-                        <button type="button" onClick={() => zoomByCenter(zoom + 0.5)} style={zoomBtnStyle}>＋</button>
-                        <span style={{ color: "#fff", fontSize: 12, minWidth: 42, textAlign: "center" }}>
-                            {Math.round(zoom * 100)}%
-                        </span>
-                        <button
-                            type="button"
-                            onClick={resetView}
-                            style={{ ...zoomBtnStyle, width: "auto", padding: "0 8px", fontSize: 12 }}
-                        >
-                            适应
-                        </button>
                     </div>
                 </div>
 
