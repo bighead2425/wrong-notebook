@@ -142,7 +142,43 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
 
     // ===== 对话框拖拽位移（按住标题栏拖动） =====
     const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
-    const dragStartRef = useRef<{ x: number; y: number; offsetX: number; offsetY: number } | null>(null);
+
+    /**
+     * 按住标题栏拖动对话框。
+     * 监听挂在 window 上（而不是标题栏自身），这样指针移出标题栏也能继续拖，不会「拖到一半卡住」。
+     * 同时做边界保护：至少保留 80px 在视口内，避免把对话框拖丢找不回来。
+     */
+    const startDialogDrag = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+        if (e.button !== 0) return; // 仅左键
+        const dlg = e.currentTarget.closest('[role="dialog"]') as HTMLElement | null;
+        const rect = dlg?.getBoundingClientRect();
+        const start = dragOffset ?? { x: 0, y: 0 };
+        const fromX = e.clientX;
+        const fromY = e.clientY;
+        const MARGIN = 80;
+        const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
+
+        const onMove = (ev: PointerEvent) => {
+            let dx = start.x + (ev.clientX - fromX);
+            let dy = start.y + (ev.clientY - fromY);
+            if (rect) {
+                // rect 是「已含当前偏移」的视觉位置，减去偏移得到未变换的基准位置
+                const baseLeft = rect.left - start.x;
+                const baseTop = rect.top - start.y;
+                dx = clamp(dx, -(baseLeft + rect.width - MARGIN), window.innerWidth - MARGIN - baseLeft);
+                dy = clamp(dy, -(baseTop + rect.height - MARGIN), window.innerHeight - MARGIN - baseTop);
+            }
+            setDragOffset({ x: dx, y: dy });
+        };
+        const onUp = () => {
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+            window.removeEventListener("pointercancel", onUp);
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+        window.addEventListener("pointercancel", onUp);
+    }, [dragOffset]);
 
     // ============================================================
     //  初始化 / 重置
@@ -1026,7 +1062,11 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
             <DialogContent
                 className={cn(
-                    "max-w-3xl max-h-[90vh] h-auto flex flex-col p-0 gap-0 relative overflow-hidden",
+                    // ⚠️ 千万不要在这里加 relative：cn() 基于 tailwind-merge，
+                    // relative 与基类的 fixed 同组冲突，会把 fixed 挤掉，
+                    // 导致对话框掉进文档流被排到页面下方（「偏下且拖不上来」的根因）。
+                    // 需要绝对定位基准时，基类的 fixed 本身就已提供。
+                    "max-w-3xl max-h-[90vh] h-auto flex flex-col p-0 gap-0 overflow-hidden",
                     dragOffset && "translate-x-0 translate-y-0",
                 )}
                 style={
@@ -1041,34 +1081,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
             >
                 <DialogHeader
                     className="p-4 border-b shrink-0 cursor-move select-none"
-                    onPointerDown={(e) => {
-                        if (e.button !== 0) return;
-                        const dialog = e.currentTarget.closest('[role="dialog"]') as HTMLElement | null;
-                        if (!dialog) return;
-                        dragStartRef.current = {
-                            x: e.clientX,
-                            y: e.clientY,
-                            offsetX: dragOffset?.x ?? 0,
-                            offsetY: dragOffset?.y ?? 0,
-                        };
-                        try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
-                    }}
-                    onPointerMove={(e) => {
-                        const s = dragStartRef.current;
-                        if (!s) return;
-                        setDragOffset({
-                            x: s.offsetX + (e.clientX - s.x),
-                            y: s.offsetY + (e.clientY - s.y),
-                        });
-                    }}
-                    onPointerUp={(e) => {
-                        dragStartRef.current = null;
-                        try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-                    }}
-                    onPointerCancel={(e) => {
-                        dragStartRef.current = null;
-                        try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-                    }}
+                    onPointerDown={startDialogDrag}
                 >
                     <DialogTitle>{t.common.cropper?.title || "Crop Image"}</DialogTitle>
                 </DialogHeader>
