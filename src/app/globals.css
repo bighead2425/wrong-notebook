@@ -121,11 +121,33 @@
   }
 }
 
+/* ===== 错题练习卷：纸张容器 =====
+   宽度 152mm = B5(182mm) - 左右各 15mm 页边距，屏幕预览即打印所得。
+   这里把主题变量重设为浅色，保证深色主题下预览和打印都是白纸黑字。 */
+.print-sheet {
+  --background: #ffffff;
+  --foreground: #111111;
+  --card: #ffffff;
+  --card-foreground: #111111;
+  --muted: #f3f3f3;
+  --muted-foreground: #555555;
+  --border: #dddddd;
+  width: 152mm;
+  margin: 0 auto;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 11pt;
+  line-height: 1.7;
+}
+
 /* Print Styles for PDF Export */
 @media print {
+  /* 国内市售 B5 = 182mm × 257mm（JIS B5）。
+     注意：CSS 的 size: B5 是 ISO B5 = 176×250mm，比国产纸每边小 6mm，
+     满页排版时会跑版，所以必须写明确毫米数，不能用 B5 简写。 */
   @page {
-    size: A4;
-    margin: 2cm;
+    size: 182mm 257mm;
+    margin: 14mm 15mm 16mm;
   }
 
   body {
@@ -134,12 +156,14 @@
   }
 
   /* Hide elements that shouldn't be printed */
-  .print\:hidden {
+  .print\:hidden,
+  .no-print {
     display: none !important;
   }
 
   /* Prevent page breaks inside elements */
-  .print\:break-inside-avoid {
+  .print\:break-inside-avoid,
+  .keep-together {
     break-inside: avoid;
     page-break-inside: avoid;
   }
@@ -163,5 +187,54 @@
   /* Remove backgrounds for better printing */
   .bg-muted {
     background-color: #f5f5f5 !important;
+  }
+
+  /* ===== 错题练习卷排版（B5） ===== */
+
+  /* 单题不被切成两半 */
+  .print-question {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* 大题独占一页 */
+  .print-question--solo {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  /* 答案/解析段整体另起一页（练习卷模式：做题时看不到答案） */
+  .print-answers {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  /* 答案段内每道题也不要断开 */
+  .print-answer-item {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* 卷头不要被挤到下一页 */
+  .print-sheet-head {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  /* 小标题（参考答案/解析/错因）与正文不分离 */
+  .print-sub-title {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  /* 手写作答区：作业本横线，行高 28px ≈ 7.4mm，适合小学生书写。
+     注意：必须用 linear-gradient + background-size 平铺，
+     不能用 repeating-linear-gradient——实测 Chrome 打印渲染器
+     对后者的重复周期会错乱（mm/px 单位都如此），只会画出稀疏几条线。 */
+  .print-answer-space {
+    background-image: linear-gradient(to bottom, #b9b9b9 2px, transparent 2px);
+    background-size: 100% 28px;
+    background-position: 0 0;
+    background-repeat: repeat;
   }
 }
