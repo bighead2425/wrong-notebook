@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback, type CSSProperties } from "react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -139,6 +140,10 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     // 说明弹窗显隐
     const [showHelp, setShowHelp] = useState(false);
 
+    // ===== 对话框拖拽位移（按住标题栏拖动） =====
+    const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
+    const dragStartRef = useRef<{ x: number; y: number; offsetX: number; offsetY: number } | null>(null);
+
     // ============================================================
     //  初始化 / 重置
     // ============================================================
@@ -158,6 +163,8 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         origCanvasRef.current = null;
         workCanvasRef.current = null;
         isCroppedRef.current = false;
+        // 每次打开都复位拖拽位置，避免沿用上一次的偏移
+        setDragOffset(null);
     }, [open, imageSrc]);
 
     // 对话框打开后加载原图并初始化画布（不再依赖 <img> 的 onLoad）
@@ -620,20 +627,26 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
 
     // 电脑端：滚轮缩放，必须以鼠标所在位置为中心，否则一滚画面就“跑飞”
     useEffect(() => {
-        const vp = viewportRef.current;
-        if (!open || !vp) return;
+        if (!open) return;
         const onWheel = (e: WheelEvent) => {
+            const vp = viewportRef.current;
+            if (!vp) return;
+            // 只在图片视口内（含黑底/canvas）才缩放；Toolbar/Footer/页面滚动不受影响
+            if (!vp.contains(e.target as Node)) return;
+
             e.preventDefault();
-            // 归一化滚轮 delta：部分鼠标/触控板以「行」(deltaMode=1) 或「页」(deltaMode=2) 上报，
-            // deltaY 只有 ±1~3，若不换算成像素，每格缩放变化 <0.5%，看起来就是「没反应」
+            // 归一化滚轮 delta：部分鼠标/触控板以「行」(deltaMode=1) 或「页」(deltaMode=2) 上报
             let dy = e.deltaY;
             if (e.deltaMode === 1) dy *= 16;
             else if (e.deltaMode === 2) dy *= 100;
-            const factor = Math.exp(-dy * 0.0015);
+
+            const factor = Math.exp(-dy * 0.002);
             zoomAt(zoomRef.current * factor, e.clientX, e.clientY);
         };
-        vp.addEventListener("wheel", onWheel, { passive: false });
-        return () => vp.removeEventListener("wheel", onWheel);
+
+        // 关键：挂到 window 的 capture 阶段，先于 Radix Dialog / RemoveScroll 的滚动锁定拿到事件
+        window.addEventListener("wheel", onWheel, { passive: false, capture: true });
+        return () => window.removeEventListener("wheel", onWheel, { capture: true });
     }, [open, zoomAt]);
 
     // 电脑端：按住空格 + 拖拽 = 平移（与 Photoshop 习惯一致）
@@ -1011,8 +1024,52 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
 
     return (
         <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-            <DialogContent className="max-w-3xl h-[90vh] flex flex-col p-0 gap-0 relative">
-                <DialogHeader className="p-4 border-b shrink-0">
+            <DialogContent
+                className={cn(
+                    "max-w-3xl max-h-[90vh] h-auto flex flex-col p-0 gap-0 relative overflow-hidden",
+                    dragOffset && "translate-x-0 translate-y-0",
+                )}
+                style={
+                    dragOffset
+                        ? {
+                              left: `calc(50% + ${dragOffset.x}px)`,
+                              top: `calc(50% + ${dragOffset.y}px)`,
+                              transform: "translate(-50%, -50%)",
+                          }
+                        : undefined
+                }
+            >
+                <DialogHeader
+                    className="p-4 border-b shrink-0 cursor-move select-none"
+                    onPointerDown={(e) => {
+                        if (e.button !== 0) return;
+                        const dialog = e.currentTarget.closest('[role="dialog"]') as HTMLElement | null;
+                        if (!dialog) return;
+                        dragStartRef.current = {
+                            x: e.clientX,
+                            y: e.clientY,
+                            offsetX: dragOffset?.x ?? 0,
+                            offsetY: dragOffset?.y ?? 0,
+                        };
+                        try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
+                    }}
+                    onPointerMove={(e) => {
+                        const s = dragStartRef.current;
+                        if (!s) return;
+                        setDragOffset({
+                            x: s.offsetX + (e.clientX - s.x),
+                            y: s.offsetY + (e.clientY - s.y),
+                        });
+                    }}
+                    onPointerUp={(e) => {
+                        dragStartRef.current = null;
+                        try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+                    }}
+                    onPointerCancel={(e) => {
+                        dragStartRef.current = null;
+                        try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+                    }}
+                >
                     <DialogTitle>{t.common.cropper?.title || "Crop Image"}</DialogTitle>
                 </DialogHeader>
 
@@ -1138,7 +1195,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                     onPointerUp={onPointerUp}
                     onPointerCancel={onPointerUp}
                     onContextMenu={(e) => e.preventDefault()}
-                    className="flex-1 bg-black w-full flex items-center justify-center p-4"
+                    className="flex-1 min-h-0 bg-black w-full flex items-center justify-center p-4"
                     style={{ position: "relative", overflow: "hidden", touchAction: "none" }}
                 >
                     <div
@@ -1147,14 +1204,14 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                             position: "relative",
                             display: "inline-block",
                             lineHeight: 0,
-                            maxHeight: "70vh",
+                            maxHeight: "100%",
                             transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                             transformOrigin: "0 0",
                         }}
                     >
                         <canvas
                             ref={baseCanvasRef}
-                            style={{ display: "block", maxHeight: "70vh", maxWidth: "100%" }}
+                            style={{ display: "block", maxHeight: "100%", maxWidth: "100%" }}
                         />
                         <canvas
                             ref={overlayCanvasRef}
