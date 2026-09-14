@@ -131,6 +131,14 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     const panDragRef = useRef<{ sx: number; sy: number; px: number; py: number } | null>(null);
     const spaceRef = useRef(false);
 
+    // ===== 平移开关 + 右键拖拽平移 =====
+    const [panMode, setPanMode] = useState(false);
+    // 首次加载的「最原始整图」副本，供「原图」键一键恢复
+    // （裁剪即提取会直接覆盖 origCanvas，所以必须另存一份干净的原始图）
+    const firstImageRef = useRef<HTMLCanvasElement | null>(null);
+    // 说明弹窗显隐
+    const [showHelp, setShowHelp] = useState(false);
+
     // ============================================================
     //  初始化 / 重置
     // ============================================================
@@ -158,6 +166,14 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         const img = new Image();
         img.onload = () => {
             ensureCanvases(img);
+            // 另存一份最原始整图，供「原图」键恢复到刚上传时的状态
+            if (origCanvasRef.current) {
+                const fc = document.createElement("canvas");
+                fc.width = origCanvasRef.current.width;
+                fc.height = origCanvasRef.current.height;
+                fc.getContext("2d")?.drawImage(origCanvasRef.current, 0, 0);
+                firstImageRef.current = fc;
+            }
             redrawWork();
             syncBase();
             redrawOverlay();
@@ -479,6 +495,18 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, mode, pendingRect, selectedBoxId, erasePendingRect, removeSelectedBox, redrawOverlay]);
 
+    // 说明弹窗：打开后，下一次任意位置按下鼠标即关闭（含点击卡片本身）
+    useEffect(() => {
+        if (!showHelp) return;
+        const close = () => setShowHelp(false);
+        // 延迟一拍再挂监听，避免“打开”的那次点击立刻把自己关掉
+        const t = setTimeout(() => document.addEventListener("mousedown", close), 0);
+        return () => {
+            clearTimeout(t);
+            document.removeEventListener("mousedown", close);
+        };
+    }, [showHelp]);
+
     // ============================================================
     //  缩放 / 平移视图（手机双指捏合 + 电脑滚轮）
     //  关键：canvas 的坐标换算走 getBoundingClientRect，天然包含 CSS transform，
@@ -493,6 +521,33 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         pinchRef.current = null;
         panDragRef.current = null;
     }, []);
+
+    /** 「原图」键：一键恢复到刚上传时的整图状态（清空裁剪/橡皮/标注、复位缩放），仍留在编辑器内 */
+    const resetToOriginal = useCallback(() => {
+        const fi = firstImageRef.current;
+        if (!fi) return;
+        const cloneOrig = document.createElement("canvas");
+        cloneOrig.width = fi.width;
+        cloneOrig.height = fi.height;
+        cloneOrig.getContext("2d")?.drawImage(fi, 0, 0);
+        origCanvasRef.current = cloneOrig;
+        const wc = document.createElement("canvas");
+        wc.width = fi.width;
+        wc.height = fi.height;
+        wc.getContext("2d")?.drawImage(fi, 0, 0);
+        workCanvasRef.current = wc;
+        shapesRef.current = [];
+        setHasShapes(false);
+        isCroppedRef.current = false;
+        setBoxes([]);
+        setSelectedBoxId(null);
+        setPendingRect(null);
+        setCropRect(null);
+        setMode("crop");
+        resetView();
+        syncBase();
+        redrawOverlay();
+    }, [resetView, syncBase, redrawOverlay]);
 
     /** 取 wrapper 在视口中的「未变换」布局位置（视觉位置减去当前 pan 即为布局位置） */
     const getLayoutOffset = useCallback(() => {
@@ -569,7 +624,12 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         if (!open || !vp) return;
         const onWheel = (e: WheelEvent) => {
             e.preventDefault();
-            const factor = Math.exp(-e.deltaY * 0.0015);
+            // 归一化滚轮 delta：部分鼠标/触控板以「行」(deltaMode=1) 或「页」(deltaMode=2) 上报，
+            // deltaY 只有 ±1~3，若不换算成像素，每格缩放变化 <0.5%，看起来就是「没反应」
+            let dy = e.deltaY;
+            if (e.deltaMode === 1) dy *= 16;
+            else if (e.deltaMode === 2) dy *= 100;
+            const factor = Math.exp(-dy * 0.0015);
             zoomAt(zoomRef.current * factor, e.clientX, e.clientY);
         };
         vp.addEventListener("wheel", onWheel, { passive: false });
@@ -593,7 +653,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
     // ============================================================
     //  指针交互（橡皮擦 / 标注）
     // ============================================================
-    const toNatural = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const toNatural = (e: { clientX: number; clientY: number }) => {
         const ov = overlayCanvasRef.current;
         const wc = workCanvasRef.current;
         if (!ov || !wc) return { x: 0, y: 0 };
@@ -605,10 +665,10 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         };
     };
 
-    const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
         if (!workCanvasRef.current) return;
         e.preventDefault();
-        try { (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
+        try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
         pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
         // 双指落下：进入捏合缩放/平移手势，并中断当前绘制，避免手指落下瞬间误画
@@ -626,8 +686,8 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
             return;
         }
 
-        // 空格 + 拖拽 或 鼠标中键拖拽：平移视图（不绘制）
-        if (spaceRef.current || e.button === 1) {
+        // 空格 + 拖拽 / 鼠标中键 / 鼠标右键 / 平移开关开启：平移视图（不绘制）
+        if (spaceRef.current || e.button === 1 || e.button === 2 || panMode) {
             panDragRef.current = {
                 sx: e.clientX,
                 sy: e.clientY,
@@ -638,6 +698,11 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         }
 
         const p = toNatural(e);
+
+        // 单指落在图片范围外（黑底）时不绘制，避免画出半截框；
+        // 两指手势已在前面处理，这里只约束单指画图区域
+        const wcInside = workCanvasRef.current;
+        if (wcInside && (p.x < 0 || p.x > wcInside.width || p.y < 0 || p.y > wcInside.height)) return;
 
         if (mode === "label") {
             const hit = [...boxes].reverse().find(
@@ -671,7 +736,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         redrawOverlay();
     };
 
-    const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
         if (pointersRef.current.has(e.pointerId)) {
             pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
         }
@@ -724,7 +789,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         redrawOverlay();
     };
 
-    const onPointerEnter = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const onPointerEnter = (e: React.PointerEvent<HTMLDivElement>) => {
         if (mode === "erase" && eraseTool === "brush") {
             const ov = overlayCanvasRef.current;
             const r = ov?.getBoundingClientRect();
@@ -736,7 +801,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         setCursorPos(null);
     };
 
-    const onPointerUp = (e?: React.PointerEvent<HTMLCanvasElement>) => {
+    const onPointerUp = (e?: React.PointerEvent<HTMLDivElement>) => {
         if (e) pointersRef.current.delete(e.pointerId);
         if (pointersRef.current.size < 2) pinchRef.current = null;
         panDragRef.current = null;
@@ -946,7 +1011,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
 
     return (
         <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-            <DialogContent className="max-w-3xl h-[90vh] flex flex-col p-0 gap-0">
+            <DialogContent className="max-w-3xl h-[90vh] flex flex-col p-0 gap-0 relative">
                 <DialogHeader className="p-4 border-b shrink-0">
                     <DialogTitle>{t.common.cropper?.title || "Crop Image"}</DialogTitle>
                 </DialogHeader>
@@ -964,6 +1029,15 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                     </button>
                     <button type="button" className={btn(mode === "label")} onClick={() => switchMode("label")}>
                         {t.common.cropper?.modeLabel || "区域标注"}
+                    </button>
+
+                    <button
+                        type="button"
+                        className={btn(panMode)}
+                        onClick={() => setPanMode((v) => !v)}
+                        title="开启后鼠标左键仅用于平移图片（也可随时按住右键拖拽平移）"
+                    >
+                        {t.common.cropper?.pan || "平移"}
                     </button>
 
                     <span className="w-px h-5 bg-border mx-1" />
@@ -1057,8 +1131,15 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                         if (zoom > 1.05) resetView();
                         else zoomAt(2.5, e.clientX, e.clientY);
                     }}
+                    onPointerDown={onPointerDown}
+                    onPointerMove={onPointerMove}
+                    onPointerEnter={onPointerEnter}
+                    onPointerLeave={onPointerLeave}
+                    onPointerUp={onPointerUp}
+                    onPointerCancel={onPointerUp}
+                    onContextMenu={(e) => e.preventDefault()}
                     className="flex-1 bg-black w-full flex items-center justify-center p-4"
-                    style={{ position: "relative", overflow: "hidden" }}
+                    style={{ position: "relative", overflow: "hidden", touchAction: "none" }}
                 >
                     <div
                         ref={wrapRef}
@@ -1077,19 +1158,17 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                         />
                         <canvas
                             ref={overlayCanvasRef}
-                            onPointerDown={onPointerDown}
-                            onPointerMove={onPointerMove}
-                            onPointerEnter={onPointerEnter}
-                            onPointerLeave={onPointerLeave}
-                            onPointerUp={onPointerUp}
-                            onPointerCancel={onPointerUp}
                             style={{
                                 position: "absolute",
                                 top: 0,
                                 left: 0,
                                 width: "100%",
                                 height: "100%",
-                                cursor: mode === "erase" && eraseTool === "brush" ? "none" : "crosshair",
+                                cursor: panMode
+                                    ? "grab"
+                                    : mode === "erase" && eraseTool === "brush"
+                                        ? "none"
+                                        : "crosshair",
                                 touchAction: "none",
                             }}
                         />
@@ -1160,16 +1239,17 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                 {/* ===== 底部 ===== */}
                 <div className="p-4 border-t bg-background shrink-0">
                     <div className="flex justify-between items-center gap-4">
-                        <p className="text-sm text-muted-foreground">
-                            {mode === "crop"
-                                ? (t.common.cropper?.hint || "💡 在图片上拖拽框选要保留的区域，再切橡皮擦/标注；不框则保留整图")
-                                : mode === "erase"
-                                    ? (t.common.cropper?.hintErase ||
-                                        "🧽 笔刷：按住涂抹即擦掉（涂白）；矩形选区：拖框后按 Delete 或点“擦除选区”。Ctrl+Z 撤销")
-                                    : (t.common.cropper?.hintLabel ||
-                                        "🖍️ 先选“题干（红框）”或“手写答案（蓝框）”，再在图上拖框；点中已有框可删除。AI 会据此区分题干与手写答案")}
-                        </p>
+                        <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setShowHelp(true); }}
+                            className="text-sm text-primary underline underline-offset-2 hover:opacity-80 shrink-0"
+                        >
+                            {t.common.cropper?.help || "说明 ⓘ"}
+                        </button>
                         <div className="flex gap-2 shrink-0">
+                            <Button variant="outline" onClick={resetToOriginal}>
+                                {t.common.cropper?.original || "原图"}
+                            </Button>
                             <Button variant="outline" onClick={onClose}>
                                 {t.common.cancel || "Cancel"}
                             </Button>
@@ -1178,10 +1258,26 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                             </Button>
                         </div>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-2">
-                        🔍 手机：双指捏合缩放、双指拖动平移 ｜ 电脑：滚轮以鼠标为中心缩放、按住空格拖拽平移、双击放大/复位
-                    </p>
                 </div>
+
+                {/* 说明弹窗：点任意处关闭（含点击卡片本身） */}
+                {showHelp && (
+                    <div
+                        className="absolute inset-0 z-30 flex items-end justify-center p-4"
+                        style={{ background: "rgba(0,0,0,0.35)" }}
+                    >
+                        <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg p-4 text-sm max-w-lg">
+                            <div className="font-semibold mb-2">{t.common.cropper?.helpTitle || "操作说明"}</div>
+                            <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+                                <li>{t.common.cropper?.hint || "裁剪：在图片上拖拽框选要保留的区域，再切橡皮擦/标注；不框则保留整图"}</li>
+                                <li>{t.common.cropper?.hintErase || "橡皮擦：笔刷按住涂抹即擦掉（涂白）；矩形选区拖框后按 Delete 或点“擦除选区”。Ctrl+Z 撤销"}</li>
+                                <li>{t.common.cropper?.hintLabel || "区域标注：先选“题干（红框）”或“手写答案（蓝框）”，再在图上拖框；点中已有框可删除"}</li>
+                                <li>🔍 手机：双指捏合缩放、双指拖动平移（图片或黑底上均可）｜ 电脑：滚轮以鼠标为中心缩放、按住右键拖拽平移、也可开「平移」开关用左键平移、双击放大/复位</li>
+                            </ul>
+                            <div className="mt-2 text-xs text-muted-foreground">（点击任意位置关闭）</div>
+                        </div>
+                    </div>
+                )}
             </DialogContent>
         </Dialog>
     );
