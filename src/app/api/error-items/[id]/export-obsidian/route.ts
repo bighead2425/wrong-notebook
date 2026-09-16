@@ -28,7 +28,7 @@ export async function POST(
 
         const item = await prisma.errorItem.findUnique({
             where: { id },
-            include: { subject: true },
+            include: { notebook: true },
         });
         if (!item) {
             return notFound("Item not found");
@@ -47,7 +47,7 @@ export async function POST(
 
         const result = await exportErrorItemToObsidian({
             questionNo,
-            subjectName: item.subject?.name || "",
+            subjectName: item.notebook?.displayName || "",
             gradeSemester: item.gradeSemester || "",
             tags: parseTags(item.knowledgePoints),
             questionText: item.questionText,

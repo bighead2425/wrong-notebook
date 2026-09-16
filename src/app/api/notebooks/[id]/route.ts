@@ -30,7 +30,7 @@ export async function GET(
             return unauthorized("Authentication required");
         }
 
-        const notebook = await prisma.subject.findUnique({
+        const notebook = await prisma.notebook.findUnique({
             where: { id },
             include: {
                 _count: {
@@ -79,7 +79,7 @@ export async function PUT(
             return unauthorized("Authentication required");
         }
 
-        const notebook = await prisma.subject.findUnique({
+        const notebook = await prisma.notebook.findUnique({
             where: { id },
         });
 
@@ -92,17 +92,36 @@ export async function PUT(
         }
 
         const body = await req.json();
-        const { name } = body;
+        // name 为旧字段别名，兼容老调用方
+        const { displayName, name, gradeStage, grade, semester, subject, archiveStatus } = body;
 
-        if (!name || !name.trim()) {
-            return badRequest("Notebook name is required");
+        // 允许只更新四字段 / 归档状态（B14 / T3），displayName 仅在显式传入时校验
+        const data: Record<string, unknown> = {};
+        if (displayName !== undefined || name !== undefined) {
+            const finalDisplayName = String(displayName ?? name ?? "").trim();
+            if (!finalDisplayName) {
+                return badRequest("Notebook name is required");
+            }
+            data.displayName = finalDisplayName;
+        }
+        if (gradeStage !== undefined) data.gradeStage = gradeStage;
+        if (grade !== undefined) data.grade = grade;
+        if (semester !== undefined) data.semester = semester;
+        if (subject !== undefined) data.subject = subject;
+        if (archiveStatus !== undefined) {
+            if (archiveStatus !== 'active' && archiveStatus !== 'archived') {
+                return badRequest("archiveStatus must be 'active' or 'archived'");
+            }
+            data.archiveStatus = archiveStatus;
         }
 
-        const updated = await prisma.subject.update({
+        if (Object.keys(data).length === 0) {
+            return badRequest("Nothing to update");
+        }
+
+        const updated = await prisma.notebook.update({
             where: { id },
-            data: {
-                name: name.trim(),
-            },
+            data,
             include: {
                 _count: {
                     select: {
@@ -142,7 +161,7 @@ export async function DELETE(
             return unauthorized("Authentication required");
         }
 
-        const notebook = await prisma.subject.findUnique({
+        const notebook = await prisma.notebook.findUnique({
             where: { id },
             include: {
                 _count: {
@@ -166,7 +185,7 @@ export async function DELETE(
             return badRequest("Cannot delete notebook with error items. Please move or delete all items first.");
         }
 
-        await prisma.subject.delete({
+        await prisma.notebook.delete({
             where: { id },
         });
 

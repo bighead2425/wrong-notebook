@@ -110,15 +110,16 @@ async function createErrorItem(
     imageBase64: string,
     mimeType: string,
     parsedData: OpenclawResponse['data'],
-    subjectId?: string
+    notebookId?: string
 ) {
     const { questionText, answerText, analysis, knowledgePoints, errorType, source } = parsedData || {};
 
     const tagNames: string[] = Array.isArray(knowledgePoints) ? knowledgePoints : [];
     const tagConnections: { id: string }[] = [];
 
-    const subject = subjectId ? await prisma.subject.findUnique({ where: { id: subjectId } }) : null;
-    const subjectKey = subject ? inferSubjectFromName(subject.name) : null;
+    // 学科直接读 Notebook.subject（5.5），不再从显示名反推
+    const notebook = notebookId ? await prisma.notebook.findUnique({ where: { id: notebookId } }) : null;
+    const subjectKey = notebook?.subject || null;
 
     const user = await prisma.user.findUnique({
         where: { id: userId },
@@ -167,7 +168,7 @@ async function createErrorItem(
     const errorItem = await prisma.errorItem.create({
         data: {
             userId: userId,
-            subjectId: subjectId || undefined,
+            notebookId: notebookId || undefined,
             originalImageUrl: `data:${mimeType};base64,${imageBase64}`,
             ocrText: questionText || null,
             questionText: questionText || null,
@@ -185,7 +186,7 @@ async function createErrorItem(
         },
         include: {
             tags: true,
-            subject: true,
+            notebook: true,
         },
     });
 
@@ -204,7 +205,7 @@ export async function POST(req: Request) {
 
     let user = null;
     let userEmail = null;
-    let subjectId = null;
+    let notebookId = null;
 
     try {
         const body = await req.json();
@@ -234,7 +235,7 @@ export async function POST(req: Request) {
             }
 
             userEmail = requestData.userEmail;
-            subjectId = requestData.subjectId;
+            notebookId = requestData.notebookId;
         } else {
             // 用户名密码认证模式（默认）
             const { username, password } = requestData;
@@ -281,7 +282,7 @@ export async function POST(req: Request) {
             }
 
             userEmail = user.email;
-            subjectId = requestData.subjectId;
+            notebookId = requestData.notebookId;
             logger.info({ userId: user.id, email: user.email }, 'User authenticated via credentials');
         }
 
@@ -368,7 +369,7 @@ export async function POST(req: Request) {
                     base64,
                     mimeType,
                     openclawResponse.data,
-                    subjectId
+                    notebookId
                 );
 
                 results.push({

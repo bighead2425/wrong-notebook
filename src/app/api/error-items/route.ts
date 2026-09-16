@@ -6,7 +6,6 @@ import { calculateGrade } from "@/lib/grade-calculator";
 import { unauthorized, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
-import { inferSubjectFromName } from "@/lib/knowledge-tags";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { subjectKeyToCode, formatDateStamp, formatQuestionNo, startOfToday } from "@/lib/question-no";
 import { exportErrorItemToObsidian, parseTags } from "@/lib/obsidian-export";
@@ -29,10 +28,11 @@ export async function POST(req: Request) {
             mistakeStatus,
             knowledgePoints,
             originalImageUrl,
-            subjectId,
+            notebookId,
             gradeSemester,
             paperLevel,
             source,
+            inputMethod,
         } = body;
 
         // 记录请求参数（不记录完整图片数据）
@@ -47,10 +47,11 @@ export async function POST(req: Request) {
             knowledgePointsCount: Array.isArray(knowledgePoints) ? knowledgePoints.length : 0,
             hasImage: !!originalImageUrl,
             imageSize: originalImageUrl?.length || 0,
-            subjectId,
+            notebookId,
             gradeSemester,
             paperLevel,
             source,
+            inputMethod,
         }, 'Request parameters received');
 
         // 查找用户
@@ -114,10 +115,10 @@ export async function POST(req: Request) {
         const tagNames: string[] = Array.isArray(knowledgePoints) ? knowledgePoints : [];
         const tagConnections: { id: string }[] = [];
 
-        // 推断学科
-        const subject = await prisma.subject.findUnique({ where: { id: subjectId || '' } });
-        const subjectKey = inferSubjectFromName(subject?.name ?? null) || 'other';
-        logger.debug({ subjectId, subjectName: subject?.name, subjectKey }, 'Subject inferred');
+        // 学科：直接读 Notebook.subject（5.5）——不再从显示名反推
+        const notebook = await prisma.notebook.findUnique({ where: { id: notebookId || '' } });
+        const subjectKey = notebook?.subject || 'other';
+        logger.debug({ notebookId, notebookName: notebook?.displayName, subjectKey }, 'Subject resolved from Notebook');
 
         // 处理每个标签
         for (const tagName of tagNames) {
@@ -180,18 +181,19 @@ export async function POST(req: Request) {
             const errorItem = await prisma.errorItem.create({
                 data: {
                     userId: user.id,
-                    subjectId: subjectId || undefined,
+                    notebookId: notebookId || undefined,
                     originalImageUrl,
                     questionText,
                     answerText,
                     analysis,
-                    wrongAnswerText: wrongAnswerText || null,
+                    // ⚠️ Q4/G6：错误解答原文已弃用，保留列但**停止写入**（错答看原图）
                     mistakeAnalysis: mistakeAnalysis || null,
                     mistakeStatus: normalizeMistakeStatusForSave(mistakeStatus, wrongAnswerText),
                     knowledgePoints: JSON.stringify(tagNames),
                     gradeSemester: finalGradeSemester,
                     paperLevel: paperLevel,
                     source: finalSource,
+                    inputMethod: inputMethod || null,
                     masteryLevel: 0,
                     tags: {
                         connect: tagConnections,
@@ -210,7 +212,7 @@ export async function POST(req: Request) {
                 if (qNo) {
                     const exp = await exportErrorItemToObsidian({
                         questionNo: qNo,
-                        subjectName: subject?.name || "",
+                        subjectName: notebook?.displayName || "",
                         gradeSemester: finalGradeSemester || "",
                         tags: parseTags(errorItem.knowledgePoints),
                         questionText,
@@ -234,7 +236,7 @@ export async function POST(req: Request) {
             logger.error({
                 error: dbError,
                 userId: user.id,
-                subjectId,
+                notebookId,
                 tagConnectionsCount: tagConnections.length
             }, 'Database error creating ErrorItem');
             throw dbError;

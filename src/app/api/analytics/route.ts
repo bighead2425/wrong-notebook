@@ -5,6 +5,7 @@ import { getServerSession } from "next-auth";
 import { startOfMonth, subMonths, format, startOfWeek, subDays } from "date-fns";
 import { unauthorized, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { subjectLabel } from "@/lib/notebook-fields";
 
 const logger = createLogger('api:analytics');
 
@@ -39,13 +40,13 @@ export async function GET(req: Request) {
         const errorItemsWithSubject = await prisma.errorItem.findMany({
             where: { userId },
             include: {
-                subject: true
+                notebook: true
             }
         });
 
         const subjectMap = new Map<string, number>();
         errorItemsWithSubject.forEach(item => {
-            const subjectName = item.subject?.name || 'Unknown';
+            const subjectName = item.notebook ? subjectLabel(item.notebook.subject) : 'Unknown';
             subjectMap.set(subjectName, (subjectMap.get(subjectName) || 0) + 1);
         });
 

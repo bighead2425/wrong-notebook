@@ -5,6 +5,7 @@ import { getServerSession } from "next-auth";
 import { getAIService } from "@/lib/ai";
 import { notFound, internalError, unauthorized } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { subjectLabel } from "@/lib/notebook-fields";
 
 const logger = createLogger('api:practice:generate');
 
@@ -20,7 +21,7 @@ export async function POST(req: Request) {
 
         const errorItemWithSubject = await prisma.errorItem.findUnique({
             where: { id: errorItemId },
-            include: { subject: true }
+            include: { notebook: true }
         });
 
         if (!errorItemWithSubject) {
@@ -45,7 +46,8 @@ export async function POST(req: Request) {
 
         // Inject the subject from the database with type safety
         const validSubjects = ["数学", "物理", "化学", "生物", "英语", "语文", "历史", "地理", "政治", "其他"] as const;
-        const subjectName = errorItemWithSubject.subject?.name || "其他";
+        // 学科中文名取自 Notebook.subject（不再是显示名）
+        const subjectName = subjectLabel(errorItemWithSubject.notebook?.subject);
         similarQuestion.subject = validSubjects.includes(subjectName as any) ? subjectName as typeof validSubjects[number] : "其他";
 
         return NextResponse.json(similarQuestion);

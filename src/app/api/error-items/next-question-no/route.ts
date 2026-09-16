@@ -37,9 +37,9 @@ export async function GET(req: Request) {
     const subjectKey = url.searchParams.get("subjectKey") || undefined;
     const subjectName = url.searchParams.get("subjectName") || undefined;
 
-    const code = subjectKeyToCode(subjectKey) !== "ot"
-        ? subjectKeyToCode(subjectKey)
-        : subjectNameToCode(subjectName);
+    // ⚠️ Q2：简拼已统一大写，兜底码是 "OT"
+    const keyCode = subjectKeyToCode(subjectKey);
+    const code = keyCode !== "OT" ? keyCode : subjectNameToCode(subjectName);
 
     const dateStamp = formatDateStamp(new Date());
 

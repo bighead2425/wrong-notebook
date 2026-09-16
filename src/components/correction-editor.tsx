@@ -23,7 +23,7 @@ import type { ReanswerQuestionResult } from "@/lib/ai/types";
 import { buildReanswerRequestBody } from "@/lib/reanswer-request";
 
 interface ParsedQuestionWithSubject extends ParsedQuestion {
-    subjectId?: string;
+    notebookId?: string;
     gradeSemester?: string;
     paperLevel?: string;
     source?: string;
@@ -51,7 +51,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
         wrongAnswerText: initialData.wrongAnswerText || "",
         mistakeAnalysis: initialData.mistakeAnalysis || "",
         mistakeStatus: initialData.mistakeStatus || "unknown",
-        subjectId: initialSubjectId,
+        notebookId: initialSubjectId,
         gradeSemester: "",
         paperLevel: "a",
         source: ""
@@ -93,15 +93,17 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
             .catch(err => console.error("Failed to fetch user info for grade calculation:", err));
     }, [language]);
 
-    // 题号自动填充：学科(subjectId)确定且用户未手动改过时，向后台取下一个题号预览
+    // 题号自动填充：学科(notebookId)确定且用户未手动改过时，向后台取下一个题号预览
     useEffect(() => {
-        if (!data.subjectId) return;
+        if (!data.notebookId) return;
         if (sourceEditedRef.current) return; // 用户已手动填写则不覆盖
-        const notebook = notebooks.find(n => n.id === data.subjectId);
-        const subjectKey = inferSubjectFromName(notebook?.name || null)
+        const notebook = notebooks.find(n => n.id === data.notebookId);
+        // 5.5：学科码直接读 Notebook.subject（subjectKey），不再从显示名反推
+        // data.subject 是 AI 给的中文名（如"数学"），仅在本未指定时兜底
+        const subjectKey = notebook?.subject
             || inferSubjectFromName(data.subject || null)
             || undefined;
-        const subjectName = notebook?.name || undefined;
+        const subjectName = notebook?.displayName || undefined;
         const qs = new URLSearchParams();
         if (subjectKey) qs.set("subjectKey", subjectKey);
         if (subjectName) qs.set("subjectName", subjectName);
@@ -111,7 +113,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
             })
             .catch(() => { /* 预览失败不影响保存，后端会兜底生成 */ });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [data.subjectId, notebooks]);
+    }, [data.notebookId, notebooks]);
 
     // 重新解题函数
     const handleReanswer = async () => {
@@ -188,7 +190,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                     </Button>
                     <Button
                         onClick={async () => {
-                            if (!data.subjectId) {
+                            if (!data.notebookId) {
                                 alert(t.editor.messages?.selectNotebook || "Please select a notebook");
                                 return;
                             }
@@ -236,8 +238,8 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                     <div className="space-y-2">
                         <Label>{t.editor.selectNotebook || "Select Notebook"}</Label>
                         <NotebookSelector
-                            value={data.subjectId}
-                            onChange={(id) => setData({ ...data, subjectId: id })}
+                            value={data.notebookId}
+                            onChange={(id) => setData({ ...data, notebookId: id })}
                         />
                     </div>
 
@@ -322,7 +324,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                             onChange={(tags) => setData({ ...data, knowledgePoints: tags })}
                             placeholder={t.editor.tagsPlaceholder || "Enter knowledge tags..."}
                             enterHint={t.editor.createTagHint}
-                            subject={inferSubjectFromName(notebooks.find(n => n.id === data.subjectId)?.name || null) || inferSubjectFromName(data.subject || null) || undefined}
+                            subject={notebooks.find(n => n.id === data.notebookId)?.subject || inferSubjectFromName(data.subject || null) || undefined}
                             gradeStage={educationStage}
                         />
                         <p className="text-xs text-muted-foreground">

@@ -1,54 +1,58 @@
 /**
  * 题号（source）生成工具
  *
- * 题号格式：<学科2字简拼小写> + <8位录入日期 YYYYMMDD> + <3位当日流水>
- * 示例：sx20260912001 表示 数学 + 2026-09-12 + 当天第1题
+ * 题号格式：<学科2字简拼大写> + <8位录入日期 YYYYMMDD> + <3位当日流水>
+ * 示例：SX20260912001 表示 数学 + 2026-09-12 + 当天第1题
  *
- * 设计说明：
- * - 学科简拼由 inferSubjectFromName 返回的 subjectKey（math/english/...）映射，
- *   这样即使学科名是“小五上数学”这类脏名也能正确识别。
+ * 设计说明（Q2 / 5.4 / 5.5）：
+ * - 学科简拼统一**大写**（旧版小写 sx，已按 Q2 改）。
+ * - 学科码**直接读 Notebook.subject**（subjectKey），不再从显示名反推——
+ *   旧版 inferSubjectFromName 依赖名字里必须含学科词，太脆弱。
  * - 当日流水为该用户当天已录入错题数 + 1（跨学科统一计数）。
  * - 题号后续将作为文件名 / 二维码地址，用于扫描打开 NAS 上的错题页。
  */
 
-// subjectKey（来自 lib/knowledge-tags.inferSubjectFromName）-> 2 字简拼
+// subjectKey（Notebook.subject）-> 2 字简拼（大写）
 const SUBJECT_CODE_MAP: Record<string, string> = {
-    math: "sx",      // 数学
-    english: "yy",   // 英语
-    chinese: "yw",   // 语文
-    physics: "wl",   // 物理
-    chemistry: "hx", // 化学
-    biology: "sw",   // 生物
-    politics: "zz",  // 政治
-    history: "ls",   // 历史
-    geography: "dl", // 地理
+    math: "SX",      // 数学
+    english: "YY",   // 英语
+    chinese: "YW",   // 语文
+    physics: "WL",   // 物理
+    chemistry: "HX", // 化学
+    biology: "SW",   // 生物
+    politics: "ZZ",  // 政治
+    history: "LS",   // 历史
+    geography: "DL", // 地理
+    other: "OT",     // 其他
 };
 
-const FALLBACK_CODE = "ot"; // 其他 / 未识别
+const FALLBACK_CODE = "OT"; // 其他 / 未识别
 
 /**
- * 将学科 key 转为 2 字简拼（小写）。无法识别时返回 "ot"。
+ * 将学科 key 转为 2 字简拼（大写）。无法识别时返回 "OT"。
  */
 export function subjectKeyToCode(subjectKey: string | null | undefined): string {
     if (!subjectKey) return FALLBACK_CODE;
-    return SUBJECT_CODE_MAP[subjectKey] || FALLBACK_CODE;
+    // 兼容历史小写 key 与中文名：统一小写化后再查表
+    return SUBJECT_CODE_MAP[subjectKey.toLowerCase().trim()] || FALLBACK_CODE;
 }
 
 /**
- * 将学科中文名（如“小五上数学”）转为 2 字简拼，便于在前端未拿到 subjectKey 时兜底。
+ * 将学科中文名（如“小五上数学”）转为 2 字简拼（大写）。
+ * ⚠️ 仅作兜底：新代码应直接读 Notebook.subject，不要用这个函数猜名字（5.5）。
  */
 export function subjectNameToCode(subjectName: string | null | undefined): string {
     if (!subjectName) return FALLBACK_CODE;
     const lower = subjectName.toLowerCase();
-    if (lower.includes("math") || lower.includes("数学")) return "sx";
-    if (lower.includes("english") || lower.includes("英语")) return "yy";
-    if (lower.includes("chinese") || lower.includes("语文")) return "yw";
-    if (lower.includes("physics") || lower.includes("物理")) return "wl";
-    if (lower.includes("chemistry") || lower.includes("化学")) return "hx";
-    if (lower.includes("biology") || lower.includes("生物")) return "sw";
-    if (lower.includes("politics") || lower.includes("政治")) return "zz";
-    if (lower.includes("history") || lower.includes("历史")) return "ls";
-    if (lower.includes("geography") || lower.includes("地理")) return "dl";
+    if (lower.includes("math") || lower.includes("数学")) return "SX";
+    if (lower.includes("english") || lower.includes("英语")) return "YY";
+    if (lower.includes("chinese") || lower.includes("语文")) return "YW";
+    if (lower.includes("physics") || lower.includes("物理")) return "WL";
+    if (lower.includes("chemistry") || lower.includes("化学")) return "HX";
+    if (lower.includes("biology") || lower.includes("生物")) return "SW";
+    if (lower.includes("politics") || lower.includes("政治")) return "ZZ";
+    if (lower.includes("history") || lower.includes("历史")) return "LS";
+    if (lower.includes("geography") || lower.includes("地理")) return "DL";
     return FALLBACK_CODE;
 }
 

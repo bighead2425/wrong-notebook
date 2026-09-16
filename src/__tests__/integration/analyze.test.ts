@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
     mockPrismaUser: {
         findUnique: vi.fn(),
     },
-    mockPrismaSubject: {
+    mockPrismaNotebook: {
         findUnique: vi.fn(),
     },
     mockAIService: {
@@ -28,7 +28,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/prisma', () => ({
     prisma: {
         user: mocks.mockPrismaUser,
-        subject: mocks.mockPrismaSubject,
+        notebook: mocks.mockPrismaNotebook,
     },
 }));
 
@@ -146,7 +146,7 @@ describe('/api/analyze', () => {
                 educationStage: 'junior_high',
                 enrollmentYear: 2024,
             });
-            mocks.mockPrismaSubject.findUnique.mockResolvedValue({
+            mocks.mockPrismaNotebook.findUnique.mockResolvedValue({
                 name: '物理',
             });
             mocks.mockAIService.analyzeImage.mockResolvedValue({
@@ -161,7 +161,7 @@ describe('/api/analyze', () => {
                 body: JSON.stringify({
                     imageBase64: 'data:image/png;base64,test...',
                     language: 'zh',
-                    subjectId: 'subject-physics-id',
+                    notebookId: 'subject-physics-id',
                 }),
                 headers: { 'Content-Type': 'application/json' },
             });

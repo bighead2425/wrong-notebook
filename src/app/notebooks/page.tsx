@@ -7,8 +7,9 @@ import { BackButton } from "@/components/ui/back-button";
 import { Plus, House } from "lucide-react";
 import Link from "next/link";
 import { NotebookCard } from "@/components/notebook-card";
-import { CreateNotebookDialog } from "@/components/create-notebook-dialog";
+import { CreateNotebookDialog, type CreateNotebookPayload } from "@/components/create-notebook-dialog";
 import { RenameNotebookDialog } from "@/components/rename-notebook-dialog";
+import { buildNotebookMeta } from "@/lib/notebook-fields";
 
 import { Notebook } from "@/types/api";
 import { apiClient } from "@/lib/api-client";
@@ -40,9 +41,9 @@ export default function NotebooksPage() {
         }
     };
 
-    const handleCreate = async (name: string) => {
+    const handleCreate = async (payload: CreateNotebookPayload) => {
         try {
-            await apiClient.post("/api/notebooks", { name });
+            await apiClient.post("/api/notebooks", payload);
             await fetchNotebooks();
         } catch (error: any) {
             console.error(error);
@@ -53,7 +54,7 @@ export default function NotebooksPage() {
 
     const handleRename = async (name: string) => {
         if (!renameTarget) return;
-        await apiClient.put(`/api/notebooks/${renameTarget.id}`, { name });
+        await apiClient.put(`/api/notebooks/${renameTarget.id}`, { displayName: name });
         setRenameTarget(null);
         await fetchNotebooks();
     };
@@ -130,11 +131,13 @@ export default function NotebooksPage() {
                             <NotebookCard
                                 key={notebook.id}
                                 id={notebook.id}
-                                name={notebook.name}
+                                displayName={notebook.displayName}
+                                meta={buildNotebookMeta(notebook)}
+                                archived={notebook.archiveStatus === "archived"}
                                 errorCount={notebook._count?.errorItems || 0}
                                 onClick={() => handleNotebookClick(notebook.id)}
                                 onRename={() => setRenameTarget(notebook)}
-                                onDelete={() => handleDelete(notebook.id, notebook._count?.errorItems || 0, notebook.name)}
+                                onDelete={() => handleDelete(notebook.id, notebook._count?.errorItems || 0, notebook.displayName)}
                                 itemLabel={t.notebooks?.items || "items"}
                             />
                         ))}
@@ -151,7 +154,7 @@ export default function NotebooksPage() {
                 <RenameNotebookDialog
                     open={!!renameTarget}
                     onOpenChange={(open) => { if (!open) setRenameTarget(null); }}
-                    currentName={renameTarget?.name || ""}
+                    currentName={renameTarget?.displayName || ""}
                     onRename={handleRename}
                 />
             </div >

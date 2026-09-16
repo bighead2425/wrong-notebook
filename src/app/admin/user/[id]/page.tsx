@@ -142,7 +142,7 @@ export default function AdminUserDetailPage() {
                             <div className="space-y-2">
                                 {data.notebooks.map((nb) => (
                                     <div key={nb.id} className="flex justify-between items-center p-2 rounded-lg bg-muted/30">
-                                        <span className="font-medium text-sm">{nb.name}</span>
+                                        <span className="font-medium text-sm">{nb.displayName}</span>
                                         <Badge variant="secondary" className="text-xs">{nb.errorCount} 题</Badge>
                                     </div>
                                 ))}
@@ -236,8 +236,8 @@ export default function AdminUserDetailPage() {
                                             {item.questionText || item.ocrText || `(无题目文本)`}
                                         </p>
                                         <div className="flex items-center gap-2 mt-1">
-                                            {item.subject && (
-                                                <Badge variant="outline" className="text-xs">{item.subject.name}</Badge>
+                                            {item.notebook && (
+                                                <Badge variant="outline" className="text-xs">{item.notebook.displayName}</Badge>
                                             )}
                                             {item.masteryLevel === 2 && (
                                                 <Badge variant="default" className="text-xs">{t.admin?.dashboard?.masteryMastered || "已掌握"}</Badge>

@@ -23,7 +23,7 @@ const mocks = vi.hoisted(() => ({
         findFirst: vi.fn(),
         create: vi.fn(),
     },
-    mockPrismaSubject: {
+    mockPrismaNotebook: {
         findUnique: vi.fn(),
     },
     mockSession: {
@@ -41,7 +41,7 @@ vi.mock('@/lib/prisma', () => ({
         user: mocks.mockPrismaUser,
         errorItem: mocks.mockPrismaErrorItem,
         knowledgeTag: mocks.mockPrismaKnowledgeTag,
-        subject: mocks.mockPrismaSubject,
+        notebook: mocks.mockPrismaNotebook,
     },
 }));
 
@@ -83,7 +83,7 @@ describe('/api/error-items', () => {
         vi.mocked(getServerSession).mockResolvedValue(mocks.mockSession);
 
         // Default: subject not found (handle null case)
-        mocks.mockPrismaSubject.findUnique.mockResolvedValue(null);
+        mocks.mockPrismaNotebook.findUnique.mockResolvedValue(null);
 
         // Default: knowledgeTag returns a mock tag (used when finding existing tags)
         mocks.mockPrismaKnowledgeTag.findFirst.mockImplementation(async (args: any) => {
@@ -145,7 +145,7 @@ describe('/api/error-items', () => {
                 analysis: '简单加法',
                 knowledgePoints: ['加法'],
                 originalImageUrl: 'data:image/png;base64,test...',
-                subjectId: 'subject-math-id',
+                notebookId: 'subject-math-id',
             };
 
             const createdItem = {
@@ -166,7 +166,7 @@ describe('/api/error-items', () => {
             const data = await response.json();
 
             expect(response.status).toBe(201);
-            expect(data.subjectId).toBe('subject-math-id');
+            expect(data.notebookId).toBe('subject-math-id');
         });
 
         it('应该成功创建错题并设置年级学期', async () => {
@@ -292,7 +292,7 @@ describe('/api/error-items', () => {
                 knowledgePoints: '["一元一次方程", "移项"]',
                 originalImageUrl: 'data:image/png;base64,test...',
                 masteryLevel: 0,
-                subject: { id: 'math', name: '数学' },
+                notebook: { id: 'math', displayName: '数学', subject: 'math' },
             };
             mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(errorItem);
 
@@ -302,7 +302,7 @@ describe('/api/error-items', () => {
 
             expect(response.status).toBe(200);
             expect(data.questionText).toBe('求解 x + 2 = 5');
-            expect(data.subject.name).toBe('数学');
+            expect(data.notebook.displayName).toBe('数学');
         });
 
         it('应该返回 404 当错题不存在', async () => {
@@ -470,18 +470,18 @@ describe('/api/error-items', () => {
         it('应该支持按科目筛选', async () => {
             mocks.mockPrismaErrorItem.count.mockResolvedValue(1);
             mocks.mockPrismaErrorItem.findMany.mockResolvedValue([
-                { id: '1', questionText: '数学题', subjectId: 'math-id' },
+                { id: '1', questionText: '数学题', notebookId: 'math-id' },
             ]);
 
-            const request = new Request('http://localhost/api/error-items/list?subjectId=math-id');
+            const request = new Request('http://localhost/api/error-items/list?notebookId=math-id');
             const response = await GET_LIST(request);
 
             expect(response.status).toBe(200);
-            // 验证查询时使用了 subjectId 筛选
+            // 验证查询时使用了 notebookId 筛选
             expect(mocks.mockPrismaErrorItem.findMany).toHaveBeenCalledWith(
                 expect.objectContaining({
                     where: expect.objectContaining({
-                        subjectId: 'math-id',
+                        notebookId: 'math-id',
                     }),
                 })
             );

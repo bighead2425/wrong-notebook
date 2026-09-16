@@ -55,7 +55,7 @@ export function NotebookSelector({ value, onChange, className }: NotebookSelecto
                 ) : (
                     notebooks.map((notebook) => (
                         <SelectItem key={notebook.id} value={notebook.id}>
-                            {notebook.name}
+                            {notebook.displayName}
                         </SelectItem>
                     ))
                 )}

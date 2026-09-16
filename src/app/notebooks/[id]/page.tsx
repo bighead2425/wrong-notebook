@@ -45,7 +45,7 @@ export default function NotebookDetailPage() {
 
     const handleRename = async (name: string) => {
         if (!notebook) return;
-        const updated = await apiClient.put<Notebook>(`/api/notebooks/${notebook.id}`, { name });
+        const updated = await apiClient.put<Notebook>(`/api/notebooks/${notebook.id}`, { displayName: name });
         setNotebook(updated);
     };
 
@@ -66,7 +66,7 @@ export default function NotebookDetailPage() {
                     <BackButton fallbackUrl="/notebooks" className="shrink-0" />
                     <div className="flex-1 min-w-0 space-y-1">
                         <div className="flex items-center gap-2">
-                            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight truncate">{notebook.name}</h1>
+                            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight truncate">{notebook.displayName}</h1>
                             <Button
                                 variant="ghost"
                                 size="icon-sm"
@@ -98,12 +98,12 @@ export default function NotebookDetailPage() {
                     </div>
                 </div>
 
-                <ErrorList subjectId={notebook.id} subjectName={notebook.name} />
+                <ErrorList notebookId={notebook.id} subjectName={notebook.displayName} />
 
                 <RenameNotebookDialog
                     open={renameDialogOpen}
                     onOpenChange={setRenameDialogOpen}
-                    currentName={notebook.name}
+                    currentName={notebook.displayName}
                     onRename={handleRename}
                 />
             </div>

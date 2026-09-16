@@ -129,7 +129,7 @@ export default function AddErrorPage() {
             const data = await apiClient.post<AnalyzeResponse>("/api/analyze", {
                 imageBase64: base64Image,
                 language: language,
-                subjectId: notebookId
+                notebookId: notebookId
             }, { timeout: aiTimeout }); // Use configured timeout
             const apiDuration = Date.now() - apiStartTime;
             frontendLogger.info('[AddAnalyze]', 'API response received, validating data', {
@@ -233,7 +233,7 @@ export default function AddErrorPage() {
         }
     };
 
-    const handleSave = async (finalData: ParsedQuestion & { subjectId?: string; gradeSemester?: string; paperLevel?: string }): Promise<void> => {
+    const handleSave = async (finalData: ParsedQuestion & { notebookId?: string; gradeSemester?: string; paperLevel?: string }): Promise<void> => {
         if (!currentImage) {
             alert(t.common.messages?.missingImage || 'Missing image');
             return;
@@ -243,7 +243,7 @@ export default function AddErrorPage() {
             const result = await apiClient.post<{ id: string; duplicate?: boolean }>("/api/error-items", {
                 ...finalData,
                 originalImageUrl: currentImage,
-                subjectId: notebookId,
+                notebookId: notebookId,
             });
 
             // 检查是否是重复提交（后端去重返回）

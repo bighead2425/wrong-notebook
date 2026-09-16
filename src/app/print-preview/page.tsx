@@ -106,7 +106,7 @@ function PrintPreviewContent() {
     const toggleSolo = toggle(setSoloIds);
 
     const sheetInfo = useMemo(() => {
-        const subjects = [...new Set(selectedItems.map((i) => i.subject?.name).filter(Boolean) as string[])];
+        const subjects = [...new Set(selectedItems.map((i) => i.notebook?.displayName).filter(Boolean) as string[])];
         const grades = [...new Set(selectedItems.map((i) => normalizeGrade(i.gradeSemester)).filter(Boolean))];
         const times = selectedItems.map((i) => new Date(i.createdAt).getTime()).filter((n) => !Number.isNaN(n));
         return {

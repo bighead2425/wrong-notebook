@@ -26,7 +26,7 @@ export async function GET() {
             return unauthorized("Authentication required");
         }
 
-        let notebooks = await prisma.subject.findMany({
+        let notebooks = await prisma.notebook.findMany({
             where: {
                 userId: user.id,
             },
@@ -42,21 +42,28 @@ export async function GET() {
             },
         });
 
-        // If no notebooks exist, create default ones
+        // If no notebooks exist, create default ones (教科书级：学科 × 学期)
         if (notebooks.length === 0) {
-            const defaultSubjects = ["数学", "英语"];
+            const defaults = [
+                { displayName: "数学", subject: "math" },
+                { displayName: "语文", subject: "chinese" },
+            ];
 
-            await Promise.all(defaultSubjects.map(name =>
-                prisma.subject.create({
+            await Promise.all(defaults.map(d =>
+                prisma.notebook.create({
                     data: {
-                        name,
+                        displayName: d.displayName,
+                        subject: d.subject,
+                        gradeStage: user.educationStage || "primary",
+                        grade: "",
+                        semester: "上",
                         userId: user!.id,
                     }
                 })
             ));
 
             // Fetch again
-            notebooks = await prisma.subject.findMany({
+            notebooks = await prisma.notebook.findMany({
                 where: {
                     userId: user.id,
                 },
@@ -100,17 +107,28 @@ export async function POST(req: Request) {
         }
 
         const body = await req.json();
-        const { name } = body;
+        // 新模型：教科书级四字段 + 显示名（B14）；兼容旧调用方只传 name
+        const {
+            displayName,
+            name,
+            gradeStage,
+            grade,
+            semester,
+            subject,
+        } = body;
 
-        if (!name || !name.trim()) {
+        const finalDisplayName = String(displayName ?? name ?? "").trim();
+        const finalSubject = String(subject ?? "other").trim() || "other";
+
+        if (!finalDisplayName) {
             return badRequest("Notebook name is required");
         }
 
         // 检查是否已存在同名错题本
-        const existing = await prisma.subject.findUnique({
+        const existing = await prisma.notebook.findUnique({
             where: {
-                name_userId: {
-                    name: name.trim(),
+                displayName_userId: {
+                    displayName: finalDisplayName,
                     userId: user.id,
                 },
             },
@@ -120,9 +138,13 @@ export async function POST(req: Request) {
             return conflict("Notebook with this name already exists");
         }
 
-        const notebook = await prisma.subject.create({
+        const notebook = await prisma.notebook.create({
             data: {
-                name: name.trim(),
+                displayName: finalDisplayName,
+                gradeStage: String(gradeStage ?? user.educationStage ?? "primary"),
+                grade: String(grade ?? ""),
+                semester: String(semester ?? "上"),
+                subject: finalSubject,
                 userId: user.id,
             },
             include: {

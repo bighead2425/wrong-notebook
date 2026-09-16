@@ -13,11 +13,14 @@ export async function GET(req: Request) {
     const session = await getServerSession(authOptions);
 
     const { searchParams } = new URL(req.url);
-    const subjectId = searchParams.get("subjectId");
+    // 旧参数名 subjectId 仍兼容，新参数名 notebookId
+    const notebookId = searchParams.get("notebookId") ?? searchParams.get("subjectId");
     const query = searchParams.get("query");
     const mastery = searchParams.get("mastery");
     const timeRange = searchParams.get("timeRange");
     const tag = searchParams.get("tag");
+    // 四分法（H2）：trash=1 查回收箱；默认只看未软删的题
+    const trash = searchParams.get("trash");
 
     // 分页参数
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
@@ -39,9 +42,12 @@ export async function GET(req: Request) {
             userId: user.id,
         };
 
-        if (subjectId) {
-            whereClause.subjectId = subjectId;
+        if (notebookId) {
+            whereClause.notebookId = notebookId;
         }
+
+        // 软删：默认排除回收箱；trash=1 时只看回收箱
+        whereClause.deletedAt = trash === "1" ? { not: null } : null;
 
         // 搜索条件需要使用 AND 包装，避免与其他 OR 条件冲突
         // 最终的 whereClause.AND 会包含所有需要同时满足的条件
@@ -148,7 +154,7 @@ export async function GET(req: Request) {
             where: whereClause,
             orderBy: { createdAt: "desc" },
             include: {
-                subject: true,
+                notebook: true,
                 tags: true,
             },
             skip: (page - 1) * pageSize,

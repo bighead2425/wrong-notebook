@@ -63,7 +63,7 @@ describe('/api/practice', () => {
             id: 'error-item-1',
             questionText: '求解 x + 2 = 5',
             knowledgePoints: '["一元一次方程", "移项"]',
-            subject: { id: 'math', name: '数学' },
+            notebook: { id: 'math', displayName: '数学', subject: 'math' },
         };
 
         it('应该成功生成类似题目', async () => {
@@ -268,7 +268,7 @@ describe('/api/practice', () => {
         it('应该从数据库获取正确的学科', async () => {
             const errorItemWithPhysics = {
                 ...mockErrorItem,
-                subject: { id: 'physics', name: '物理' },
+                notebook: { id: 'physics', displayName: '物理', subject: 'physics' },
             };
             mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(errorItemWithPhysics);
             mocks.mockAIService.generateSimilarQuestion.mockResolvedValue({
@@ -298,7 +298,7 @@ describe('/api/practice', () => {
         it('应该处理未知学科为"其他"', async () => {
             const errorItemWithUnknownSubject = {
                 ...mockErrorItem,
-                subject: { id: 'unknown', name: '未知学科' },
+                notebook: { id: 'unknown', displayName: '未知学科', subject: 'other' },
             };
             mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(errorItemWithUnknownSubject);
             mocks.mockAIService.generateSimilarQuestion.mockResolvedValue({
@@ -327,7 +327,7 @@ describe('/api/practice', () => {
         it('应该处理没有关联学科的错题', async () => {
             const errorItemWithNoSubject = {
                 ...mockErrorItem,
-                subject: null,
+                notebook: null,
             };
             mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(errorItemWithNoSubject);
             mocks.mockAIService.generateSimilarQuestion.mockResolvedValue({

@@ -40,11 +40,11 @@ export async function GET(
         }
 
         // 错题本列表及每个本子的错题数
-        const notebooks = await prisma.subject.findMany({
+        const notebooks = await prisma.notebook.findMany({
             where: { userId: id },
             select: {
                 id: true,
-                name: true,
+                displayName: true,
                 _count: {
                     select: { errorItems: true }
                 }
@@ -86,22 +86,22 @@ export async function GET(
             mastered: masteryStats.find(m => m.masteryLevel === 2)?._count.id || 0,
         }
 
-        // 学科错题分布（按 subjectId 分组）
+        // 错题本分布（按 notebookId 分组）
         const subjectErrorCounts = await prisma.errorItem.groupBy({
-            by: ['subjectId'],
+            by: ['notebookId'],
             where: { userId: id },
             _count: { id: true }
         })
-        const subjectIds = subjectErrorCounts.map((s: any) => s.subjectId).filter(Boolean) as string[]
-        const subjectNames = await prisma.subject.findMany({
-            where: { id: { in: subjectIds } },
-            select: { id: true, name: true }
+        const notebookIds = subjectErrorCounts.map((s: any) => s.notebookId).filter(Boolean) as string[]
+        const notebookNames = await prisma.notebook.findMany({
+            where: { id: { in: notebookIds } },
+            select: { id: true, displayName: true }
         })
-        const subjectNameMap = new Map(subjectNames.map(s => [s.id, s.name]))
+        const subjectNameMap = new Map(notebookNames.map(s => [s.id, s.displayName]))
         const subjectDistribution = subjectErrorCounts
-            .filter(s => s.subjectId)
+            .filter(s => s.notebookId)
             .map(s => ({
-                name: subjectNameMap.get(s.subjectId!) || "未知",
+                name: subjectNameMap.get(s.notebookId!) || "未知",
                 count: s._count.id
             }))
 
@@ -114,8 +114,8 @@ export async function GET(
                 ocrText: true,
                 masteryLevel: true,
                 createdAt: true,
-                subject: {
-                    select: { name: true }
+                notebook: {
+                    select: { displayName: true }
                 }
             },
             orderBy: { createdAt: 'desc' },
@@ -126,7 +126,7 @@ export async function GET(
             user,
             notebooks: notebooks.map(nb => ({
                 id: nb.id,
-                name: nb.name,
+                displayName: nb.displayName,
                 errorCount: nb._count.errorItems,
             })),
             errorCount,
@@ -141,7 +141,7 @@ export async function GET(
                 ocrText: item.ocrText,
                 masteryLevel: item.masteryLevel,
                 createdAt: item.createdAt,
-                subject: item.subject,
+                notebook: item.notebook,
             })),
         })
     } catch (error) {

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getAIService } from "@/lib/ai";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
-import { calculateGradeNumber, inferSubjectFromName } from "@/lib/knowledge-tags";
+import { calculateGradeNumber } from "@/lib/knowledge-tags";
 import { calculateGrade } from "@/lib/grade-calculator";
 import { prisma } from "@/lib/prisma";
 import { badRequest, internalError, createErrorResponse, ErrorCode } from "@/lib/api-errors";
@@ -23,13 +23,15 @@ export async function POST(req: Request) {
 
     try {
         const body = await req.json();
-        let { imageBase64, mimeType, language, subjectId } = body;
+        let { imageBase64, mimeType, language, notebookId, subjectId } = body;
+        // 兼容旧参数名
+        const targetNotebookId = notebookId ?? subjectId;
 
         logger.debug({
             imageLength: imageBase64?.length,
             mimeType,
             language,
-            subjectId
+            notebookId: targetNotebookId
         }, 'Request received');
 
         if (!imageBase64) {
@@ -68,16 +70,17 @@ export async function POST(req: Request) {
                     logger.debug({ userGrade, userGradeSemester }, 'Calculated user grade');
                 }
 
-                // 获取错题本信息以推断学科
-                if (subjectId) {
-                    const subject = await prisma.subject.findUnique({
-                        where: { id: subjectId },
-                        select: { name: true }
+                // 学科直接读 Notebook.subject（5.5），不再从显示名反推
+                if (targetNotebookId) {
+                    const notebook = await prisma.notebook.findUnique({
+                        where: { id: targetNotebookId },
+                        select: { subject: true, displayName: true }
                     });
 
-                    if (subject) {
-                        subjectName = inferSubjectFromName(subject.name);
-                        logger.debug({ subjectName, subjectDisplayName: subject.name }, 'Inferred subject');
+                    if (notebook?.subject) {
+                        const valid = ['math', 'physics', 'chemistry', 'biology', 'english', 'chinese', 'history', 'geography', 'politics'];
+                        subjectName = (valid.includes(notebook.subject) ? notebook.subject : null) as typeof subjectName;
+                        logger.debug({ subjectName, notebookDisplayName: notebook.displayName }, 'Subject read from Notebook');
                     }
                 }
             } catch (error) {

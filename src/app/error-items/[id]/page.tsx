@@ -15,7 +15,6 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiClient } from "@/lib/api-client";
 import { UserProfile, Notebook } from "@/types/api";
-import { inferSubjectFromName } from "@/lib/knowledge-tags";
 import { getMistakeStatusLabel, normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { NotebookSelector } from "@/components/notebook-selector";
 
@@ -37,10 +36,11 @@ interface ErrorItemDetail {
     masteryLevel: number;
     originalImageUrl: string;
     userNotes: string | null;
-    subjectId?: string | null;
-    subject?: {
+    notebookId?: string | null;
+    notebook?: {
         id: string;
-        name: string;
+        displayName: string;
+        subject: string;
     } | null;
     gradeSemester?: string | null;
     paperLevel?: string | null;
@@ -118,8 +118,8 @@ export default function ErrorDetailPage() {
         try {
             await apiClient.delete(`/api/error-items/${item.id}/delete`);
             alert(t.common?.messages?.deleteSuccess || 'Deleted successfully');
-            if (item.subjectId) {
-                router.push(`/notebooks/${item.subjectId}`);
+            if (item.notebookId) {
+                router.push(`/notebooks/${item.notebookId}`);
             } else {
                 router.push('/notebooks');
             }
@@ -201,7 +201,7 @@ export default function ErrorDetailPage() {
 
     const startEditingMetadata = () => {
         if (item) {
-            setNotebookInput(item.subjectId || null);
+            setNotebookInput(item.notebookId || null);
             setGradeSemesterInput(item.gradeSemester || "");
             setPaperLevelInput(item.paperLevel || "a");
             setIsEditingMetadata(true);
@@ -211,7 +211,7 @@ export default function ErrorDetailPage() {
     const saveMetadataHandler = async () => {
         try {
             await apiClient.put(`/api/error-items/${item?.id}`, {
-                subjectId: notebookInput || null,
+                notebookId: notebookInput || null,
                 gradeSemester: gradeSemesterInput,
                 paperLevel: paperLevelInput,
             });
@@ -400,7 +400,7 @@ export default function ErrorDetailPage() {
             <div className="container mx-auto p-4 space-y-6 pb-20">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div className="flex items-center gap-4">
-                        <Link href={item.subjectId ? `/notebooks/${item.subjectId}` : "/notebooks"}>
+                        <Link href={item.notebookId ? `/notebooks/${item.notebookId}` : "/notebooks"}>
                             <Button variant="ghost" size="icon">
                                 <ArrowLeft className="w-4 h-4" />
                             </Button>
@@ -546,7 +546,7 @@ export default function ErrorDetailPage() {
                                                 value={tagsInput}
                                                 onChange={setTagsInput}
                                                 placeholder={t.editor?.tagsPlaceholder || 'Enter or select knowledge tags...'}
-                                                subject={inferSubjectFromName(item.subject?.name || null) || undefined}
+                                                subject={item.notebook?.subject || undefined}
                                                 gradeStage={educationStage}
                                             />
                                             <p className="text-xs text-muted-foreground">
@@ -647,7 +647,7 @@ export default function ErrorDetailPage() {
                                             <div className="flex justify-between">
                                                 <span className="text-muted-foreground">{t.notebooks?.title || 'Notebook'}:</span>
                                                 <span className="font-medium">
-                                                    {item.subject?.name || (t.common?.notSet || 'Not set')}
+                                                    {item.notebook?.displayName || (t.common?.notSet || 'Not set')}
                                                 </span>
                                             </div>
                                             <div className="flex justify-between">

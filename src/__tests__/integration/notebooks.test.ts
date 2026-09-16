@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
         findFirst: vi.fn(),
         create: vi.fn(),
     },
-    mockPrismaSubject: {
+    mockPrismaNotebook: {
         findMany: vi.fn(),
         findUnique: vi.fn(),
         create: vi.fn(),
@@ -31,7 +31,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/prisma', () => ({
     prisma: {
         user: mocks.mockPrismaUser,
-        subject: mocks.mockPrismaSubject,
+        notebook: mocks.mockPrismaNotebook,
     },
 }));
 
@@ -66,29 +66,29 @@ describe('/api/notebooks', () => {
     describe('GET /api/notebooks (获取所有错题本)', () => {
         it('应该返回用户的所有错题本', async () => {
             const notebooks = [
-                { id: 'nb-1', name: '数学', userId: 'user-123', _count: { errorItems: 5 } },
-                { id: 'nb-2', name: '英语', userId: 'user-123', _count: { errorItems: 3 } },
+                { id: 'nb-1', displayName: '数学', userId: 'user-123', _count: { errorItems: 5 } },
+                { id: 'nb-2', displayName: '英语', userId: 'user-123', _count: { errorItems: 3 } },
             ];
-            mocks.mockPrismaSubject.findMany.mockResolvedValue(notebooks);
+            mocks.mockPrismaNotebook.findMany.mockResolvedValue(notebooks);
 
             const response = await GET();
             const data = await response.json();
 
             expect(response.status).toBe(200);
             expect(data).toHaveLength(2);
-            expect(data[0].name).toBe('数学');
+            expect(data[0].displayName).toBe('数学');
             expect(data[0]._count.errorItems).toBe(5);
         });
 
         it('应该在没有错题本时创建默认错题本', async () => {
             // 第一次查询返回空数组，创建后第二次查询返回默认错题本
-            mocks.mockPrismaSubject.findMany
+            mocks.mockPrismaNotebook.findMany
                 .mockResolvedValueOnce([])
                 .mockResolvedValueOnce([
-                    { id: 'nb-1', name: '数学', userId: 'user-123', _count: { errorItems: 0 } },
-                    { id: 'nb-2', name: '英语', userId: 'user-123', _count: { errorItems: 0 } },
+                    { id: 'nb-1', displayName: '数学', userId: 'user-123', _count: { errorItems: 0 } },
+                    { id: 'nb-2', displayName: '英语', userId: 'user-123', _count: { errorItems: 0 } },
                 ]);
-            mocks.mockPrismaSubject.create.mockResolvedValue({});
+            mocks.mockPrismaNotebook.create.mockResolvedValue({});
 
             const response = await GET();
             const data = await response.json();
@@ -96,7 +96,7 @@ describe('/api/notebooks', () => {
             expect(response.status).toBe(200);
             expect(data).toHaveLength(2);
             // 验证创建了默认错题本
-            expect(mocks.mockPrismaSubject.create).toHaveBeenCalledTimes(2);
+            expect(mocks.mockPrismaNotebook.create).toHaveBeenCalledTimes(2);
         });
     });
 
@@ -104,12 +104,12 @@ describe('/api/notebooks', () => {
         it('应该成功创建错题本', async () => {
             const newNotebook = {
                 id: 'nb-new',
-                name: '物理',
+                displayName: '物理',
                 userId: 'user-123',
                 _count: { errorItems: 0 },
             };
-            mocks.mockPrismaSubject.findUnique.mockResolvedValue(null); // 不存在同名
-            mocks.mockPrismaSubject.create.mockResolvedValue(newNotebook);
+            mocks.mockPrismaNotebook.findUnique.mockResolvedValue(null); // 不存在同名
+            mocks.mockPrismaNotebook.create.mockResolvedValue(newNotebook);
 
             const request = new Request('http://localhost/api/notebooks', {
                 method: 'POST',
@@ -121,7 +121,7 @@ describe('/api/notebooks', () => {
             const data = await response.json();
 
             expect(response.status).toBe(201);
-            expect(data.name).toBe('物理');
+            expect(data.displayName).toBe('物理');
             expect(data._count.errorItems).toBe(0);
         });
 
@@ -155,9 +155,9 @@ describe('/api/notebooks', () => {
 
         it('应该拒绝创建同名错题本', async () => {
             // 模拟已存在同名错题本
-            mocks.mockPrismaSubject.findUnique.mockResolvedValue({
+            mocks.mockPrismaNotebook.findUnique.mockResolvedValue({
                 id: 'existing-nb',
-                name: '数学',
+                displayName: '数学',
                 userId: 'user-123',
             });
 
@@ -175,10 +175,10 @@ describe('/api/notebooks', () => {
         });
 
         it('应该自动 trim 名称两端的空格', async () => {
-            mocks.mockPrismaSubject.findUnique.mockResolvedValue(null);
-            mocks.mockPrismaSubject.create.mockResolvedValue({
+            mocks.mockPrismaNotebook.findUnique.mockResolvedValue(null);
+            mocks.mockPrismaNotebook.create.mockResolvedValue({
                 id: 'nb-new',
-                name: '化学',
+                displayName: '化学',
                 userId: 'user-123',
                 _count: { errorItems: 0 },
             });
@@ -193,7 +193,7 @@ describe('/api/notebooks', () => {
             const data = await response.json();
 
             expect(response.status).toBe(201);
-            expect(data.name).toBe('化学');
+            expect(data.displayName).toBe('化学');
         });
     });
 
@@ -201,23 +201,23 @@ describe('/api/notebooks', () => {
         it('应该返回错题本详情', async () => {
             const notebook = {
                 id: 'nb-1',
-                name: '数学',
+                displayName: '数学',
                 userId: 'user-123',
                 _count: { errorItems: 10 },
             };
-            mocks.mockPrismaSubject.findUnique.mockResolvedValue(notebook);
+            mocks.mockPrismaNotebook.findUnique.mockResolvedValue(notebook);
 
             const request = new Request('http://localhost/api/notebooks/nb-1');
             const response = await GET_NOTEBOOK(request, { params: Promise.resolve({ id: 'nb-1' }) });
             const data = await response.json();
 
             expect(response.status).toBe(200);
-            expect(data.name).toBe('数学');
+            expect(data.displayName).toBe('数学');
             expect(data._count.errorItems).toBe(10);
         });
 
         it('应该返回 404 当错题本不存在', async () => {
-            mocks.mockPrismaSubject.findUnique.mockResolvedValue(null);
+            mocks.mockPrismaNotebook.findUnique.mockResolvedValue(null);
 
             const request = new Request('http://localhost/api/notebooks/not-exist');
             const response = await GET_NOTEBOOK(request, { params: Promise.resolve({ id: 'not-exist' }) });
@@ -230,10 +230,10 @@ describe('/api/notebooks', () => {
         it('应该拒绝访问其他用户的错题本', async () => {
             const notebook = {
                 id: 'nb-1',
-                name: '数学',
+                displayName: '数学',
                 userId: 'other-user-id', // 不同的用户
             };
-            mocks.mockPrismaSubject.findUnique.mockResolvedValue(notebook);
+            mocks.mockPrismaNotebook.findUnique.mockResolvedValue(notebook);
 
             const request = new Request('http://localhost/api/notebooks/nb-1');
             const response = await GET_NOTEBOOK(request, { params: Promise.resolve({ id: 'nb-1' }) });
@@ -248,13 +248,13 @@ describe('/api/notebooks', () => {
         it('应该成功更新错题本名称', async () => {
             const existingNotebook = {
                 id: 'nb-1',
-                name: '数学',
+                displayName: '数学',
                 userId: 'user-123',
             };
-            mocks.mockPrismaSubject.findUnique.mockResolvedValue(existingNotebook);
-            mocks.mockPrismaSubject.update.mockResolvedValue({
+            mocks.mockPrismaNotebook.findUnique.mockResolvedValue(existingNotebook);
+            mocks.mockPrismaNotebook.update.mockResolvedValue({
                 ...existingNotebook,
-                name: '高等数学',
+                displayName: '高等数学',
                 _count: { errorItems: 5 },
             });
 
@@ -268,16 +268,16 @@ describe('/api/notebooks', () => {
             const data = await response.json();
 
             expect(response.status).toBe(200);
-            expect(data.name).toBe('高等数学');
+            expect(data.displayName).toBe('高等数学');
         });
 
         it('应该拒绝更新为空名称', async () => {
             const existingNotebook = {
                 id: 'nb-1',
-                name: '数学',
+                displayName: '数学',
                 userId: 'user-123',
             };
-            mocks.mockPrismaSubject.findUnique.mockResolvedValue(existingNotebook);
+            mocks.mockPrismaNotebook.findUnique.mockResolvedValue(existingNotebook);
 
             const request = new Request('http://localhost/api/notebooks/nb-1', {
                 method: 'PUT',
@@ -293,7 +293,7 @@ describe('/api/notebooks', () => {
         });
 
         it('应该返回 404 当错题本不存在', async () => {
-            mocks.mockPrismaSubject.findUnique.mockResolvedValue(null);
+            mocks.mockPrismaNotebook.findUnique.mockResolvedValue(null);
 
             const request = new Request('http://localhost/api/notebooks/not-exist', {
                 method: 'PUT',
@@ -311,10 +311,10 @@ describe('/api/notebooks', () => {
         it('应该拒绝更新其他用户的错题本', async () => {
             const existingNotebook = {
                 id: 'nb-1',
-                name: '数学',
+                displayName: '数学',
                 userId: 'other-user-id', // 不同的用户
             };
-            mocks.mockPrismaSubject.findUnique.mockResolvedValue(existingNotebook);
+            mocks.mockPrismaNotebook.findUnique.mockResolvedValue(existingNotebook);
 
             const request = new Request('http://localhost/api/notebooks/nb-1', {
                 method: 'PUT',
@@ -334,12 +334,12 @@ describe('/api/notebooks', () => {
         it('应该成功删除空的错题本', async () => {
             const notebook = {
                 id: 'nb-1',
-                name: '数学',
+                displayName: '数学',
                 userId: 'user-123',
                 _count: { errorItems: 0 }, // 没有错题
             };
-            mocks.mockPrismaSubject.findUnique.mockResolvedValue(notebook);
-            mocks.mockPrismaSubject.delete.mockResolvedValue(notebook);
+            mocks.mockPrismaNotebook.findUnique.mockResolvedValue(notebook);
+            mocks.mockPrismaNotebook.delete.mockResolvedValue(notebook);
 
             const request = new Request('http://localhost/api/notebooks/nb-1', {
                 method: 'DELETE',
@@ -350,17 +350,17 @@ describe('/api/notebooks', () => {
 
             expect(response.status).toBe(200);
             expect(data.message).toBe('Notebook deleted successfully');
-            expect(mocks.mockPrismaSubject.delete).toHaveBeenCalledWith({ where: { id: 'nb-1' } });
+            expect(mocks.mockPrismaNotebook.delete).toHaveBeenCalledWith({ where: { id: 'nb-1' } });
         });
 
         it('应该拒绝删除包含错题的错题本', async () => {
             const notebook = {
                 id: 'nb-1',
-                name: '数学',
+                displayName: '数学',
                 userId: 'user-123',
                 _count: { errorItems: 5 }, // 有错题
             };
-            mocks.mockPrismaSubject.findUnique.mockResolvedValue(notebook);
+            mocks.mockPrismaNotebook.findUnique.mockResolvedValue(notebook);
 
             const request = new Request('http://localhost/api/notebooks/nb-1', {
                 method: 'DELETE',
@@ -371,11 +371,11 @@ describe('/api/notebooks', () => {
 
             expect(response.status).toBe(400);
             expect(data.message).toContain('Cannot delete notebook with error items');
-            expect(mocks.mockPrismaSubject.delete).not.toHaveBeenCalled();
+            expect(mocks.mockPrismaNotebook.delete).not.toHaveBeenCalled();
         });
 
         it('应该返回 404 当错题本不存在', async () => {
-            mocks.mockPrismaSubject.findUnique.mockResolvedValue(null);
+            mocks.mockPrismaNotebook.findUnique.mockResolvedValue(null);
 
             const request = new Request('http://localhost/api/notebooks/not-exist', {
                 method: 'DELETE',
@@ -391,11 +391,11 @@ describe('/api/notebooks', () => {
         it('应该拒绝删除其他用户的错题本', async () => {
             const notebook = {
                 id: 'nb-1',
-                name: '数学',
+                displayName: '数学',
                 userId: 'other-user-id', // 不同的用户
                 _count: { errorItems: 0 },
             };
-            mocks.mockPrismaSubject.findUnique.mockResolvedValue(notebook);
+            mocks.mockPrismaNotebook.findUnique.mockResolvedValue(notebook);
 
             const request = new Request('http://localhost/api/notebooks/nb-1', {
                 method: 'DELETE',
@@ -406,7 +406,7 @@ describe('/api/notebooks', () => {
 
             expect(response.status).toBe(403);
             expect(data.message).toContain('Not authorized');
-            expect(mocks.mockPrismaSubject.delete).not.toHaveBeenCalled();
+            expect(mocks.mockPrismaNotebook.delete).not.toHaveBeenCalled();
         });
     });
 });

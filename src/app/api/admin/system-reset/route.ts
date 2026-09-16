@@ -48,7 +48,7 @@ export async function POST(req: Request) {
             // Usually subjects like 'Math' are created by users or system default?
             // If we delete all subjects, the app might break if it expects at least one.
             // The app creates default notebook on fetch if missing. So safe to delete.
-            await tx.subject.deleteMany({});
+            await tx.notebook.deleteMany({});
 
             // 4. Delete Custom Tags (keep system tags)
             await tx.knowledgeTag.deleteMany({

@@ -26,7 +26,7 @@ export async function GET() {
         const totalPracticeRecords = await prisma.practiceRecord.count()
 
         // 总错题本数
-        const totalSubjects = await prisma.subject.count()
+        const totalSubjects = await prisma.notebook.count()
 
         // 每个用户的详细统计
         const userStats = await prisma.user.findMany({
@@ -46,16 +46,16 @@ export async function GET() {
                     select: {
                         errorItems: true,
                         practiceRecords: true,
-                        subjects: true,
+                        notebooks: true,
                     }
                 }
             }
         })
 
         // 按学科统计错题分布
-        const subjectDistribution = await prisma.subject.findMany({
+        const subjectDistribution = await prisma.notebook.findMany({
             select: {
-                name: true,
+                displayName: true,
                 _count: {
                     select: {
                         errorItems: true
@@ -130,10 +130,10 @@ export async function GET() {
                 enrollmentYear: u.enrollmentYear,
                 errorCount: u._count.errorItems,
                 practiceCount: u._count.practiceRecords,
-                notebookCount: u._count.subjects,
+                notebookCount: u._count.notebooks,
             })),
             subjectDistribution: subjectDistribution.map(s => ({
-                name: s.name,
+                name: s.displayName,
                 count: s._count.errorItems,
             })),
             dailyTrend,

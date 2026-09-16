@@ -19,12 +19,22 @@ interface ImportData {
         enrollmentYear: number | null;
         role: string;
     };
-    subjects: Array<{
+    // 教科书级错题本（B13）；旧备份里的 subjects 字段也兼容读取
+    notebooks?: Array<{
+        id: string;
+        displayName: string;
+        name?: string;
+        gradeStage?: string;
+        grade?: string;
+        semester?: string;
+        subject?: string;
+        archiveStatus?: string;
+        userId: string;
+    }>;
+    subjects?: Array<{
         id: string;
         name: string;
         userId: string;
-        createdAt: string;
-        updatedAt: string;
     }>;
     customTags: Array<{
         id: string;
@@ -41,7 +51,7 @@ interface ImportData {
     errorItems: Array<{
         id: string;
         userId: string;
-        subjectId: string | null;
+        notebookId: string | null;
         originalImageUrl: string;
         ocrText: string | null;
         questionText: string | null;
@@ -145,23 +155,42 @@ export async function POST(req: Request) {
 
         // 使用事务确保数据一致性
         await prisma.$transaction(async (tx) => {
-            // 1. 导入 subjects
-            const subjectIdMap = new Map<string, string>();
-            for (const subject of (body.subjects || [])) {
-                const targetUserId = importAll ? subject.userId : user.id;
-                const existing = await tx.subject.findFirst({
-                    where: { name: subject.name, userId: targetUserId },
+            // 1. 导入 notebooks（教科书级；兼容旧备份里的 subjects 字段）
+            const notebookIdMap = new Map<string, string>();
+            const notebookList = body.notebooks || body.subjects || [];
+            for (const nbRaw of notebookList) {
+                // 新旧备份字段混用，统一收窄成一种形状再处理
+                const nb = nbRaw as {
+                    id: string;
+                    displayName?: string;
+                    name?: string;
+                    gradeStage?: string;
+                    grade?: string;
+                    semester?: string;
+                    subject?: string;
+                    archiveStatus?: string;
+                    userId: string;
+                };
+                const targetUserId = importAll ? nb.userId : user.id;
+                const displayName = nb.displayName || nb.name || "";
+                const existing = await tx.notebook.findFirst({
+                    where: { displayName, userId: targetUserId },
                 });
                 if (existing) {
-                    subjectIdMap.set(subject.id, existing.id);
+                    notebookIdMap.set(nb.id, existing.id);
                 } else {
-                    const created = await tx.subject.create({
+                    const created = await tx.notebook.create({
                         data: {
-                            name: subject.name,
+                            displayName,
+                            gradeStage: nb.gradeStage || 'primary',
+                            grade: nb.grade || '',
+                            semester: nb.semester || '上',
+                            subject: nb.subject || 'other',
+                            archiveStatus: nb.archiveStatus || 'active',
                             userId: targetUserId,
                         },
                     });
-                    subjectIdMap.set(subject.id, created.id);
+                    notebookIdMap.set(nb.id, created.id);
                     stats.subjectsCreated++;
                 }
             }
@@ -231,14 +260,19 @@ export async function POST(req: Request) {
             const errorItemIdMap = new Map<string, string>();
             for (const item of body.errorItems) {
                 const targetUserId = importAll ? item.userId : user.id;
-                const newSubjectId = item.subjectId ? subjectIdMap.get(item.subjectId) : undefined;
+                const oldNotebookId = item.notebookId
+                    ?? (item as unknown as { subjectId?: string | null }).subjectId
+                    ?? null;
+                const newNotebookId = oldNotebookId
+                    ? notebookIdMap.get(oldNotebookId)
+                    : undefined;
 
-                // 去重：同一用户 + 同一科目 + 相同题目文本视为重复
+                // 去重：同一用户 + 同一错题本 + 相同题目文本视为重复
                 if (item.questionText) {
                     const existing = await tx.errorItem.findFirst({
                         where: {
                             userId: targetUserId,
-                            subjectId: newSubjectId || null,
+                            notebookId: newNotebookId || null,
                             questionText: item.questionText,
                         },
                     });
@@ -252,7 +286,7 @@ export async function POST(req: Request) {
                 const created = await tx.errorItem.create({
                     data: {
                         userId: targetUserId,
-                        subjectId: newSubjectId || undefined,
+                        notebookId: newNotebookId || undefined,
                         originalImageUrl: item.originalImageUrl || '',
                         ocrText: item.ocrText,
                         questionText: item.questionText,

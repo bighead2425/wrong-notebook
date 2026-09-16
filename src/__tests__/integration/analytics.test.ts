@@ -55,9 +55,9 @@ describe('/api/analytics', () => {
 
             // Mock subject distribution
             mocks.mockPrismaErrorItem.findMany.mockResolvedValue([
-                { subject: { name: '数学' } },
-                { subject: { name: '数学' } },
-                { subject: { name: '英语' } },
+                { notebook: { subject: 'math' } },
+                { notebook: { subject: 'math' } },
+                { notebook: { subject: 'english' } },
             ]);
 
             // Mock activity data (7 days)
@@ -80,11 +80,11 @@ describe('/api/analytics', () => {
         it('应该返回正确的学科分布', async () => {
             mocks.mockPrismaErrorItem.count.mockResolvedValue(0);
             mocks.mockPrismaErrorItem.findMany.mockResolvedValue([
-                { subject: { name: '数学' } },
-                { subject: { name: '数学' } },
-                { subject: { name: '数学' } },
-                { subject: { name: '物理' } },
-                { subject: { name: '化学' } },
+                { notebook: { subject: 'math' } },
+                { notebook: { subject: 'math' } },
+                { notebook: { subject: 'math' } },
+                { notebook: { subject: 'physics' } },
+                { notebook: { subject: 'chemistry' } },
             ]);
 
             const request = new Request('http://localhost/api/analytics');
@@ -105,8 +105,8 @@ describe('/api/analytics', () => {
         it('应该处理没有学科的错题', async () => {
             mocks.mockPrismaErrorItem.count.mockResolvedValue(0);
             mocks.mockPrismaErrorItem.findMany.mockResolvedValue([
-                { subject: null },
-                { subject: { name: '数学' } },
+                { notebook: null },
+                { notebook: { subject: 'math' } },
             ]);
 
             const request = new Request('http://localhost/api/analytics');

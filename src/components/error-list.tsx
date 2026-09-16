@@ -28,7 +28,7 @@ import { DEFAULT_PAGE_SIZE } from "@/lib/constants/pagination";
 import { getMistakeStatusLabel } from "@/lib/mistake-status";
 
 interface ErrorListProps {
-    subjectId?: string;
+    notebookId?: string;
     subjectName?: string;
 }
 
@@ -38,7 +38,7 @@ type KnowledgeFilterChange = {
     tag?: string | null;
 };
 
-export function ErrorList({ subjectId, subjectName }: ErrorListProps = {}) {
+export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
     const [items, setItems] = useState<ErrorItem[]>([]);
     const [, setLoading] = useState(true);
     const [search, setSearch] = useState("");
@@ -63,7 +63,7 @@ export function ErrorList({ subjectId, subjectName }: ErrorListProps = {}) {
 
     const handleExportPrint = () => {
         const params = new URLSearchParams();
-        if (subjectId) params.append("subjectId", subjectId);
+        if (notebookId) params.append("notebookId", notebookId);
         if (search) params.append("query", search);
         if (masteryFilter !== "all") {
             params.append("mastery", masteryFilter === "mastered" ? "1" : "0");
@@ -168,7 +168,7 @@ export function ErrorList({ subjectId, subjectName }: ErrorListProps = {}) {
     };
 
     // 追踪筛选条件是否变化（用于判断是否需要重置页码）
-    const prevFiltersRef = useRef({ search, masteryFilter, timeFilter, selectedTag, subjectId, gradeFilter, chapterFilter, paperLevelFilter });
+    const prevFiltersRef = useRef({ search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, paperLevelFilter });
 
     useEffect(() => {
         const prevFilters = prevFiltersRef.current;
@@ -177,13 +177,13 @@ export function ErrorList({ subjectId, subjectName }: ErrorListProps = {}) {
             prevFilters.masteryFilter !== masteryFilter ||
             prevFilters.timeFilter !== timeFilter ||
             prevFilters.selectedTag !== selectedTag ||
-            prevFilters.subjectId !== subjectId ||
+            prevFilters.notebookId !== notebookId ||
             prevFilters.gradeFilter !== gradeFilter ||
             prevFilters.chapterFilter !== chapterFilter ||
             prevFilters.paperLevelFilter !== paperLevelFilter;
 
         // 更新 ref
-        prevFiltersRef.current = { search, masteryFilter, timeFilter, selectedTag, subjectId, gradeFilter, chapterFilter, paperLevelFilter };
+        prevFiltersRef.current = { search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, paperLevelFilter };
 
         if (filtersChanged && page !== 1) {
             // 筛选条件变化且不在第一页，重置到第一页（会再次触发此 effect）
@@ -193,13 +193,13 @@ export function ErrorList({ subjectId, subjectName }: ErrorListProps = {}) {
 
         // 正常请求数据
         fetchItems();
-    }, [page, search, masteryFilter, timeFilter, selectedTag, subjectId, gradeFilter, chapterFilter, paperLevelFilter]);
+    }, [page, search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, paperLevelFilter]);
 
     const fetchItems = async () => {
         setLoading(true);
         try {
             const params = new URLSearchParams();
-            if (subjectId) params.append("subjectId", subjectId);
+            if (notebookId) params.append("notebookId", notebookId);
             if (search) params.append("query", search);
             if (masteryFilter !== "all") {
                 params.append("mastery", masteryFilter === "mastered" ? "1" : "0");

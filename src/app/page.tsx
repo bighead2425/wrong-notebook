@@ -20,6 +20,7 @@ import { signOut } from "next-auth/react";
 
 import { ProgressFeedback, ProgressStatus } from "@/components/ui/progress-feedback";
 import { frontendLogger } from "@/lib/frontend-logger";
+import { subjectLabel } from "@/lib/notebook-fields";
 
 function HomeContent() {
     const [step, setStep] = useState<"upload" | "review">("upload");
@@ -31,7 +32,7 @@ function HomeContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const initialNotebookId = searchParams.get("notebook");
-    const [notebooks, setNotebooks] = useState<{ id: string; name: string }[]>([]);
+    const [notebooks, setNotebooks] = useState<Notebook[]>([]);
     const [autoSelectedNotebookId, setAutoSelectedNotebookId] = useState<string | null>(null);
 
     const [config, setConfig] = useState<AppConfig | null>(null);
@@ -134,7 +135,7 @@ function HomeContent() {
             const data = await apiClient.post<AnalyzeResponse>("/api/analyze", {
                 imageBase64: base64Image,
                 language: language,
-                subjectId: initialNotebookId || autoSelectedNotebookId || undefined
+                notebookId: initialNotebookId || autoSelectedNotebookId || undefined
             }, { timeout: aiTimeout }); // Use configured timeout
             const apiDuration = Date.now() - apiStartTime;
             frontendLogger.info('[HomeAnalyze]', 'API response received, validating data', {
@@ -159,13 +160,15 @@ function HomeContent() {
             const dataSize = JSON.stringify(data).length;
             // Auto-select notebook based on subject
             if (data.subject) {
-                const matchedNotebook = notebooks.find(n =>
-                    n.name.includes(data.subject!) || data.subject!.includes(n.name)
-                );
+                // 优先按 Notebook.subject 精确匹配学科，其次退回显示名包含匹配
+                const matchedNotebook = notebooks.find(n => subjectLabel(n.subject) === data.subject)
+                    || notebooks.find(n =>
+                        n.displayName.includes(data.subject!) || data.subject!.includes(n.displayName)
+                    );
                 if (matchedNotebook) {
                     setAutoSelectedNotebookId(matchedNotebook.id);
                     frontendLogger.info('[HomeAnalyze]', 'Auto-selected notebook', {
-                        notebook: matchedNotebook.name,
+                        notebook: matchedNotebook.displayName,
                         subject: data.subject
                     });
                 }
@@ -247,11 +250,11 @@ function HomeContent() {
         }
     };
 
-    const handleSave = async (finalData: ParsedQuestion & { subjectId?: string }): Promise<void> => {
+    const handleSave = async (finalData: ParsedQuestion & { notebookId?: string }): Promise<void> => {
         frontendLogger.info('[HomeSave]', 'Starting save process', {
             hasQuestionText: !!finalData.questionText,
             hasAnswerText: !!finalData.answerText,
-            subjectId: finalData.subjectId,
+            notebookId: finalData.notebookId,
             knowledgePointsCount: finalData.knowledgePoints?.length || 0,
             hasImage: !!currentImage,
             imageSize: currentImage?.length || 0,
@@ -274,9 +277,9 @@ function HomeContent() {
             setCurrentImage(null);
             alert(t.common?.messages?.saveSuccess || 'Saved successfully!');
 
-            // Redirect to notebook page if subjectId is present
-            if (finalData.subjectId) {
-                router.push(`/notebooks/${finalData.subjectId}`);
+            // Redirect to notebook page if notebookId is present
+            if (finalData.notebookId) {
+                router.push(`/notebooks/${finalData.notebookId}`);
             }
         } catch (error: any) {
             frontendLogger.error('[HomeSave]', 'Save failed', {

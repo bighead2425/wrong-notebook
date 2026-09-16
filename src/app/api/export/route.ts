@@ -33,7 +33,7 @@ export async function GET(req: Request) {
     try {
         const userFilter = exportAll ? {} : { userId: user.id };
 
-        const subjects = await prisma.subject.findMany({
+        const notebooks = await prisma.notebook.findMany({
             where: userFilter,
         });
 
@@ -73,7 +73,7 @@ export async function GET(req: Request) {
                 enrollmentYear: user.enrollmentYear,
                 role: user.role,
             },
-            subjects,
+            notebooks,
             customTags,
             errorItems,
             reviewSchedules,
@@ -83,7 +83,7 @@ export async function GET(req: Request) {
         logger.info({
             userId: user.id,
             scope: exportAll ? 'all' : 'user',
-            subjectsCount: subjects.length,
+            notebooksCount: notebooks.length,
             customTagsCount: customTags.length,
             errorItemsCount: errorItems.length,
             reviewSchedulesCount: reviewSchedules.length,

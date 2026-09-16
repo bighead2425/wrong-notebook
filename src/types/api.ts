@@ -36,7 +36,12 @@ export interface ModelsResponse {
 
 export interface Notebook {
     id: string;
-    name: string;
+    displayName: string;      // 自由显示名，如 "小五上数学"
+    gradeStage: string;       // primary / junior / senior
+    grade: string;            // 如 "五年级"
+    semester: string;         // 上 / 下
+    subject: string;          // subjectKey: math / chinese / ...
+    archiveStatus: string;    // active / archived
     userId: string;
     createdAt: string;
     updatedAt: string;
@@ -48,8 +53,8 @@ export interface Notebook {
 export interface ErrorItem {
     id: string;
     userId: string;
-    subjectId?: string | null;
-    subject?: Notebook | null;
+    notebookId?: string | null;
+    notebook?: Notebook | null;
     originalImageUrl: string;
     ocrText?: string | null;
     questionText?: string | null;
@@ -69,6 +74,15 @@ export interface ErrorItem {
     gradeSemester?: string | null;
     paperLevel?: string | null;
 
+    // 状态字段（5.3 单一事实来源）
+    printCount?: number;
+    attention?: number;
+    redoCount?: number;
+    mergeSource?: string | null;
+    deletedAt?: string | null;
+    lastPrintedAt?: string | null;
+    inputMethod?: string | null;
+
     createdAt: string;
     updatedAt: string;
 }
@@ -76,7 +90,7 @@ export interface ErrorItem {
 // For creation/updates
 export interface CreateErrorItemRequest extends ParsedQuestion {
     originalImageUrl: string;
-    subjectId?: string;
+    notebookId?: string;
     gradeSemester?: string;
     paperLevel?: string;
 }
@@ -216,7 +230,7 @@ export interface AdminUserDetail {
         educationStage: string | null;
         enrollmentYear: number | null;
     };
-    notebooks: { id: string; name: string; errorCount: number }[];
+    notebooks: { id: string; displayName: string; errorCount: number }[];
     errorCount: number;
     practiceCount: number;
     notebookCount: number;
@@ -233,7 +247,7 @@ export interface AdminUserDetail {
         ocrText: string | null;
         masteryLevel: number;
         createdAt: string;
-        subject: { name: string } | null;
+        notebook: { displayName: string } | null;
     }[];
 }
 

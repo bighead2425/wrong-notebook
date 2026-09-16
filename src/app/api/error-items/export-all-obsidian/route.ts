@@ -23,7 +23,7 @@ export async function POST(req: Request) {
 
         const items = await prisma.errorItem.findMany({
             where: { userId: user.id },
-            include: { subject: true },
+            include: { notebook: true },
         });
 
         let succeeded = 0;
@@ -37,7 +37,7 @@ export async function POST(req: Request) {
             }
             const result = await exportErrorItemToObsidian({
                 questionNo,
-                subjectName: item.subject?.name || "",
+                subjectName: item.notebook?.displayName || "",
                 gradeSemester: item.gradeSemester || "",
                 tags: parseTags(item.knowledgePoints),
                 questionText: item.questionText,

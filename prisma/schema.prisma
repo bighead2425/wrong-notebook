@@ -26,7 +26,7 @@ model User {
   isActive  Boolean  @default(true)   // 用户是否启用
 
   errorItems ErrorItem[]
-  subjects   Subject[]
+  notebooks  Notebook[]
   practiceRecords PracticeRecord[]
   customTags KnowledgeTag[] // User's custom tags
 }
@@ -64,9 +64,24 @@ model KnowledgeTag {
   @@index([subject])
 }
 
-model Subject {
-  id     String @id @default(cuid())
-  name   String
+/// 教科书级错题本（B13：一本教科书 = 一个错题本，如「小五上数学」）
+/// 学科 / 学期 / 年级 / 学段四结构化字段在此承载，ErrorItem 不再重复存。
+/// 注意：SQLite 不支持 Prisma enum，以下枚举类字段一律用 String 存，取值见注释。
+model Notebook {
+  id          String @id @default(cuid())
+
+  // 四结构化字段（Q1）
+  gradeStage  String @default("primary") // 学段: primary(小学) / junior(初中) / senior(高中)
+  grade       String @default("")        // 年级: 如 "五年级"
+  semester    String @default("上")      // 学期: 上 / 下
+  subject     String @default("math")    // 学科 subjectKey: math/chinese/english/physics/chemistry/biology/politics/history/geography/other
+                                          // ⚠️ 题号生成直接读此字段，不再从显示名反推（5.5）
+
+  displayName String                     // 自由显示名，如 "小五上数学"（B14）
+
+  // 归档状态（H2 四分法 · 归档是本级操作，5.3：题不自持归档标记）
+  archiveStatus String @default("active") // active(在用) / archived(已归档)
+
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -75,16 +90,19 @@ model Subject {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([name, userId])
+  @@unique([displayName, userId])
+  @@index([userId])
+  @@index([subject])
+  @@index([archiveStatus])
 }
 
 model ErrorItem {
   id             String   @id @default(cuid())
   userId         String
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subjectId      String?
-  subject        Subject? @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  
+  notebookId     String?
+  notebook       Notebook? @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+
   originalImageUrl String
   ocrText          String?
   
@@ -92,7 +110,7 @@ model ErrorItem {
   questionText     String? // Parsed question
   answerText       String? // AI provided answer
   analysis         String? // AI analysis/explanation
-  wrongAnswerText  String? // Student's wrong answer/work if visible
+  wrongAnswerText  String? // [Q4/G6 已弃用·保留列停止写入] 错答直接从原图看，T11 拍板保留列不删
   mistakeAnalysis  String? // Analysis of why the wrong answer happened
   mistakeStatus    String? // not_attempted, wrong_attempt, unknown
   knowledgePoints  String? // [DEPRECATED] JSON string - kept for migration only
@@ -105,14 +123,28 @@ model ErrorItem {
   errorType        String? // e.g. "Calculation", "Concept"
   userNotes        String?
   
-  masteryLevel     Int     @default(0) // 0: New, 1: Reviewing, 2: Mastered
-  gradeSemester    String? // e.g. "Junior High Grade 2, 1st Semester"
+  masteryLevel     Int     @default(0) // 0: New, 1: Reviewing, 2: Mastered（5.3：=2 即四分法「已掌握」）
+  gradeSemester    String? // [遗留·不再写入] 年级学期由 Notebook 承载，保留列仅为兼容旧数据
   paperLevel       String? // e.g. "A", "B", "Other"
-  
+
+  // ===== 状态字段（5.3 单一事实来源，禁止再造冗余态）=====
+  printCount       Int       @default(0)  // 打印次数，只显不改（#10 / T4）
+  attention        Int       @default(1)  // 关注档 1-5，语义=难度档（G8 / T5）
+  redoCount        Int       @default(0)  // 复做计次，扫码复做 +1（H1 不闭环 / T7）
+  mergeSource      String?               // 合并来源原题号组（#14 / T6）
+  deletedAt        DateTime?             // 软删标记，非空=在回收箱（H2 / T2）
+  lastPrintedAt    DateTime?             // 最近打印时间（#10）
+  inputMethod      String?               // 录入方式: photo(拍照) / album(相册) / manual(手动)（H4）
+                                          // ⚠️ 与上面 source(试卷来源) 不是一回事，勿混用
+
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   reviewSchedules ReviewSchedule[]
+
+  @@index([notebookId])
+  @@index([deletedAt])
+  @@index([userId, createdAt])
 }
 
 model ReviewSchedule {
