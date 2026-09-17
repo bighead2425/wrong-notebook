@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useState, useEffect } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import { useDropzone } from "react-dropzone";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { UploadCloud, Loader2, Monitor, Keyboard } from "lucide-react";
+import { UploadCloud, Loader2, Monitor, Keyboard, Camera } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
 
 // 添加 CaptureController 类型声明
 declare global {
@@ -29,6 +30,20 @@ export function UploadZone({ onImageSelect, isAnalyzing, onManualInput }: Upload
     const { t } = useLanguage();
     const [isScreenshotting, setIsScreenshotting] = useState(false);
     const [isClient, setIsClient] = useState(false);
+    const scannerRef = useRef<DocScannerHandle>(null);
+
+    /**
+     * 相机只在安全上下文（https / localhost）可用。
+     * 家里 http://192.168.1.10:3000 会被浏览器直接禁用摄像头，
+     * 所以非安全上下文干脆不显示这个按钮，避免用户点了才报错。
+     */
+    const isCameraAllowed = () => {
+        return isClient &&
+            typeof navigator !== 'undefined' &&
+            'mediaDevices' in navigator &&
+            typeof navigator.mediaDevices?.getUserMedia === 'function' &&
+            (window.isSecureContext === true);
+    };
     // 确保只在客户端渲染屏幕截图功能
     useEffect(() => {
         setIsClient(true);
@@ -208,6 +223,23 @@ export function UploadZone({ onImageSelect, isAnalyzing, onManualInput }: Upload
                     </div>
                 </CardContent>
             </Card>
+            {/* 拍照扫描 —— 蓝图 #2 路线B：软件内自研拍摄（自动找纸边拉正 + 漂白/黑白增强） */}
+            {isCameraAllowed() && (
+                <div className="flex flex-col items-center gap-2">
+                    <Button
+                        variant="outline"
+                        onClick={() => scannerRef.current?.openCamera()}
+                        disabled={isAnalyzing}
+                        className="flex items-center gap-2"
+                    >
+                        <Camera className="h-4 w-4" />
+                        拍照扫描
+                    </Button>
+                    <p className="text-xs text-muted-foreground text-center">
+                        自动识别纸张边缘并拉正，可选漂白 / 黑白，比直接拍照更清晰省墨
+                    </p>
+                </div>
+            )}
             {/* 屏幕截图按钮 - 只在客户端渲染 */}
             {isScreenshotSupported() && (
                 <div className="flex flex-col items-center gap-2">
@@ -246,6 +278,17 @@ export function UploadZone({ onImageSelect, isAnalyzing, onManualInput }: Upload
                     </p>
                 </div>
             )}
+            {/* 拍照扫描浮层：OpenCV 按需加载，不影响首屏 */}
+            <DocScanner
+                ref={scannerRef}
+                onScanComplete={(blob: Blob) => {
+                    const file = new File([blob], `scan-${Date.now()}.jpg`, {
+                        type: 'image/jpeg'
+                    });
+                    onImageSelect(file);
+                }}
+                onClose={() => { }}
+            />
         </div>
     );
 }

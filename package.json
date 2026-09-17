@@ -30,6 +30,7 @@
     "@radix-ui/react-slot": "^1.2.4",
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tabs": "^1.1.13",
+    "@techstark/opencv-js": "^5.0.0-release.1",
     "@types/qrcode": "^1.5.6",
     "bcryptjs": "^3.0.3",
     "date-fns": "^4.1.0",
