@@ -4,7 +4,7 @@ import { useCallback, useState, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { UploadCloud, Loader2, Monitor } from "lucide-react";
+import { UploadCloud, Loader2, Monitor, Keyboard } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 
 // 添加 CaptureController 类型声明
@@ -21,9 +21,11 @@ declare global {
 interface UploadZoneProps {
     onImageSelect: (file: File) => void;  // 改为传递 File 对象
     isAnalyzing: boolean;
+    /** H4：不拍照，直接进编辑页手填（有的题手动输入更快） */
+    onManualInput?: () => void;
 }
 
-export function UploadZone({ onImageSelect, isAnalyzing }: UploadZoneProps) {
+export function UploadZone({ onImageSelect, isAnalyzing, onManualInput }: UploadZoneProps) {
     const { t } = useLanguage();
     const [isScreenshotting, setIsScreenshotting] = useState(false);
     const [isClient, setIsClient] = useState(false);
@@ -224,6 +226,23 @@ export function UploadZone({ onImageSelect, isAnalyzing }: UploadZoneProps) {
                     </Button>
                     <p className="text-xs text-muted-foreground text-center">
                         {t.upload.screenshotDesc}
+                    </p>
+                </div>
+            )}
+            {/* H4：手动输入 —— 有的题手动敲比拍照识别更快，仍可接 AI 生成答案 */}
+            {onManualInput && (
+                <div className="flex flex-col items-center gap-2">
+                    <Button
+                        variant="outline"
+                        onClick={onManualInput}
+                        disabled={isAnalyzing}
+                        className="flex items-center gap-2"
+                    >
+                        <Keyboard className="h-4 w-4" />
+                        {t.upload.manual}
+                    </Button>
+                    <p className="text-xs text-muted-foreground text-center">
+                        {t.upload.manualDesc}
                     </p>
                 </div>
             )}

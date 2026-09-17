@@ -45,6 +45,10 @@ interface ErrorItemDetail {
     gradeSemester?: string | null;
     paperLevel?: string | null;
     source?: string | null;
+    /** #10 / T4：打印次数，只显不改 */
+    printCount?: number | null;
+    /** G8 / T5：关注档（难度）1-5 */
+    attention?: number | null;
 }
 
 export default function ErrorDetailPage() {
@@ -667,6 +671,15 @@ export default function ErrorDetailPage() {
                                                 <span className="font-medium font-mono">
                                                     {item.source || (t.common?.notSet || 'Not set')}
                                                 </span>
+                                            </div>
+                                            {/* #10 / T4：打印次数与关注档——只显不改，任何打印触发 +1 */}
+                                            <div className="flex justify-between">
+                                                <span className="text-muted-foreground">{t.detail.printCount}:</span>
+                                                <span className="font-medium tabular-nums">{item.printCount ?? 0}</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span className="text-muted-foreground">{t.detail.attention}:</span>
+                                                <span className="font-medium tabular-nums">{item.attention ?? 1}</span>
                                             </div>
                                         </div>
                                     )}

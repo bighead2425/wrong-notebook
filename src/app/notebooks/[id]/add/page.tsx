@@ -234,15 +234,13 @@ export default function AddErrorPage() {
     };
 
     const handleSave = async (finalData: ParsedQuestion & { notebookId?: string; gradeSemester?: string; paperLevel?: string }): Promise<void> => {
-        if (!currentImage) {
-            alert(t.common.messages?.missingImage || 'Missing image');
-            return;
-        }
-
+        // H4：不再强制要求图片 —— 手动输入的题没有原图，originalImageUrl 传空串
+        // （该列在 schema 里非空，空串是合法值；纸面缺原图时只印题干）
         try {
             const result = await apiClient.post<{ id: string; duplicate?: boolean }>("/api/error-items", {
                 ...finalData,
-                originalImageUrl: currentImage,
+                originalImageUrl: currentImage || "",
+                inputMethod: currentImage ? undefined : "manual",
                 notebookId: notebookId,
             });
 
@@ -257,6 +255,23 @@ export default function AddErrorPage() {
             console.error(error);
             alert(t.common.messages?.saveFailed || 'Save failed');
         }
+    };
+
+    /** H4：手动输入 —— 不拍照直接进编辑页；题号仍由后端按 Notebook.subject 自动生成 */
+    const handleManualInput = () => {
+        setParsedData({
+            questionText: "",
+            answerText: "",
+            analysis: "",
+            wrongAnswerText: "",
+            mistakeAnalysis: "",
+            mistakeStatus: "unknown",
+            subject: "其他",
+            knowledgePoints: [],
+            requiresImage: false,
+        });
+        setCurrentImage(null);
+        setStep("review");
     };
 
     const getProgressMessage = () => {
@@ -298,10 +313,14 @@ export default function AddErrorPage() {
 
                 {/* Main Content */}
                 {step === "upload" && (
-                    <UploadZone onImageSelect={onImageSelect} isAnalyzing={analysisStep !== 'idle'} />
+                    <UploadZone
+                        onImageSelect={onImageSelect}
+                        isAnalyzing={analysisStep !== 'idle'}
+                        onManualInput={handleManualInput}
+                    />
                 )}
 
-                {step === "review" && parsedData && currentImage && (
+                {step === "review" && parsedData && (
                     <CorrectionEditor
                         initialData={parsedData}
                         imagePreview={currentImage}

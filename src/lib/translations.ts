@@ -107,6 +107,8 @@ export const translations = {
             // analyzing: "Analyzing...", // Moved to app
             screenshot: "Screenshot",
             screenshotDesc: "Capture screen content (select 'This Tab' to avoid switching)",
+            manual: "Type it in",
+            manualDesc: "Skip the photo — fill the question by hand (AI can still write the answer and analysis).",
             screenshotNotSupported: "Screenshot not supported in this browser",
             screenshotFailed: "Screenshot failed",
             screenshotPermissionDenied: "Screenshot permission denied",
@@ -258,6 +260,8 @@ export const translations = {
             noMistakeAnalysis: "No mistake analysis yet.",
             close: "Close",
             clickOutside: "Click outside to close",
+            printCount: "Print count",
+            attention: "Attention (1 easy – 5 hard)",
         },
         practice: {
             title: "Smart Practice",
@@ -787,6 +791,8 @@ export const translations = {
             // analyzing: "解析中...", // Moved to app
             screenshot: "屏幕截图",
             screenshotDesc: "捕获屏幕内容（建议选择‘整个屏幕’或‘窗口’以获得最佳效果）",
+            manual: "手动输入",
+            manualDesc: "不拍照，直接手填题目（仍可让 AI 生成答案和解析）。",
             screenshotNotSupported: "此浏览器不支持屏幕截图",
             screenshotFailed: "截图失败",
             screenshotPermissionDenied: "截图权限被拒绝",
@@ -938,6 +944,8 @@ export const translations = {
             noMistakeAnalysis: "暂无错因分析",
             close: "✕ 关闭",
             clickOutside: "点击图片外部区域关闭",
+            printCount: "打印次数",
+            attention: "关注档（1 容易 – 5 困难）",
         },
         practice: {
             title: "智能练习",
