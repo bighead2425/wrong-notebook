@@ -13,7 +13,7 @@ import { AnalyzeResponse, Notebook, AppConfig } from "@/types/api";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { processImageFile } from "@/lib/image-utils";
-import { Upload, BookOpen, Tags, LogOut, BarChart3 } from "lucide-react";
+import { Upload, BookOpen, Tags, LogOut, BarChart3, QrCode, ArchiveRestore } from "lucide-react";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { BroadcastNotification } from "@/components/broadcast-notification";
 import { signOut } from "next-auth/react";
@@ -315,6 +315,17 @@ function HomeContent() {
                     <UserWelcome />
 
                     <div className="flex items-center gap-2 bg-card p-2 rounded-lg border shadow-sm shrink-0">
+                        {/* #11：主页左上扫描按钮 —— 纸上的二维码扫回来 */}
+                        <Link href="/scan">
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="rounded-full text-muted-foreground hover:text-primary"
+                                title={t.app?.scan || "扫一扫"}
+                            >
+                                <QrCode className="h-5 w-5" />
+                            </Button>
+                        </Link>
                         <BroadcastNotification />
                         <SettingsDialog />
                         <Button
@@ -380,6 +391,20 @@ function HomeContent() {
                                     <div className="flex items-center gap-2">
                                         <BarChart3 className="h-5 w-5" />
                                         <span>{t.app?.stats || 'Stats'}</span>
+                                    </div>
+                                </Button>
+                            </Link>
+
+                            {/* H2 四分法：回收箱是独立库，不在「我的错题本」下显示 */}
+                            <Link href="/trash" className="w-full">
+                                <Button
+                                    variant="outline"
+                                    size="lg"
+                                    className="w-full h-auto py-4 text-base shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <ArchiveRestore className="h-5 w-5" />
+                                        <span>{t.app?.trash || '回收箱'}</span>
                                     </div>
                                 </Button>
                             </Link>

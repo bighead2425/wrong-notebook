@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+/* ===== 学科 9 色（5.6 已定稿 · 与 src/lib/subject-colors.ts 保持同源）=====
+   定色原则：① 明度统一偏深，白字对比度 ≥ 4:1；② 色相两两拉开 ≥ 45°；
+   ③ 天生冗余——色块旁必印 2 字母简拼，黑白复印也能分辨学科。      */
+:root {
+  --subject-math: #D32F2F;      /* SX 数学 中国红 */
+  --subject-chinese: #E65100;   /* YW 语文 深橙 */
+  --subject-english: #1565C0;   /* YY 英语 深蓝 */
+  --subject-physics: #6A1B9A;   /* WL 物理 深紫 */
+  --subject-chemistry: #00838F; /* HX 化学 青 */
+  --subject-biology: #2E7D32;   /* SW 生物 深绿 */
+  --subject-politics: #AD1457;  /* ZZ 政治 玫红 */
+  --subject-history: #795548;   /* LS 历史 棕褐 */
+  --subject-geography: #455A64; /* DL 地理 蓝灰 */
+  --subject-other: #212121;     /* OT 其他 近黑 */
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -236,5 +252,86 @@
     background-size: 100% 28px;
     background-position: 0 0;
     background-repeat: repeat;
+  }
+
+  /* ===== #9 / G7 新打印模板：一道错题两页 =====
+     第 1 页：题号色标 + 二维码 + 原题圆角框 + 原图 + 解析左/空白右（延伸到第 2 页）
+     第 2 页末：从后往前 —— 最末答案（灰淡字），答案上方错因（圆角框）        */
+
+  /* 学科色标：实心填充 + 纯白字，22mm×7mm，圆角 1.5mm。
+     必须用 print-color-adjust: exact，否则浏览器打印会丢背景色。 */
+  .subject-chip {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* 一道错题占一张纸的两面：这里用「整块不拆」+ 显式断点控制分页 */
+  .print-card {
+    break-before: page;
+    page-break-before: always;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .print-card:first-of-type {
+    break-before: auto;
+    page-break-before: auto;
+  }
+
+  /* 原题圆角框 / 错因圆角框 */
+  .print-rounded-box {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* 解析左、空白右的两栏（B9：右手在纸右边写字方便），延伸到第二页 */
+  .print-two-col {
+    break-inside: auto;
+  }
+
+  .print-two-col > div {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* 第二页：从后往前的答案/错因区 */
+  .print-tail {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* 参考答案：灰淡字（一眼能看，但不会直接抢答案） */
+  .print-faint {
+    color: #6b6b6b !important;
+  }
+
+  /* 二维码：打印时保持实心黑，不反灰 */
+  .print-qr img,
+  .print-qr svg {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* 手动双面：翻面提示卡。用户家里打印机不支持自动双面，
+     打印完一面后按这张纸上的提示把纸翻回来。 */
+  .print-flip-hint {
+    break-before: page;
+    page-break-before: always;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .print-flip-hint .flip-box {
+    border: 1px dashed #888;
+    page-break-inside: avoid;
+  }
+
+  /* 打印时隐藏非 Duplex 分组的内容（手动双面分批打印用） */
+  .print-group-hidden {
+    display: none !important;
   }
 }

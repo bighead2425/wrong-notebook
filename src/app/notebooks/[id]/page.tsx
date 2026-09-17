@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
-import { Plus, House, Pencil } from "lucide-react";
+import { Plus, House, Pencil, Printer, Sparkles, ArchiveRestore } from "lucide-react";
 import Link from "next/link";
 import { ErrorList } from "@/components/error-list";
 import { RenameNotebookDialog } from "@/components/rename-notebook-dialog";
+import { NotebookAnalyzeDialog } from "@/components/notebook-analyze-dialog";
 
 import { Notebook } from "@/types/api";
 import { apiClient } from "@/lib/api-client";
@@ -23,6 +24,7 @@ export default function NotebookDetailPage() {
     const [notebook, setNotebook] = useState<Notebook | null>(null);
     const [loading, setLoading] = useState(true);
     const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+    const [analyzeOpen, setAnalyzeOpen] = useState(false);
 
     useEffect(() => {
         if (params.id) {
@@ -47,6 +49,13 @@ export default function NotebookDetailPage() {
         if (!notebook) return;
         const updated = await apiClient.put<Notebook>(`/api/notebooks/${notebook.id}`, { displayName: name });
         setNotebook(updated);
+    };
+
+    /** B15：按本拉回（归档粒度在 Notebook，题不自持归档位） */
+    const handleUnarchive = async () => {
+        if (!notebook) return;
+        await apiClient.put<Notebook>(`/api/notebooks/${notebook.id}`, { archiveStatus: "active" });
+        setNotebook({ ...notebook, archiveStatus: "active" });
     };
 
     if (loading) {
@@ -81,6 +90,46 @@ export default function NotebookDetailPage() {
                         </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
+                        {/* #10 三级打印 · 第 2 级：只打这一本里还没打过的 */}
+                        <Button
+                            variant="secondary"
+                            size="sm"
+                            className="hidden sm:flex"
+                            onClick={() => router.push(`/print-preview?notebookId=${notebook.id}&unprinted=1&mode=card`)}
+                        >
+                            <Printer className="mr-2 h-4 w-4" />
+                            {t.notebooks?.printThisUnprinted || "打印本册未打印"}
+                        </Button>
+                        <Button
+                            variant="secondary"
+                            size="icon"
+                            className="sm:hidden"
+                            title={t.notebooks?.printThisUnprinted || "打印本册未打印"}
+                            onClick={() => router.push(`/print-preview?notebookId=${notebook.id}&unprinted=1&mode=card`)}
+                        >
+                            <Printer className="h-4 w-4" />
+                        </Button>
+
+                        {/* #15 本集 AI 分析 */}
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="hidden sm:flex"
+                            onClick={() => setAnalyzeOpen(true)}
+                        >
+                            <Sparkles className="mr-2 h-4 w-4" />
+                            {t.notebooks?.aiAnalyze || "AI 分析"}
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="icon"
+                            className="sm:hidden"
+                            title={t.notebooks?.aiAnalyze || "AI 分析"}
+                            onClick={() => setAnalyzeOpen(true)}
+                        >
+                            <Sparkles className="h-4 w-4" />
+                        </Button>
+
                         <Link href={`/notebooks/${notebook.id}/add`}>
                             <Button size="sm" className="hidden sm:flex">
                                 <Plus className="mr-2 h-4 w-4" />
@@ -98,6 +147,18 @@ export default function NotebookDetailPage() {
                     </div>
                 </div>
 
+                {notebook.archiveStatus === "archived" && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+                        <span className="text-sm">
+                            {t.notebooks?.archivedBanner || "这本已归档：里面的题不在主库出现，但仍然可以打开查看。"}
+                        </span>
+                        <Button variant="outline" size="sm" onClick={handleUnarchive}>
+                            <ArchiveRestore className="mr-1.5 h-4 w-4" />
+                            {t.notebooks?.unarchive || "拉回在用"}
+                        </Button>
+                    </div>
+                )}
+
                 <ErrorList notebookId={notebook.id} subjectName={notebook.displayName} />
 
                 <RenameNotebookDialog
@@ -105,6 +166,13 @@ export default function NotebookDetailPage() {
                     onOpenChange={setRenameDialogOpen}
                     currentName={notebook.displayName}
                     onRename={handleRename}
+                />
+
+                <NotebookAnalyzeDialog
+                    notebookId={notebook.id}
+                    notebookName={notebook.displayName}
+                    open={analyzeOpen}
+                    onOpenChange={setAnalyzeOpen}
                 />
             </div>
         </main>

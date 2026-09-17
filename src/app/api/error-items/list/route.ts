@@ -19,8 +19,22 @@ export async function GET(req: Request) {
     const mastery = searchParams.get("mastery");
     const timeRange = searchParams.get("timeRange");
     const tag = searchParams.get("tag");
-    // 四分法（H2）：trash=1 查回收箱；默认只看未软删的题
+    // 四分法（H2 / 5.3）：
+    //   scope=main(默认) 主库：deletedAt=null 且 所属本 archiveStatus != archived
+    //   scope=archived   学期归档：deletedAt=null 且 所属本 archiveStatus = archived
+    //   scope=all        全部未软删（不分归档）
+    //   trash=1          回收箱，优先级最高：回收箱 > 已掌握 > 归档 > 主库
     const trash = searchParams.get("trash");
+    const scope = searchParams.get("scope");
+
+    // 未打印筛选（#10 / T4 三级打印按钮）
+    const unprinted = searchParams.get("unprinted");
+
+    // 指定 ID 列表（单题打印跳转用）
+    const idsParam = searchParams.get("ids");
+
+    // 关注档下限（G8 / T5）：attention=N 表示筛选 >= N
+    const attentionParam = searchParams.get("attention");
 
     // 分页参数
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
@@ -46,8 +60,42 @@ export async function GET(req: Request) {
             whereClause.notebookId = notebookId;
         }
 
-        // 软删：默认排除回收箱；trash=1 时只看回收箱
-        whereClause.deletedAt = trash === "1" ? { not: null } : null;
+        // 指定 ID 列表优先（单题打印 / 扫码后跳单题打印）
+        if (idsParam) {
+            const idList = idsParam.split(",").map(s => s.trim()).filter(Boolean);
+            whereClause.id = { in: idList };
+            // 单题打印需要能拿到回收箱里的题，故此处不强制 deletedAt
+        } else {
+            // 回收箱优先级最高；否则按 scope 决定归档范围
+            if (trash === "1") {
+                whereClause.deletedAt = { not: null };
+            } else {
+                whereClause.deletedAt = null;
+                if (scope === "archived") {
+                    whereClause.notebook = { is: { archiveStatus: "archived" } };
+                } else if (scope === "main" || !scope) {
+                    // 主库：本未归档（无本的题视作在主库，避免旧测试数据凭空消失）
+                    whereClause.OR = [
+                        { notebookId: null },
+                        { notebook: { is: { archiveStatus: { not: "archived" } } } },
+                    ];
+                }
+                // scope=all 不加额外限制
+            }
+        }
+
+        // 未打印筛选：只取从没打印过的题
+        if (unprinted === "1") {
+            whereClause.printCount = 0;
+        }
+
+        // 关注档下限筛选（G8 难度档：1 容易 ~ 5 困难）
+        if (attentionParam) {
+            const lv = Number(attentionParam);
+            if (Number.isFinite(lv) && lv >= 1 && lv <= 5) {
+                whereClause.attention = { gte: Math.round(lv) };
+            }
+        }
 
         // 搜索条件需要使用 AND 包装，避免与其他 OR 条件冲突
         // 最终的 whereClause.AND 会包含所有需要同时满足的条件
@@ -124,12 +172,13 @@ export async function GET(req: Request) {
         }
 
         // Grade/Semester filter
+        // ⚠️ 用 AND 追加，不能 Object.assign 到顶层 —— buildGradeFilter 返回的是 { OR: [...] }，
+        //    直接覆盖会把上面主库/归档范围的 OR 条件挤掉（四分法失效）。
         const gradeSemester = searchParams.get("gradeSemester");
         if (gradeSemester) {
             const gradeFilter = buildGradeFilter(gradeSemester);
             if (gradeFilter) {
-                // Merge into main whereClause
-                Object.assign(whereClause, gradeFilter);
+                andConditions.push(gradeFilter);
             }
         }
 

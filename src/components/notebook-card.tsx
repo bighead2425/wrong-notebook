@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { BookOpen, Pencil, Trash2 } from "lucide-react";
+import { BookOpen, Pencil, Trash2, Archive, ArchiveRestore } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface NotebookCardProps {
@@ -14,10 +14,15 @@ interface NotebookCardProps {
     onClick: () => void;
     onRename?: () => void;
     onDelete?: (id: string) => void;
+    /** 归档 / 拉回（B15：逐本归档 + 按本拉回，不做批量按钮） */
+    onToggleArchive?: (id: string) => void;
     itemLabel?: string;
 }
 
-export function NotebookCard({ id, displayName, errorCount, meta, archived = false, onClick, onRename, onDelete, itemLabel = "items" }: NotebookCardProps) {
+export function NotebookCard({
+    id, displayName, errorCount, meta, archived = false,
+    onClick, onRename, onDelete, onToggleArchive, itemLabel = "items",
+}: NotebookCardProps) {
     return (
         <Card
             className={`cursor-pointer hover:border-primary/50 transition-colors relative group ${archived ? "opacity-60" : ""}`}
@@ -34,7 +39,8 @@ export function NotebookCard({ id, displayName, errorCount, meta, archived = fal
                             )}
                         </div>
                     </div>
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    {/* ⚠️ 不要用 group-hover 才显示：手机没有 hover，按钮会永远点不到 */}
+                    <div className="flex items-center gap-1 shrink-0">
                         {onRename && (
                             <Button
                                 variant="ghost"
@@ -46,6 +52,22 @@ export function NotebookCard({ id, displayName, errorCount, meta, archived = fal
                                 }}
                             >
                                 <Pencil className="h-4 w-4" />
+                            </Button>
+                        )}
+                        {onToggleArchive && (
+                            <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                className="h-8 w-8"
+                                title={archived ? "拉回在用" : "归档"}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onToggleArchive(id);
+                                }}
+                            >
+                                {archived
+                                    ? <ArchiveRestore className="h-4 w-4" />
+                                    : <Archive className="h-4 w-4" />}
                             </Button>
                         )}
                         {onDelete && (

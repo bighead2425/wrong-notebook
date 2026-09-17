@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
-import { Plus, House } from "lucide-react";
+import { Plus, House, ArchiveRestore, Printer } from "lucide-react";
 import Link from "next/link";
 import { NotebookCard } from "@/components/notebook-card";
 import { CreateNotebookDialog, type CreateNotebookPayload } from "@/components/create-notebook-dialog";
@@ -76,9 +76,29 @@ export default function NotebooksPage() {
         }
     };
 
+    const handleArchiveToggle = async (id: string) => {
+        const nb = notebooks.find(n => n.id === id);
+        if (!nb) return;
+        const toArchived = nb.archiveStatus !== "archived";
+        if (toArchived && !confirm(`${t.notebooks?.archiveConfirm || "Archive"}「${nb.displayName}」？`)) return;
+        try {
+            await apiClient.put(`/api/notebooks/${id}`, {
+                archiveStatus: toArchived ? "archived" : "active",
+            });
+            await fetchNotebooks();
+        } catch (error: any) {
+            console.error(error);
+            alert(error?.data?.message || t.notebooks?.archiveError || "Failed to archive");
+        }
+    };
+
     const handleNotebookClick = (id: string) => {
         router.push(`/notebooks/${id}`);
     };
+
+    // H2 四分法：在用本 / 已归档本分开摆，归档的本仍可见（否则拉不回来）
+    const activeBooks = notebooks.filter(n => n.archiveStatus !== "archived");
+    const archivedBooks = notebooks.filter(n => n.archiveStatus === "archived");
 
     if (loading) {
         return (
@@ -100,6 +120,11 @@ export default function NotebooksPage() {
                         </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
+                        <Link href="/trash">
+                            <Button variant="outline" size="icon" title={t.notebooks?.trash || "回收箱"}>
+                                <ArchiveRestore className="h-4 w-4" />
+                            </Button>
+                        </Link>
                         <Button onClick={() => setDialogOpen(true)} size="sm" className="hidden sm:flex">
                             <Plus className="mr-2 h-4 w-4" />
                             {t.notebooks?.create || "New Notebook"}
@@ -115,6 +140,21 @@ export default function NotebooksPage() {
                     </div>
                 </div>
 
+                {/* #10 三级打印 · 第 1 级：所有本里还没打印过的题 */}
+                <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => router.push("/print-preview?unprinted=1&mode=card")}
+                    >
+                        <Printer className="mr-2 h-4 w-4" />
+                        {t.notebooks?.printAllUnprinted || "打印所有未打印"}
+                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                        {t.notebooks?.printAllHint || "把各本里从没打过的题一次打成错题卡"}
+                    </p>
+                </div>
+
                 {notebooks.length === 0 ? (
                     <div className="text-center py-12 border-2 border-dashed rounded-lg">
                         <p className="text-muted-foreground mb-4">
@@ -126,21 +166,52 @@ export default function NotebooksPage() {
                         </Button>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {notebooks.map((notebook) => (
-                            <NotebookCard
-                                key={notebook.id}
-                                id={notebook.id}
-                                displayName={notebook.displayName}
-                                meta={buildNotebookMeta(notebook)}
-                                archived={notebook.archiveStatus === "archived"}
-                                errorCount={notebook._count?.errorItems || 0}
-                                onClick={() => handleNotebookClick(notebook.id)}
-                                onRename={() => setRenameTarget(notebook)}
-                                onDelete={() => handleDelete(notebook.id, notebook._count?.errorItems || 0, notebook.displayName)}
-                                itemLabel={t.notebooks?.items || "items"}
-                            />
-                        ))}
+                    <div className="space-y-8">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {activeBooks.map((notebook) => (
+                                <NotebookCard
+                                    key={notebook.id}
+                                    id={notebook.id}
+                                    displayName={notebook.displayName}
+                                    meta={buildNotebookMeta(notebook)}
+                                    archived={false}
+                                    errorCount={notebook._count?.errorItems || 0}
+                                    onClick={() => handleNotebookClick(notebook.id)}
+                                    onRename={() => setRenameTarget(notebook)}
+                                    onToggleArchive={handleArchiveToggle}
+                                    onDelete={() => handleDelete(notebook.id, notebook._count?.errorItems || 0, notebook.displayName)}
+                                    itemLabel={t.notebooks?.items || "items"}
+                                />
+                            ))}
+                        </div>
+
+                        {archivedBooks.length > 0 && (
+                            <div className="space-y-3">
+                                <div className="flex items-center gap-2">
+                                    <h2 className="text-lg font-semibold">{t.notebooks?.archived || "已归档"}</h2>
+                                    <span className="text-xs text-muted-foreground">
+                                        {t.notebooks?.archivedHint || "点书本上的图标可以拉回在用"}
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {archivedBooks.map((notebook) => (
+                                        <NotebookCard
+                                            key={notebook.id}
+                                            id={notebook.id}
+                                            displayName={notebook.displayName}
+                                            meta={buildNotebookMeta(notebook)}
+                                            archived
+                                            errorCount={notebook._count?.errorItems || 0}
+                                            onClick={() => handleNotebookClick(notebook.id)}
+                                            onRename={() => setRenameTarget(notebook)}
+                                            onToggleArchive={handleArchiveToggle}
+                                            onDelete={() => handleDelete(notebook.id, notebook._count?.errorItems || 0, notebook.displayName)}
+                                            itemLabel={t.notebooks?.items || "items"}
+                                        />
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
 

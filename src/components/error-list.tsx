@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Search, Filter, CheckCircle, Clock, ChevronDown, Printer, ListChecks, Trash2, X } from "lucide-react";
+import { Search, Filter, CheckCircle, Clock, ChevronDown, Printer, ListChecks, Trash2, X, Combine, Flame } from "lucide-react";
 import Link from "next/link";
 import { format } from "date-fns";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -49,6 +49,8 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
     const [paperLevelFilter, setPaperLevelFilter] = useState<"all" | "a" | "b" | "other">("all");
     const [selectedTag, setSelectedTag] = useState<string | null>(null);
     const [expandedTags, setExpandedTags] = useState<Set<string>>(new Set());
+    // 关注档下限筛选（G8 / T5）：0=全部，1..5=至少该档
+    const [attentionFilter, setAttentionFilter] = useState(0);
     // 分页状态
     const [page, setPage] = useState(1);
     const [pageSize] = useState(DEFAULT_PAGE_SIZE);
@@ -58,6 +60,7 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
     const [isSelectMode, setIsSelectMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [isDeleting, setIsDeleting] = useState(false);
+    const [isMerging, setIsMerging] = useState(false);
     const { t, language } = useLanguage();
     const router = useRouter();
 
@@ -77,6 +80,8 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
         if (gradeFilter) params.append("gradeSemester", gradeFilter);
         if (chapterFilter) params.append("chapter", chapterFilter); // 章节筛选
         if (paperLevelFilter !== "all") params.append("paperLevel", paperLevelFilter);
+        // 关注档下限（导出打印要跟列表同口径）
+        if (attentionFilter >= 1) params.append("attention", String(attentionFilter));
 
         router.push(`/print-preview?${params.toString()}`);
     };
@@ -146,16 +151,17 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
     const handleBatchDelete = async () => {
         if (selectedIds.size === 0) return;
 
-        const confirmMsg = (t.notebook?.confirmBatchDelete || "Delete {count} items?")
+        const confirmMsg = (t.notebook?.confirmBatchTrash || "Move {count} items to trash?")
             .replace("{count}", selectedIds.size.toString());
         if (!confirm(confirmMsg)) return;
 
         setIsDeleting(true);
         try {
+            // H2/T2：默认软删进回收箱，可还原
             await apiClient.post("/api/error-items/batch-delete", {
                 ids: Array.from(selectedIds),
             });
-            alert(t.notebook?.batchDeleteSuccess || "Deleted successfully");
+            alert(t.notebook?.batchTrashSuccess || "Moved to trash");
             setIsSelectMode(false);
             setSelectedIds(new Set());
             fetchItems();
@@ -167,8 +173,42 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
         }
     };
 
+    /**
+     * #14 / T6：多选后合并错题
+     * 把几道同源错题打包重送 AI，生成一道新题（新题号），原来几道进回收箱。
+     */
+    const handleBatchMerge = async () => {
+        if (selectedIds.size < 2) {
+            alert(t.notebook?.mergeNeedTwo || "请至少选择 2 道题合并");
+            return;
+        }
+
+        const confirmMsg = (t.notebook?.confirmMerge || "Merge {count} items into one new question? The originals go to trash.")
+            .replace("{count}", selectedIds.size.toString());
+        if (!confirm(confirmMsg)) return;
+
+        setIsMerging(true);
+        try {
+            const res = await apiClient.post<{ item: { id: string; source?: string | null } }>(
+                "/api/error-items/merge",
+                { ids: Array.from(selectedIds) },
+                { timeout: 180000 },
+            );
+            alert((t.notebook?.mergeSuccess || "Merged. New question no: {no}")
+                .replace("{no}", res.item.source || res.item.id));
+            setIsSelectMode(false);
+            setSelectedIds(new Set());
+            fetchItems();
+        } catch (error: any) {
+            console.error(error);
+            alert(error?.data?.message || t.notebook?.mergeFailed || "Merge failed");
+        } finally {
+            setIsMerging(false);
+        }
+    };
+
     // 追踪筛选条件是否变化（用于判断是否需要重置页码）
-    const prevFiltersRef = useRef({ search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, paperLevelFilter });
+    const prevFiltersRef = useRef({ search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, paperLevelFilter, attentionFilter });
 
     useEffect(() => {
         const prevFilters = prevFiltersRef.current;
@@ -180,10 +220,11 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
             prevFilters.notebookId !== notebookId ||
             prevFilters.gradeFilter !== gradeFilter ||
             prevFilters.chapterFilter !== chapterFilter ||
-            prevFilters.paperLevelFilter !== paperLevelFilter;
+            prevFilters.paperLevelFilter !== paperLevelFilter ||
+            prevFilters.attentionFilter !== attentionFilter;
 
         // 更新 ref
-        prevFiltersRef.current = { search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, paperLevelFilter };
+        prevFiltersRef.current = { search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, paperLevelFilter, attentionFilter };
 
         if (filtersChanged && page !== 1) {
             // 筛选条件变化且不在第一页，重置到第一页（会再次触发此 effect）
@@ -193,7 +234,7 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
 
         // 正常请求数据
         fetchItems();
-    }, [page, search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, paperLevelFilter]);
+    }, [page, search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, paperLevelFilter, attentionFilter]);
 
     const fetchItems = async () => {
         setLoading(true);
@@ -213,6 +254,8 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
             if (gradeFilter) params.append("gradeSemester", gradeFilter);
             if (chapterFilter) params.append("chapter", chapterFilter); // 章节筛选
             if (paperLevelFilter !== "all") params.append("paperLevel", paperLevelFilter);
+            // 关注档下限（G8 难度档）
+            if (attentionFilter >= 1) params.append("attention", String(attentionFilter));
             // 分页参数
             params.append("page", page.toString());
             params.append("pageSize", pageSize.toString());

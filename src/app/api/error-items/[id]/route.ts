@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
-import { unauthorized, forbidden, notFound, internalError } from "@/lib/api-errors";
+import { unauthorized, forbidden, notFound, badRequest, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
@@ -76,7 +76,14 @@ export async function PUT(
         }
 
         const body = await req.json();
-        const { knowledgePoints, gradeSemester, paperLevel, questionText, answerText, analysis, notebookId, wrongAnswerText, mistakeAnalysis, mistakeStatus } = body;
+        const {
+            knowledgePoints, gradeSemester, paperLevel, questionText, answerText, analysis,
+            notebookId, wrongAnswerText, mistakeAnalysis, mistakeStatus,
+            // ===== 状态字段（5.3 单一事实来源）=====
+            attention,        // 关注档 1-5（难度档，G8 / T5）
+            masteryLevel,     // 0 New / 1 Reviewing / 2 Mastered（=2 即四分法「已掌握」）
+            userNotes,        // 备注（扫码「跳转原题备注」用）
+        } = body;
 
         const errorItem = await prisma.errorItem.findUnique({
             where: { id },
@@ -100,6 +107,23 @@ export async function PUT(
         if (analysis !== undefined) updateData.analysis = analysis;
         // ⚠️ Q4/G6：wrongAnswerText 已弃用，保留列但**不再写入**（仅接收用于推算 mistakeStatus）
         if (mistakeAnalysis !== undefined) updateData.mistakeAnalysis = mistakeAnalysis || null;
+        if (userNotes !== undefined) updateData.userNotes = userNotes || null;
+
+        // 关注档 1-5（G8 难度档）：夹到 1..5，非法值忽略
+        if (attention !== undefined) {
+            const n = Number(attention);
+            if (Number.isFinite(n) && n >= 1 && n <= 5) {
+                updateData.attention = Math.round(n);
+            }
+        }
+
+        // 掌握状态：0=New / 1=Reviewing / 2=Mastered（=2 即四分法「已掌握」，扫码「已会」写此位）
+        if (masteryLevel !== undefined) {
+            const m = Number(masteryLevel);
+            if (Number.isFinite(m) && m >= 0 && m <= 2) {
+                updateData.masteryLevel = Math.round(m);
+            }
+        }
         if (notebookId !== undefined) {
             if (notebookId === "") {
                 updateData.notebook = { disconnect: true };
@@ -218,5 +242,127 @@ export async function PUT(
     } catch (error) {
         logger.error({ error }, 'Error updating item');
         return internalError("Failed to update error item");
+    }
+}
+
+/**
+ * PATCH /api/error-items/[id]
+ * 动作型更新，不覆盖字段，只做自增/置位：
+ *  - { action: "redo" }  复做计次 +1（H1 不闭环，仅计次 / T7）
+ *  - { action: "restore" } 从回收箱还原（H2 / T2）
+ */
+export async function PATCH(
+    req: Request,
+    { params }: { params: Promise<{ id: string }> }
+) {
+    const { id } = await params;
+    const session = await getServerSession(authOptions);
+
+    try {
+        let user;
+        if (session?.user?.email) {
+            user = await prisma.user.findUnique({
+                where: { email: session.user.email },
+            });
+        }
+
+        if (!user) {
+            return unauthorized("Authentication required");
+        }
+
+        const errorItem = await prisma.errorItem.findUnique({
+            where: { id },
+            select: { id: true, userId: true },
+        });
+
+        if (!errorItem) {
+            return notFound("Item not found");
+        }
+
+        if (errorItem.userId !== user.id) {
+            return forbidden("Not authorized to update this item");
+        }
+
+        const body = await req.json().catch(() => ({}));
+        const action = String(body?.action || "");
+
+        const updateData: Prisma.ErrorItemUpdateInput = {};
+        if (action === "redo") {
+            updateData.redoCount = { increment: 1 };
+        } else if (action === "restore") {
+            updateData.deletedAt = null;
+        } else {
+            return badRequest("Unknown action. Supported: redo | restore");
+        }
+
+        const updated = await prisma.errorItem.update({
+            where: { id },
+            data: updateData,
+            include: { tags: true, notebook: true },
+        });
+
+        return NextResponse.json(updated);
+    } catch (error) {
+        logger.error({ error }, 'Error patching item');
+        return internalError("Failed to patch error item");
+    }
+}
+
+/**
+ * DELETE /api/error-items/[id]
+ * 软删进回收箱（H2 / T2）。带 ?hard=1 才彻底删除。
+ * 回收箱内的题再删一次必须走 hard=1 —— 前端负责传，服务端不替用户决定。
+ */
+export async function DELETE(
+    req: Request,
+    { params }: { params: Promise<{ id: string }> }
+) {
+    const { id } = await params;
+    const session = await getServerSession(authOptions);
+
+    try {
+        let user;
+        if (session?.user?.email) {
+            user = await prisma.user.findUnique({
+                where: { email: session.user.email },
+            });
+        }
+
+        if (!user) {
+            return unauthorized("Authentication required");
+        }
+
+        const { searchParams } = new URL(req.url);
+        const hard = searchParams.get("hard") === "1";
+
+        const errorItem = await prisma.errorItem.findUnique({
+            where: { id },
+            select: { id: true, userId: true, deletedAt: true },
+        });
+
+        if (!errorItem) {
+            return notFound("Item not found");
+        }
+
+        if (errorItem.userId !== user.id) {
+            return forbidden("Not authorized to delete this item");
+        }
+
+        if (hard) {
+            await prisma.errorItem.delete({ where: { id } });
+            logger.info({ id }, 'Error item permanently deleted');
+            return NextResponse.json({ id, permanent: true });
+        }
+
+        const updated = await prisma.errorItem.update({
+            where: { id },
+            data: { deletedAt: new Date() },
+        });
+
+        logger.info({ id, alreadyInTrash: !!errorItem.deletedAt }, 'Error item moved to trash');
+        return NextResponse.json({ id, deletedAt: updated.deletedAt, permanent: false });
+    } catch (error) {
+        logger.error({ error }, 'Error deleting item');
+        return internalError("Failed to delete error item");
     }
 }

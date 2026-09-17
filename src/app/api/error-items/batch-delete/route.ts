@@ -10,7 +10,10 @@ const logger = createLogger('api:error-items:batch-delete');
 /**
  * POST /api/error-items/batch-delete
  * 批量删除错题
- * Body: { ids: string[] }
+ *
+ * H2/T2：默认**软删**进回收箱；body 带 { permanent: true } 才彻底删除。
+ *
+ * Body: { ids: string[], permanent?: boolean }
  */
 export async function POST(req: Request) {
     logger.info('POST /api/error-items/batch-delete called');
@@ -19,7 +22,7 @@ export async function POST(req: Request) {
 
     try {
         const body = await req.json();
-        const { ids } = body;
+        const { ids, permanent = false } = body;
 
         // 验证参数
         if (!Array.isArray(ids) || ids.length === 0) {
@@ -42,9 +45,8 @@ export async function POST(req: Request) {
             return unauthorized("Authentication required");
         }
 
-        logger.debug({ userId: user.id, idsCount: ids.length }, 'Batch delete request');
+        logger.info({ userId: user.id, idsCount: ids.length, permanent }, 'Batch delete request');
 
-        // 查询所有要删除的错题，验证所有权
         const itemsToDelete = await prisma.errorItem.findMany({
             where: {
                 id: { in: ids },
@@ -66,21 +68,28 @@ export async function POST(req: Request) {
             logger.warn({ unauthorizedIds }, 'Some items do not belong to user or do not exist');
         }
 
-        // 执行删除
-        let deletedCount = 0;
+        // 执行删除：permanent=true 真删；否则软删（写 deletedAt 进回收箱）
+        let affectedCount = 0;
         if (ownedIds.length > 0) {
-            const result = await prisma.errorItem.deleteMany({
-                where: {
-                    id: { in: ownedIds },
-                },
-            });
-            deletedCount = result.count;
+            if (permanent) {
+                const result = await prisma.errorItem.deleteMany({
+                    where: { id: { in: ownedIds } },
+                });
+                affectedCount = result.count;
+            } else {
+                const result = await prisma.errorItem.updateMany({
+                    where: { id: { in: ownedIds } },
+                    data: { deletedAt: new Date() },
+                });
+                affectedCount = result.count;
+            }
         }
 
-        logger.info({ deletedCount, requestedCount: ids.length, failedCount: unauthorizedIds.length }, 'Batch delete completed');
+        logger.info({ affectedCount, requestedCount: ids.length, permanent }, 'Batch delete completed');
 
         return NextResponse.json({
-            deleted: deletedCount,
+            deleted: affectedCount,
+            permanent,
             failed: unauthorizedIds,
         });
     } catch (error) {
