@@ -11,8 +11,11 @@ import {
 import { loadOpenCV } from "@/lib/cv-loader";
 import {
   findPaperCorners,
-  warpPerspective,
+  warpFromMat,
+  imageToMat,
   enhanceMat,
+  scaleCorners,
+  MAX_OUTPUT_EDGE,
   type Corners,
   type EnhanceMode,
 } from "@/lib/doc-scan";
@@ -29,11 +32,46 @@ interface DocScannerProps {
   onClose: () => void;
 }
 
+/** 界面文案集中一处，将来接入 i18n 只需替换这一个对象 */
+const TEXT = {
+  aimHint: "对准练习册页面",
+  reviewHint: "确认扫描效果",
+  close: "关闭",
+  shoot: "拍摄",
+  album: "相册",
+  starting: "正在启动相机…",
+  loadingCv: "正在加载图像处理模块…",
+  noPaper: "未自动识别到纸张四角，已用整张原图。可拖动四角微调，或点「重拍」。",
+  dragTip: "拖动图上的青色圆点可微调纸边",
+  retake: "重拍",
+  useOriginal: "用原图",
+  useOriginalAgain: "再点一次用原图",
+  useOriginalTip: "「用原图」将放弃自动拉正与美化，直接使用原始照片",
+  confirm: "确认",
+  previewing: "正在生成预览…",
+  finalizing: "正在生成图片…",
+};
+
 const ENHANCE_LABEL: Record<EnhanceMode, string> = {
   original: "原色",
   white: "漂白",
   bw: "黑白",
 };
+
+/**
+ * 预览用的最大边长。
+ * 【custom-v19 性能核心】custom-v18 的预览直接跑全尺寸（2500px），单帧 4~7.5 秒。
+ * 预览 canvas 实际显示宽度只有几百 CSS px（高 DPI 屏按 2 倍算约 1400 物理像素），
+ * 因此 1200px 足以肉眼无差别，而像素量只有全尺寸的约 1/4 → 预览快 4 倍以上。
+ * 出图仍走 MAX_OUTPUT_EDGE 全尺寸，清晰度不受影响。
+ */
+const PREVIEW_EDGE = 1200;
+
+/** 「用原图」的二次确认时限（毫秒），超时自动取消 */
+const CONFIRM_WINDOW_MS = 3000;
+
+/** 拖动四角的判定半径（CSS px），兼顾手指触摸精度 */
+const HIT_RADIUS = 44;
 
 export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
   function DocScanner({ onScanComplete, onClose }, ref) {
@@ -44,8 +82,24 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
     const srcCanvasRef = useRef<HTMLCanvasElement>(null);
     const overlayRef = useRef<HTMLCanvasElement>(null);
     const previewRef = useRef<HTMLCanvasElement>(null);
+    const leftColRef = useRef<HTMLDivElement>(null);
     const cvRef = useRef<any>(null);
     const dragRef = useRef<keyof Corners | null>(null);
+
+    // —— custom-v19：Mat 只读一次并缓存，全链路复用 ——
+    /** 全分辨率源图 Mat（出图用） */
+    const fullMatRef = useRef<any>(null);
+    /** 预览尺寸源图 Mat（预览用，像素量约为全图 1/4） */
+    const previewMatRef = useRef<any>(null);
+    /** 预览 Mat 相对全图的缩放比，用于把角点坐标映射到预览坐标系 */
+    const previewScaleRef = useRef(1);
+    /** 竞态闸门：换图/关窗后，迟到的 onload 回调不再写入状态 */
+    const tokenRef = useRef(0);
+    /** pointermove 的 rAF 合并 */
+    const rafRef = useRef<number | null>(null);
+    const pendingRef = useRef<{ x: number; y: number } | null>(null);
+    /** 「用原图」二次确认的定时器 */
+    const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const [open, setOpen] = useState(false);
     const [mode, setMode] = useState<"camera" | "review">("camera");
@@ -60,6 +114,27 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
     const [videoReady, setVideoReady] = useState(false);
     // 实际拍到的像素——custom-v8 曾因没要分辨率只拍出 461×562，这里显示出来便于当场验证
     const [shotSize, setShotSize] = useState<string>("");
+    /** 拖动中：此时**不重算预览**，只移动把手（custom-v18 卡死的根因就在这里） */
+    const [dragging, setDragging] = useState(false);
+    /** 预览正在后台计算，给用户一个提示，避免以为卡死 */
+    const [previewBusy, setPreviewBusy] = useState(false);
+    const [confirmUseOriginal, setConfirmUseOriginal] = useState(false);
+    /** 左栏显示尺寸（CSS px），随容器宽度自适应 */
+    const [display, setDisplay] = useState<{ w: number; h: number } | null>(null);
+    /** 换图时 +1，用于触发底图重绘 */
+    const [imgEpoch, setImgEpoch] = useState(0);
+
+    /** 释放缓存的 Mat，避免 wasm 堆内存泄漏 */
+    const releaseMats = useCallback(() => {
+      try {
+        fullMatRef.current?.delete?.();
+        previewMatRef.current?.delete?.();
+      } catch {
+        /* 忽略：Mat 可能已被销毁 */
+      }
+      fullMatRef.current = null;
+      previewMatRef.current = null;
+    }, []);
 
     const stopCamera = useCallback(() => {
       streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -69,7 +144,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
     /**
      * 打开相机。
      * 【custom-v8 的第一个病根就在这里】v8 只写 { facingMode: "environment" } 没要分辨率，
-     * 浏览器默认给 ~480p，12MP 的主摄只拍出 461×562。这里显式要 1920+ 并开连续对焦。
+     * 浏览器默认给 ~480p，12MP 的主摄只拍出 461×562。这里显式要 4K 并开连续对焦。
      */
     const startCamera = useCallback(async () => {
       setCamError(null);
@@ -96,7 +171,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
             setShotSize(`相机流 ${s.width}×${s.height}`);
           }
         }
-      } catch (e: any) {
+      } catch {
         // 部分浏览器不接受 advanced 约束，降级为只要 facingMode
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
@@ -120,39 +195,73 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
     }, []);
 
     /** 把图片载入审核态，并自动找纸张四角 */
-    const loadImgAndReview = useCallback(async (dataUrl: string, sizeNote?: string) => {
-      setBusy(true);
-      setDetectFail(false);
-      setCorners(null);
-      setCvError(null);
-      const img = new Image();
-      img.onload = async () => {
-        imgRef.current = img;
-        if (sizeNote) setShotSize(sizeNote);
-        try {
-          setCvLoading(true);
-          const cv = await loadOpenCV();
-          cvRef.current = cv;
-          setCvLoading(false);
-          const found = findPaperCorners(cv, img);
-          if (found) {
-            setCorners(found);
-            setDetectFail(false);
-          } else {
-            setDetectFail(true);
+    const loadImgAndReview = useCallback(
+      async (dataUrl: string, sizeNote?: string) => {
+        const token = ++tokenRef.current;
+        setBusy(true);
+        setDetectFail(false);
+        setCorners(null);
+        setCvError(null);
+        setDragging(false);
+        dragRef.current = null;
+        releaseMats();
+
+        const img = new Image();
+        img.onload = async () => {
+          // 已被更新的请求取代（用户连续选了另一张图 / 已关闭）→ 丢弃本次结果
+          if (token !== tokenRef.current) return;
+          imgRef.current = img;
+          if (sizeNote) setShotSize(sizeNote);
+          try {
+            setCvLoading(true);
+            const cv = await loadOpenCV();
+            if (token !== tokenRef.current) return;
+            cvRef.current = cv;
+
+            // 全尺寸与预览尺寸各读一次，之后所有重算都复用（custom-v19）
+            const full = imageToMat(cv, img);
+            if (token !== tokenRef.current) {
+              full.delete();
+              return;
+            }
+            fullMatRef.current = full;
+
+            const scale = Math.min(
+              1,
+              PREVIEW_EDGE / Math.max(img.width, img.height)
+            );
+            previewScaleRef.current = scale;
+            const pm = new cv.Mat();
+            cv.resize(full, pm, new cv.Size(0, 0), scale, scale, cv.INTER_AREA);
+            previewMatRef.current = pm;
+
+            setCvLoading(false);
+
+            const found = findPaperCorners(cv, full);
+            if (found) {
+              setCorners(found);
+              setDetectFail(false);
+            } else {
+              setDetectFail(true);
+            }
+          } catch (err: any) {
+            setCvLoading(false);
+            setCvError(err?.message || "图像处理模块加载失败");
           }
-        } catch (err: any) {
-          setCvError(err?.message || "图像处理模块加载失败");
-        }
-        setMode("review");
-        setBusy(false);
-      };
-      img.onerror = () => {
-        setCvError("图片加载失败");
-        setBusy(false);
-      };
-      img.src = dataUrl;
-    }, []);
+          if (token !== tokenRef.current) return;
+          setImgEpoch((e) => e + 1);
+          setMode("review");
+          setBusy(false);
+        };
+        img.onerror = () => {
+          if (token !== tokenRef.current) return;
+          setCvError("图片加载失败");
+          setBusy(false);
+        };
+        img.src = dataUrl;
+      },
+      [releaseMats]
+    );
 
     const openCamera = useCallback(() => {
       setOpen(true);
@@ -160,19 +269,23 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
       setVideoReady(false);
       setShotSize("");
       setEnhance("white");
+      setConfirmUseOriginal(false);
       startCamera();
     }, [startCamera]);
 
     const openWithFile = useCallback(
       (file: File) => {
+        // 【custom-v19 修复】相册路径原先不关摄像头，相机会一直亮着
+        stopCamera();
         setOpen(true);
         setShotSize("");
         setEnhance("white");
+        setConfirmUseOriginal(false);
         const r = new FileReader();
         r.onload = () => loadImgAndReview(r.result as string);
         r.readAsDataURL(file);
       },
-      [loadImgAndReview]
+      [loadImgAndReview, stopCamera]
     );
 
     useImperativeHandle(ref, () => ({ openCamera, openWithFile }), [
@@ -180,10 +293,35 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
       openWithFile,
     ]);
 
+    const closeAll = useCallback(() => {
+      tokenRef.current++; // 作废在途的加载请求
+      stopCamera();
+      releaseMats();
+      setOpen(false);
+      setConfirmUseOriginal(false);
+      onClose();
+    }, [onClose, releaseMats, stopCamera]);
+
     useEffect(() => {
       if (!open) stopCamera();
       return () => stopCamera();
     }, [open, stopCamera]);
+
+    // 卸载时彻底释放 wasm 内存与定时器
+    useEffect(() => {
+      return () => {
+        tokenRef.current++;
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+        try {
+          fullMatRef.current?.delete?.();
+          previewMatRef.current?.delete?.();
+        } catch {
+          /* 忽略 */
+        }
+        if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+        if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+      };
+    }, []);
 
     /**
      * 抓帧。优先用 ImageCapture.takePhoto() 拿相机全分辨率静帧（比 video 流清晰），
@@ -233,120 +371,202 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
       loadImgAndReview(dataUrl);
     }, [loadImgAndReview, stopCamera, videoReady]);
 
-    /** 画原图 + 四角把手（青色，沿用用户偏好的高对比配色） */
-    const drawSrc = useCallback(() => {
-      const img = imgRef.current;
-      const srcC = srcCanvasRef.current;
-      const ov = overlayRef.current;
-      if (!img || !srcC || !ov) return;
-      const maxW = Math.min(srcC.clientWidth || 360, 720);
-      const scale = maxW / img.width;
-      const w = Math.round(img.width * scale);
-      const h = Math.round(img.height * scale);
-      [srcC, ov].forEach((c) => {
-        c.width = w;
-        c.height = h;
-        c.style.width = w + "px";
-        c.style.height = h + "px";
-      });
-      const ctx = srcC.getContext("2d")!;
-      ctx.drawImage(img, 0, 0, w, h);
-      const octx = ov.getContext("2d")!;
-      octx.clearRect(0, 0, w, h);
-      if (corners) {
-        const pts = [
-          corners.topLeftCorner,
-          corners.topRightCorner,
-          corners.bottomRightCorner,
-          corners.bottomLeftCorner,
-        ].map((p) => ({ x: p.x * scale, y: p.y * scale }));
-        octx.strokeStyle = "#00D4FF";
-        octx.lineWidth = 2;
-        octx.beginPath();
-        octx.moveTo(pts[0].x, pts[0].y);
-        for (let i = 1; i < 4; i++) octx.lineTo(pts[i].x, pts[i].y);
-        octx.closePath();
-        octx.stroke();
-        octx.fillStyle = "#00D4FF";
-        pts.forEach((p) => {
-          octx.beginPath();
-          octx.arc(p.x, p.y, 12, 0, Math.PI * 2);
-          octx.fill();
-        });
-      }
-    }, [corners]);
-
-    /** 拉正 + 增强，渲染预览 */
-    const renderPreview = useCallback(() => {
-      const img = imgRef.current;
-      const prev = previewRef.current;
-      const cv = cvRef.current;
-      if (!img || !prev || !cv) return;
-      try {
-        let base: any;
-        if (corners) {
-          const { mat } = warpPerspective(cv, img, corners);
-          base = mat;
-        } else {
-          // 没找到纸边：直接用原图
-          const c = document.createElement("canvas");
-          c.width = img.width;
-          c.height = img.height;
-          c.getContext("2d")!.drawImage(img, 0, 0);
-          base = cv.imread(c);
+    /** 渲染增强预览。用**预览尺寸**的 Mat，比全尺寸快 4 倍以上。 */
+    const renderPreview = useCallback(
+      (modeNow: EnhanceMode, cs: Corners | null) => {
+        const cv = cvRef.current;
+        const pm = previewMatRef.current;
+        const prev = previewRef.current;
+        if (!cv || !pm || !prev) return;
+        try {
+          let base: any;
+          let ownBase = false;
+          if (cs) {
+            // 角点是原图坐标，用前先换算到预览 Mat 的坐标系
+            base = warpFromMat(
+              cv,
+              pm,
+              scaleCorners(cs, previewScaleRef.current),
+              PREVIEW_EDGE
+            ).mat;
+            ownBase = true;
+          } else {
+            // 没找到纸边：直接用（预览尺寸的）原图
+            base = pm;
+          }
+          const out = enhanceMat(cv, base, modeNow);
+          cv.imshow(prev, out);
+          out.delete();
+          if (ownBase) base.delete();
+        } catch (e) {
+          console.warn("[doc-scanner] 预览渲染失败:", e);
         }
-        const out = enhanceMat(cv, base, enhance);
-        cv.imshow(prev, out);
-        out.delete();
-        base.delete();
-      } catch (e) {
-        console.warn("[doc-scanner] 预览渲染失败:", e);
-      }
-    }, [corners, enhance]);
+      },
+      []
+    );
 
+    /**
+     * 预览重算。
+     * 【custom-v19 关键】拖动中直接 return —— 只移动把手，不重算。
+     * custom-v18 是「每动一像素就重算全尺寸一次」，一次拖拽等于连续几十次 7 秒计算，界面必然冻死。
+     * 现在改为：拖动只画圆点（毫秒级），松手后才算一次。
+     */
     useEffect(() => {
-      if (mode === "review") {
-        drawSrc();
-        renderPreview();
+      if (mode !== "review" || !open) return;
+      if (dragging) {
+        setPreviewBusy(false);
+        return;
       }
-    }, [mode, drawSrc, renderPreview, enhance]);
+      if (!previewMatRef.current) return;
+      let cancelled = false;
+      setPreviewBusy(true);
+      // 先让浏览器把「计算中」画出来，再干同步的 wasm 重活，否则提示根本来不及显示
+      const t = setTimeout(() => {
+        if (cancelled) return;
+        renderPreview(enhance, corners);
+        setPreviewBusy(false);
+      }, 30);
+      return () => {
+        cancelled = true;
+        clearTimeout(t);
+      };
+    }, [mode, open, enhance, corners, dragging, renderPreview, imgEpoch]);
 
-    // 四角拖拽微调
+    /** 画左侧底图，并把显示尺寸设为容器宽度（custom-v18 锁死 300px 的修复） */
+    useEffect(() => {
+      if (mode !== "review" || !open) return;
+      const redraw = () => {
+        const img = imgRef.current;
+        const srcC = srcCanvasRef.current;
+        const ov = overlayRef.current;
+        const col = leftColRef.current;
+        if (!img || !srcC || !ov || !col) return;
+        // 关键：量**容器**宽度，而不是 canvas 自身的 clientWidth。
+        // canvas 未设尺寸时默认 300px，custom-v18 正是被这个默认值锁死的。
+        const avail = col.clientWidth || 360;
+        const maxW = Math.max(220, Math.min(avail, 720));
+        const scale = maxW / img.width;
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+        [srcC, ov].forEach((c) => {
+          c.width = w;
+          c.height = h;
+          c.style.width = w + "px";
+          c.style.height = h + "px";
+        });
+        srcC.getContext("2d")!.drawImage(img, 0, 0, w, h);
+        setDisplay({ w, h });
+      };
+      redraw();
+      const ro = new ResizeObserver(redraw);
+      if (leftColRef.current) ro.observe(leftColRef.current);
+      return () => ro.disconnect();
+    }, [mode, open, imgEpoch]);
+
+    /** 单独重绘把手层：拖动时只跑这一个 effect，成本近似为零 */
+    useEffect(() => {
+      const ov = overlayRef.current;
+      const img = imgRef.current;
+      if (!ov || !display) return;
+      const ctx = ov.getContext("2d")!;
+      ctx.clearRect(0, 0, ov.width, ov.height);
+      if (!corners || !img) return;
+      const s = display.w / img.width;
+      const pts = [
+        corners.topLeftCorner,
+        corners.topRightCorner,
+        corners.bottomRightCorner,
+        corners.bottomLeftCorner,
+      ].map((p) => ({ x: p.x * s, y: p.y * s }));
+      ctx.strokeStyle = "#00D4FF";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < 4; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.fillStyle = "#00D4FF";
+      pts.forEach((p) => {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 12, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }, [corners, display]);
+
+    // —— 四角拖拽微调 ——
     const onPointerDown = (e: React.PointerEvent) => {
-      if (!corners || !overlayRef.current) return;
-      const rect = overlayRef.current.getBoundingClientRect();
+      const ov = overlayRef.current;
+      const img = imgRef.current;
+      if (!corners || !ov || !img) return;
+      const rect = ov.getBoundingClientRect();
+      const s = rect.width / img.width;
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      const img = imgRef.current;
-      if (!img) return;
-      const scale = rect.width / img.width;
       let nearest: keyof Corners | null = null;
       let best = Infinity;
       (Object.keys(corners) as (keyof Corners)[]).forEach((k) => {
         const p = corners[k];
-        const d = Math.hypot(p.x * scale - x, p.y * scale - y);
+        const d = Math.hypot(p.x * s - x, p.y * s - y);
         if (d < best) {
           best = d;
           nearest = k;
         }
       });
-      if (best < 40) dragRef.current = nearest;
+      if (best < HIT_RADIUS) {
+        dragRef.current = nearest;
+        setDragging(true);
+        // 手指移出画布也能继续拖（手机上很关键）
+        try {
+          ov.setPointerCapture(e.pointerId);
+        } catch {
+          /* 部分浏览器不支持，忽略 */
+        }
+      }
     };
 
     const onPointerMove = (e: React.PointerEvent) => {
-      if (!dragRef.current || !corners || !overlayRef.current || !imgRef.current) return;
-      const rect = overlayRef.current.getBoundingClientRect();
-      const scale = rect.width / imgRef.current.width;
-      const x = (e.clientX - rect.left) / scale;
-      const y = (e.clientY - rect.top) / scale;
-      setCorners({ ...corners, [dragRef.current]: { x, y } });
+      const key = dragRef.current;
+      const ov = overlayRef.current;
+      const img = imgRef.current;
+      if (!key || !ov || !img) return;
+      const rect = ov.getBoundingClientRect();
+      const s = rect.width / img.width;
+      // custom-v19 修复：把角点夹在图片范围内，避免拖出边界导致拉正结果异常
+      const x = Math.max(0, Math.min(img.width, (e.clientX - rect.left) / s));
+      const y = Math.max(0, Math.min(img.height, (e.clientY - rect.top) / s));
+      pendingRef.current = { x, y };
+      if (rafRef.current != null) return;
+      // 用 rAF 把同一帧内的多次 pointermove 合并成一次 state 更新
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        const p = pendingRef.current;
+        const k = dragRef.current;
+        if (!p || !k) return;
+        // 函数式更新：不依赖闭包里的 corners，避免连续移动时丢失中间状态
+        setCorners((prev) => (prev ? { ...prev, [k]: p } : prev));
+      });
     };
 
     const onPointerUp = () => {
+      if (!dragRef.current) return;
+      if (rafRef.current != null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      const p = pendingRef.current;
+      const k = dragRef.current;
+      pendingRef.current = null;
       dragRef.current = null;
+      if (p && k) setCorners((prev) => (prev ? { ...prev, [k]: p } : prev));
+      setDragging(false); // 松手 → 触发一次预览重算
     };
 
-    /** 确认：拉正+增强后回传 Blob */
+    /**
+     * 确认出图。
+     * 【custom-v19 修复 P0】useOriginal 时**完全不经 OpenCV**：不拉正、不增强、不改一个像素。
+     * custom-v18 在这里仍调用了 enhanceMat，所以在「黑白」档点「用原图」拿到的是黑白二值图，
+     * 与「用原图」四个字的意思完全相反。
+     */
     const finalize = useCallback(
       (useOriginal: boolean) => {
         const img = imgRef.current;
@@ -354,34 +574,38 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
         if (!img) return;
         setBusy(true);
         try {
-          let out: any;
-          if (!useOriginal && cv && corners) {
-            const { mat } = warpPerspective(cv, img, corners);
-            out = enhanceMat(cv, mat, enhance);
-            mat.delete();
-          } else if (cv) {
-            const c = document.createElement("canvas");
-            c.width = img.width;
-            c.height = img.height;
-            c.getContext("2d")!.drawImage(img, 0, 0);
-            const base = cv.imread(c);
-            out = enhanceMat(cv, base, enhance);
-            base.delete();
-          }
           const canvas = document.createElement("canvas");
-          if (out) {
-            cv.imshow(canvas, out);
-            out.delete();
-          } else {
+          let out: any = null;
+
+          if (useOriginal || !cv) {
+            // 真正的原图
             canvas.width = img.width;
             canvas.height = img.height;
             canvas.getContext("2d")!.drawImage(img, 0, 0);
+          } else {
+            const fm = fullMatRef.current;
+            if (fm && corners) {
+              const warped = warpFromMat(cv, fm, corners, MAX_OUTPUT_EDGE).mat;
+              out = enhanceMat(cv, warped, enhance);
+              warped.delete();
+            } else if (fm) {
+              out = enhanceMat(cv, fm, enhance);
+            }
+            if (out) {
+              cv.imshow(canvas, out);
+              out.delete();
+            } else {
+              canvas.width = img.width;
+              canvas.height = img.height;
+              canvas.getContext("2d")!.drawImage(img, 0, 0);
+            }
           }
+
           canvas.toBlob(
             (blob) => {
               if (blob) onScanComplete(blob);
               setBusy(false);
-              setOpen(false);
+              closeAll();
             },
             "image/jpeg",
             0.95
@@ -391,8 +615,24 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
           setBusy(false);
         }
       },
-      [corners, enhance, onScanComplete]
+      [corners, enhance, onScanComplete, closeAll]
     );
+
+    /** 「用原图」二次确认：避免误触丢掉自动拉正与美化（蓝图 #5 要求） */
+    const handleUseOriginal = () => {
+      if (!confirmUseOriginal) {
+        setConfirmUseOriginal(true);
+        if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+        confirmTimerRef.current = setTimeout(
+          () => setConfirmUseOriginal(false),
+          CONFIRM_WINDOW_MS
+        );
+        return;
+      }
+      if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+      setConfirmUseOriginal(false);
+      finalize(true);
+    };
 
     if (!open) return null;
 
@@ -401,21 +641,13 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
         {/* 顶部条 */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
           <div className="text-white text-sm">
-            {mode === "camera" ? "对准练习册页面" : "确认扫描效果"}
+            {mode === "camera" ? TEXT.aimHint : TEXT.reviewHint}
             {shotSize && (
               <span className="ml-2 text-xs text-[#00D4FF]">{shotSize}</span>
             )}
           </div>
-          <Button
-            variant="ghost"
-            className="text-white"
-            onClick={() => {
-              setOpen(false);
-              stopCamera();
-              onClose();
-            }}
-          >
-            关闭
+          <Button variant="ghost" className="text-white" onClick={closeAll}>
+            {TEXT.close}
           </Button>
         </div>
 
@@ -442,18 +674,18 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
                     disabled={!videoReady || busy}
                     className="bg-[#00D4FF] text-slate-900 border-0 hover:bg-[#00D4FF]/90"
                   >
-                    <Camera className="mr-2 h-5 w-5" /> 拍摄
+                    <Camera className="mr-2 h-5 w-5" /> {TEXT.shoot}
                   </Button>
                   <Button
                     variant="outline"
                     className="text-[#00D4FF] border-[#00D4FF]/60"
                     onClick={() => fileInputRef.current?.click()}
                   >
-                    <ImageIcon className="mr-2 h-5 w-5" /> 相册
+                    <ImageIcon className="mr-2 h-5 w-5" /> {TEXT.album}
                   </Button>
                 </div>
                 {!videoReady && !camError && (
-                  <p className="text-xs text-slate-400">正在启动相机…</p>
+                  <p className="text-xs text-slate-400">{TEXT.starting}</p>
                 )}
               </div>
             </div>
@@ -462,7 +694,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
               {cvLoading && (
                 <p className="text-xs text-[#00D4FF] text-center">
                   <Loader2 className="inline h-3 w-3 animate-spin mr-1" />
-                  正在加载图像处理模块…
+                  {TEXT.loadingCv}
                 </p>
               )}
               {cvError && (
@@ -470,27 +702,41 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
               )}
               {detectFail && (
                 <p className="text-amber-400 text-sm text-center">
-                  未自动识别到纸张四角，已用整张原图。可拖动四角微调，或点「重拍」。
+                  {TEXT.noPaper}
                 </p>
               )}
-              <div className="grid md:grid-cols-2 gap-4">
-                {/* 左：原图 + 四角 */}
-                <div className="relative inline-block">
-                  <canvas ref={srcCanvasRef} className="rounded" />
+              <div className="grid md:grid-cols-2 gap-4 items-start">
+                {/* 左：原图 + 四角（宽度跟随容器，不再锁死） */}
+                <div ref={leftColRef} className="relative w-full">
+                  <canvas ref={srcCanvasRef} className="rounded block" />
                   <canvas
                     ref={overlayRef}
-                    className="absolute inset-0 touch-none"
+                    className="absolute inset-0 touch-none cursor-crosshair"
                     onPointerDown={onPointerDown}
                     onPointerMove={onPointerMove}
                     onPointerUp={onPointerUp}
-                    onPointerLeave={onPointerUp}
+                    onPointerCancel={onPointerUp}
                   />
                 </div>
                 {/* 右：增强预览 */}
-                <div>
-                  <canvas ref={previewRef} className="rounded w-full h-auto" />
+                <div className="relative">
+                  <canvas ref={previewRef} className="rounded w-full h-auto block" />
+                  {previewBusy && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-slate-950/40 rounded">
+                      <span className="text-xs text-[#00D4FF] bg-slate-950/80 px-3 py-1.5 rounded-full">
+                        <Loader2 className="inline h-3 w-3 animate-spin mr-1" />
+                        {TEXT.previewing}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
+
+              {corners && !dragging && (
+                <p className="text-xs text-slate-500 text-center">
+                  {TEXT.dragTip}
+                </p>
+              )}
 
               {/* 三档增强：原色 / 漂白 / 黑白（v8 的"灰度"只是去色没意义，换成"漂白"） */}
               <div className="flex gap-2 justify-center flex-wrap">
@@ -499,10 +745,13 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
                     key={m}
                     size="sm"
                     variant={enhance === m ? "default" : "outline"}
+                    // custom-v19 修复：选中态必须显式覆盖 hover 样式。
+                    // 原来只写 bg/text，Button 自带的 hover:bg-primary 会在鼠标悬停时把
+                    // 亮青底压成深色，而文字仍是深色 → 对比度 1.01:1，文字直接看不见。
                     className={
                       enhance === m
-                        ? "bg-[#00D4FF] text-slate-900 border-0"
-                        : "text-[#00D4FF] border-[#00D4FF]/60"
+                        ? "bg-[#00D4FF] text-slate-900 border-0 hover:bg-[#00D4FF]/90 hover:text-slate-900"
+                        : "text-[#00D4FF] border-[#00D4FF]/60 hover:bg-[#00D4FF]/10 hover:text-[#00D4FF]"
                     }
                     onClick={() => setEnhance(m)}
                   >
@@ -511,31 +760,50 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
                 ))}
               </div>
 
+              {busy && (
+                <p className="text-xs text-[#00D4FF] text-center">
+                  <Loader2 className="inline h-3 w-3 animate-spin mr-1" />
+                  {TEXT.finalizing}
+                </p>
+              )}
+
+              {confirmUseOriginal && (
+                <p className="text-xs text-amber-400 text-center">
+                  {TEXT.useOriginalTip}
+                </p>
+              )}
+
               <div className="flex gap-3 justify-center flex-wrap">
                 <Button
                   variant="outline"
                   className="text-[#00D4FF] border-[#00D4FF]/60"
                   onClick={() => {
+                    setConfirmUseOriginal(false);
                     setMode("camera");
                     startCamera();
                   }}
+                  disabled={busy}
                 >
-                  <RotateCcw className="mr-1 h-4 w-4" /> 重拍
+                  <RotateCcw className="mr-1 h-4 w-4" /> {TEXT.retake}
                 </Button>
                 <Button
                   variant="outline"
-                  className="text-[#00D4FF] border-[#00D4FF]/60"
-                  onClick={() => finalize(true)}
+                  className={
+                    confirmUseOriginal
+                      ? "border-amber-400 text-amber-400 hover:bg-amber-400/10 hover:text-amber-400"
+                      : "text-[#00D4FF] border-[#00D4FF]/60 hover:bg-[#00D4FF]/10 hover:text-[#00D4FF]"
+                  }
+                  onClick={handleUseOriginal}
                   disabled={busy}
                 >
-                  用原图
+                  {confirmUseOriginal ? TEXT.useOriginalAgain : TEXT.useOriginal}
                 </Button>
                 <Button
                   onClick={() => finalize(false)}
                   disabled={busy || !!cvError}
                   className="bg-[#00D4FF] text-slate-900 border-0 hover:bg-[#00D4FF]/90"
                 >
-                  <Check className="mr-1 h-4 w-4" /> 确认
+                  <Check className="mr-1 h-4 w-4" /> {TEXT.confirm}
                 </Button>
               </div>
             </div>
