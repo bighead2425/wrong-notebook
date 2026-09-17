@@ -265,12 +265,15 @@
     -webkit-print-color-adjust: exact;
   }
 
-  /* 一道错题占一张纸的两面：这里用「整块不拆」+ 显式断点控制分页 */
+  /* 一道错题占一张纸的两面（G7）：正面一页 + 背面(.print-tail)另起一页。
+     ⚠️ 卡内必须允许分页（break-inside: auto）：父级一旦 forbid，子元素 .print-tail
+     的 break-before:page 会被浏览器直接忽略，正反面就被压进同一页
+     —— 实测 5 题只出 4 页，且答案与题目同页，孩子一眼看见答案。 */
   .print-card {
     break-before: page;
     page-break-before: always;
-    break-inside: avoid;
-    page-break-inside: avoid;
+    break-inside: auto;
+    page-break-inside: auto;
   }
 
   .print-card:first-of-type {
@@ -296,8 +299,12 @@
     page-break-inside: avoid;
   }
 
-  /* 第二页：从后往前的答案/错因区 */
+  /* 第二页：从后往前的答案/错因区。
+     必须显式另起一页，否则「手动双面（奇数页正面 / 偶数页背面）」对不上号；
+     配合 print-card 的 break-inside:auto 才形成真正的一题两页。 */
   .print-tail {
+    break-before: page;
+    page-break-before: always;
     break-inside: avoid;
     page-break-inside: avoid;
   }

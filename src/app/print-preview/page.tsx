@@ -81,6 +81,17 @@ function PrintPreviewContent() {
         fetchItems();
     }, []);
 
+    // 三级打印按钮通过 URL 传打印意图（?mode=card|practice|explain）。
+    // 此前 mode 硬编码为 "practice" 且从不读 URL，导致卡片模板
+    // （题号色标 + 二维码 + 正反面/一题两页）在任何入口下都不会渲染。
+    // 直接读 window.location 而非 useSearchParams，避免静态渲染下取值为空的时序问题。
+    useEffect(() => {
+        const m = new URLSearchParams(window.location.search).get("mode");
+        if (m === "card" || m === "practice" || m === "explain") {
+            setMode(m);
+        }
+    }, []);
+
     const fetchItems = async () => {
         try {
             const params = new URLSearchParams(searchParams.toString());
