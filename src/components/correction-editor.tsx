@@ -22,7 +22,7 @@ import { normalizeMistakeStatusForSave, type MistakeStatus } from "@/lib/mistake
 import type { ReanswerQuestionResult } from "@/lib/ai/types";
 import { buildReanswerRequestBody } from "@/lib/reanswer-request";
 
-interface ParsedQuestionWithSubject extends ParsedQuestion {
+export interface ParsedQuestionWithSubject extends ParsedQuestion {
     notebookId?: string;
     gradeSemester?: string;
     paperLevel?: string;

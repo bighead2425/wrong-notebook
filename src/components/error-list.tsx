@@ -338,6 +338,8 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
                         tag={selectedTag}
                         onFilterChange={handleFilterChange}
                         subjectName={subjectName}
+                        // 本内（notebookId 存在）已锁定年级学期，不再重复筛年级
+                        hideGrade={!!notebookId}
                     />
                 </div>
                 <div className="flex flex-wrap gap-2">

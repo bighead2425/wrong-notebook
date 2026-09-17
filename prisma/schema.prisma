@@ -15,7 +15,8 @@ model User {
   id        String   @id @default(cuid())
   email     String   @unique
   password  String
-  name      String?
+  // 登录用户名：登录页用「用户名 + 密码」，故必须唯一（邮箱降级为可选用途）
+  name      String?  @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

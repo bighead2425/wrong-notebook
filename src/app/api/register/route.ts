@@ -38,6 +38,18 @@ export async function POST(req: Request) {
             )
         }
 
+        // 用户名是登录标识，必须唯一（登录页用「用户名 + 密码」）
+        const existingName = await prisma.user.findUnique({
+            where: { name }
+        })
+
+        if (existingName) {
+            return NextResponse.json(
+                { user: null, message: "This username is already taken" },
+                { status: 409 }
+            )
+        }
+
         const hashedPassword = await hash(password, 10)
         const newUser = await prisma.user.create({
             data: {

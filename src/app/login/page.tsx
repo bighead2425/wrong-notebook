@@ -12,7 +12,8 @@ import { useLanguage } from "@/contexts/LanguageContext";
 export default function LoginPage() {
     const router = useRouter();
     const { t, language } = useLanguage();
-    const [email, setEmail] = useState("");
+    // 登录标识改用「用户名」（邮箱仍可作为账号识别符，但界面不再提示）
+    const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
@@ -25,7 +26,7 @@ export default function LoginPage() {
         try {
             const result = await signIn("credentials", {
                 redirect: false,
-                email,
+                username,
                 password,
             });
 
@@ -53,15 +54,16 @@ export default function LoginPage() {
                 <CardContent>
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <div className="space-y-2">
-                            <label htmlFor="email" className="text-sm font-medium">
-                                {t.auth?.email || 'Email'}
+                            <label htmlFor="username" className="text-sm font-medium">
+                                {t.auth?.username || '用户名'}
                             </label>
                             <Input
-                                id="email"
-                                name="email"
-                                type="email"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
+                                id="username"
+                                name="username"
+                                type="text"
+                                autoComplete="username"
+                                value={username}
+                                onChange={(e) => setUsername(e.target.value)}
                                 required
                             />
                         </div>

@@ -7,7 +7,6 @@ import { unauthorized, forbidden, notFound, badRequest, internalError } from "@/
 import { createLogger } from "@/lib/logger";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
-import { exportErrorItemToObsidian, parseTags } from "@/lib/obsidian-export";
 
 const logger = createLogger('api:error-items:id');
 
@@ -213,30 +212,8 @@ export async function PUT(
             include: { tags: true, notebook: true },
         });
 
-        // 同步导出到 Obsidian 仓库（覆盖写；失败仅记录，不影响更新结果）
-        try {
-            const qNo = updated.source || "";
-            if (qNo) {
-                const exp = await exportErrorItemToObsidian({
-                    questionNo: qNo,
-                    subjectName: updated.notebook?.displayName || "",
-                    gradeSemester: updated.gradeSemester || "",
-                    tags: parseTags(updated.knowledgePoints),
-                    questionText: updated.questionText,
-                    originalImageUrl: updated.originalImageUrl,
-                    analysis: updated.analysis,
-                    answerText: updated.answerText,
-                    mistakeAnalysis: updated.mistakeAnalysis,
-                });
-                if (exp.ok) {
-                    logger.info({ notePath: exp.notePath }, 'Exported to Obsidian on update');
-                } else {
-                    logger.warn({ error: exp.error }, 'Obsidian export failed on update (non-fatal)');
-                }
-            }
-        } catch (expErr) {
-            logger.warn({ error: expErr }, 'Obsidian export threw on update (non-fatal)');
-        }
+        // 注：按用户要求，保存错题时**不再自动导出**到 Obsidian。
+        //     需要导出时走错题详情页的「导出到 ob」按钮（本文件的 export-obsidian 路由）。
 
         return NextResponse.json(updated);
     } catch (error) {

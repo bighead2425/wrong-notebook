@@ -36,20 +36,25 @@ export const authOptions: NextAuthOptions = {
         CredentialsProvider({
             name: "Credentials",
             credentials: {
+                // 登录标识改为「用户名」，邮箱保留兼容（老用户仍可输邮箱登录）
+                username: { label: "Username", type: "text" },
                 email: { label: "Email", type: "email" },
                 password: { label: "Password", type: "password" }
             },
             async authorize(credentials) {
-                logger.debug({ email: credentials?.email }, 'Authorize called');
-                if (!credentials?.email || !credentials?.password) {
+                // 优先取 username，其次 email（登录页现在只发 username）
+                const identifier = (credentials?.username || credentials?.email || "").trim();
+                logger.debug({ identifier }, 'Authorize called');
+                if (!identifier || !credentials?.password) {
                     logger.debug('Missing credentials');
                     return null
                 }
 
+                // 先按用户名查，查不到再按邮箱查
                 const user = await prisma.user.findUnique({
-                    where: {
-                        email: credentials.email
-                    }
+                    where: { name: identifier }
+                }) || await prisma.user.findUnique({
+                    where: { email: identifier }
                 })
 
                 if (!user) {

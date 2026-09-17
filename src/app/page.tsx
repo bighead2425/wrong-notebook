@@ -340,72 +340,57 @@ function HomeContent() {
                     </div>
                 </div>
 
-                {/* Action Center */}
-                <div className={initialNotebookId ? "flex justify-center mb-6" : "grid grid-cols-2 md:grid-cols-4 gap-4"}>
+                {/* Action Center —— 弹性等分：桌面尽量一行，窄屏/手机自动换行（用户要求缩短） */}
+                <div className={initialNotebookId ? "flex justify-center mb-6" : "flex flex-wrap gap-3"}>
                     <Button
-                        size="lg"
-                        className={`h-auto py-4 text-base shadow-sm hover:shadow-md transition-all ${initialNotebookId ? "w-full max-w-md" : ""}`}
+                        className={`h-11 text-sm shadow-sm hover:shadow-md transition-all ${initialNotebookId ? "w-full max-w-md" : "flex-1 min-w-[140px]"}`}
                         variant={step === "upload" ? "default" : "secondary"}
                         onClick={() => setStep("upload")}
                     >
-                        <div className="flex items-center gap-2">
-                            <Upload className="h-5 w-5" />
-                            <span>{t.app.uploadNew}</span>
-                        </div>
+                        <Upload className="mr-2 h-4 w-4 shrink-0" />
+                        <span className="truncate">{t.app.uploadNew}</span>
                     </Button>
 
                     {!initialNotebookId && (
                         <>
-                            <Link href="/notebooks" className="w-full">
+                            <Link href="/notebooks" className="flex-1 min-w-[140px]">
                                 <Button
                                     variant="outline"
-                                    size="lg"
-                                    className="w-full h-auto py-4 text-base shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
+                                    className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
                                 >
-                                    <div className="flex items-center gap-2">
-                                        <BookOpen className="h-5 w-5" />
-                                        <span>{t.app.viewNotebook}</span>
-                                    </div>
+                                    <BookOpen className="mr-2 h-4 w-4 shrink-0" />
+                                    <span className="truncate">{t.app.viewNotebook}</span>
                                 </Button>
                             </Link>
 
-                            <Link href="/tags" className="w-full">
+                            <Link href="/tags" className="flex-1 min-w-[140px]">
                                 <Button
                                     variant="outline"
-                                    size="lg"
-                                    className="w-full h-auto py-4 text-base shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
+                                    className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
                                 >
-                                    <div className="flex items-center gap-2">
-                                        <Tags className="h-5 w-5" />
-                                        <span>{t.app?.tags || 'Tags'}</span>
-                                    </div>
+                                    <Tags className="mr-2 h-4 w-4 shrink-0" />
+                                    <span className="truncate">{t.app?.tags || 'Tags'}</span>
                                 </Button>
                             </Link>
 
-                            <Link href="/stats" className="w-full">
+                            <Link href="/stats" className="flex-1 min-w-[140px]">
                                 <Button
                                     variant="outline"
-                                    size="lg"
-                                    className="w-full h-auto py-4 text-base shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
+                                    className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
                                 >
-                                    <div className="flex items-center gap-2">
-                                        <BarChart3 className="h-5 w-5" />
-                                        <span>{t.app?.stats || 'Stats'}</span>
-                                    </div>
+                                    <BarChart3 className="mr-2 h-4 w-4 shrink-0" />
+                                    <span className="truncate">{t.app?.stats || 'Stats'}</span>
                                 </Button>
                             </Link>
 
                             {/* H2 四分法：回收箱是独立库，不在「我的错题本」下显示 */}
-                            <Link href="/trash" className="w-full">
+                            <Link href="/trash" className="flex-1 min-w-[140px]">
                                 <Button
                                     variant="outline"
-                                    size="lg"
-                                    className="w-full h-auto py-4 text-base shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
+                                    className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
                                 >
-                                    <div className="flex items-center gap-2">
-                                        <ArchiveRestore className="h-5 w-5" />
-                                        <span>{t.app?.trash || '回收箱'}</span>
-                                    </div>
+                                    <ArchiveRestore className="mr-2 h-4 w-4 shrink-0" />
+                                    <span className="truncate">{t.app?.trash || '回收箱'}</span>
                                 </Button>
                             </Link>
                         </>

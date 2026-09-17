@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X } from "lucide-react";
+import { ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X, Sparkles, Loader2 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import Link from "next/link";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -17,6 +17,8 @@ import { apiClient } from "@/lib/api-client";
 import { UserProfile, Notebook } from "@/types/api";
 import { getMistakeStatusLabel, normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { NotebookSelector } from "@/components/notebook-selector";
+import { CorrectionEditor, ParsedQuestionWithSubject } from "@/components/correction-editor";
+import { ParsedQuestion } from "@/lib/ai";
 
 interface KnowledgeTag {
     id: string;
@@ -64,6 +66,9 @@ export default function ErrorDetailPage() {
     const [tagsInput, setTagsInput] = useState<string[]>([]);
     const [isEditingMetadata, setIsEditingMetadata] = useState(false);
     const [exportState, setExportState] = useState<"idle" | "doing" | "ok" | "err">("idle");
+    // 需求六：「AI 重新分析」——用原图重跑 AI，进审核页，确认保存才覆盖
+    const [reanalyzeData, setReanalyzeData] = useState<ParsedQuestion | null>(null);
+    const [isReanalyzing, setIsReanalyzing] = useState(false);
     const [gradeSemesterInput, setGradeSemesterInput] = useState("");
     const [paperLevelInput, setPaperLevelInput] = useState("a");
     const [notebookInput, setNotebookInput] = useState<string | null>(null);
@@ -150,6 +155,50 @@ export default function ErrorDetailPage() {
             setExportState("err");
             setTimeout(() => setExportState("idle"), 4000);
         }
+    };
+
+    /**
+     * 需求六：用原始图片重新跑一次 AI 分析（换 API / 换模型后想重跑也走这里）。
+     * 只更新「知识点 / 题目 / 参考答案 / 解析 / 错因」，保存时不传
+     * 错题本、年级学期、题号、打印次数，因此这些字段保持不变。
+     */
+    const handleReanalyze = async () => {
+        if (!item) return;
+        if (!item.originalImageUrl) {
+            alert(t.detail?.aiReanalyzeNoImage || "这道题没有原始图片，无法用 AI 分析。");
+            return;
+        }
+        setIsReanalyzing(true);
+        try {
+            const data = await apiClient.post<ParsedQuestion>("/api/analyze", {
+                imageBase64: item.originalImageUrl,
+                language,
+                notebookId: item.notebookId || undefined,
+            });
+            setReanalyzeData(data);
+        } catch (error) {
+            console.error(error);
+            alert(t.detail?.aiReanalyzeFailed || "AI 分析失败，请重试。");
+        } finally {
+            setIsReanalyzing(false);
+        }
+    };
+
+    /** 审核页点「保存」：只覆盖分析类字段，题号/打印次数/所属本不动 */
+    const handleReanalyzeSave = async (data: ParsedQuestionWithSubject) => {
+        if (!item) return;
+        await apiClient.put(`/api/error-items/${item.id}`, {
+            questionText: data.questionText,
+            answerText: data.answerText,
+            analysis: data.analysis,
+            knowledgePoints: data.knowledgePoints,
+            wrongAnswerText: data.wrongAnswerText,
+            mistakeAnalysis: data.mistakeAnalysis,
+            mistakeStatus: data.mistakeStatus,
+        });
+        setReanalyzeData(null);
+        await fetchItem(item.id);
+        alert(t.common?.messages?.saveSuccess || "保存成功！");
     };
 
     const startEditingNotes = () => {
@@ -386,6 +435,23 @@ export default function ErrorDetailPage() {
     if (loading) return <div className="p-8 text-center">{t.common.loading}</div>;
     if (!item) return <div className="p-8 text-center">{t.detail.notFound || "Item not found"}</div>;
 
+    // 需求六：AI 重新分析 → 先过审核页，点保存才写回
+    if (reanalyzeData) {
+        return (
+            <main className="min-h-screen bg-background">
+                <div className="container mx-auto p-4 space-y-6 pb-20">
+                    <CorrectionEditor
+                        initialData={reanalyzeData}
+                        onSave={handleReanalyzeSave}
+                        onCancel={() => setReanalyzeData(null)}
+                        imagePreview={item.originalImageUrl || null}
+                        initialSubjectId={item.notebookId || undefined}
+                    />
+                </div>
+            </main>
+        );
+    }
+
     // 优先从 tags 关联获取，回退到 knowledgePoints
     let tags: string[] = [];
     if (item.tags && item.tags.length > 0) {
@@ -412,7 +478,24 @@ export default function ErrorDetailPage() {
                         <h1 className="text-2xl font-bold">{t.detail.title}</h1>
                     </div>
 
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2 justify-end">
+                        {/* 需求六：用原图重新跑 AI，只更新分析类字段 */}
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleReanalyze}
+                            disabled={isReanalyzing}
+                            title={t.detail?.aiReanalyzeHint || ""}
+                        >
+                            {isReanalyzing ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                                <Sparkles className="mr-2 h-4 w-4" />
+                            )}
+                            {isReanalyzing
+                                ? (t.detail?.aiReanalyzing || "AI 分析中…")
+                                : (t.detail?.aiReanalyze || "AI 重新分析")}
+                        </Button>
                         <Button
                             variant="outline"
                             size="sm"

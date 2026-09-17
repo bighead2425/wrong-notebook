@@ -23,6 +23,8 @@ interface KnowledgeFilterProps {
     gradeSemester?: string;
     tag?: string | null;
     subjectName?: string;
+    /** 本内已锁定年级学期（一本教科书=一个本），无需再按年级筛选 */
+    hideGrade?: boolean;
     onFilterChange: (filters: {
         gradeSemester?: string;
         chapter?: string;
@@ -59,6 +61,7 @@ export function KnowledgeFilter({
     gradeSemester: initialGrade,
     tag: initialTag,
     subjectName,
+    hideGrade = false,
     onFilterChange,
     className
 }: KnowledgeFilterProps) {
@@ -207,7 +210,11 @@ export function KnowledgeFilter({
 
     // 从标签树中找到当前年级节点
     const currentGradeNode = tagTree.find(node => node.name === gradeSemester);
-    const chapters = currentGradeNode?.children || [];
+    // 未选年级（含本内隐藏年级的情况）时把各年级下的章节平铺，
+    // 否则「章节」下拉会被前置条件卡死成永远为空
+    const chapters = currentGradeNode
+        ? currentGradeNode.children
+        : tagTree.flatMap(node => node.children || []);
 
     // 从标签树中找到当前章节节点
     const currentChapterNode = chapters.find(node => node.name === chapter);
@@ -220,7 +227,7 @@ export function KnowledgeFilter({
     // 去重标签，避免 React key 冲突
     const tags = currentChapterNode
         ? [...new Set(getLeafTags(currentChapterNode))]
-        : [];
+        : [...new Set(chapters.flatMap(c => getLeafTags(c)))];
 
     // 过滤可用年级 (只显示数据库中存在的)
     // 对于非数学科目，如果不按照年级结构存储，这里可能会被清空
@@ -235,19 +242,21 @@ export function KnowledgeFilter({
 
     return (
         <div className={`flex gap-2 ${className}`}>
-            <Select value={gradeSemester} onValueChange={handleGradeChange} disabled={loading}>
-                <SelectTrigger className="w-[140px]">
-                    <SelectValue placeholder="年级/学期" />
-                </SelectTrigger>
-                <SelectContent>
-                    <SelectItem value="all">全部年级</SelectItem>
-                    {filteredGrades.map(gs => (
-                        <SelectItem key={gs} value={gs}>{gs}</SelectItem>
-                    ))}
-                </SelectContent>
-            </Select>
+            {!hideGrade && (
+                <Select value={gradeSemester} onValueChange={handleGradeChange} disabled={loading}>
+                    <SelectTrigger className="w-[140px]">
+                        <SelectValue placeholder="年级/学期" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="all">全部年级</SelectItem>
+                        {filteredGrades.map(gs => (
+                            <SelectItem key={gs} value={gs}>{gs}</SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+            )}
 
-            <Select value={chapter} onValueChange={handleChapterChange} disabled={!gradeSemester || gradeSemester === "all"}>
+            <Select value={chapter} onValueChange={handleChapterChange} disabled={loading}>
                 <SelectTrigger className="w-[180px]">
                     <SelectValue placeholder="章节" />
                 </SelectTrigger>
@@ -261,7 +270,7 @@ export function KnowledgeFilter({
                 </SelectContent>
             </Select>
 
-            <Select value={tag} onValueChange={handleTagChange} disabled={!chapter || chapter === "all"}>
+            <Select value={tag} onValueChange={handleTagChange} disabled={loading}>
                 <SelectTrigger className="w-[140px]">
                     <SelectValue placeholder="知识点" />
                 </SelectTrigger>

@@ -6,7 +6,6 @@ import { getServerSession } from "next-auth";
 import { unauthorized, badRequest, notFound, internalError } from "@/lib/api-errors";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
-import { exportErrorItemToObsidian, parseTags } from "@/lib/obsidian-export";
 import {
     subjectKeyToCode,
     formatDateStamp,
@@ -188,24 +187,7 @@ export async function POST(req: Request) {
 
         logger.info({ mergedId: merged.id, questionNo, trashed: ids.length }, 'Merge completed');
 
-        try {
-            const exp = await exportErrorItemToObsidian({
-                questionNo,
-                subjectName: notebook?.displayName || "",
-                gradeSemester: first.gradeSemester || "",
-                tags: parseTags(merged.knowledgePoints),
-                questionText: mergedQuestionText,
-                originalImageUrl: first.originalImageUrl,
-                analysis: ai.analysis,
-                answerText: ai.answerText,
-                mistakeAnalysis: ai.mistakeAnalysis,
-            });
-            if (!exp.ok) {
-                logger.warn({ error: exp.error }, 'Obsidian export failed on merge (non-fatal)');
-            }
-        } catch (expErr) {
-            logger.warn({ error: expErr }, 'Obsidian export threw on merge (non-fatal)');
-        }
+        // 注：按用户要求，保存/合并时**不再自动导出**到 Obsidian。
 
         return NextResponse.json({ item: merged, trashedIds: ids }, { status: 201 });
     } catch (error) {

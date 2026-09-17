@@ -19,8 +19,11 @@ export function MarkdownRenderer({ content, className = '' }: MarkdownRendererPr
         // Preserve existing double line breaks with a unique marker
         .replace(/\n\n/g, '\n\n###PRESERVE_BREAK###\n\n')
         // Convert patterns that should be new paragraphs
-        .replace(/([。！？；])\n(?!\n)/g, '$1\n\n')  // Chinese punctuation followed by single newline
-        .replace(/([.!?;])\s*\n(?!\n)/g, '$1\n\n')   // English punctuation followed by single newline
+        // ⚠️ 关键：如果下一行是「列表项」（1. / 1、/ 1) / - / * / +），
+        //    就**不能**插空行 —— 否则有序列表会从 tight 变 loose，
+        //    渲染成「序号独占一行、内容另起一行」（用户反馈的困扰点）。
+        .replace(/([。！？；])\n(?!\n)(?![ \t]*(?:\d+[.、)]|[-*+])\s)/g, '$1\n\n')  // Chinese punctuation followed by single newline
+        .replace(/([.!?;])\s*\n(?!\n)(?![ \t]*(?:\d+[.、)]|[-*+])\s)/g, '$1\n\n')   // English punctuation followed by single newline
         .replace(/(\d+\))\s*\n(?!\n)/g, '$1\n\n')    // Numbered items like (1), (2)
         .replace(/([\u2460-\u2473])\s*\n(?!\n)/g, '$1\n\n')  // Circled numbers ①②③
         // Fix: Remove indentation for lines starting with circled numbers or (n) to prevent code block rendering
@@ -43,9 +46,11 @@ export function MarkdownRenderer({ content, className = '' }: MarkdownRendererPr
                     h2: ({ node, ...props }) => <h2 className="text-xl font-bold mt-5 mb-3" {...props} />,
                     h3: ({ node, ...props }) => <h3 className="text-lg font-bold mt-4 mb-2" {...props} />,
                     p: ({ node, ...props }) => <p className="mb-3 leading-relaxed" {...props} />,
-                    ul: ({ node, ...props }) => <ul className="list-disc list-inside mb-3 space-y-1" {...props} />,
-                    ol: ({ node, ...props }) => <ol className="list-decimal list-inside mb-3 space-y-1" {...props} />,
-                    li: ({ node, ...props }) => <li className="ml-4" {...props} />,
+                    // list-outside：序号在内容块外侧，即使列表项被 <p> 包裹（loose list）
+                    // 也不会出现「序号独占一行、正文另起一行」的错位
+                    ul: ({ node, ...props }) => <ul className="list-disc list-outside mb-3 space-y-1 pl-5" {...props} />,
+                    ol: ({ node, ...props }) => <ol className="list-decimal list-outside mb-3 space-y-1 pl-5" {...props} />,
+                    li: ({ node, ...props }) => <li {...props} />,
                     blockquote: ({ node, ...props }) => (
                         <blockquote className="border-l-4 border-primary pl-4 italic my-4 text-muted-foreground" {...props} />
                     ),

@@ -133,7 +133,7 @@ export const translations = {
             tags: "Knowledge Points (Press Enter to add)",
             addTag: "Add a tag...",
             cancel: "Cancel",
-            save: "Save to Notebook",
+            save: "Save",
             selectNotebook: "Select Notebook",
             gradeSemester: "Grade/Semester",
             preview: {
@@ -262,6 +262,11 @@ export const translations = {
             clickOutside: "Click outside to close",
             printCount: "Print count",
             attention: "Attention (1 easy – 5 hard)",
+            aiReanalyze: "Re-analyze with AI",
+            aiReanalyzing: "Analyzing…",
+            aiReanalyzeHint: "Re-runs AI on the original image. Only knowledge tags / question / answer / analysis / mistake analysis are updated — notebook, grade, question no. and print count stay unchanged.",
+            aiReanalyzeNoImage: "This item has no original image, so AI analysis is unavailable.",
+            aiReanalyzeFailed: "AI analysis failed, please try again.",
         },
         practice: {
             title: "Smart Practice",
@@ -605,6 +610,7 @@ export const translations = {
             },
         },
         auth: {
+            username: "Username",
             email: "Email",
             password: "Password",
             confirmPassword: "Confirm Password",
@@ -629,6 +635,7 @@ export const translations = {
                 title: "Create an Account",
                 passwordMismatch: "Passwords do not match",
                 emailExists: "User with this email already exists",
+                usernameExists: "This username is already taken",
                 success: "Registration successful! Please login",
                 failed: "Registration failed",
                 disabled: "Registration Disabled",
@@ -817,7 +824,7 @@ export const translations = {
             tags: "知识点 (回车添加)",
             addTag: "添加标签...",
             cancel: "取消",
-            save: "保存到错题本",
+            save: "保存",
             selectNotebook: "选择错题本",
             gradeSemester: "年级/学期",
             preview: {
@@ -946,6 +953,11 @@ export const translations = {
             clickOutside: "点击图片外部区域关闭",
             printCount: "打印次数",
             attention: "关注档（1 容易 – 5 困难）",
+            aiReanalyze: "AI 重新分析",
+            aiReanalyzing: "AI 分析中…",
+            aiReanalyzeHint: "用原图重新跑一遍 AI。只更新知识点、题目、参考答案、解析、错因分析；错题本、年级学期、题号、打印次数都不变。",
+            aiReanalyzeNoImage: "这道题没有原始图片，无法用 AI 分析。",
+            aiReanalyzeFailed: "AI 分析失败，请重试。",
         },
         practice: {
             title: "智能练习",
@@ -1288,6 +1300,7 @@ export const translations = {
             },
         },
         auth: {
+            username: "用户名",
             email: "邮箱",
             password: "密码",
             confirmPassword: "确认密码",
@@ -1312,6 +1325,7 @@ export const translations = {
                 title: "注册新账号",
                 passwordMismatch: "两次密码不一致",
                 emailExists: "该邮箱已被注册",
+                usernameExists: "该用户名已被占用",
                 success: "注册成功！请登录",
                 failed: "注册失败",
                 disabled: "注册已关闭",

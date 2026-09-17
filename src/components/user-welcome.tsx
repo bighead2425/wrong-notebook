@@ -2,13 +2,11 @@
 
 import { useState, useEffect } from "react";
 
-import { useLanguage } from "@/contexts/LanguageContext";
 import { useSession, signOut } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { LogOut, User } from "lucide-react";
 
 export function UserWelcome() {
-    const { t, language } = useLanguage();
     const { data: session } = useSession();
     const [mounted, setMounted] = useState(false);
 
@@ -22,11 +20,9 @@ export function UserWelcome() {
 
     return (
         <div className="flex items-center gap-2 bg-card p-4 rounded-lg border shadow-sm animate-in fade-in slide-in-from-top-4 duration-700">
-            <User className="h-5 w-5 text-primary" />
-            <span className="font-medium">
-                {t.common.welcome || 'Welcome back, '}
-                {userName}
-            </span>
+            <User className="h-5 w-5 text-primary shrink-0" />
+            {/* 只显示用户名，"欢迎回来，"前缀太长（用户要求精简） */}
+            <span className="font-medium truncate">{userName}</span>
         </div>
     );
 }

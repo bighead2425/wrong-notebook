@@ -68,6 +68,8 @@ export default function RegisterPage() {
             let errorMsg = error.data?.message;
             if (errorMsg === 'User with this email already exists') {
                 errorMsg = t.auth?.register?.emailExists || errorMsg;
+            } else if (errorMsg === 'This username is already taken') {
+                errorMsg = t.auth?.register?.usernameExists || errorMsg;
             } else {
                 errorMsg = errorMsg || (t.auth?.register?.failed || 'Registration failed');
             }
