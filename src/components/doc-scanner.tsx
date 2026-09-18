@@ -16,6 +16,7 @@ import {
   enhanceMat,
   scaleCorners,
   MAX_OUTPUT_EDGE,
+  type CornerConfidence,
   type Corners,
   type EnhanceMode,
 } from "@/lib/doc-scan";
@@ -43,8 +44,16 @@ const TEXT = {
   loadingCv: "正在加载图像处理模块…",
   noPaper:
     "未自动识别到纸张四角。已放好一个默认框，可拖动四个青色圆点手动拉正；不动它就保持整张原图。",
+  /**
+   * 【custom-v21】低置信档文案。
+   * 这一档**已经默认参与拉正**（不再等用户拖），所以必须明确告诉用户"这是系统估算、可能不准"，
+   * 并把"看一眼预览"这个动作点出来 —— 预览就是这一档唯一的人工闸门。
+   */
+  estimated:
+    "四角是系统估算的（可能不准），已按它拉正预览。看一眼右图，不对就拖动四个琥珀色圆点修正。",
   noPaperManual: "已按你拖出的四个角拉正。继续微调，或点「重拍」重新拍。",
   dragTip: "拖动图上的青色圆点可微调纸边",
+  dragTipLow: "拖动图上的琥珀色圆点可微调纸边",
   retake: "重拍",
   useOriginal: "用原图",
   useOriginalAgain: "再点一次用原图",
@@ -89,6 +98,26 @@ const CONFIRM_WINDOW_MS = 3000;
 
 /** 拖动四角的判定半径（CSS px），兼顾手指触摸精度 */
 const HIT_RADIUS = 44;
+
+/**
+ * 【custom-v21】把手配色与线型 —— 这是让"错得像对的"变得**可察觉**的唯一手段。
+ * 青色实线 = 系统确定（直接确定即可）；琥珀虚线 = 系统在估算（值得扫一眼预览）。
+ * 只用形状/颜色区分、不加文字弹窗，是因为这一档不需要打断用户操作。
+ */
+const HANDLE_COLOR_HIGH = "#00D4FF";
+const HANDLE_COLOR_LOW = "#F59E0B";
+const LOW_CONFIDENCE_DASH = [10, 6];
+
+/**
+ * 【custom-v21】非高置信档允许把手拖出画面外的比例。
+ *
+ * 历史：custom-v19 把角点硬夹在图片范围内，理由是"拖出边界会导致拉正结果异常"
+ * —— 这没错，但夹得太死会留下一个死角：当**纸张本身被取景框切掉**时，
+ * 真实纸角落在画面之外，用户根本标不出来。
+ * 低置信 / 无候选档本来就是"手动修正"场景，放开 6% 余量；高置信档维持严格夹取，
+ * 不改变已被验收过的行为。副作用上限也只是边缘一条 6% 的黑边，且只有用户主动拖出去才有。
+ */
+const OVERSHOOT_PAD = 0.06;
 
 /**
  * 【问题①】未识别到纸张四角时，默认角点相对图片的内缩比例。
@@ -155,10 +184,17 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
     // 默认「漂白」：底色干净最省墨，AI 识别率也最高
     const [enhance, setEnhance] = useState<EnhanceMode>("white");
     const [corners, setCorners] = useState<Corners | null>(null);
-    const [detectFail, setDetectFail] = useState(false);
+    /**
+     * 【custom-v21】四角检测的置信档，取代原来的 detectFail 布尔量。
+     * - `high`：严格档认出来的，青色实线，直接拉正；
+     * - `low` ：降级链兜住的（放宽阈值 / 点数补救 / 旋转矩形），琥珀虚线，**过校验即默认拉正**；
+     * - `none`：彻底没候选，corners 只是内缩默认框，不动就保持整张原图（沿用旧行为）。
+     */
+    const [cornerConfidence, setCornerConfidence] =
+      useState<CornerConfidence>("none");
     /**
      * 用户是否**真的拖过**任一把手。
-     * 检测失败时 corners 只是"展示用"的默认框，必须等这个开关打开才拿它去裁剪
+     * none 档时 corners 只是"展示用"的默认框，必须等这个开关打开才拿它去裁剪
      * （否则会立刻裁掉一圈，比不改更差）—— 详见 MANUAL_CORNER_INSET 注释。
      */
     const [manualWarp, setManualWarp] = useState(false);
@@ -178,11 +214,12 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
 
     /**
      * 角点是否**参与**拉正与裁剪。
-     * - 检测成功：corners 来自纸张识别 → 直接生效；
-     * - 检测失败：corners 只是默认展示框 → 必须等用户拖过（manualWarp）才生效。
+     * - high / low：corners 是识别（或降级兜住）的结果 → 直接生效；
+     * - none：corners 只是默认展示框 → 必须等用户拖过（manualWarp）才生效。
      * 预览与出图都必须用这个开关判断，否则会出现"提示说保留原图、实际却裁掉一圈"。
      */
-    const cornersActive = !!corners && (manualWarp || !detectFail);
+    const cornersActive =
+      !!corners && (manualWarp || cornerConfidence !== "none");
 
     /** 释放缓存的 Mat，避免 wasm 堆内存泄漏 */
     const releaseMats = useCallback(() => {
@@ -259,7 +296,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
       async (dataUrl: string, sizeNote?: string) => {
         const token = ++tokenRef.current;
         setBusy(true);
-        setDetectFail(false);
+        setCornerConfidence("none");
         setCorners(null);
         setManualWarp(false);
         setCvError(null);
@@ -298,15 +335,19 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
 
             setCvLoading(false);
 
+            // 【custom-v21】分档处理：
+            // high → 严格档认出来的，直接拉正（同旧版成功路径）；
+            // low  → 降级链兜住的，过合理性校验即默认拉正，把手画成琥珀虚线提示"这是估算"；
+            // none → 旧版失败路径：给默认内缩框当把手，不动就保持整张原图。
             const found = findPaperCorners(cv, full);
-            if (found) {
-              setCorners(found);
-              setDetectFail(false);
+            if (found.corners) {
+              setCorners(found.corners);
+              setCornerConfidence(found.confidence);
             } else {
               // 【问题①】检测失败也必须给出一组角点：否则 overlay 不画把手、用户无从下手。
               // 注意这只是"展示用"的默认框，是否据其裁剪由 manualWarp 决定。
               setCorners(defaultCornersFor(img));
-              setDetectFail(true);
+              setCornerConfidence("none");
             }
           } catch (err: any) {
             setCvLoading(false);
@@ -542,20 +583,25 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
         corners.bottomRightCorner,
         corners.bottomLeftCorner,
       ].map((p) => ({ x: p.x * s, y: p.y * s }));
-      ctx.strokeStyle = "#00D4FF";
+      // 【custom-v21】低置信档用琥珀虚线：颜色本身就是"这是系统估算、可能不准"的信号
+      const low = cornerConfidence === "low";
+      const color = low ? HANDLE_COLOR_LOW : HANDLE_COLOR_HIGH;
+      ctx.strokeStyle = color;
       ctx.lineWidth = 2;
+      ctx.setLineDash(low ? LOW_CONFIDENCE_DASH : []);
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < 4; i++) ctx.lineTo(pts[i].x, pts[i].y);
       ctx.closePath();
       ctx.stroke();
-      ctx.fillStyle = "#00D4FF";
+      ctx.setLineDash([]);
+      ctx.fillStyle = color;
       pts.forEach((p) => {
         ctx.beginPath();
         ctx.arc(p.x, p.y, 12, 0, Math.PI * 2);
         ctx.fill();
       });
-    }, [corners, display]);
+    }, [corners, display, cornerConfidence]);
 
     // —— 四角拖拽微调 ——
     const onPointerDown = (e: React.PointerEvent) => {
@@ -595,9 +641,15 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
       if (!key || !ov || !img) return;
       const rect = ov.getBoundingClientRect();
       const s = rect.width / img.width;
-      // custom-v19 修复：把角点夹在图片范围内，避免拖出边界导致拉正结果异常
-      const x = Math.max(0, Math.min(img.width, (e.clientX - rect.left) / s));
-      const y = Math.max(0, Math.min(img.height, (e.clientY - rect.top) / s));
+      // 【custom-v19→v21】把角点夹在图片范围内，避免拖出边界导致拉正结果异常。
+      // v21 调整：只在**高置信档**严格夹取；低置信 / 无候选档本来就处于"手动修正"场景，
+      // 放开 OVERSHOOT_PAD 余量 —— 否则当纸张被取景框切掉时，真实纸角落在画面外、
+      // 用户根本标不出来（详见 OVERSHOOT_PAD 注释）。
+      const pad = cornerConfidence === "high" ? 0 : OVERSHOOT_PAD;
+      const padX = img.width * pad;
+      const padY = img.height * pad;
+      const x = Math.max(-padX, Math.min(img.width + padX, (e.clientX - rect.left) / s));
+      const y = Math.max(-padY, Math.min(img.height + padY, (e.clientY - rect.top) / s));
       pendingRef.current = { x, y };
       if (rafRef.current != null) return;
       // 用 rAF 把同一帧内的多次 pointermove 合并成一次 state 更新
@@ -772,12 +824,17 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
               {cvError && (
                 <p className="text-red-400 text-sm text-center">{cvError}</p>
               )}
-              {detectFail && !manualWarp && (
+              {cornerConfidence === "low" && !manualWarp && (
+                <p className="text-amber-400 text-sm text-center">
+                  {TEXT.estimated}
+                </p>
+              )}
+              {cornerConfidence === "none" && !manualWarp && (
                 <p className="text-amber-400 text-sm text-center">
                   {TEXT.noPaper}
                 </p>
               )}
-              {detectFail && manualWarp && (
+              {manualWarp && (
                 <p className="text-[#00D4FF] text-sm text-center">
                   {TEXT.noPaperManual}
                 </p>
@@ -811,7 +868,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
 
               {corners && !dragging && (
                 <p className="text-xs text-slate-500 text-center">
-                  {TEXT.dragTip}
+                  {cornerConfidence === "low" ? TEXT.dragTipLow : TEXT.dragTip}
                 </p>
               )}
 
