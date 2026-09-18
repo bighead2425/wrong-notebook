@@ -21,11 +21,12 @@ import { ImageCropper } from "@/components/image-cropper";
 import { CorrectionEditor, ParsedQuestionWithSubject } from "@/components/correction-editor";
 import { ParsedQuestion } from "@/lib/ai";
 import { apiClient } from "@/lib/api-client";
-import { AnalyzeResponse } from "@/types/api";
+import { AnalyzeResponse, Notebook } from "@/types/api";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { processImageFile } from "@/lib/image-utils";
+import { subjectLabel } from "@/lib/notebook-fields";
 import { frontendLogger } from "@/lib/frontend-logger";
 import { ProgressFeedback, ProgressStatus } from "@/components/ui/progress-feedback";
 import {
@@ -63,6 +64,14 @@ interface BatchPipelineProps {
     onExit: () => void;
 }
 
+/**
+ * 一批最多收多少张。
+ *
+ * 图片全在前端内存里（File + base64 两份），手机浏览器撑不住几十张大图；
+ * 而且分析是串行的，一批 30 张最坏要等很久。超出直接挡掉，比跑到一半崩掉强。
+ */
+const MAX_BATCH = 30;
+
 export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }: BatchPipelineProps) {
     const { t } = useLanguage();
 
@@ -79,6 +88,12 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
     const [run, setRun] = useState<{ i: number; n: number } | null>(null);
     const [savedCount, setSavedCount] = useState(0);
 
+    /** 审阅时用来把 AI 认出的学科对到错题本（与单题流同一套匹配） */
+    const [notebooks, setNotebooks] = useState<Notebook[]>([]);
+    /** 用户点了「取消剩余」→ 循环下一轮开头就停 */
+    const cancelRef = useRef(false);
+    const [canceling, setCanceling] = useState(false);
+
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // 卸载时统一回收 blob URL，避免内存泄漏
@@ -86,6 +101,12 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
     useEffect(() => { itemsRef.current = items; }, [items]);
     useEffect(() => () => {
         itemsRef.current.forEach(it => URL.revokeObjectURL(it.previewUrl));
+    }, []);
+
+    useEffect(() => {
+        apiClient.get<Notebook[]>("/api/notebooks")
+            .then(setNotebooks)
+            .catch(err => frontendLogger.error('[Batch]', 'Load notebooks failed', { error: String(err) }));
     }, []);
 
     const editingItem = items.find(i => i.id === editingId) || null;
@@ -101,11 +122,54 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
      */
     const sendableProcessed = processedItems.filter(i => i.status !== "saved");
     const sendableAll = items.filter(i => i.status !== "saved");
+    /** 选项①同理：选中的那张要是已入库，也不该再送 */
+    const activeSendable = activeItem && activeItem.status !== "saved" ? activeItem : null;
+
+    /**
+     * 审阅时给每一道算出「该归到哪个错题本」。
+     *
+     * 【为什么必须有】单题流分析完会按 `data.subject` 自动选错题本
+     * （首页 page.tsx 的 autoSelectedNotebookId），但流水线原来直接把
+     * defaultNotebookId 传下去 —— 从首页进来时那个值是 undefined，
+     * 于是**每一道都要手动在下拉菜单里选一次错题本**。10 道就是 10 次，
+     * 正好卡在「爸爸代劳录 100 道」最疼的地方。这里把同一套匹配补上。
+     */
+    const resolveNotebookId = (subject?: string): string | undefined => {
+        if (defaultNotebookId) return defaultNotebookId;
+        if (!subject || !notebooks.length) return undefined;
+        const matched = notebooks.find(n => subjectLabel(n.subject) === subject)
+            || notebooks.find(n => n.displayName.includes(subject) || subject.includes(n.displayName));
+        return matched?.id;
+    };
+
+    /** 退出前拦一道：没入库的图退出即丢，不能一声不响 */
+    const requestExit = () => {
+        const unsaved = items.filter(i => i.status !== "saved").length;
+        if (unsaved > 0) {
+            const msg = (t.common.batch?.confirmExit
+                || "还有 {n} 张没入库，退出后这些图就没了（图片只存在当前页面）。确定退出？")
+                .replace("{n}", String(unsaved));
+            if (!confirm(msg)) return;
+        }
+        onExit();
+    };
 
     /** 收图：一次可以选多张（连拍的那批） */
     const addFiles = (files: File[]) => {
         if (!files.length) return;
-        const added: BatchItem[] = files.map((f, k) => ({
+        const room = MAX_BATCH - items.length;
+        if (room <= 0) {
+            alert((t.common.batch?.tooMany || "一批最多 {n} 张（建议 10~20 张），请分批处理")
+                .replace("{n}", String(MAX_BATCH)));
+            return;
+        }
+        let accepted = files;
+        if (files.length > room) {
+            accepted = files.slice(0, room);
+            alert((t.common.batch?.tooMany || "一批最多 {n} 张（建议 10~20 张），多出的没有加入")
+                .replace("{n}", String(MAX_BATCH)));
+        }
+        const added: BatchItem[] = accepted.map((f, k) => ({
             id: `b${Date.now()}-${k}-${Math.random().toString(36).slice(2, 7)}`,
             file: f,
             previewUrl: URL.createObjectURL(f),
@@ -152,12 +216,21 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
     const analyzeTargets = async (targets: BatchItem[]) => {
         if (!targets.length) return;
         setSendOpen(false);
+        cancelRef.current = false;
+        setCanceling(false);
+        // 进度必须**每轮重置**：否则第二批一进来就停在上一批留下的 100%
+        setProgress(0);
         setRun({ i: 0, n: targets.length });
 
         let okCount = 0;
+        let canceled = false;
         for (let k = 0; k < targets.length; k++) {
+            if (cancelRef.current) { canceled = true; break; }
             const it = targets[k];
             setRun({ i: k + 1, n: targets.length });
+            // 进度按「已开始处理几张」推进。原先把 progress 只在末尾置 100，
+            // 于是整个批量过程里进度条一直显示 0%，与旁边的「3/20」自相矛盾。
+            setProgress(Math.round((k / targets.length) * 100));
             try {
                 setAnalysisStep("compressing");
                 const b64 = await processImageFile(it.file);
@@ -191,10 +264,12 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
         }
 
         setAnalysisStep("idle");
-        setProgress(100);
+        if (!canceled) setProgress(100);
         setRun(null);
+        setCanceling(false);
+        cancelRef.current = false;
         frontendLogger.info('[BatchAnalyze]', 'Batch finished', {
-            total: targets.length, ok: okCount,
+            total: targets.length, ok: okCount, canceled,
         });
         setReviewIdx(0);
         setStage("review");
@@ -205,10 +280,15 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
         const cur = readyItems[reviewIdx];
         if (!cur) return;
         try {
-            await apiClient.post<{ id: string }>("/api/error-items", {
+            const res = await apiClient.post<{ id: string; duplicate?: boolean }>("/api/error-items", {
                 ...data,
                 originalImageUrl: cur.base64 || "",
             });
+            // 后端 2 秒去重窗口命中会回 duplicate:true，此时并没有新建记录。
+            // 单题流会记一条日志，这里也补上，免得排查时看不出「怎么少了一道」。
+            if (res.duplicate) {
+                frontendLogger.info('[BatchSave]', 'Duplicate submission detected, using existing record', { id: cur.id });
+            }
             setItems(prev => prev.map(x => x.id === cur.id ? { ...x, status: "saved" } : x));
             setSavedCount(c => c + 1);
             // 不递增索引：当前项已变 saved，会从 readyItems 里移除，
@@ -242,6 +322,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
         // 全看完了：给个汇总
         if (!current) {
             const errCount = items.filter(i => i.status === "error").length;
+            const skippedCount = items.filter(i => i.status === "skipped").length;
             return (
                 <div className="space-y-6">
                     <ProgressFeedback status={analysisStep} progress={progress} message={progressMessage()} />
@@ -253,6 +334,12 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
                         <p className="text-sm text-muted-foreground">
                             {(t.common.batch?.doneSummary || "已录入 {n} 道")
                                 .replace("{n}", String(savedCount))}
+                            {skippedCount > 0 && (
+                                <span className="text-amber-600">
+                                    ，{(t.common.batch?.skippedSummary || "{n} 道已跳过")
+                                        .replace("{n}", String(skippedCount))}
+                                </span>
+                            )}
                             {errCount > 0 && (
                                 <span className="text-destructive">
                                     ，{(t.common.batch?.errorSummary || "{n} 道 AI 失败")
@@ -261,11 +348,27 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
                             )}
                         </p>
                         <div className="flex flex-wrap justify-center gap-3">
+                            {/* 「跳过」原来是个单向门：跳过之后 result/base64 还留着，
+                                但待审队列只认 ready，用户再也回不到那一道 ——
+                                等于 AI 白分析、题也丢了。这里给一条回路。 */}
+                            {skippedCount > 0 && (
+                                <Button
+                                    variant="secondary"
+                                    onClick={() => {
+                                        setItems(prev => prev.map(x =>
+                                            x.status === "skipped" ? { ...x, status: "ready" as BatchStatus } : x));
+                                        setReviewIdx(0);
+                                    }}
+                                >
+                                    {(t.common.batch?.reReviewSkipped || "还有 {n} 道跳过的，重新审阅")
+                                        .replace("{n}", String(skippedCount))}
+                                </Button>
+                            )}
                             <Button variant="outline" onClick={() => { setStage("queue"); setReviewIdx(0); }}>
                                 <ArrowLeft className="mr-2 h-4 w-4" />
                                 {t.common.batch?.backToQueue || "回到队列"}
                             </Button>
-                            <Button onClick={onExit}>
+                            <Button onClick={requestExit}>
                                 {t.common.batch?.finish || "结束批量"}
                             </Button>
                         </div>
@@ -280,8 +383,10 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div className="flex items-center gap-2 text-sm font-medium">
                         <Layers className="h-4 w-4" />
-                        {(t.common.batch?.reviewProgress || "第 {i} / {n} 道")
-                            .replace("{i}", String(reviewIdx + 1))
+                        {/* 原来写「第 {i} / {n} 道」，但 reviewIdx 恒为 0（入库/跳过都会把当前项
+                            从 readyItems 里摘掉，索引自然指向下一道），分子永远显示 1。
+                            改成只报「还剩几道」，配合旁边的已录入数，语义才自洽。 */}
+                        {(t.common.batch?.reviewProgress || "待审阅 {n} 道")
                             .replace("{n}", String(readyItems.length))}
                         <span className="text-muted-foreground font-normal">
                             ，{t.common.batch?.savedCount ? t.common.batch.savedCount.replace("{n}", String(savedCount)) : `已录入 ${savedCount} 道`}
@@ -303,7 +408,9 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
                     onSave={handleSaveCurrent}
                     onCancel={() => setStage("queue")}
                     imagePreview={current.base64}
-                    initialSubjectId={defaultNotebookId}
+                    /* 自动对上学科（见 resolveNotebookId 注释），没匹配到也不强塞，
+                       编辑器里本来就有错题本下拉，用户自己选。 */
+                    initialSubjectId={resolveNotebookId(current.result?.subject)}
                     aiTimeout={aiTimeout}
                 />
             </div>
@@ -313,7 +420,17 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
     // ===== 队列阶段：收图 + 逐张加工 =====
     return (
         <div className="space-y-5">
-            <ProgressFeedback status={analysisStep} progress={progress} message={progressMessage()} />
+            {/* 这个遮罩是 fixed inset-0 全屏拦截：批量是串行跑 N 张，
+                没有 onCancel 的话用户在几十张的批次里被彻底锁死。 */}
+            <ProgressFeedback
+                status={analysisStep}
+                progress={progress}
+                message={progressMessage()}
+                onCancel={() => { cancelRef.current = true; setCanceling(true); }}
+                cancelLabel={canceling
+                    ? (t.common.batch?.canceling || "正在取消，等当前这张结束…")
+                    : (t.common.batch?.cancelRemaining || "取消剩余")}
+            />
 
             <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
@@ -322,7 +439,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
                         {t.common.batch?.subtitle || "一次收多张 → 逐张加工 → 批量送 AI → 一道道录入"}
                     </p>
                 </div>
-                <Button variant="outline" size="sm" onClick={onExit}>
+                <Button variant="outline" size="sm" onClick={requestExit}>
                     <X className="mr-1 h-4 w-4" />
                     {t.common.batch?.exit || "退出批量"}
                 </Button>
@@ -396,7 +513,8 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
                         </Button>
                         {readyItems.length > 0 && (
                             <Button variant="secondary" onClick={() => { setReviewIdx(0); setStage("review"); }}>
-                                {t.common.batch?.gotoReview || `继续审阅（${readyItems.length} 道待录）`}
+                                {(t.common.batch?.gotoReview || "继续审阅（{n} 道待录）")
+                                    .replace("{n}", String(readyItems.length))}
                             </Button>
                         )}
                     </div>
@@ -411,10 +529,16 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
                     </DialogHeader>
                     <div className="space-y-2">
                         <SendOption
-                            disabled={!activeItem}
+                            disabled={!activeSendable}
                             label={t.common.batch?.optCurrent || "① 只分析当前这张"}
-                            desc={activeItem ? undefined : (t.common.batch?.noCurrent || "（还没选中任何一张）")}
-                            onClick={() => activeItem && analyzeTargets([activeItem])}
+                            desc={
+                                !activeItem
+                                    ? (t.common.batch?.noCurrent || "（还没选中任何一张）")
+                                    : activeItem.status === "saved"
+                                        ? (t.common.batch?.optCurrentSaved || "（这张已入库，不用再分析）")
+                                        : undefined
+                            }
+                            onClick={() => activeSendable && analyzeTargets([activeSendable])}
                         />
                         <SendOption
                             disabled={sendableProcessed.length === 0}

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export type ProgressStatus = 'compressing' | 'uploading' | 'analyzing' | 'processing' | 'idle';
@@ -12,11 +13,20 @@ interface ProgressFeedbackProps {
     progress?: number;
     message?: string;
     className?: string;
+    /**
+     * 【custom-v23】可选的中止入口。
+     *
+     * 这个遮罩是 `fixed inset-0 z-50`，只要 status 不为 idle 就盖住整屏 ——
+     * 单张分析几秒钟无所谓，但批量送 AI 是**串行**跑 N 张，20 张最坏能锁屏几十分钟，
+     * 用户完全没有退路。给了 onCancel 才不至于把人关在里面。
+     */
+    onCancel?: () => void;
+    cancelLabel?: string;
 }
 
 import { useLanguage } from "@/contexts/LanguageContext";
 
-export function ProgressFeedback({ status, progress, message, className }: ProgressFeedbackProps) {
+export function ProgressFeedback({ status, progress, message, className, onCancel, cancelLabel }: ProgressFeedbackProps) {
     const { t } = useLanguage();
     // 确保只在客户端挂载完成后才渲染遮罩层，防止 SSR/Hydration 问题
     const [isMounted, setIsMounted] = useState(false);
@@ -54,6 +64,12 @@ export function ProgressFeedback({ status, progress, message, className }: Progr
                     <p className="text-sm text-muted-foreground">
                         {progress !== undefined ? `${Math.round(progress)}%` : (t.common.pleaseWait || 'Please wait...')}
                     </p>
+
+                    {onCancel && (
+                        <Button variant="outline" size="sm" onClick={onCancel}>
+                            {cancelLabel || '取消'}
+                        </Button>
+                    )}
                 </div>
             </div>
         </div>
