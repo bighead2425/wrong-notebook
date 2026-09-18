@@ -1,16 +1,26 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
+import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
 
 interface ImageCropperProps {
     imageSrc: string;
     open: boolean;
     onClose: () => void;
     onCropComplete: (croppedImageBlob: Blob) => void;
+    /**
+     * 送 AI 进行中。
+     * 【custom-v20 问题②】对话框此时**保持打开**（失败才不丢编辑成果），
+     * 因而页面上那套进度提示被对话框盖住了，需要由编辑器自己给一个"正在分析"的反馈，
+     * 并锁住「确定」避免重复提交。
+     */
+    analyzing?: boolean;
 }
 
 // ============================================================
@@ -86,7 +96,7 @@ function drawCircledNumber(
     ctx.restore();
 }
 
-export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageCropperProps) {
+export function ImageCropper({ imageSrc, open, onClose, onCropComplete, analyzing = false }: ImageCropperProps) {
     const { t } = useLanguage();
 
     // ===== 新增状态 =====
@@ -140,6 +150,16 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
 
     // ===== 对话框拖拽位移（按住标题栏拖动） =====
     const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
+
+    // ===== 拉伸：把当前图送进拍摄扫描器，拖四角拉正 + 漂白/黑白 =====
+    // 解决"照片本身拍歪了"——进编辑器后仍能补救（问题③）。
+    const [stretchOpen, setStretchOpen] = useState(false);
+    const scannerRef = useRef<DocScannerHandle | null>(null);
+    // 扫描器必须 portal 到 body（原因见渲染处注释），SSR 阶段没有 document，挂载后再渲染
+    const [portalReady, setPortalReady] = useState(false);
+    useEffect(() => {
+        setPortalReady(true);
+    }, []);
 
     /**
      * 按住标题栏拖动对话框。
@@ -654,10 +674,102 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         fitView();
     }, [fitView, syncBase, redrawOverlay]);
 
+    // ============================================================
+    //  拉伸：当前图 → 拍摄扫描器（拖四角拉正 + 漂白/黑白）→ 回传新图作为基准
+    //  解决"照片本身就拍歪了"——进了编辑器也还有补救入口（问题③）
+    // ============================================================
+    /** 导出工作画布当前内容（用户已做的擦除一并带上）交给扫描器 */
+    const handleStretch = useCallback(() => {
+        const wc = workCanvasRef.current;
+        if (!wc) return;
+        wc.toBlob(
+            (blob) => {
+                if (!blob) return;
+                setStretchOpen(true);
+                scannerRef.current?.openWithFile(
+                    new File([blob], "stretch.jpg", { type: "image/jpeg" })
+                );
+            },
+            "image/jpeg",
+            0.95
+        );
+    }, []);
+
+    /**
+     * 拉伸完成 → 回传的新图直接替换编辑器**内部**的基准画布。
+     *
+     * 为什么不换 imageSrc：那是 prop，一改就会触发本组件的重置 effect（依赖 [open, imageSrc]），
+     *   zoom / 模式 / 画布全部重来，等于把用户踢出编辑器。
+     * 按既定口径：已有的橡皮擦痕迹与框选标注一律清除且不弹提示 —— 坐标系已变，保留只会错位。
+     */
+    const handleStretchDone = useCallback(
+        (blob: Blob) => {
+            setStretchOpen(false);
+            const url = URL.createObjectURL(blob);
+            const img = new Image();
+            img.onload = () => {
+                URL.revokeObjectURL(url);
+                const base = document.createElement("canvas");
+                base.width = img.naturalWidth;
+                base.height = img.naturalHeight;
+                base.getContext("2d")?.drawImage(img, 0, 0);
+
+                origCanvasRef.current = base;
+                const wc = document.createElement("canvas");
+                wc.width = base.width;
+                wc.height = base.height;
+                wc.getContext("2d")?.drawImage(base, 0, 0);
+                workCanvasRef.current = wc;
+
+                shapesRef.current = [];
+                drawingRef.current = null;
+                setHasShapes(false);
+                setBoxes([]);
+                setSelectedBoxId(null);
+                setPendingRect(null);
+                setCropRect(null);
+                // 新基准就是"整张拉伸结果"，不存在已烘焙的裁剪 → 置 false，
+                // 这样用户之后仍能在拉伸结果上重新框选裁剪。
+                isCroppedRef.current = false;
+                setMode("crop");
+
+                syncBase();
+                redrawOverlay();
+                fitView();
+            };
+            img.onerror = () => {
+                URL.revokeObjectURL(url);
+                // 读取失败：保持原状，用户可再点一次「拉伸」
+            };
+            img.src = url;
+        },
+        [fitView, syncBase, redrawOverlay]
+    );
+
     // 打开/换图/切模式时让画面适应窗口（裁剪烘焙后图像尺寸会变，必须重算）
     useEffect(() => {
         if (open) fitView();
     }, [open, imageSrc, mode, fitView]);
+
+    /**
+     * 【custom-v20 保险】拉伸浮层开/关时把底图与覆盖层重画一遍。
+     *
+     * 为什么需要：浮层状态一变，Radix 可能把 DialogContent 的子树卸载重建，
+     * 新的 <canvas> 是空白的，而「加载原图」的 effect 依赖 [open, imageSrc] 不会重跑
+     * → 编辑器一片空白。基准图（workCanvasRef）是游离在 DOM 之外的 canvas，不会丢，
+     * 所以这里只要在**提交之后**重新同步一次即可自愈。
+     * 正常情况下（没有重建）这两行也是幂等的，不会产生副作用。
+     */
+    useEffect(() => {
+        if (!open) return;
+        const id = requestAnimationFrame(() => {
+            if (!workCanvasRef.current) return;
+            syncBase();
+            redrawOverlay();
+            fitView();
+        });
+        return () => cancelAnimationFrame(id);
+    }, [stretchOpen, open, syncBase, redrawOverlay, fitView]);
 
     // 视口尺寸变化（拖大窗口 / 手机横竖屏）：仍在自动适应则重新适应，否则只重新钳制
     useEffect(() => {
@@ -1069,9 +1181,34 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                 : "bg-background text-foreground border-input hover:bg-accent"
         }`;
 
+    // ⚠️【custom-v20 坑】modal 必须**恒定**，绝不能写成 modal={!stretchOpen}。
+    //   Radix 的 DialogContent 是按 modal 在 DialogContentModal / DialogContentNonModal
+    //   **两种组件类型**之间切换的；组件类型一变，React 就把整棵子树卸载重建，
+    //   对话框里的 <canvas> 会被换成新的空白元素（默认 300×150）且无人重绘
+    //   → 一开「拉伸」浮层，编辑器就变成一片空白，取消后也回不来。
+    //   取非 modal：视口仍被 DialogOverlay 全屏盖住，点不到背后的页面；
+    //   DialogContent 的 onPointerDownOutside 已无条件 preventDefault，点外面也不会误关。
     return (
-        <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
+        <Dialog
+            open={open}
+            onOpenChange={(isOpen) => !isOpen && onClose()}
+            modal={false}
+        >
             <DialogContent
+                // 拉伸浮层期间按 Esc 不该把编辑器一起关掉 —— 那正是"编辑成果丢失"的老路
+                onEscapeKeyDown={(e) => {
+                    if (stretchOpen) e.preventDefault();
+                }}
+                // 拉伸浮层是 portal 到 body 的、对话框**之外**的节点。
+                // 非 modal 的 Radix 会把「焦点移到外面」「在外层交互」都当成关闭信号，
+                // 用户点一下浮层里的「黑白」编辑器就会被静默关掉、编辑成果作废。
+                // 浮层展开期间把这两条默认关闭行为挡掉（onPointerDownOutside 由基类挡）。
+                onFocusOutside={(e) => {
+                    if (stretchOpen) e.preventDefault();
+                }}
+                onInteractOutside={(e) => {
+                    if (stretchOpen) e.preventDefault();
+                }}
                 className={cn(
                     // ⚠️ 千万不要在这里加 relative：cn() 基于 tailwind-merge，
                     // relative 与基类的 fixed 同组冲突，会把 fixed 挤掉，
@@ -1122,6 +1259,20 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                         title="开启后鼠标左键仅用于平移图片（也可随时按住右键拖拽平移）"
                     >
                         {t.common.cropper?.pan || "平移"}
+                    </button>
+
+                    {/* 拉伸：进编辑器后才发现照片拍歪了的补救入口（问题③）。
+                        ⚠️ 这里用字面文案而非 t.common.cropper.stretch —— t 的类型取自
+                        translations['en']，新 key 必须所有语种一起补齐才能过类型检查，
+                        而编辑器界面本来就是中文，先不铺这一层。 */}
+                    <button
+                        type="button"
+                        className={btn(false)}
+                        onClick={handleStretch}
+                        disabled={analyzing}
+                        title="把当前图送进拍摄扫描器：拖四角把斜拍的纸拉正，并可漂白 / 黑白"
+                    >
+                        拉伸
                     </button>
 
                     <span className="w-px h-5 bg-border mx-1" />
@@ -1295,6 +1446,14 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
 
                 {/* ===== 底部 ===== */}
                 <div className="p-4 border-t bg-background shrink-0">
+                    {/* 送 AI 期间对话框不再关闭（失败要保留编辑成果），页面上那套进度提示被
+                        对话框盖住了，所以在这里自己给一个反馈，并明说"失败可原地重试"。 */}
+                    {analyzing && (
+                        <p className="mb-2 flex items-center gap-1.5 text-xs text-primary">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            正在分析…编辑已保留；若失败可直接再点「确定」重试
+                        </p>
+                    )}
                     <div className="flex justify-between items-center gap-4">
                         <button
                             type="button"
@@ -1304,14 +1463,17 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                             {t.common.cropper?.help || "说明 ⓘ"}
                         </button>
                         <div className="flex gap-2 shrink-0">
-                            <Button variant="outline" onClick={resetToOriginal}>
+                            <Button variant="outline" onClick={resetToOriginal} disabled={analyzing}>
                                 {t.common.cropper?.original || "原图"}
                             </Button>
+                            {/* 取消保持可用：AI 卡住时留一个逃生口（代价是编辑成果不保，属用户明确选择） */}
                             <Button variant="outline" onClick={onClose}>
                                 {t.common.cancel || "Cancel"}
                             </Button>
-                            <Button onClick={handleConfirm}>
-                                {t.common.confirm || "Confirm"}
+                            <Button onClick={handleConfirm} disabled={analyzing}>
+                                {analyzing
+                                    ? t.common.pleaseWait || "请稍候"
+                                    : t.common.confirm || "Confirm"}
                             </Button>
                         </div>
                     </div>
@@ -1336,6 +1498,24 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                     </div>
                 )}
             </DialogContent>
+
+            {/*
+              拉伸浮层（问题③）：把当前图交给拍摄扫描器，拉正 + 漂白/黑白后回传新图。
+              ⚠️ 必须 portal 到 body，不能内嵌在 DialogContent 里 —— DialogContent 基类自带
+                 translate（由此成为 fixed 后代的包含块）且 overflow-hidden，内嵌的全屏浮层
+                 会被裁成对话框那么大，直接废掉。
+              浮层期间 Dialog 已切到 modal={false}；DialogContent 的 onPointerDownOutside
+              早就 preventDefault，所以点浮层不会误关编辑器。
+            */}
+            {portalReady &&
+                createPortal(
+                    <DocScanner
+                        ref={scannerRef}
+                        onScanComplete={handleStretchDone}
+                        onClose={() => setStretchOpen(false)}
+                    />,
+                    document.body
+                )}
         </Dialog>
     );
 }

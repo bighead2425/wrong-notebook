@@ -41,7 +41,9 @@ const TEXT = {
   album: "相册",
   starting: "正在启动相机…",
   loadingCv: "正在加载图像处理模块…",
-  noPaper: "未自动识别到纸张四角，已用整张原图。可拖动四角微调，或点「重拍」。",
+  noPaper:
+    "未自动识别到纸张四角。已放好一个默认框，可拖动四个青色圆点手动拉正；不动它就保持整张原图。",
+  noPaperManual: "已按你拖出的四个角拉正。继续微调，或点「重拍」重新拍。",
   dragTip: "拖动图上的青色圆点可微调纸边",
   retake: "重拍",
   useOriginal: "用原图",
@@ -88,6 +90,35 @@ const CONFIRM_WINDOW_MS = 3000;
 /** 拖动四角的判定半径（CSS px），兼顾手指触摸精度 */
 const HIT_RADIUS = 44;
 
+/**
+ * 【问题①】未识别到纸张四角时，默认角点相对图片的内缩比例。
+ *
+ * 原实现检测失败只弹一句提示、`corners` 保持 null，而画把手（overlay effect）与拖动提示
+ * 都以 `corners` 有值为前提 → 提示成了空头支票，用户"想拖也无从下手"。
+ * 现在给一组内缩 6% 的默认角点，四个把手就出现了。
+ *
+ * ⚠️ 只给角点是不够的：只要 `corners` 有值，出图就会按它做 warpPerspective 裁剪。
+ * 若一上来就按"内缩框"裁，用户看到的是**被裁掉一圈的图** —— 比不改还差。
+ * 因此另设 manualWarp 闸门：默认角点**只用于显示把手**，必须等用户真的拖过任一把手，
+ * 才启用按角点裁剪；拖动之前始终保持整张原图。
+ */
+const MANUAL_CORNER_INSET = 0.06;
+
+/** 按图片尺寸推一组内缩矩形角点（仅用于展示把手；是否真的据其裁剪由 manualWarp 决定） */
+function defaultCornersFor(img: {
+  width: number;
+  height: number;
+}): Corners {
+  const dx = Math.round(img.width * MANUAL_CORNER_INSET);
+  const dy = Math.round(img.height * MANUAL_CORNER_INSET);
+  return {
+    topLeftCorner: { x: dx, y: dy },
+    topRightCorner: { x: img.width - dx, y: dy },
+    bottomRightCorner: { x: img.width - dx, y: img.height - dy },
+    bottomLeftCorner: { x: dx, y: img.height - dy },
+  };
+}
+
 export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
   function DocScanner({ onScanComplete, onClose }, ref) {
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -125,6 +156,12 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
     const [enhance, setEnhance] = useState<EnhanceMode>("white");
     const [corners, setCorners] = useState<Corners | null>(null);
     const [detectFail, setDetectFail] = useState(false);
+    /**
+     * 用户是否**真的拖过**任一把手。
+     * 检测失败时 corners 只是"展示用"的默认框，必须等这个开关打开才拿它去裁剪
+     * （否则会立刻裁掉一圈，比不改更差）—— 详见 MANUAL_CORNER_INSET 注释。
+     */
+    const [manualWarp, setManualWarp] = useState(false);
     const [busy, setBusy] = useState(false);
     const [videoReady, setVideoReady] = useState(false);
     // 实际拍到的像素——custom-v8 曾因没要分辨率只拍出 461×562，这里显示出来便于当场验证
@@ -138,6 +175,14 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
     const [display, setDisplay] = useState<{ w: number; h: number } | null>(null);
     /** 换图时 +1，用于触发底图重绘 */
     const [imgEpoch, setImgEpoch] = useState(0);
+
+    /**
+     * 角点是否**参与**拉正与裁剪。
+     * - 检测成功：corners 来自纸张识别 → 直接生效；
+     * - 检测失败：corners 只是默认展示框 → 必须等用户拖过（manualWarp）才生效。
+     * 预览与出图都必须用这个开关判断，否则会出现"提示说保留原图、实际却裁掉一圈"。
+     */
+    const cornersActive = !!corners && (manualWarp || !detectFail);
 
     /** 释放缓存的 Mat，避免 wasm 堆内存泄漏 */
     const releaseMats = useCallback(() => {
@@ -216,6 +261,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
         setBusy(true);
         setDetectFail(false);
         setCorners(null);
+        setManualWarp(false);
         setCvError(null);
         setDragging(false);
         dragRef.current = null;
@@ -257,6 +303,9 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
               setCorners(found);
               setDetectFail(false);
             } else {
+              // 【问题①】检测失败也必须给出一组角点：否则 overlay 不画把手、用户无从下手。
+              // 注意这只是"展示用"的默认框，是否据其裁剪由 manualWarp 决定。
+              setCorners(defaultCornersFor(img));
               setDetectFail(true);
             }
           } catch (err: any) {
@@ -364,7 +413,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
           c.width = w;
           c.height = h;
           c.getContext("2d")!.drawImage(bmp, 0, 0);
-          dataUrl = c.toDataURL("image/jpeg", 0.95);
+          dataUrl = c.toDataURL("image/jpeg", CAPTURE_QUALITY);
           bmp.close?.();
         } catch {
           dataUrl = ""; // 回退到抓帧
@@ -438,14 +487,14 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
       // 先让浏览器把「计算中」画出来，再干同步的 wasm 重活，否则提示根本来不及显示
       const t = setTimeout(() => {
         if (cancelled) return;
-        renderPreview(enhance, corners);
+        renderPreview(enhance, cornersActive ? corners : null);
         setPreviewBusy(false);
       }, 30);
       return () => {
         cancelled = true;
         clearTimeout(t);
       };
-    }, [mode, open, enhance, corners, dragging, renderPreview, imgEpoch]);
+    }, [mode, open, enhance, corners, cornersActive, dragging, renderPreview, imgEpoch]);
 
     /** 画左侧底图，并把显示尺寸设为容器宽度（custom-v18 锁死 300px 的修复） */
     useEffect(() => {
@@ -573,6 +622,9 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
       pendingRef.current = null;
       dragRef.current = null;
       if (p && k) setCorners((prev) => (prev ? { ...prev, [k]: p } : prev));
+      // 用户真的动过把手了 → 打开"按角点裁剪"闸门。
+      // 检测失败时这是唯一的启用途径：默认框在你亲手拖过之后才生效。
+      setManualWarp(true);
       setDragging(false); // 松手 → 触发一次预览重算
     };
 
@@ -599,7 +651,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
             canvas.getContext("2d")!.drawImage(img, 0, 0);
           } else {
             const fm = fullMatRef.current;
-            if (fm && corners) {
+            if (fm && corners && cornersActive) {
               const warped = warpFromMat(cv, fm, corners, MAX_OUTPUT_EDGE).mat;
               out = enhanceMat(cv, warped, enhance);
               warped.delete();
@@ -630,7 +682,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
           setBusy(false);
         }
       },
-      [corners, enhance, onScanComplete, closeAll]
+      [corners, cornersActive, enhance, onScanComplete, closeAll]
     );
 
     /** 「用原图」二次确认：避免误触丢掉自动拉正与美化（蓝图 #5 要求） */
@@ -651,8 +703,13 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
 
     if (!open) return null;
 
+    /**
+     * z-[100]：本组件现在有两个挂载点 —— ① UploadZone（页面级，z-50 就够）
+     * ② 编辑器的「拉伸」入口（上面压着 Radix Dialog，其 Overlay 与 Content 都是 z-50）。
+     * 统一抬到 100，保证无论从哪进来都盖在最上层。
+     */
     return (
-      <div className="fixed inset-0 z-50 bg-slate-950 flex flex-col">
+      <div className="fixed inset-0 z-[100] bg-slate-950 flex flex-col">
         {/* 顶部条 */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
           <div className="text-white text-sm">
@@ -715,9 +772,14 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
               {cvError && (
                 <p className="text-red-400 text-sm text-center">{cvError}</p>
               )}
-              {detectFail && (
+              {detectFail && !manualWarp && (
                 <p className="text-amber-400 text-sm text-center">
                   {TEXT.noPaper}
+                </p>
+              )}
+              {detectFail && manualWarp && (
+                <p className="text-[#00D4FF] text-sm text-center">
+                  {TEXT.noPaperManual}
                 </p>
               )}
               <div className="grid md:grid-cols-2 gap-4 items-start">

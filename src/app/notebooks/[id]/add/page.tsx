@@ -99,13 +99,20 @@ export default function AddErrorPage() {
         setIsCropperOpen(true);
     };
 
+    /**
+     * 编辑器确认 → 送 AI。
+     * 【custom-v20 问题②】不再"先关对话框再分析"：送 AI 会失败（网络/超时/模型报错），
+     * 原实现先 setIsCropperOpen(false) 再 handleAnalyze，失败后只弹一个 alert，
+     * 对话框已经卸载，裁剪/擦除/框选全部随组件消失，用户毫无补救办法。
+     * 现改为"成功才关"：失败时编辑器原地保留，用户可直接再点一次「确定」重试。
+     */
     const handleCropComplete = async (croppedBlob: Blob) => {
-        setIsCropperOpen(false);
         const file = new File([croppedBlob], "cropped-image.jpg", { type: "image/jpeg" });
-        handleAnalyze(file);
+        const ok = await handleAnalyze(file);
+        if (ok) setIsCropperOpen(false);
     };
 
-    const handleAnalyze = async (file: File) => {
+    const handleAnalyze = async (file: File): Promise<boolean> => {
         const startTime = Date.now();
         frontendLogger.info('[AddAnalyze]', 'Starting analysis flow', {
             timeoutSettings: {
@@ -171,6 +178,7 @@ export default function AddErrorPage() {
             frontendLogger.info('[AddAnalyze]', 'Analysis completed successfully', {
                 totalDuration
             });
+            return true;
         } catch (error: any) {
             const errorDuration = Date.now() - startTime;
             frontendLogger.error('[AddError]', 'Analysis failed', {
@@ -225,6 +233,8 @@ export default function AddErrorPage() {
                 // 确保至少弹出一个提示
                 alert('Analysis failed. Please try again.');
             }
+            // 失败：保持 false，让调用方知道"没成功、别关对话框"
+            return false;
         } finally {
             // Always reset analysis state, even if setState throws
             frontendLogger.info('[AddAnalyze]', 'Finally: Resetting analysis state to idle');
@@ -337,6 +347,7 @@ export default function AddErrorPage() {
                 open={isCropperOpen}
                 onClose={() => setIsCropperOpen(false)}
                 onCropComplete={handleCropComplete}
+                analyzing={analysisStep !== 'idle'}
             />
         </main>
     );

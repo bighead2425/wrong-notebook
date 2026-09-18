@@ -20,7 +20,7 @@ export async function GET(req: Request) {
     const timeRange = searchParams.get("timeRange");
     const tag = searchParams.get("tag");
     // 四分法（H2 / 5.3）：
-    //   scope=main(默认) 主库：deletedAt=null 且 所属本 archiveStatus != archived
+    //   scope=main(默认) 主库：deletedAt=null 且 masteryLevel<2 且 所属本 archiveStatus != archived
     //   scope=archived   学期归档：deletedAt=null 且 所属本 archiveStatus = archived
     //   scope=all        全部未软删（不分归档）
     //   trash=1          回收箱，优先级最高：回收箱 > 已掌握 > 归档 > 主库
@@ -56,6 +56,11 @@ export async function GET(req: Request) {
             userId: user.id,
         };
 
+        // 需要同时满足的附加条件，最终并入 whereClause.AND。
+        // ⚠️ 这类条件必须走 AND 累加，不能写顶层同名字段 —— 顶层键（OR / masteryLevel 等）
+        //    会被后面的筛选逻辑整段覆盖，条件会静默丢失（gradeSemester 就踩过这个坑）。
+        const andConditions: Prisma.ErrorItemWhereInput[] = [];
+
         if (notebookId) {
             whereClause.notebookId = notebookId;
         }
@@ -79,6 +84,13 @@ export async function GET(req: Request) {
                         { notebookId: null },
                         { notebook: { is: { archiveStatus: { not: "archived" } } } },
                     ];
+                    // 【四分法对齐 · 蓝图 5.3】主库 = deletedAt=null 且 masteryLevel<2 且 本在用。
+                    // 原实现漏了 masteryLevel<2，「已掌握」的题一直混在主库里，四分法名不副实。
+                    // 但要留一个出口：界面上的「已掌握」筛选项正是靠 mastery=1 来看这一分区的，
+                    // 若无条件排除，该筛选会查出空集。故只在调用方**未显式传 mastery** 时排除。
+                    if (mastery === null) {
+                        andConditions.push({ masteryLevel: { lt: 2 } });
+                    }
                 }
                 // scope=all 不加额外限制
             }
@@ -98,9 +110,7 @@ export async function GET(req: Request) {
         }
 
         // 搜索条件需要使用 AND 包装，避免与其他 OR 条件冲突
-        // 最终的 whereClause.AND 会包含所有需要同时满足的条件
-        const andConditions: Prisma.ErrorItemWhereInput[] = [];
-
+        // 最终的 whereClause.AND 会包含所有需要同时满足的条件（声明已提前到函数开头）
         if (query) {
             // 搜索条件：在题目、解析、知识点中任一匹配即可
             andConditions.push({
