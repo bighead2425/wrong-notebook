@@ -6,6 +6,7 @@ import Link from "next/link";
 import { UploadZone } from "@/components/upload-zone";
 import { CorrectionEditor } from "@/components/correction-editor";
 import { ImageCropper } from "@/components/image-cropper";
+import { BatchPipeline } from "@/components/batch-pipeline";
 import { ParsedQuestion } from "@/lib/ai";
 import { UserWelcome } from "@/components/user-welcome";
 import { apiClient } from "@/lib/api-client";
@@ -40,6 +41,14 @@ function HomeContent() {
     // Cropper state
     const [croppingImage, setCroppingImage] = useState<string | null>(null);
     const [isCropperOpen, setIsCropperOpen] = useState(false);
+
+    /**
+     * 【custom-v23 · 蓝图 #5/#6/#7】批量上传（流水线模式）。
+     * 原来「上传新题」只做 setStep("upload")，在已经处于上传页时点了毫无反应 ——
+     * 空空以为它是个死按钮。现在改成**这一步的入口**：点它进流水线。
+     * 流水线自己管一套队列，与下面单题流互不干扰。
+     */
+    const [batchMode, setBatchMode] = useState(false);
 
     // Timeout Config
     const aiTimeout = config?.timeouts?.analyze || 180000;
@@ -356,8 +365,8 @@ function HomeContent() {
                 <div className={initialNotebookId ? "flex justify-center mb-6" : "flex flex-wrap gap-3"}>
                     <Button
                         className={`h-11 text-sm shadow-sm hover:shadow-md transition-all ${initialNotebookId ? "w-full max-w-md" : "flex-1 min-w-[140px]"}`}
-                        variant={step === "upload" ? "default" : "secondary"}
-                        onClick={() => setStep("upload")}
+                        variant={batchMode ? "default" : (step === "upload" ? "default" : "secondary")}
+                        onClick={() => setBatchMode(true)}
                     >
                         <Upload className="mr-2 h-4 w-4 shrink-0" />
                         <span className="truncate">{t.app.uploadNew}</span>
@@ -409,30 +418,42 @@ function HomeContent() {
                     )}
                 </div>
 
-                {step === "upload" && (
-                    <UploadZone onImageSelect={onImageSelect} isAnalyzing={analysisStep !== 'idle'} />
-                )}
-
-                {croppingImage && (
-                    <ImageCropper
-                        imageSrc={croppingImage}
-                        open={isCropperOpen}
-                        onClose={() => setIsCropperOpen(false)}
-                        onCropComplete={handleCropComplete}
-                        analyzing={analysisStep !== 'idle'}
-                    />
-                )}
-
-
-                {step === "review" && parsedData && (
-                    <CorrectionEditor
-                        initialData={parsedData}
-                        onSave={handleSave}
-                        onCancel={() => setStep("upload")}
-                        imagePreview={currentImage}
-                        initialSubjectId={initialNotebookId || autoSelectedNotebookId || undefined}
+                {batchMode ? (
+                    /* 【custom-v23 · 蓝图 #5/#6/#7】流水线：多张收进来 → 逐张加工 → 批量送 AI → 一道道录入 */
+                    <BatchPipeline
+                        language={language}
                         aiTimeout={aiTimeout}
+                        defaultNotebookId={initialNotebookId || autoSelectedNotebookId || undefined}
+                        onExit={() => setBatchMode(false)}
                     />
+                ) : (
+                    <>
+                        {step === "upload" && (
+                            <UploadZone onImageSelect={onImageSelect} isAnalyzing={analysisStep !== 'idle'} />
+                        )}
+
+                        {croppingImage && (
+                            <ImageCropper
+                                imageSrc={croppingImage}
+                                open={isCropperOpen}
+                                onClose={() => setIsCropperOpen(false)}
+                                onCropComplete={handleCropComplete}
+                                analyzing={analysisStep !== 'idle'}
+                            />
+                        )}
+
+
+                        {step === "review" && parsedData && (
+                            <CorrectionEditor
+                                initialData={parsedData}
+                                onSave={handleSave}
+                                onCancel={() => setStep("upload")}
+                                imagePreview={currentImage}
+                                initialSubjectId={initialNotebookId || autoSelectedNotebookId || undefined}
+                                aiTimeout={aiTimeout}
+                            />
+                        )}
+                    </>
                 )}
 
             </div>
