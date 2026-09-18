@@ -63,9 +63,24 @@ const ENHANCE_LABEL: Record<EnhanceMode, string> = {
  * 【custom-v19 性能核心】custom-v18 的预览直接跑全尺寸（2500px），单帧 4~7.5 秒。
  * 预览 canvas 实际显示宽度只有几百 CSS px（高 DPI 屏按 2 倍算约 1400 物理像素），
  * 因此 1200px 足以肉眼无差别，而像素量只有全尺寸的约 1/4 → 预览快 4 倍以上。
- * 出图仍走 MAX_OUTPUT_EDGE 全尺寸，清晰度不受影响。
+ * 出图走 MAX_OUTPUT_EDGE（custom-v19 起为 1920，与下游落库上限对齐），清晰度不受影响。
  */
 const PREVIEW_EDGE = 1200;
+
+/**
+ * 出图 JPEG 质量。
+ * 【custom-v19】0.95 → 0.80：与下游 compressImage 的默认质量（0.8）对齐，
+ * 出图即最终成品——此前只有超过 1MB 的档位会被下游二次重编码，同批图质量不一致。
+ * 0.80 是扫描件常规区间，配合前置的漂白/二值化，1920 长边下纸面足够干净。
+ */
+const OUTPUT_QUALITY = 0.8;
+
+/**
+ * 抓帧转 dataURL 的质量——拍摄路径的**中间产物**，与 OUTPUT_QUALITY 是两回事。
+ * 这里编出来的图是喂给 OpenCV 的原图，**不落库**；最终成品的尺寸与质量
+ * 由 MAX_OUTPUT_EDGE / OUTPUT_QUALITY 决定。保持高质量，避免进算法前就丢细节。
+ */
+const CAPTURE_QUALITY = 0.95;
 
 /** 「用原图」的二次确认时限（毫秒），超时自动取消 */
 const CONFIRM_WINDOW_MS = 3000;
@@ -361,7 +376,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
         canvas.width = v.videoWidth;
         canvas.height = v.videoHeight;
         canvas.getContext("2d")!.drawImage(v, 0, 0);
-        dataUrl = canvas.toDataURL("image/jpeg", 0.95);
+        dataUrl = canvas.toDataURL("image/jpeg", CAPTURE_QUALITY);
         w = v.videoWidth;
         h = v.videoHeight;
       }
@@ -608,7 +623,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
               closeAll();
             },
             "image/jpeg",
-            0.95
+            OUTPUT_QUALITY
           );
         } catch (e) {
           console.warn("[doc-scanner] 出图失败:", e);
