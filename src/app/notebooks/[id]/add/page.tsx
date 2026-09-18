@@ -40,8 +40,18 @@ export default function AddErrorPage() {
     const [loopMode, setLoopMode] = useState(false);
     /** 本页已抠走并入库的区域（整页自然坐标），画在编辑器上避免重复抠同一道 */
     const [doneRects, setDoneRects] = useState<DoneRect[]>([]);
-    /** 本次框选的区域。等**保存成功后**才并进 doneRects —— 保存失败就不算数，不能占位 */
-    const [pendingRect, setPendingRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+    /**
+     * 本次框选的区域。等**保存成功后**才并进 doneRects —— 保存失败就不算数，不能占位。
+     * 注意：与编辑器内部那个同名的 `pendingRect`（橡皮擦的待擦矩形）无关，故加 Crop 区分。
+     */
+    const [pendingCropRect, setPendingCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+    /**
+     * 【custom-v22 循环模式】本页真正**入库了几道**，与 doneRects 分开记。
+     * 为什么不直接用 doneRects.length：编辑器在"本题做过拉伸"时无法把区域映射回整页，
+     * 会回传 null（不给绿框），此时题目照样入库了，进度必须照涨 —— 否则录完一道进度还停在 0，
+     * 看起来像没保存成功。代价是进度数可能略多于绿框数，这是有意为之。
+     */
+    const [pageSavedCount, setPageSavedCount] = useState(0);
     /**
      * 递增以强制重建编辑器实例。
      * 为什么要用 key 而不是再开关一次对话框：编辑器的重置 effect 依赖 [open, imageSrc]，
@@ -113,9 +123,10 @@ export default function AddErrorPage() {
     const onImageSelect = (file: File) => {
         const imageUrl = URL.createObjectURL(file);
         setPageImageUrl(imageUrl);
-        // 新的一页：已抠标记从头开始，编辑器换实例复位
+        // 新的一页：已抠标记与进度都从头开始，编辑器换实例复位
         setDoneRects([]);
-        setPendingRect(null);
+        setPageSavedCount(0);
+        setPendingCropRect(null);
         setCropperKey((k) => k + 1);
         setIsCropperOpen(true);
     };
@@ -124,9 +135,11 @@ export default function AddErrorPage() {
      * 【custom-v22 循环模式】编辑器确认时回传本次框选的整页坐标。
      * 只暂存，不立刻记进 doneRects —— 这道题还没保存成功，
      * 提前标成"已抠"的话，一旦保存失败，用户就再也找不到那块区域了。
+     * 传 null 有明确含义：本题区域**无法映射回整页**（做过拉伸，或按标注框导出），
+     * 此时要覆盖掉上一道的残留值，绝不能把旧坐标算到这道题头上。
      */
     const handleCropRegion = (rect: { x: number; y: number; w: number; h: number } | null) => {
-        setPendingRect(rect);
+        setPendingCropRect(rect);
     };
 
     /**
@@ -293,16 +306,22 @@ export default function AddErrorPage() {
             // 把这一道的区域记进已抠标记，回到整页继续抠下一道。
             // 弹 alert 在这里会打断节奏（每道题都要点一次确定），
             // 进度改由编辑器标题的「本页已录 N 道」承担。
-            if (loopMode) {
-                if (pendingRect) {
+            //
+            // 条件是 `loopMode && pageImageUrl`：循环的意义是"在同一张整页上接着抠"。
+            // 没有整页图（走手动输入，从没拍过）时既回不去也没进度可显示，
+            // 若仍走循环分支就会变成"静默保存"——不弹提示、不跳转、页面上毫无反馈。
+            // 这种情况回落到下面的正常保存路径。
+            if (loopMode && pageImageUrl) {
+                if (pendingCropRect) {
                     setDoneRects((prev) => [
                         ...prev,
-                        { ...pendingRect, index: prev.length + 1 },
+                        { ...pendingCropRect, index: prev.length + 1 },
                     ]);
                 }
-                setPendingRect(null);
+                setPendingCropRect(null);
                 setParsedData(null);
                 setStep("upload");
+                setPageSavedCount((c) => c + 1);
                 setCropperKey((k) => k + 1);
                 setIsCropperOpen(true);
                 return;
@@ -321,7 +340,7 @@ export default function AddErrorPage() {
         // 【custom-v22 循环模式】手动输入没有"从整页抠下的区域"这一说，
         // 必须清掉上一道残留的框选坐标 —— 否则保存时会把它记成已抠区域，
         // 于是在整页上凭空多出一个根本没录过的绿框。
-        setPendingRect(null);
+        setPendingCropRect(null);
         setParsedData({
             questionText: "",
             answerText: "",
@@ -402,11 +421,11 @@ export default function AddErrorPage() {
                             只要本页已经开抠就给出口，一道都没录成也能退出，不至于被卡在循环里。 */}
                         {loopMode && pageImageUrl && (
                             <div className="flex flex-wrap items-center gap-3 p-3 rounded-lg border border-green-500/40 bg-green-500/5">
-                                {doneRects.length > 0 && (
+                                {pageSavedCount > 0 && (
                                     <span className="text-sm font-medium">
                                         {t.common.cropper?.loopDoneCount
-                                            ? t.common.cropper.loopDoneCount.replace("{n}", String(doneRects.length))
-                                            : `本页已录 ${doneRects.length} 道`}
+                                            ? t.common.cropper.loopDoneCount.replace("{n}", String(pageSavedCount))
+                                            : `本页已录 ${pageSavedCount} 道`}
                                     </span>
                                 )}
                                 <Button
@@ -457,7 +476,7 @@ export default function AddErrorPage() {
                 analyzing={analysisStep !== 'idle'}
                 doneRects={loopMode ? doneRects : undefined}
                 onCropRegion={handleCropRegion}
-                loopCount={loopMode ? doneRects.length : undefined}
+                loopCount={loopMode ? pageSavedCount : undefined}
             />
         </main>
     );

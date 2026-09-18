@@ -144,6 +144,22 @@ export function ImageCropper({
      */
     const lastCropRectRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
 
+    /**
+     * 【custom-v22 循环模式】**已抠标记的坐标系是否已失效**。
+     *
+     * 标记存的是「整页自然坐标」，只有基准画布仍等于**未经变形的整页**时才对得上。
+     * 会打掉它的操作：
+     *   · 拉伸（handleStretchDone）—— 基准换成矫正后的图，尺寸、比例全变
+     *     （裁剪即提取那次不用它管，`isCroppedRef` 已经覆盖）
+     * 会恢复它的操作：
+     *   · 「原图」键（回到最初的整页）、新一轮打开编辑器
+     *
+     * 失效后：① 回传 null，绝不把错坐标记进 doneRects（否则一道拉伸过的题
+     * 会把后面几道的绿框全带偏）；② 停止绘制已有标记。
+     * 宁可这一道没有标记，也不能给一个位置错误的绿框。
+     */
+    const rectSpaceStaleRef = useRef(false);
+
     // ===== 新增状态 =====
     const [mode, setMode] = useState<Mode>("crop");
     const [eraseTool, setEraseTool] = useState<EraseTool>("brush");
@@ -264,6 +280,8 @@ export function ImageCropper({
         isCroppedRef.current = false;
         // 【custom-v22 循环模式】新一轮从整页重新开始，上一道的框选坐标作废
         lastCropRectRef.current = null;
+        // 新一轮加载的就是原始整页 → 坐标系重新成立
+        rectSpaceStaleRef.current = false;
         // 每次打开都复位拖拽位置，避免沿用上一次的偏移
         setDragOffset(null);
     }, [open, imageSrc]);
@@ -430,9 +448,11 @@ export function ImageCropper({
         }
 
         // 【custom-v22 循环模式】本页已抠走并入库的题：绿色半透明遮罩 + 圈号。
-        // 只在**尚未做「裁剪即提取」**时绘制 —— 裁过之后工作画布已换成裁剪后的小图，
-        // 整页坐标不再对应，画上去只会是错位的一团。
-        if (doneRects && doneRects.length > 0 && !isCroppedRef.current) {
+        // 只在**坐标系仍然成立**时绘制：
+        //   · !isCroppedRef —— 裁过之后工作画布已换成裁剪后的小图；
+        //   · !rectSpaceStaleRef —— 拉伸之后基准图已换成矫正图。
+        // 两种情况下整页坐标都不再对应，画上去只会是错位的一团。
+        if (doneRects && doneRects.length > 0 && !isCroppedRef.current && !rectSpaceStaleRef.current) {
             ctx.save();
             for (const d of doneRects) {
                 ctx.fillStyle = "rgba(0, 200, 83, 0.16)";
@@ -447,7 +467,10 @@ export function ImageCropper({
             // 圈号半径按画面短边取，避免小图上字号失控、大图上又看不清
             const rr = Math.max(10, Math.min(ov.width, ov.height) * 0.022);
             for (const d of doneRects) {
-                drawCircledNumber(ctx, d.index, d.x + rr * 1.3, d.y + rr * 1.3, rr);
+                // 靠左上角画；但夹在画幅内，避免第一行/第一列的圈号被裁掉半个
+                const cx = Math.min(Math.max(d.x + rr * 1.3, rr), ov.width - rr);
+                const cy = Math.min(Math.max(d.y + rr * 1.3, rr), ov.height - rr);
+                drawCircledNumber(ctx, d.index, cx, cy, rr);
             }
         }
 
@@ -742,6 +765,8 @@ export function ImageCropper({
         pointersRef.current.clear();
         pinchRef.current = null;
         panDragRef.current = null;
+        // 【custom-v22 循环模式】回到"最初整页" → 已抠标记的坐标系重新成立
+        rectSpaceStaleRef.current = false;
         syncBase();
         redrawOverlay();
         fitView();
@@ -804,6 +829,9 @@ export function ImageCropper({
                 // 新基准就是"整张拉伸结果"，不存在已烘焙的裁剪 → 置 false，
                 // 这样用户之后仍能在拉伸结果上重新框选裁剪。
                 isCroppedRef.current = false;
+                // 【custom-v22 循环模式】基准换成了矫正后的图（尺寸/比例全变），
+                // 旧标记的整页坐标不再对应 → 置失效，既不回传也不绘制，避免绿框错位。
+                rectSpaceStaleRef.current = true;
                 setMode("crop");
 
                 syncBase();
@@ -1163,11 +1191,18 @@ export function ImageCropper({
         // 【custom-v22 循环模式】
         // 情形一：用户切过橡皮擦/标注模式 → bakeCropIntoBase 已把整页坐标记进 lastCropRectRef；
         // 情形二：一直在裁剪模式直接点确定 → 还没记，这里补上。
-        // 两种情形统一在这一处回传，保证下面任何一条导出分支都不会漏掉。
         if (cropRect && !isCroppedRef.current) {
             lastCropRectRef.current = { x: cropRect.x, y: cropRect.y, w: cropRect.w, h: cropRect.h };
         }
-        onCropRegion?.(lastCropRectRef.current);
+        /**
+         * 只有**实际导出区域确实等于裁剪框**时，这个矩形才配当"这一道在整页上的位置"。
+         * 两种不成立的情形（可与下面三条导出分支逐条对上）：
+         *   · 区域标注 + 按框导出（cropToRegions && boxes.length）→ 导出的是框的包围盒或分图结果，
+         *     与 cropRect 无关，照抄会把绿框标到错误位置；
+         *   · 坐标系已失效（本题做过拉伸）→ 数值对不上整页，宁可这一道没有标记。
+         */
+        const regionIsCropRect = !(cropToRegions && boxes.length > 0);
+        onCropRegion?.(regionIsCropRect && !rectSpaceStaleRef.current ? lastCropRectRef.current : null);
 
         // 画布未就绪（极端情况）：退回原图，保持旧行为
         if (!wc) {
@@ -1327,7 +1362,8 @@ export function ImageCropper({
                             </span>
                         )}
                     </DialogTitle>
-                    {loopCount !== undefined && (
+                    {/* 只在**确实画了绿框**时才解释绿框是什么意思 */}
+                    {(loopCount ?? 0) > 0 && doneRects && doneRects.length > 0 && (
                         <p className="mt-1 text-xs text-muted-foreground">
                             {t.common.cropper?.loopHint || "绿色框是已录入的题，避开它们框下一道；保存后会自动回到本页"}
                         </p>
