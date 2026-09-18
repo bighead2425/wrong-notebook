@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { UploadZone } from "@/components/upload-zone";
 import { CorrectionEditor } from "@/components/correction-editor";
-import { ImageCropper } from "@/components/image-cropper";
+import { ImageCropper, type DoneRect } from "@/components/image-cropper";
 import { ParsedQuestion } from "@/lib/ai";
 import { apiClient } from "@/lib/api-client";
 import { AnalyzeResponse, Notebook, AppConfig } from "@/types/api";
@@ -30,8 +30,25 @@ export default function AddErrorPage() {
     const [config, setConfig] = useState<AppConfig | null>(null);
 
     // Cropper state
-    const [croppingImage, setCroppingImage] = useState<string | null>(null);
+    // 【custom-v22 循环模式】pageImageUrl = 整页图，循环中**常驻不换**，
+    // 每抠完一道回到它重新框下一道。非循环模式下它就是一次性图，语义不变。
+    const [pageImageUrl, setPageImageUrl] = useState<string | null>(null);
     const [isCropperOpen, setIsCropperOpen] = useState(false);
+
+    // ===== 循环模式状态（custom-v22 · 蓝图 #4 #7）=====
+    /** 是否开启「拍整页 → 一道道抠」的循环 */
+    const [loopMode, setLoopMode] = useState(false);
+    /** 本页已抠走并入库的区域（整页自然坐标），画在编辑器上避免重复抠同一道 */
+    const [doneRects, setDoneRects] = useState<DoneRect[]>([]);
+    /** 本次框选的区域。等**保存成功后**才并进 doneRects —— 保存失败就不算数，不能占位 */
+    const [pendingRect, setPendingRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+    /**
+     * 递增以强制重建编辑器实例。
+     * 为什么要用 key 而不是再开关一次对话框：编辑器的重置 effect 依赖 [open, imageSrc]，
+     * 循环里 imageSrc 恒定是整页图，光靠 open 的 false→true 并不可靠；
+     * 换 key 让 React 整棵子树卸载重建，擦除/裁剪/框选全部干净复位到整页。
+     */
+    const [cropperKey, setCropperKey] = useState(0);
 
     // Timeout Config
     const aiTimeout = config?.timeouts?.analyze || 180000;
@@ -40,11 +57,11 @@ export default function AddErrorPage() {
     // Cleanup Blob URL to prevent memory leak
     useEffect(() => {
         return () => {
-            if (croppingImage) {
-                URL.revokeObjectURL(croppingImage);
+            if (pageImageUrl) {
+                URL.revokeObjectURL(pageImageUrl);
             }
         };
-    }, [croppingImage]);
+    }, [pageImageUrl]);
 
     useEffect(() => {
         // Fetch notebook info
@@ -95,8 +112,21 @@ export default function AddErrorPage() {
 
     const onImageSelect = (file: File) => {
         const imageUrl = URL.createObjectURL(file);
-        setCroppingImage(imageUrl);
+        setPageImageUrl(imageUrl);
+        // 新的一页：已抠标记从头开始，编辑器换实例复位
+        setDoneRects([]);
+        setPendingRect(null);
+        setCropperKey((k) => k + 1);
         setIsCropperOpen(true);
+    };
+
+    /**
+     * 【custom-v22 循环模式】编辑器确认时回传本次框选的整页坐标。
+     * 只暂存，不立刻记进 doneRects —— 这道题还没保存成功，
+     * 提前标成"已抠"的话，一旦保存失败，用户就再也找不到那块区域了。
+     */
+    const handleCropRegion = (rect: { x: number; y: number; w: number; h: number } | null) => {
+        setPendingRect(rect);
     };
 
     /**
@@ -259,6 +289,25 @@ export default function AddErrorPage() {
                 frontendLogger.info('[AddSave]', 'Duplicate submission detected, using existing record');
             }
 
+            // 【custom-v22 循环模式 · 蓝图 #4】保存成功后**不跳转、不弹窗**：
+            // 把这一道的区域记进已抠标记，回到整页继续抠下一道。
+            // 弹 alert 在这里会打断节奏（每道题都要点一次确定），
+            // 进度改由编辑器标题的「本页已录 N 道」承担。
+            if (loopMode) {
+                if (pendingRect) {
+                    setDoneRects((prev) => [
+                        ...prev,
+                        { ...pendingRect, index: prev.length + 1 },
+                    ]);
+                }
+                setPendingRect(null);
+                setParsedData(null);
+                setStep("upload");
+                setCropperKey((k) => k + 1);
+                setIsCropperOpen(true);
+                return;
+            }
+
             alert(t.common.messages?.saveSuccess || 'Saved!');
             router.push(`/notebooks/${notebookId}`);
         } catch (error) {
@@ -269,6 +318,10 @@ export default function AddErrorPage() {
 
     /** H4：手动输入 —— 不拍照直接进编辑页；题号仍由后端按 Notebook.subject 自动生成 */
     const handleManualInput = () => {
+        // 【custom-v22 循环模式】手动输入没有"从整页抠下的区域"这一说，
+        // 必须清掉上一道残留的框选坐标 —— 否则保存时会把它记成已抠区域，
+        // 于是在整页上凭空多出一个根本没录过的绿框。
+        setPendingRect(null);
         setParsedData({
             questionText: "",
             answerText: "",
@@ -323,11 +376,64 @@ export default function AddErrorPage() {
 
                 {/* Main Content */}
                 {step === "upload" && (
-                    <UploadZone
-                        onImageSelect={onImageSelect}
-                        isAnalyzing={analysisStep !== 'idle'}
-                        onManualInput={handleManualInput}
-                    />
+                    <div className="space-y-4">
+                        {/* ===== 循环模式开关（custom-v22 · 蓝图 #4 #7）=====
+                            一整页上有多道错题时开启：抠一道 → 保存 → 自动回到整页抠下一道，
+                            已抠的题会标成绿框，直到你点「结束」。 */}
+                        <label className="flex items-start gap-2 p-3 rounded-lg border bg-muted/30 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                className="mt-0.5 h-4 w-4"
+                                checked={loopMode}
+                                onChange={(e) => setLoopMode(e.target.checked)}
+                            />
+                            <span className="text-sm">
+                                <span className="font-medium">
+                                    {t.common.cropper?.loopMode || "循环模式（一页多道）"}
+                                </span>
+                                <span className="block text-xs text-muted-foreground mt-0.5">
+                                    {t.common.cropper?.loopModeHint
+                                        || "拍一整页，抠完一道保存后自动回到本页继续抠下一道，适合一页上有好几道错题"}
+                                </span>
+                            </span>
+                        </label>
+
+                        {/* 循环中的出口（蓝图：循环至某次保存后取消才结束）。
+                            只要本页已经开抠就给出口，一道都没录成也能退出，不至于被卡在循环里。 */}
+                        {loopMode && pageImageUrl && (
+                            <div className="flex flex-wrap items-center gap-3 p-3 rounded-lg border border-green-500/40 bg-green-500/5">
+                                {doneRects.length > 0 && (
+                                    <span className="text-sm font-medium">
+                                        {t.common.cropper?.loopDoneCount
+                                            ? t.common.cropper.loopDoneCount.replace("{n}", String(doneRects.length))
+                                            : `本页已录 ${doneRects.length} 道`}
+                                    </span>
+                                )}
+                                <Button
+                                    size="sm"
+                                    onClick={() => {
+                                        setCropperKey((k) => k + 1);
+                                        setIsCropperOpen(true);
+                                    }}
+                                >
+                                    {t.common.cropper?.loopContinue || "继续抠下一道"}
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => router.push(`/notebooks/${notebookId}`)}
+                                >
+                                    {t.common.cropper?.loopFinish || "结束并查看错题本"}
+                                </Button>
+                            </div>
+                        )}
+
+                        <UploadZone
+                            onImageSelect={onImageSelect}
+                            isAnalyzing={analysisStep !== 'idle'}
+                            onManualInput={handleManualInput}
+                        />
+                    </div>
                 )}
 
                 {step === "review" && parsedData && (
@@ -343,11 +449,15 @@ export default function AddErrorPage() {
             </div>
 
             <ImageCropper
-                imageSrc={croppingImage || ""}
+                key={cropperKey}
+                imageSrc={pageImageUrl || ""}
                 open={isCropperOpen}
                 onClose={() => setIsCropperOpen(false)}
                 onCropComplete={handleCropComplete}
                 analyzing={analysisStep !== 'idle'}
+                doneRects={loopMode ? doneRects : undefined}
+                onCropRegion={handleCropRegion}
+                loopCount={loopMode ? doneRects.length : undefined}
             />
         </main>
     );

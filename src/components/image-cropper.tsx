@@ -21,6 +21,33 @@ interface ImageCropperProps {
      * 并锁住「确定」避免重复提交。
      */
     analyzing?: boolean;
+    /**
+     * 【custom-v22 循环模式】本页**已经抠走并入库**的题目区域，坐标为**整页自然坐标**。
+     * 仅作视觉标记（半透明遮罩 + 序号），用来避免同一道被重复抠。
+     * 只在尚未做"裁剪即提取"时绘制——一旦裁过，工作画布已换成裁剪后的小图，
+     * 坐标系随之改变，旧标记不再对应。
+     */
+    doneRects?: DoneRect[];
+    /**
+     * 【custom-v22 循环模式】确认时回传本次框选的区域（**整页自然坐标**）。
+     * 调用方据此把它加进 doneRects。用户没拖裁剪框（整图直送）时为 null。
+     */
+    onCropRegion?: (rect: { x: number; y: number; w: number; h: number } | null) => void;
+    /**
+     * 【custom-v22 循环模式】"本页已录 N 道"的提示，显示在编辑器标题右侧。
+     * 不传则不显示（非循环模式）。
+     */
+    loopCount?: number;
+}
+
+/** 循环模式下已抠走的区域（整页自然坐标） */
+export interface DoneRect {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    /** 第几道（从 1 开始），画成圈号 */
+    index: number;
 }
 
 // ============================================================
@@ -96,8 +123,26 @@ function drawCircledNumber(
     ctx.restore();
 }
 
-export function ImageCropper({ imageSrc, open, onClose, onCropComplete, analyzing = false }: ImageCropperProps) {
+export function ImageCropper({
+    imageSrc,
+    open,
+    onClose,
+    onCropComplete,
+    analyzing = false,
+    doneRects,
+    onCropRegion,
+    loopCount,
+}: ImageCropperProps) {
     const { t } = useLanguage();
+
+    /**
+     * 【custom-v22 循环模式】本次框选区域的**整页自然坐标**。
+     * 为什么要用 ref 而不是直接读 cropRect：
+     * 「裁剪即提取」(bakeCropIntoBase) 会把整个基准画布换成裁剪后的小图、
+     * 并把 cropRect 清空，坐标系从此改变 —— 那时再读 cropRect 已经拿不到整页坐标了。
+     * 所以必须在烘焙发生**之前**就把坐标记下来。
+     */
+    const lastCropRectRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
 
     // ===== 新增状态 =====
     const [mode, setMode] = useState<Mode>("crop");
@@ -217,6 +262,8 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete, analyzin
         origCanvasRef.current = null;
         workCanvasRef.current = null;
         isCroppedRef.current = false;
+        // 【custom-v22 循环模式】新一轮从整页重新开始，上一道的框选坐标作废
+        lastCropRectRef.current = null;
         // 每次打开都复位拖拽位置，避免沿用上一次的偏移
         setDragOffset(null);
     }, [open, imageSrc]);
@@ -382,6 +429,28 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete, analyzin
             drawEraseFrame(pendingRect.x, pendingRect.y, pendingRect.w, pendingRect.h, true);
         }
 
+        // 【custom-v22 循环模式】本页已抠走并入库的题：绿色半透明遮罩 + 圈号。
+        // 只在**尚未做「裁剪即提取」**时绘制 —— 裁过之后工作画布已换成裁剪后的小图，
+        // 整页坐标不再对应，画上去只会是错位的一团。
+        if (doneRects && doneRects.length > 0 && !isCroppedRef.current) {
+            ctx.save();
+            for (const d of doneRects) {
+                ctx.fillStyle = "rgba(0, 200, 83, 0.16)";
+                ctx.fillRect(d.x, d.y, d.w, d.h);
+                ctx.strokeStyle = "rgba(0, 200, 83, 0.85)";
+                ctx.lineWidth = Math.max(1.5, lw);
+                ctx.setLineDash([lw * 2, lw * 2]);
+                ctx.strokeRect(d.x, d.y, d.w, d.h);
+                ctx.setLineDash([]);
+            }
+            ctx.restore();
+            // 圈号半径按画面短边取，避免小图上字号失控、大图上又看不清
+            const rr = Math.max(10, Math.min(ov.width, ov.height) * 0.022);
+            for (const d of doneRects) {
+                drawCircledNumber(ctx, d.index, d.x + rr * 1.3, d.y + rr * 1.3, rr);
+            }
+        }
+
         // 裁剪模式：已确认的裁剪框（白框 + 外部暗色遮罩，和 ReactCrop 一样直观）
         if (mode === "crop" && cropRect) {
             ctx.save();
@@ -433,7 +502,7 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete, analyzin
                 ctx.restore();
             }
         }
-    }, [boxes, selectedBoxId, pendingRect, mode, labelKind, cropRect]);
+    }, [boxes, selectedBoxId, pendingRect, mode, labelKind, cropRect, doneRects]);
 
     // 模式切换或画布初次就绪时，把 workCanvas 同步到 baseCanvas 并重绘 overlay
     useEffect(() => {
@@ -459,6 +528,10 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete, analyzin
         if (!cropRect) return;
         const r = cropRect;
         if (r.w < 5 || r.h < 5) return;
+
+        // 【custom-v22 循环模式】烘焙之后基准画布就换成这张小图、坐标系随之改变，
+        // 所以必须在替换**之前**记下整页坐标，供调用方标记"这一道已抠走"。
+        lastCropRectRef.current = { x: r.x, y: r.y, w: r.w, h: r.h };
 
         const cropped = document.createElement("canvas");
         cropped.width = Math.max(1, Math.round(r.w));
@@ -1087,6 +1160,15 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete, analyzin
     const handleConfirm = async () => {
         const wc = workCanvasRef.current;
 
+        // 【custom-v22 循环模式】
+        // 情形一：用户切过橡皮擦/标注模式 → bakeCropIntoBase 已把整页坐标记进 lastCropRectRef；
+        // 情形二：一直在裁剪模式直接点确定 → 还没记，这里补上。
+        // 两种情形统一在这一处回传，保证下面任何一条导出分支都不会漏掉。
+        if (cropRect && !isCroppedRef.current) {
+            lastCropRectRef.current = { x: cropRect.x, y: cropRect.y, w: cropRect.w, h: cropRect.h };
+        }
+        onCropRegion?.(lastCropRectRef.current);
+
         // 画布未就绪（极端情况）：退回原图，保持旧行为
         if (!wc) {
             try {
@@ -1234,7 +1316,22 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete, analyzin
                     className="p-4 border-b shrink-0 cursor-move select-none"
                     onPointerDown={startDialogDrag}
                 >
-                    <DialogTitle>{t.common.cropper?.title || "Crop Image"}</DialogTitle>
+                    <DialogTitle>
+                        {t.common.cropper?.title || "Crop Image"}
+                        {/* 【custom-v22 循环模式】本页进度：录了几道、已抠区域怎么标 */}
+                        {loopCount !== undefined && (
+                            <span className="ml-2 text-sm font-normal text-muted-foreground">
+                                {t.common.cropper?.loopProgress
+                                    ? t.common.cropper.loopProgress.replace("{n}", String(loopCount))
+                                    : `本页已录 ${loopCount} 道`}
+                            </span>
+                        )}
+                    </DialogTitle>
+                    {loopCount !== undefined && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                            {t.common.cropper?.loopHint || "绿色框是已录入的题，避开它们框下一道；保存后会自动回到本页"}
+                        </p>
+                    )}
                 </DialogHeader>
 
                 {/* ===== 工具栏 ===== */}
