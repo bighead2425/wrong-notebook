@@ -18,6 +18,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { ImageCropper } from "@/components/image-cropper";
+import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
 import { CorrectionEditor, ParsedQuestionWithSubject } from "@/components/correction-editor";
 import { ParsedQuestion } from "@/lib/ai";
 import { apiClient } from "@/lib/api-client";
@@ -30,7 +31,7 @@ import { subjectLabel } from "@/lib/notebook-fields";
 import { frontendLogger } from "@/lib/frontend-logger";
 import { ProgressFeedback, ProgressStatus } from "@/components/ui/progress-feedback";
 import {
-    Upload, X, Check, Sparkles, ArrowLeft, Trash2, Layers, PenLine,
+    Upload, X, Check, Sparkles, ArrowLeft, Trash2, Layers, PenLine, Camera,
 } from "lucide-react";
 
 /** 一张图在流水线里的状态 */
@@ -103,6 +104,19 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
     const fileInputRef = useRef<HTMLInputElement>(null);
     /** 【custom-v26】文件正被拖到收图框上方（用于高亮） */
     const [dragActive, setDragActive] = useState(false);
+
+    /** 【custom-v26 连拍】扫描器句柄 + 本轮已拍张数（显示在扫描器顶部条） */
+    const scannerRef = useRef<DocScannerHandle>(null);
+    const [burstCount, setBurstCount] = useState(0);
+    /** 相机可用才显示「连续拍摄」：必须是安全上下文（https / localhost）且浏览器支持 */
+    const [camOk, setCamOk] = useState(false);
+    useEffect(() => {
+        setCamOk(
+            typeof navigator !== "undefined" &&
+            typeof navigator.mediaDevices?.getUserMedia === "function" &&
+            window.isSecureContext === true
+        );
+    }, []);
 
     /**
      * 【custom-v26】拖放兜底：拦掉浏览器「打开被拖文件」的默认行为。
@@ -237,6 +251,23 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
         setItems(prev => [...prev, ...added]);
         setActiveId(added[added.length - 1].id);
         setStage("queue");
+    };
+
+    /**
+     * 【custom-v26 连拍】扫描器出的每一张都进「待处理」。
+     *
+     * 为什么是待处理而不是预处理：扫描器只做了"拉正 + 漂白"，
+     * 关键的一步（把这一道从整页里抠出来 / 擦掉多余笔迹）还得进编辑器做，
+     * 所以按用户要求先堆在待处理，回头在队列里逐张加工。
+     *
+     * @param action "again" = 用户还要接着拍（扫描器自己回取景，这里不用管）
+     *               "done"  = 收工（扫描器自己会关闭，这里把计数清零，下一轮从头数）
+     */
+    const handleBurstShot = (blob: Blob, action: "again" | "done") => {
+        const f = new File([blob], `burst-${Date.now()}.jpg`, { type: "image/jpeg" });
+        addFiles([f]);
+        if (action === "done") setBurstCount(0);
+        else setBurstCount((c) => c + 1);
     };
 
     const removeItem = (id: string) => {
@@ -510,6 +541,17 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
         <div className="space-y-5">
             {/* 这个遮罩是 fixed inset-0 全屏拦截：批量是串行跑 N 张，
                 没有 onCancel 的话用户在几十张的批次里被彻底锁死。 */}
+            {/* 【custom-v26 连拍】扫描器挂在这里：连拍模式下它自己管理"继续拍 / 收工"，
+                每张通过 onBurstShot 回传；onScanComplete 只在单张模式用到，这里给个空实现。 */}
+            <DocScanner
+                ref={scannerRef}
+                burstMode
+                burstCount={burstCount}
+                onBurstShot={handleBurstShot}
+                onScanComplete={() => { }}
+                onClose={() => { }}
+            />
+
             <ProgressFeedback
                 status={analysisStep}
                 progress={progress}
@@ -586,6 +628,19 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                     }}
                 />
             </div>
+
+            {/* 【custom-v26 连拍】直接调用摄像头：拍一张 → 确认效果 → 收进待处理 → 接着拍。
+                相机不可用（非 https / 浏览器不支持）时整个按钮不出现，避免点了没反应。 */}
+            {camOk && (
+                <button
+                    type="button"
+                    onClick={() => scannerRef.current?.openCamera()}
+                    className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed py-3 text-sm font-medium text-primary hover:bg-primary/5 transition-colors"
+                >
+                    <Camera className="h-4 w-4" />
+                    {t.common.batch?.burst || "连续拍摄：拍一张收一张，拍完一起加工"}
+                </button>
+            )}
 
             {items.length > 0 && (
                 <>

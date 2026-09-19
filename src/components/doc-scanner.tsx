@@ -31,6 +31,21 @@ export interface DocScannerHandle {
 interface DocScannerProps {
   onScanComplete: (blob: Blob) => void;
   onClose: () => void;
+  /**
+   * 【custom-v26 连拍模式】批量上传的「连续拍摄」用。
+   *
+   * 开启后发生两件事：
+   *  ① 「确认扫描效果」那一步的「确认」按钮换成 **「再拍一张」/「完成」**；
+   *  ② 每张图连同用户意图一起回传给 `onBurstShot`，而不再走 `onScanComplete`。
+   *     点「再拍一张」时扫描器**不关闭** —— 直接回到取景框继续拍，
+   *     拍多少张就往批量队列里堆多少张，直到点「完成」才关闭。
+   *
+   * 不传就是原本的单张模式，行为一字不变。
+   */
+  burstMode?: boolean;
+  onBurstShot?: (blob: Blob, action: "again" | "done") => void;
+  /** 连拍已拍张数（显示在顶部条）——连着拍十几张时没这个数会心里没底 */
+  burstCount?: number;
 }
 
 /** 界面文案集中一处，将来接入 i18n 只需替换这一个对象 */
@@ -59,6 +74,11 @@ const TEXT = {
   useOriginalAgain: "再点一次用原图",
   useOriginalTip: "「用原图」将放弃自动拉正与美化，直接使用原始照片",
   confirm: "确认",
+  /** 【custom-v26 连拍】「确认」拆成两个：出这张 + 继续拍 / 出这张 + 收工 */
+  burstAgain: "再拍一张",
+  burstDone: "完成",
+  /** 连拍模式下「用原图」变成开关，选中后由上面两个按钮决定何时出图 */
+  useOriginalOn: "已选原图",
   previewing: "正在生成预览…",
   finalizing: "正在生成图片…",
 };
@@ -149,7 +169,7 @@ function defaultCornersFor(img: {
 }
 
 export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
-  function DocScanner({ onScanComplete, onClose }, ref) {
+  function DocScanner({ onScanComplete, onClose, burstMode = false, onBurstShot, burstCount = 0 }, ref) {
     const videoRef = useRef<HTMLVideoElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
@@ -207,6 +227,12 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
     /** 预览正在后台计算，给用户一个提示，避免以为卡死 */
     const [previewBusy, setPreviewBusy] = useState(false);
     const [confirmUseOriginal, setConfirmUseOriginal] = useState(false);
+    /**
+     * 【custom-v26 连拍】「用原图」在连拍模式下不是"立刻出图"，而是一个**开关**：
+     * 出图动作交给「再拍一张」/「完成」，所以必须先记住"这张要不要放弃拉正美化"。
+     * 单张模式不走这个状态（那边点「用原图」就直接出图，保持原行为）。
+     */
+    const [useOrig, setUseOrig] = useState(false);
     /** 左栏显示尺寸（CSS px），随容器宽度自适应 */
     const [display, setDisplay] = useState<{ w: number; h: number } | null>(null);
     /** 换图时 +1，用于触发底图重绘 */
@@ -244,6 +270,15 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
      * 浏览器默认给 ~480p，12MP 的主摄只拍出 461×562。这里显式要 4K 并开连续对焦。
      */
     const startCamera = useCallback(async () => {
+      /**
+       * 【custom-v26】开新流之前先停掉旧流。
+       *
+       * 拍完照那条流是**故意留着**的（「重拍」要能立刻回到取景，不必重新授权），
+       * 但以前 startCamera 是直接覆盖 streamRef —— 旧流没人 stop，就一直挂着：
+       * 单张模式点一次「重拍」泄漏一条；连拍模式拍 10 张就是 10 条流同时活着
+       * （摄像头指示灯不灭、手机发热耗电，部分浏览器还会直接拒绝再开新流）。
+       */
+      stopCamera();
       setCamError(null);
       setVideoReady(false);
       try {
@@ -289,7 +324,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
           );
         }
       }
-    }, []);
+    }, [stopCamera]);
 
     /** 把图片载入审核态，并自动找纸张四角 */
     const loadImgAndReview = useCallback(
@@ -375,6 +410,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
       setShotSize("");
       setEnhance("white");
       setConfirmUseOriginal(false);
+      setUseOrig(false);
       startCamera();
     }, [startCamera]);
 
@@ -687,7 +723,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
      * 与「用原图」四个字的意思完全相反。
      */
     const finalize = useCallback(
-      (useOriginal: boolean) => {
+      (useOriginal: boolean, action?: "again" | "done") => {
         const img = imgRef.current;
         const cv = cvRef.current;
         if (!img) return;
@@ -722,9 +758,23 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
 
           canvas.toBlob(
             (blob) => {
-              if (blob) onScanComplete(blob);
+              if (blob) {
+                // 【custom-v26 连拍】连拍模式下每张图连同「还要不要继续拍」一起回传，
+                // 由调用方决定往队列里堆；单张模式维持原样。
+                if (burstMode && onBurstShot && action) onBurstShot(blob, action);
+                else onScanComplete(blob);
+              }
               setBusy(false);
-              closeAll();
+              if (burstMode && action === "again") {
+                // 连拍：留在扫描器里，回到取景继续拍。
+                // 与「重拍」走同一条复位路径（下一张 loadImgAndReview 会释放上一张的 Mat）。
+                setUseOrig(false);
+                setConfirmUseOriginal(false);
+                setMode("camera");
+                startCamera();
+              } else {
+                closeAll();
+              }
             },
             "image/jpeg",
             OUTPUT_QUALITY
@@ -734,11 +784,17 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
           setBusy(false);
         }
       },
-      [corners, cornersActive, enhance, onScanComplete, closeAll]
+      [corners, cornersActive, enhance, onScanComplete, closeAll, burstMode, onBurstShot, startCamera]
     );
 
     /** 「用原图」二次确认：避免误触丢掉自动拉正与美化（蓝图 #5 要求） */
     const handleUseOriginal = () => {
+      // 【custom-v26 连拍】连拍模式下这是个**开关**而不是"立刻出图"：
+      // 出图由「再拍一张 / 完成」触发，这里只决定这张要不要放弃拉正美化。
+      if (burstMode) {
+        setUseOrig((v) => !v);
+        return;
+      }
       if (!confirmUseOriginal) {
         setConfirmUseOriginal(true);
         if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
@@ -768,6 +824,11 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
             {mode === "camera" ? TEXT.aimHint : TEXT.reviewHint}
             {shotSize && (
               <span className="ml-2 text-xs text-[#00D4FF]">{shotSize}</span>
+            )}
+            {burstMode && burstCount > 0 && (
+              <span className="ml-2 text-xs text-[#00D4FF]">
+                已拍 {burstCount} 张
+              </span>
             )}
           </div>
           <Button variant="ghost" className="text-white" onClick={closeAll}>
@@ -913,6 +974,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
                   className="text-[#00D4FF] border-[#00D4FF]/60"
                   onClick={() => {
                     setConfirmUseOriginal(false);
+                    setUseOrig(false); // 重拍是换一张，上一张的「用原图」选择不该继承
                     setMode("camera");
                     startCamera();
                   }}
@@ -923,22 +985,46 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
                 <Button
                   variant="outline"
                   className={
-                    confirmUseOriginal
+                    (burstMode ? useOrig : confirmUseOriginal)
                       ? "border-amber-400 text-amber-400 hover:bg-amber-400/10 hover:text-amber-400"
                       : "text-[#00D4FF] border-[#00D4FF]/60 hover:bg-[#00D4FF]/10 hover:text-[#00D4FF]"
                   }
                   onClick={handleUseOriginal}
                   disabled={busy}
                 >
-                  {confirmUseOriginal ? TEXT.useOriginalAgain : TEXT.useOriginal}
+                  {burstMode
+                    ? (useOrig ? TEXT.useOriginalOn : TEXT.useOriginal)
+                    : (confirmUseOriginal ? TEXT.useOriginalAgain : TEXT.useOriginal)}
                 </Button>
-                <Button
-                  onClick={() => finalize(false)}
-                  disabled={busy || !!cvError}
-                  className="bg-[#00D4FF] text-slate-900 border-0 hover:bg-[#00D4FF]/90"
-                >
-                  <Check className="mr-1 h-4 w-4" /> {TEXT.confirm}
-                </Button>
+                {burstMode ? (
+                  <>
+                    {/* 连拍：出这张 → 留在扫描器继续拍（扫描器不关闭，见 finalize） */}
+                    <Button
+                      onClick={() => finalize(useOrig, "again")}
+                      disabled={busy || !!cvError}
+                      className="text-[#00D4FF] border-[#00D4FF]/60 hover:bg-[#00D4FF]/10 hover:text-[#00D4FF]"
+                      variant="outline"
+                    >
+                      <Camera className="mr-1 h-4 w-4" /> {TEXT.burstAgain}
+                    </Button>
+                    {/* 连拍：出这张 → 关闭扫描器，回到批量页 */}
+                    <Button
+                      onClick={() => finalize(useOrig, "done")}
+                      disabled={busy || !!cvError}
+                      className="bg-[#00D4FF] text-slate-900 border-0 hover:bg-[#00D4FF]/90"
+                    >
+                      <Check className="mr-1 h-4 w-4" /> {TEXT.burstDone}
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    onClick={() => finalize(false)}
+                    disabled={busy || !!cvError}
+                    className="bg-[#00D4FF] text-slate-900 border-0 hover:bg-[#00D4FF]/90"
+                  >
+                    <Check className="mr-1 h-4 w-4" /> {TEXT.confirm}
+                  </Button>
+                )}
               </div>
             </div>
           )}
