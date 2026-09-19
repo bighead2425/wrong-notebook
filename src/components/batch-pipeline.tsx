@@ -101,6 +101,31 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
     const [canceling, setCanceling] = useState(false);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
+    /** 【custom-v26】文件正被拖到收图框上方（用于高亮） */
+    const [dragActive, setDragActive] = useState(false);
+
+    /**
+     * 【custom-v26】拖放兜底：拦掉浏览器「打开被拖文件」的默认行为。
+     *
+     * 为什么必须加：用户在这页攒了十几张图（全在内存里），
+     * 要是不小心把图片拖到**虚线框以外**的地方，浏览器会直接导航去打开那张图
+     * → 页面一跳，这一批图全没了。拦掉 window 上的默认 drop 就能彻底避免。
+     * 本页没有其它放置目标，所以全局拦是安全的。
+     */
+    useEffect(() => {
+        const block = (e: DragEvent) => {
+            // 收图框自己处理，这里放行
+            if (e.target instanceof HTMLElement && e.target.closest("[data-dropzone]")) return;
+            // 只拦「拖文件」：拖选中的文字进输入框不受影响（那类拖拽 types 里没有 Files）
+            if (e.dataTransfer?.types?.includes("Files")) e.preventDefault();
+        };
+        window.addEventListener("dragover", block);
+        window.addEventListener("drop", block);
+        return () => {
+            window.removeEventListener("dragover", block);
+            window.removeEventListener("drop", block);
+        };
+    }, []);
 
     // 卸载时统一回收 blob URL，避免内存泄漏
     const itemsRef = useRef<BatchItem[]>([]);
@@ -183,15 +208,22 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
     /** 收图：一次可以选多张（连拍的那批） */
     const addFiles = (files: File[]) => {
         if (!files.length) return;
+        // 【custom-v26】拖放进来的可能夹着 PDF / 文档等，先按 MIME 过滤再进队列，
+        // 否则后面预览是裂图、送 AI 也是白花钱。
+        const imgs = files.filter(f => f.type.startsWith("image/"));
+        if (imgs.length < files.length) {
+            alert(t.common.batch?.notImage || "只能收图片（JPG / PNG），其它文件已忽略");
+        }
+        if (!imgs.length) return;
         const room = MAX_BATCH - items.length;
         if (room <= 0) {
             alert((t.common.batch?.tooMany || "一批最多 {n} 张（建议 10~20 张），请分批处理")
                 .replace("{n}", String(MAX_BATCH)));
             return;
         }
-        let accepted = files;
-        if (files.length > room) {
-            accepted = files.slice(0, room);
+        let accepted = imgs;
+        if (imgs.length > room) {
+            accepted = imgs.slice(0, room);
             alert((t.common.batch?.tooMany || "一批最多 {n} 张（建议 10~20 张），多出的没有加入")
                 .replace("{n}", String(MAX_BATCH)));
         }
@@ -503,12 +535,40 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
 
             {/* 收图区 */}
             <div
-                className="border-2 border-dashed rounded-xl p-6 text-center cursor-pointer hover:border-primary/60 hover:bg-accent/30 transition-colors"
+                data-dropzone
+                className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${
+                    dragActive
+                        ? "border-primary bg-primary/10 ring-2 ring-primary/30"
+                        : "hover:border-primary/60 hover:bg-accent/30"
+                }`}
                 onClick={() => fileInputRef.current?.click()}
+                onDragEnter={(e) => {
+                    e.preventDefault();
+                    setDragActive(true);
+                }}
+                onDragOver={(e) => {
+                    // 必须 preventDefault，否则浏览器不认这里是放置目标（drop 不触发）
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "copy";
+                    if (!dragActive) setDragActive(true);
+                }}
+                onDragLeave={(e) => {
+                    // 只在指针真的离开本框时取消高亮：移到子元素上不算离开，否则会疯狂闪烁
+                    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+                    setDragActive(false);
+                }}
+                onDrop={(e) => {
+                    e.preventDefault();
+                    setDragActive(false);
+                    const dropped = Array.from(e.dataTransfer?.files || []);
+                    if (dropped.length) addFiles(dropped);
+                }}
             >
-                <Upload className="mx-auto h-8 w-8 text-muted-foreground mb-2" />
+                <Upload className={`mx-auto h-8 w-8 mb-2 ${dragActive ? "text-primary" : "text-muted-foreground"}`} />
                 <p className="text-sm font-medium">
-                    {t.common.batch?.pickHint || "点击选择多张图片（可一次选一批连拍的）"}
+                    {dragActive
+                        ? (t.common.batch?.dropNow || "松手即加入这一批")
+                        : (t.common.batch?.pickHint || "点击选择多张图片（可一次选一批连拍的）")}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
                     {t.common.batch?.pickSub || "支持 JPG / PNG"}
