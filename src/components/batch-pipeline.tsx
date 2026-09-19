@@ -62,6 +62,12 @@ interface BatchPipelineProps {
     /** 从哪个错题本进来的（首页可能带 notebookId 参数） */
     defaultNotebookId?: string;
     onExit: () => void;
+    /**
+     * 【custom-v25 绿框】外面（首页 / 错题本内页的裁剪对话框）用「区🟩」一次裁出来的几道题。
+     * 这些图**已经裁剪 + 烘焙**过，直接落进「预处理」文件夹，点一下「送 AI」就能跑。
+     * 只在首次挂载时消费一次。
+     */
+    initialFiles?: File[];
 }
 
 /**
@@ -72,7 +78,7 @@ interface BatchPipelineProps {
  */
 const MAX_BATCH = 30;
 
-export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }: BatchPipelineProps) {
+export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, initialFiles }: BatchPipelineProps) {
     const { t } = useLanguage();
 
     const [items, setItems] = useState<BatchItem[]>([]);
@@ -142,6 +148,26 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
         return matched?.id;
     };
 
+    /**
+     * 【custom-v25 绿框】外面裁好送进来的一批图，落地即「已预处理」。
+     * 用 ref 保证只消费一次：这个组件重渲染很频繁（进度、选中都会触发），
+     * 不加锁的话每渲染一次就往队列里重复塞一批。
+     */
+    const initialConsumedRef = useRef(false);
+    useEffect(() => {
+        if (initialConsumedRef.current || !initialFiles?.length) return;
+        initialConsumedRef.current = true;
+        const added: BatchItem[] = initialFiles.slice(0, MAX_BATCH).map((f, k) => ({
+            id: `b${Date.now()}-i${k}-${Math.random().toString(36).slice(2, 7)}`,
+            file: f,
+            previewUrl: URL.createObjectURL(f),
+            processed: true,
+            status: "processed" as BatchStatus,
+        }));
+        setItems(prev => [...prev, ...added]);
+        setActiveId(added[added.length - 1].id);
+    }, [initialFiles]);
+
     /** 退出前拦一道：没入库的图退出即丢，不能一声不响 */
     const requestExit = () => {
         const unsaved = items.filter(i => i.status !== "saved").length;
@@ -210,6 +236,36 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
             error: undefined,
         } : it));
         setEditingId(null);
+    };
+
+    /**
+     * 【custom-v25 绿框】编辑器里画了「区🟩」→ 一次交出多张（一区一张，重叠的已并成一块）。
+     *
+     * 这批图已经裁好、红蓝框也烘焙好了，直接进「预处理」文件夹等送 AI；
+     * 被编辑的那张**整页图移出队列** —— 它已经被拆成好几道，留着只会被重复送一次 AI。
+     * 与 handleCropComplete 的区别只在这一点：单张是"替换"，多张是"替换成 N 张"。
+     */
+    const handleCropBatch = (blobs: Blob[]) => {
+        if (!blobs.length) return;
+        const editing = editingId ? items.find(i => i.id === editingId) : null;
+        const room = MAX_BATCH - (items.length - (editing ? 1 : 0));
+        const accepted = room > 0 ? blobs.slice(0, room) : [];
+        if (accepted.length < blobs.length) {
+            alert((t.common.batch?.tooMany || "一批最多 {n} 张（建议 10~20 张），多出的没有加入")
+                .replace("{n}", String(MAX_BATCH)));
+        }
+        const added: BatchItem[] = accepted.map((b, k) => ({
+            id: `b${Date.now()}-g${k}-${Math.random().toString(36).slice(2, 7)}`,
+            file: new File([b], `region-${Date.now()}-${k + 1}.jpg`, { type: "image/jpeg" }),
+            previewUrl: URL.createObjectURL(b),
+            processed: true,
+            status: "processed" as BatchStatus,
+        }));
+        if (editing) URL.revokeObjectURL(editing.previewUrl);
+        setItems(prev => [...prev.filter(i => i.id !== editingId), ...added]);
+        setActiveId(added[added.length - 1]?.id ?? null);
+        setEditingId(null);
+        setStage("queue");
     };
 
     /** 蓝图 #5 送 AI 四选项 → 串行分析 */
@@ -565,6 +621,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit }
                     open={!!editingId}
                     onClose={() => setEditingId(null)}
                     onCropComplete={handleCropComplete}
+                    onCropBatch={handleCropBatch}
                     analyzing={analysisStep !== "idle"}
                 />
             )}

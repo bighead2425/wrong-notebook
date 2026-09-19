@@ -6,6 +6,7 @@ import Link from "next/link";
 import { UploadZone } from "@/components/upload-zone";
 import { CorrectionEditor } from "@/components/correction-editor";
 import { ImageCropper, type DoneRect } from "@/components/image-cropper";
+import { BatchPipeline } from "@/components/batch-pipeline";
 import { ParsedQuestion } from "@/lib/ai";
 import { apiClient } from "@/lib/api-client";
 import { AnalyzeResponse, Notebook, AppConfig } from "@/types/api";
@@ -38,6 +39,12 @@ export default function AddErrorPage() {
     // ===== 循环模式状态（custom-v22 · 蓝图 #4 #7）=====
     /** 是否开启「拍整页 → 一道道抠」的循环 */
     const [loopMode, setLoopMode] = useState(false);
+    /**
+     * 【custom-v25 绿框】画了「区🟩」后被拆出来的多道题，交给流水线处理。
+     * 退出流水线时清空，避免再次进入时重复灌入。
+     */
+    const [batchMode, setBatchMode] = useState(false);
+    const [batchFiles, setBatchFiles] = useState<File[]>([]);
     /** 本页已抠走并入库的区域（整页自然坐标），画在编辑器上避免重复抠同一道 */
     const [doneRects, setDoneRects] = useState<DoneRect[]>([]);
     /**
@@ -153,6 +160,18 @@ export default function AddErrorPage() {
         const file = new File([croppedBlob], "cropped-image.jpg", { type: "image/jpeg" });
         const ok = await handleAnalyze(file);
         if (ok) setIsCropperOpen(false);
+    };
+
+    /**
+     * 【custom-v25 绿框】编辑器里画了「区🟩」→ 一图裁出多道，交给流水线逐道送 AI + 审阅。
+     * 单题流的下一步只有一个 CorrectionEditor，塞不下多道，所以这里直接切走。
+     * 错题本已知（notebookId），所以流水线里的每一道会默认落到这个本上。
+     */
+    const handleCropBatch = (blobs: Blob[]) => {
+        if (!blobs.length) return;
+        setIsCropperOpen(false);
+        setBatchFiles(blobs.map((b, i) => new File([b], `region-${i + 1}.jpg`, { type: "image/jpeg" })));
+        setBatchMode(true);
     };
 
     const handleAnalyze = async (file: File): Promise<boolean> => {
@@ -366,6 +385,26 @@ export default function AddErrorPage() {
         }
     };
 
+    /**
+     * 【custom-v25 绿框】走了绿框分区 → 直接进流水线，不经过单题流的编辑界面。
+     * 放在 `!notebook` 之前：图已经在手上，没必要为等本子详情先闪一下 loading。
+     */
+    if (batchMode) {
+        return (
+            <main className="min-h-screen bg-background">
+                <div className="container mx-auto p-4 pb-20">
+                    <BatchPipeline
+                        language={language}
+                        aiTimeout={aiTimeout}
+                        defaultNotebookId={notebookId}
+                        initialFiles={batchFiles}
+                        onExit={() => { setBatchMode(false); setBatchFiles([]); }}
+                    />
+                </div>
+            </main>
+        );
+    }
+
     if (!notebook) {
         return (
             <div className="min-h-screen flex items-center justify-center">
@@ -473,6 +512,7 @@ export default function AddErrorPage() {
                 open={isCropperOpen}
                 onClose={() => setIsCropperOpen(false)}
                 onCropComplete={handleCropComplete}
+                onCropBatch={handleCropBatch}
                 analyzing={analysisStep !== 'idle'}
                 doneRects={loopMode ? doneRects : undefined}
                 onCropRegion={handleCropRegion}

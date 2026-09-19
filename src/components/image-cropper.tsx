@@ -38,6 +38,18 @@ interface ImageCropperProps {
      * 不传则不显示（非循环模式）。
      */
     loopCount?: number;
+    /**
+     * 【custom-v25 绿框】一张图上画了「区🟩」时，确认后是**一次交出多张**（一区一张），
+     * 所以不能再走单张的 onCropComplete。
+     *
+     * 传了它 → 画了绿框就走批量；没画绿框仍走 onCropComplete（老路径完全不变）。
+     * 没传它 → 绿框退化成"只按第一个区裁一张"，至少不会把整幅图连框外内容一起送出去。
+     *
+     * ⚠️ 调用方必须自己处理"多张"：批量上传把它并进队列，
+     *    单题流（首页 / 错题本内添加）应切到批量流程，
+     *    绝不能只取 blobs[0] 把其余几张默默丢掉。
+     */
+    onCropBatch?: (blobs: Blob[]) => void;
 }
 
 /** 循环模式下已抠走的区域（整页自然坐标） */
@@ -54,7 +66,12 @@ export interface DoneRect {
 //  图片编辑模式：裁剪(原有) / 橡皮擦(涂白) / 区域标注(题干·手写答案)
 // ============================================================
 type Mode = "crop" | "erase" | "label";
-type LabelKind = "question" | "answer";
+/**
+ * 【custom-v25】region = 绿框「区🟩」。
+ * 语义与前两种**不同**：红/蓝框是"把这段内容告诉 AI 是什么"，绿框是"这一块就是一道题"，
+ * 它同时承担了裁剪边界 —— 有绿框时 cropRect 不再参与导出。
+ */
+type LabelKind = "question" | "answer" | "region";
 type EraseTool = "brush" | "rect";
 
 /** 已提交的擦除图形（自然坐标）。白色填充可重叠且幂等，因此可按顺序重放来实现精确撤销。 */
@@ -74,14 +91,21 @@ interface Box {
 
 const QUESTION_COLOR = "#e50000"; // 红 = 题干
 const ANSWER_COLOR = "#0055ff";   // 蓝 = 手写答案
+/**
+ * 绿 = 一道题的范围（区🟩）。
+ * 刻意选偏深的绿：编辑器里「已录入」的标记是 #00c853 的虚线半透明遮罩，
+ * 这里用实线 + 深一点的颜色，两者同框出现时也能一眼分开。
+ */
+const REGION_COLOR = "#009a4c";
 const BRUSH_SIZES = [10, 20, 40, 80];
 /**
  * 【custom-v24】笔头粗细四档的按钮文案。
- * 用户要求四档统一显示 🔘，用**字号从小到大**表达由细到粗（不再写「小/中/大/特大」四个字）。
+ * 用户要求四档统一显示同一个圈，用**字号从小到大**表达由细到粗（不写「小/中/大/特大」四个字）。
  * 档位中文名挪进 title，鼠标悬停仍有提示，但不再占版面宽度。
+ * 【custom-v25】实心圆 🔘 换成空心圆 ⚪（用户指定），四档仍靠字号递进。
  * ⚠️ BRUSH_LABELS / BRUSH_TITLES / BRUSH_FONT_PX 三个数组必须同长同序，改一处就得改三处。
  */
-const BRUSH_LABELS = ["🔘", "🔘", "🔘", "🔘"];
+const BRUSH_LABELS = ["⚪", "⚪", "⚪", "⚪"];
 const BRUSH_TITLES = ["小", "中", "大", "特大"];
 const BRUSH_FONT_PX = [11, 14, 18, 23];
 
@@ -107,6 +131,47 @@ function rectsIntersect(
     b: { x: number; y: number; w: number; h: number },
 ) {
     return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+/**
+ * 【custom-v25 绿框】把重叠（含互相包含）的绿框并成一组，每组取**并集包围盒**。
+ *
+ * 为什么用"连通分量"而不是"两两合并后重扫"：A∩B、B∩C 但 A∩C=∅ 时，
+ * 三个框其实是同一片连续区域，必须并成一道题 —— 简单两两合并会漏掉这种传递关系，
+ * 于是同一道题被切成两块分别送去分析。
+ *
+ * 异形排布也能覆盖：用户只要让绿框彼此搭上边，就会并成一个包得住两者的矩形。
+ */
+function mergeRegions(regions: { x: number; y: number; w: number; h: number }[]) {
+    const n = regions.length;
+    if (n === 0) return [];
+    const parent = Array.from({ length: n }, (_, i) => i);
+    const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+    const union = (a: number, b: number) => {
+        const ra = find(a), rb = find(b);
+        if (ra !== rb) parent[rb] = ra;
+    };
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            if (rectsIntersect(regions[i], regions[j])) union(i, j);
+        }
+    }
+    const groups = new Map<number, { x0: number; y0: number; x1: number; y1: number }>();
+    regions.forEach((r, i) => {
+        const root = find(i);
+        const g = groups.get(root);
+        const x0 = r.x, y0 = r.y, x1 = r.x + r.w, y1 = r.y + r.h;
+        if (!g) groups.set(root, { x0, y0, x1, y1 });
+        else {
+            g.x0 = Math.min(g.x0, x0); g.y0 = Math.min(g.y0, y0);
+            g.x1 = Math.max(g.x1, x1); g.y1 = Math.max(g.y1, y1);
+        }
+    });
+    // 按阅读顺序（上→下、左→右）输出，方便与"第 1 道 / 第 2 道"的直觉对上
+    return [...groups.values()]
+        .map((g) => ({ x: g.x0, y: g.y0, w: g.x1 - g.x0, h: g.y1 - g.y0 }))
+        .filter((r) => r.w > 4 && r.h > 4)
+        .sort((a, b) => a.y - b.y || a.x - b.x);
 }
 
 /** 在 canvas 上画一个带圈数字（分图序号水印），中心 (cx,cy)，半径 r */
@@ -140,6 +205,7 @@ export function ImageCropper({
     doneRects,
     onCropRegion,
     loopCount,
+    onCropBatch,
 }: ImageCropperProps) {
     const { t } = useLanguage();
 
@@ -436,9 +502,25 @@ export function ImageCropper({
             ctx.restore();
         };
 
+        // 【custom-v25 绿框】画了绿框 → 把框外压暗，直观表达"这些不要了"。
+        // 必须铺在框线之前：遮罩若在后，会把框线一起压灰，看着像失效了。
+        const regionBoxes = boxes.filter((b) => b.kind === "region");
+        if (regionBoxes.length > 0) {
+            ctx.save();
+            ctx.fillStyle = "rgba(0, 0, 0, 0.28)";
+            ctx.beginPath();
+            ctx.rect(0, 0, ov.width, ov.height);
+            for (const r of regionBoxes) ctx.rect(r.x, r.y, r.w, r.h);
+            // evenodd：整幅矩形里挖掉每个绿框，剩下的就是"会被丢掉的部分"
+            ctx.fill("evenodd");
+            ctx.restore();
+        }
+
         // 已确认的标注框
         for (const b of boxes) {
-            const color = b.kind === "question" ? QUESTION_COLOR : ANSWER_COLOR;
+            const color = b.kind === "question" ? QUESTION_COLOR
+                : b.kind === "answer" ? ANSWER_COLOR
+                    : REGION_COLOR;
             drawFrame(b.x, b.y, b.w, b.h, color, false);
             if (b.id === selectedBoxId) {
                 ctx.save();
@@ -482,6 +564,18 @@ export function ImageCropper({
             }
         }
 
+        // 【custom-v25 绿框】把"合并后会裁出几道题"直接标在图上：
+        // 用户画完三个绿框、其中两个重叠时，应当一眼看到编号是 1、2（而不是 1、2、3）。
+        if (regionBoxes.length > 0) {
+            const merged = mergeRegions(regionBoxes);
+            const rr2 = Math.max(10, Math.min(ov.width, ov.height) * 0.022);
+            merged.forEach((r, i) => {
+                const cx = Math.min(Math.max(r.x + rr2 * 1.3, rr2), ov.width - rr2);
+                const cy = Math.min(Math.max(r.y + rr2 * 1.3, rr2), ov.height - rr2);
+                drawCircledNumber(ctx, i + 1, cx, cy, rr2);
+            });
+        }
+
         // 裁剪模式：已确认的裁剪框（白框 + 外部暗色遮罩，和 ReactCrop 一样直观）
         if (mode === "crop" && cropRect) {
             ctx.save();
@@ -499,7 +593,9 @@ export function ImageCropper({
         if (d) {
             if (d.kind === "rect") {
                 if (mode === "label") {
-                    const color = labelKind === "question" ? QUESTION_COLOR : ANSWER_COLOR;
+                    const color = labelKind === "question" ? QUESTION_COLOR
+                        : labelKind === "answer" ? ANSWER_COLOR
+                            : REGION_COLOR;
                     drawFrame(d.x, d.y, d.w, d.h, color, true);
                 } else if (mode === "crop") {
                     // 裁剪拖拽预览：暗色外部 + 亮框
@@ -855,10 +951,20 @@ export function ImageCropper({
         [fitView, syncBase, redrawOverlay]
     );
 
-    // 打开/换图/切模式时让画面适应窗口（裁剪烘焙后图像尺寸会变，必须重算）
+    /**
+     * 打开 / 换图时让画面适应窗口。
+     *
+     * 【custom-v25 撤掉 mode 依赖】原来依赖里带着 `mode`，等于**每切一次工具就强制 fitView**：
+     * 用户放大到 300% 正对某一行小字，一点「橡皮擦」，画面"啪"地弹回整图适应大小，
+     * 得重新放大、重新找刚才的位置；手机上更明显 —— 框选一结束、手指一抬就弹回去。
+     * 按要求改为：**除裁剪烘焙与拉伸回传外，切页面、切工具一律保持当前缩放与位置**，
+     * 想回适应大小就双击。
+     * 裁剪确实会改变图像尺寸，但那条路走的是 bakeCropIntoBase，它末尾自己 fitView()（用户许可）。
+     */
     useEffect(() => {
         if (open) fitView();
-    }, [open, imageSrc, mode, fitView]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, imageSrc, fitView]);
 
     /**
      * 【custom-v20 保险】拉伸浮层开/关时把底图与覆盖层重画一遍。
@@ -944,6 +1050,34 @@ export function ImageCropper({
         };
     };
 
+    /**
+     * 【custom-v25】选中框的判定：**点到边框附近才算选中**，点框内部则视为要画新框。
+     *
+     * 为什么改掉"点在框内即选中"：
+     *   旧规则下「在大框里再画一个小框」根本做不到 —— 起手点必然落在大框内部，
+     *   那一下直接被吃成"选中大框"，永远画不出里面的小框。
+     * 改成边缘带命中后两件事同时成立：
+     *   · 大框里能起手画小框（点在深处不命中任何框）；
+     *   · 重叠时仍能选到"后画的那一个"（自后向前扫描 → 后画的优先）。
+     * 容差按**屏幕像素**折算（8px ÷ zoom），放大到 400% 时不会变成"必须精确戳在线上"。
+     * 特例：框本身很窄（宽或高不到两倍容差）时整个框都算边缘，小框照样点得中。
+     */
+    const hitBoxAt = (p: { x: number; y: number }): Box | null => {
+        const tol = 8 / Math.max(zoomRef.current, 0.01);
+        for (let i = boxes.length - 1; i >= 0; i--) {
+            const b = boxes[i];
+            const inOuter =
+                p.x >= b.x - tol && p.x <= b.x + b.w + tol &&
+                p.y >= b.y - tol && p.y <= b.y + b.h + tol;
+            if (!inOuter) continue;
+            const inInner =
+                p.x >= b.x + tol && p.x <= b.x + b.w - tol &&
+                p.y >= b.y + tol && p.y <= b.y + b.h - tol;
+            if (!inInner) return b;
+        }
+        return null;
+    };
+
     const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
         if (!workCanvasRef.current) return;
         e.preventDefault();
@@ -980,15 +1114,30 @@ export function ImageCropper({
 
         const p = toNatural(e);
 
-        // 单指落在图片范围外（黑底）时不绘制，避免画出半截框；
-        // 两指手势已在前面处理，这里只约束单指画图区域
+        /**
+         * 单指起点落在图片范围外（黑底）时的处理。
+         *
+         * 【custom-v25】橡皮擦-笔刷**放宽**：只要笔头圆还压着图片（出界不超过一个笔头半径）
+         * 就照常擦。旧代码在这里无条件 return，于是"预览绿圈明明已经压到纸边了，
+         * 却怎么也擦不动"—— 必须把指针整个挪进图片里才生效。
+         * 其余工具维持原判：从黑底起手不画，免得拖出半截框。
+         */
         const wcInside = workCanvasRef.current;
-        if (wcInside && (p.x < 0 || p.x > wcInside.width || p.y < 0 || p.y > wcInside.height)) return;
+        if (wcInside) {
+            let slack = 0;
+            if (mode === "erase" && eraseTool === "brush") {
+                const ovRect = overlayCanvasRef.current?.getBoundingClientRect();
+                const scale = ovRect && ovRect.width ? wcInside.width / ovRect.width : 1;
+                slack = (BRUSH_SIZES[brushIdx] * scale) / 2;
+            }
+            if (
+                p.x < -slack || p.x > wcInside.width + slack ||
+                p.y < -slack || p.y > wcInside.height + slack
+            ) return;
+        }
 
         if (mode === "label") {
-            const hit = [...boxes].reverse().find(
-                (b) => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h
-            );
+            const hit = hitBoxAt(p);
             if (hit) {
                 setSelectedBoxId(hit.id);
                 return;
@@ -1193,8 +1342,99 @@ export function ImageCropper({
         return out;
     }
 
+    /**
+     * 【custom-v25 绿框】把「一块绿框区域」导成一张图。
+     *
+     * baked 是整个工作画布，region 是**合并后**的绿框（自然坐标）。
+     * 区域内的红/蓝框先平移成相对坐标，再走与整图时完全相同的两条路：
+     *   · 勾了 省🔡 且红蓝框有重叠 → 分图（题干涂白 + 答案 + 序号）；
+     *   · 否则把红/蓝框线烘焙进这一小块。
+     * 绿框自己**不画进结果** —— 它只是分区标记，印到题面上纯属干扰。
+     */
+    function buildRegionCanvas(
+        baked: HTMLCanvasElement,
+        region: { x: number; y: number; w: number; h: number },
+    ): HTMLCanvasElement {
+        const sx = Math.max(0, Math.round(region.x));
+        const sy = Math.max(0, Math.round(region.y));
+        const sw = Math.max(1, Math.round(Math.min(region.w, baked.width - sx)));
+        const sh = Math.max(1, Math.round(Math.min(region.h, baked.height - sy)));
+
+        const sub = document.createElement("canvas");
+        sub.width = sw;
+        sub.height = sh;
+        const sctx = sub.getContext("2d");
+        if (!sctx) return sub;
+        sctx.drawImage(baked, sx, sy, sw, sh, 0, 0, sw, sh);
+
+        // 与这块区域有交集的红/蓝框才算属于这一道，并平移到区域坐标系
+        const inside = boxes.filter(
+            (b) => b.kind !== "region" && rectsIntersect(b, { x: sx, y: sy, w: sw, h: sh }),
+        );
+        const questions = inside.filter((b) => b.kind === "question")
+            .map((b) => ({ ...b, x: b.x - sx, y: b.y - sy }));
+        const answers = inside.filter((b) => b.kind === "answer")
+            .map((b) => ({ ...b, x: b.x - sx, y: b.y - sy }));
+        const overlaps = questions.length > 0 && answers.length > 0
+            && answers.some((a) => questions.some((q) => rectsIntersect(a, q)));
+
+        if (cropToRegions && overlaps) {
+            return buildSplitCanvas(sub, questions, answers);
+        }
+        if (inside.length > 0) {
+            const lw = Math.max(1.5, 2);
+            for (const b of [...questions, ...answers]) {
+                sctx.save();
+                sctx.strokeStyle = b.kind === "question" ? QUESTION_COLOR : ANSWER_COLOR;
+                sctx.lineWidth = lw;
+                sctx.strokeRect(b.x, b.y, b.w, b.h);
+                sctx.restore();
+            }
+        }
+        return sub;
+    }
+
     const handleConfirm = async () => {
         const wc = workCanvasRef.current;
+
+        /**
+         * 【custom-v25 绿框】画了绿框 → 这一页可能就是好几道题，逐块裁出来分别交出去。
+         * 绿框在时 cropRect 不再参与：绿框本身就是裁剪边界（用户："绿框以外的都不要了"）。
+         * ⚠️ 这里只是"把图切成几份"，送 AI 与入库由调用方按队列一道道做 ——
+         *    编辑器不该知道 AI 的事，否则三个入口都得抄一遍分析流程。
+         */
+        const regionBoxes = boxes.filter((b) => b.kind === "region");
+        if (regionBoxes.length > 0 && onCropBatch && wc) {
+            // 循环模式的"已抠标记"在"一图多题"下无意义，回传 null 防止把绿框标到错位置
+            onCropRegion?.(null);
+            const whole = document.createElement("canvas");
+            whole.width = wc.width;
+            whole.height = wc.height;
+            whole.getContext("2d")?.drawImage(wc, 0, 0);
+
+            const regions = mergeRegions(regionBoxes);
+            const blobs: Blob[] = [];
+            for (const r of regions) {
+                const c = buildRegionCanvas(whole, r);
+                const blob = await new Promise<Blob | null>((resolve) => {
+                    c.toBlob((b) => resolve(b), "image/jpeg", 0.92);
+                });
+                if (blob) blobs.push(blob);
+            }
+            if (blobs.length > 0) {
+                onCropBatch(blobs);
+                return;
+            }
+            // 一块都没裁成（理论上不会）：继续往下走单张逻辑，别让这次点击白费
+        }
+
+        /**
+         * 绿框之外的框才参与"题干/答案"的判定。
+         * 绿框是分区用的，混进 cropToRegions 的包围盒会把导出区撑成整幅图。
+         */
+        const labelBoxes = boxes.filter((b) => b.kind !== "region");
+        /** 兜底：调用方没接 onCropBatch（理论上不存在）时，至少按第一个绿框裁一张 */
+        const regionClip = regionBoxes.length > 0 ? (mergeRegions(regionBoxes)[0] ?? null) : null;
 
         // 【custom-v22 循环模式】
         // 情形一：用户切过橡皮擦/标注模式 → bakeCropIntoBase 已把整页坐标记进 lastCropRectRef；
@@ -1209,7 +1449,7 @@ export function ImageCropper({
          *     与 cropRect 无关，照抄会把绿框标到错误位置；
          *   · 坐标系已失效（本题做过拉伸）→ 数值对不上整页，宁可这一道没有标记。
          */
-        const regionIsCropRect = !(cropToRegions && boxes.length > 0);
+        const regionIsCropRect = !(cropToRegions && labelBoxes.length > 0);
         onCropRegion?.(regionIsCropRect && !rectSpaceStaleRef.current ? lastCropRectRef.current : null);
 
         // 画布未就绪（极端情况）：退回原图，保持旧行为
@@ -1231,15 +1471,15 @@ export function ImageCropper({
         if (!bctx) return;
         bctx.drawImage(wc, 0, 0);
 
-        const questions = boxes.filter((b) => b.kind === "question");
-        const answers = boxes.filter((b) => b.kind === "answer");
+        const questions = labelBoxes.filter((b) => b.kind === "question");
+        const answers = labelBoxes.filter((b) => b.kind === "answer");
         const overlaps =
             questions.length > 0 &&
             answers.length > 0 &&
             answers.some((a) => questions.some((q) => rectsIntersect(a, q)));
 
         // 2) 红框与蓝框重叠/包含 → 分图（题干涂白 + 答案 + 序号），根治"答案混进题干"
-        if (cropToRegions && boxes.length > 0 && overlaps) {
+        if (cropToRegions && labelBoxes.length > 0 && overlaps) {
             const out = buildSplitCanvas(baked, questions, answers);
             out.toBlob((blob) => {
                 if (blob) onCropComplete(blob);
@@ -1248,10 +1488,10 @@ export function ImageCropper({
         }
 
         // 3) 非重叠：烘焙框线 + 决定导出区（原逻辑）
-        if (boxes.length > 0) {
+        if (labelBoxes.length > 0) {
             // 烘焙到原图分辨率：2px 细线，不写字，避免遮挡表格/填空题
             const lw = Math.max(1.5, 2);
-            for (const b of boxes) {
+            for (const b of labelBoxes) {
                 const color = b.kind === "question" ? QUESTION_COLOR : ANSWER_COLOR;
                 bctx.save();
                 bctx.strokeStyle = color;
@@ -1262,9 +1502,9 @@ export function ImageCropper({
         }
 
         let sx = 0, sy = 0, sw = baked.width, sh = baked.height;
-        if (cropToRegions && boxes.length > 0) {
+        if (cropToRegions && labelBoxes.length > 0) {
             let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-            for (const b of boxes) {
+            for (const b of labelBoxes) {
                 x0 = Math.min(x0, b.x);
                 y0 = Math.min(y0, b.y);
                 x1 = Math.max(x1, b.x + b.w);
@@ -1276,6 +1516,14 @@ export function ImageCropper({
             sy = Math.max(0, y0 - padH);
             sw = Math.min(baked.width - sx, x1 - x0 + padW * 2);
             sh = Math.min(baked.height - sy, y1 - y0 + padH * 2);
+        } else if (regionClip && !isCroppedRef.current) {
+            // 【custom-v25 兜底】调用方没接 onCropBatch 却画了绿框：至少按第一个绿框裁一张，
+            // 否则整幅图（连同绿框以外那些"不要了"的部分）会被当成一道题送出去。
+            sx = Math.max(0, regionClip.x);
+            sy = Math.max(0, regionClip.y);
+            sw = Math.min(baked.width - sx, regionClip.w);
+            sh = Math.min(baked.height - sy, regionClip.h);
+            if (sw <= 0 || sh <= 0) { sx = 0; sy = 0; sw = baked.width; sh = baked.height; }
         } else {
             // 若已经烘焙过裁剪结果，工作画布本身就是目标区域，不要再按旧 crop 二次裁剪
             if (!isCroppedRef.current) {
@@ -1445,7 +1693,7 @@ export function ImageCropper({
                                 </span>
                             )}
                             <button type="button" className={btn(false)} onClick={undo} disabled={!hasShapes} title="撤销 (Ctrl+Z)">
-                                {t.common.cropper?.undo || "🔙"}
+                                {t.common.cropper?.undo || "↩️"}
                             </button>
                             <button
                                 type="button"
@@ -1476,6 +1724,17 @@ export function ImageCropper({
                                 style={labelKind === "answer" ? { background: ANSWER_COLOR, borderColor: ANSWER_COLOR, color: "#fff" } : undefined}
                             >
                                 {t.common.cropper?.labelAnswer || "手写答案（蓝框）"}
+                            </button>
+                            {/* 【custom-v25 绿框】区🟩 = 一道题的范围（同时就是裁剪边界）。
+                                确认后按"合并后的绿框"逐块裁出来分别送 AI。 */}
+                            <button
+                                type="button"
+                                className={btn(labelKind === "region")}
+                                onClick={() => setLabelKind("region")}
+                                style={labelKind === "region" ? { background: REGION_COLOR, borderColor: REGION_COLOR, color: "#fff" } : undefined}
+                                title="一个绿框 = 一道题；重叠的绿框会合并成一道。确认时会把绿框逐块裁出来分别送 AI，绿框以外不要"
+                            >
+                                {t.common.cropper?.labelRegion || "区🟩"}
                             </button>
                             <button type="button" className={btn(false)} onClick={removeSelectedBox} disabled={!selectedBoxId}>
                                 {t.common.cropper?.deleteBox || "删除选中框"}
@@ -1635,7 +1894,8 @@ export function ImageCropper({
                             <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
                                 <li>{t.common.cropper?.hint || "✂️裁：在图片上拖拽框选要保留的区域，再切 🧽擦 / 📊框；不框则保留整图"}</li>
                                 <li>{t.common.cropper?.hintErase || "🧽擦：🖍️ 按住涂抹即擦掉（涂白）；🟧 拖框后按 Delete 或点 🗑️。🔙 撤销"}</li>
-                                <li>{t.common.cropper?.hintLabel || "📊框：先选 题🟥 或 答🟦，再在图上拖框；点中已有框可删除"}</li>
+                                <li>{t.common.cropper?.hintLabel || "📊框：先选 题🟥 或 答🟦，再在图上拖框；点边框附近即选中该框"}</li>
+                                <li>{t.common.cropper?.hintRegion || "区🟩 一个框 = 一道题：重叠的绿框自动合并；确认时每个区各裁一块分别送 AI，框外不要"}</li>
                                 <li>🔍 手机：双指捏合缩放、双指拖动平移（图片或黑底上均可）｜ 电脑：滚轮以鼠标为中心缩放、按住右键拖拽平移、也可开「🧭移」开关用左键平移、双击放大/复位</li>
                             </ul>
                             <div className="mt-2 text-xs text-muted-foreground">（点击任意位置关闭）</div>

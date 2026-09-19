@@ -33,9 +33,11 @@ export async function GET(
         const notebook = await prisma.notebook.findUnique({
             where: { id },
             include: {
+                // 【custom-v25】行数统计排除回收箱里的题 —— 与列表页口径统一。
+                // 否则详情页写着"共 3 道"、列表页写"2 道"，两处对不上。
                 _count: {
                     select: {
-                        errorItems: true,
+                        errorItems: { where: { deletedAt: null } },
                     },
                 },
             },
@@ -123,9 +125,10 @@ export async function PUT(
             where: { id },
             data,
             include: {
+                // 【custom-v25】同上：排除回收箱，保证各处显示的行数一致
                 _count: {
                     select: {
-                        errorItems: true,
+                        errorItems: { where: { deletedAt: null } },
                     },
                 },
             },
@@ -163,13 +166,6 @@ export async function DELETE(
 
         const notebook = await prisma.notebook.findUnique({
             where: { id },
-            include: {
-                _count: {
-                    select: {
-                        errorItems: true,
-                    },
-                },
-            },
         });
 
         if (!notebook) {
@@ -180,8 +176,16 @@ export async function DELETE(
             return forbidden("Not authorized to delete this notebook");
         }
 
-        // 检查是否有错题
-        if (notebook._count.errorItems > 0) {
+        /**
+         * 检查是否有错题。
+         *
+         * 【custom-v25】这里必须数**含回收箱**的全部题，不能跟着展示口径一起过滤 ——
+         * 删除本子是级联删除（schema 里 errorItems 关系是 onDelete: Cascade），
+         * 回收箱里那些题的 notebookId 还指着它，一旦放行连回收箱里的也一并没了。
+         * 所以单独查一次 count，而不用上面带 where 的 _count。
+         */
+        const anyItemCount = await prisma.errorItem.count({ where: { notebookId: id } });
+        if (anyItemCount > 0) {
             return badRequest("Cannot delete notebook with error items. Please move or delete all items first.");
         }
 

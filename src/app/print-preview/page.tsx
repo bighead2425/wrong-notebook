@@ -63,7 +63,13 @@ function PrintPreviewContent() {
     const [loading, setLoading] = useState(true);
     const [printing, setPrinting] = useState(false);
 
-    const [mode, setMode] = useState<PrintMode>("practice");
+    /**
+     * 【custom-v25】默认进**错题卡**，不再是练习卷。
+     * 家里日常就是把「一道题一张卡（正面重做、背面错因+答案）」打出来做复做，
+     * 练习卷/讲解卷是偶尔才用的另一种排版，默认值应当给常用的那个。
+     * 下面那段读 URL 的 effect 仍会覆盖它（三级打印入口带 ?mode=xxx 时以入口为准）。
+     */
+    const [mode, setMode] = useState<PrintMode>("card");
     const [showQuestionText, setShowQuestionText] = useState(true);
     const [showImage, setShowImage] = useState(true);
     const [showAnswers, setShowAnswers] = useState(true);
@@ -152,7 +158,16 @@ function PrintPreviewContent() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedKey]);
 
-    /** 打印触发：先落 printCount（#10 / T4），再调浏览器打印 */
+    /**
+     * 打印触发：先落 printCount（#10 / T4），再调浏览器打印。
+     *
+     * 【custom-v25：为什么不改成"真打印了才计数"】
+     * `window.print()` 背后是浏览器自带的打印对话框，它**不回传任何结果**：
+     * 既没有"用户点了打印"的回调，也没有"取消"的回调。唯一能监听的
+     * beforeprint / afterprint 在"点了取消"时同样会触发，拿它计数会变成
+     * "取消也记一次"，比现在还差。所以在浏览器给出可用的回传通道之前，
+     * 保持"点打印按钮即计数"—— 用户已确认这条路走不通就维持原样。
+     */
     const handlePrint = useCallback(async () => {
         if (selectedItems.length === 0) return;
         setPrinting(true);

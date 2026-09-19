@@ -53,6 +53,13 @@ function HomeContent() {
      * 流水线自己管一套队列，与下面单题流互不干扰。
      */
     const [batchMode, setBatchMode] = useState(false);
+    /**
+     * 【custom-v25 绿框】单题流的裁剪对话框里画了「区🟩」→ 一图裁出多道，
+     * 这不是单题流吃得下的（它的下一步只有一个 CorrectionEditor）。
+     * 于是把这批**已经裁好的图**交给流水线去逐道送 AI + 审阅入库。
+     * 只在这里中转一次：退出流水线时立刻清空，避免下次进流水线又灌一遍。
+     */
+    const [batchFiles, setBatchFiles] = useState<File[]>([]);
 
     // Timeout Config
     const aiTimeout = config?.timeouts?.analyze || 180000;
@@ -131,6 +138,17 @@ function HomeContent() {
         const file = new File([croppedBlob], "cropped-image.jpg", { type: "image/jpeg" });
         const ok = await handleAnalyze(file);
         if (ok) setIsCropperOpen(false);
+    };
+
+    /**
+     * 【custom-v25 绿框】编辑器一次交出多张（一区一张）。
+     * 单题流只能处理一张，所以直接切到流水线：图已经裁好了，进去点「送 AI」即可。
+     */
+    const handleCropBatch = (blobs: Blob[]) => {
+        if (!blobs.length) return;
+        setIsCropperOpen(false);
+        setBatchFiles(blobs.map((b, i) => new File([b], `region-${i + 1}.jpg`, { type: "image/jpeg" })));
+        setBatchMode(true);
     };
 
     const handleAnalyze = async (file: File): Promise<boolean> => {
@@ -423,7 +441,8 @@ function HomeContent() {
                         language={language}
                         aiTimeout={aiTimeout}
                         defaultNotebookId={initialNotebookId || autoSelectedNotebookId || undefined}
-                        onExit={() => setBatchMode(false)}
+                        initialFiles={batchFiles}
+                        onExit={() => { setBatchMode(false); setBatchFiles([]); }}
                     />
                 ) : (
                     <>
@@ -437,6 +456,7 @@ function HomeContent() {
                                 open={isCropperOpen}
                                 onClose={() => setIsCropperOpen(false)}
                                 onCropComplete={handleCropComplete}
+                                onCropBatch={handleCropBatch}
                                 analyzing={analysisStep !== 'idle'}
                             />
                         )}
