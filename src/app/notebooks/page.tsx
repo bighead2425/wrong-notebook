@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
-import { Plus, House, ArchiveRestore, Printer } from "lucide-react";
+import { Plus, House, Trash2, Printer } from "lucide-react";
 import Link from "next/link";
 import { NotebookCard } from "@/components/notebook-card";
 import { CreateNotebookDialog, type CreateNotebookPayload } from "@/components/create-notebook-dialog";
@@ -120,9 +120,18 @@ export default function NotebooksPage() {
                         </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
+                        {/*
+                          回收箱入口（【custom-v24】按用户要求改造）
+                          ① 原来的纯图标按钮换成「图标 + 回收箱」三个字，一眼能认出是去哪。
+                          ② 图标从 ArchiveRestore 换成 Trash2 —— ArchiveRestore 是「盒子+回退箭头」，
+                             在别处已经承担「拉回在用（取消归档）」的意思，同一个页面上两个语义撞车，
+                             用户说「尽量给岔开」。垃圾桶图标是「丢弃/暂存」的通用语义，不会误读成还原。
+                          ③ 页面里归档横幅的「拉回在用」仍是 ArchiveRestore，两者从此泾渭分明。
+                        */}
                         <Link href="/trash">
-                            <Button variant="outline" size="icon" title={t.notebooks?.trash || "回收箱"}>
-                                <ArchiveRestore className="h-4 w-4" />
+                            <Button variant="outline" size="sm" title={t.notebooks?.trash || "回收箱"}>
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                {t.notebooks?.trash || "回收箱"}
                             </Button>
                         </Link>
                         <Button onClick={() => setDialogOpen(true)} size="sm" className="hidden sm:flex">

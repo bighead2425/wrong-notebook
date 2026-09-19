@@ -118,15 +118,27 @@ export default function ErrorDetailPage() {
         }
     };
 
+    /**
+     * 【custom-v24】删除 = 移入回收箱，不再是真删。
+     *
+     * 原实现打的是 `/api/error-items/[id]/delete`，那条路由里写的是 `prisma.errorItem.delete()`，
+     * 是**物理删除**：记录直接从库里消失，回收箱 (`deletedAt != null`) 自然也查不到，
+     * 与「所有删除都先进回收箱」的既定口径正好相反（用户反馈的正是这条）。
+     *
+     * 现改打 `/api/error-items/[id]` 的 DELETE：该路由默认**软删**（写 deletedAt），
+     * 只有显式带 `?hard=1` 才彻底删除，而 `hard=1` 只由回收箱页的「彻底删除」使用。
+     * 这样：详情页删 → 进回收箱 → 可还原；回收箱里再删 → 才真删。
+     */
     const deleteItem = async () => {
         if (!item) return;
 
-        const confirmMessage = t.common?.messages?.confirmDelete || 'Are you sure you want to delete this error item?';
+        const confirmMessage = t.common?.messages?.confirmMoveToTrash
+            || 'Move this question to the trash? You can restore it from the trash later.';
         if (!confirm(confirmMessage)) return;
 
         try {
-            await apiClient.delete(`/api/error-items/${item.id}/delete`);
-            alert(t.common?.messages?.deleteSuccess || 'Deleted successfully');
+            await apiClient.delete(`/api/error-items/${item.id}`);
+            alert(t.common?.messages?.moveToTrashSuccess || 'Moved to trash');
             if (item.notebookId) {
                 router.push(`/notebooks/${item.notebookId}`);
             } else {

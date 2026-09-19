@@ -14,9 +14,13 @@ import { AnalyzeResponse, Notebook, AppConfig } from "@/types/api";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { processImageFile } from "@/lib/image-utils";
-import { Upload, BookOpen, Tags, LogOut, BarChart3, QrCode, ArchiveRestore } from "lucide-react";
+import { Upload, BookOpen, Tags, LogOut, BarChart3, QrCode } from "lucide-react";
 import { SettingsDialog } from "@/components/settings-dialog";
-import { BroadcastNotification } from "@/components/broadcast-notification";
+/**
+ * 【custom-v24】公告通知按钮按用户要求从首页撤下（功能保留，组件文件不动）。
+ * 需要恢复时把 import 与 <BroadcastNotification /> 一起放回图右上角工具条即可。
+ */
+// import { BroadcastNotification } from "@/components/broadcast-notification";
 import { signOut } from "next-auth/react";
 
 import { ProgressFeedback, ProgressStatus } from "@/components/ui/progress-feedback";
@@ -347,7 +351,8 @@ function HomeContent() {
                                 <QrCode className="h-5 w-5" />
                             </Button>
                         </Link>
-                        <BroadcastNotification />
+                        {/* 【custom-v24】公告通知按钮已按用户要求撤下，功能组件保留备用 */}
+                        {/* <BroadcastNotification /> */}
                         <SettingsDialog />
                         <Button
                             variant="ghost"
@@ -361,10 +366,15 @@ function HomeContent() {
                     </div>
                 </div>
 
-                {/* Action Center —— 弹性等分：桌面尽量一行，窄屏/手机自动换行（用户要求缩短） */}
-                <div className={initialNotebookId ? "flex justify-center mb-6" : "flex flex-wrap gap-3"}>
+                {/* Action Center
+                    【custom-v24】两个改动：
+                    ① 按钮宽度统一 —— 由 flex-wrap 换成 grid。flex-wrap 在放不下时换行，
+                       最后一行不满的按钮会各自拉伸，宽度就对不齐；grid 强制四列等宽。
+                       窄屏退化成 2×2，仍然等宽。
+                    ② 「回收箱」入口从这里撤掉 —— 用户要求以后统一从「查看题册」页进。 */}
+                <div className={initialNotebookId ? "flex justify-center mb-6" : "grid grid-cols-2 lg:grid-cols-4 gap-3"}>
                     <Button
-                        className={`h-11 text-sm shadow-sm hover:shadow-md transition-all ${initialNotebookId ? "w-full max-w-md" : "flex-1 min-w-[140px]"}`}
+                        className={`h-11 text-sm shadow-sm hover:shadow-md transition-all ${initialNotebookId ? "w-full max-w-md" : "w-full"}`}
                         variant={batchMode ? "default" : (step === "upload" ? "default" : "secondary")}
                         onClick={() => setBatchMode(true)}
                     >
@@ -374,7 +384,7 @@ function HomeContent() {
 
                     {!initialNotebookId && (
                         <>
-                            <Link href="/notebooks" className="flex-1 min-w-[140px]">
+                            <Link href="/notebooks">
                                 <Button
                                     variant="outline"
                                     className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
@@ -384,7 +394,7 @@ function HomeContent() {
                                 </Button>
                             </Link>
 
-                            <Link href="/tags" className="flex-1 min-w-[140px]">
+                            <Link href="/tags">
                                 <Button
                                     variant="outline"
                                     className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
@@ -394,24 +404,13 @@ function HomeContent() {
                                 </Button>
                             </Link>
 
-                            <Link href="/stats" className="flex-1 min-w-[140px]">
+                            <Link href="/stats">
                                 <Button
                                     variant="outline"
                                     className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
                                 >
                                     <BarChart3 className="mr-2 h-4 w-4 shrink-0" />
                                     <span className="truncate">{t.app?.stats || 'Stats'}</span>
-                                </Button>
-                            </Link>
-
-                            {/* H2 四分法：回收箱是独立库，不在「我的错题本」下显示 */}
-                            <Link href="/trash" className="flex-1 min-w-[140px]">
-                                <Button
-                                    variant="outline"
-                                    className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
-                                >
-                                    <ArchiveRestore className="mr-2 h-4 w-4 shrink-0" />
-                                    <span className="truncate">{t.app?.trash || '回收箱'}</span>
                                 </Button>
                             </Link>
                         </>

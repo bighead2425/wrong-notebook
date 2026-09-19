@@ -75,7 +75,15 @@ interface Box {
 const QUESTION_COLOR = "#e50000"; // 红 = 题干
 const ANSWER_COLOR = "#0055ff";   // 蓝 = 手写答案
 const BRUSH_SIZES = [10, 20, 40, 80];
-const BRUSH_LABELS = ["小", "中", "大", "特大"];
+/**
+ * 【custom-v24】笔头粗细四档的按钮文案。
+ * 用户要求四档统一显示 🔘，用**字号从小到大**表达由细到粗（不再写「小/中/大/特大」四个字）。
+ * 档位中文名挪进 title，鼠标悬停仍有提示，但不再占版面宽度。
+ * ⚠️ BRUSH_LABELS / BRUSH_TITLES / BRUSH_FONT_PX 三个数组必须同长同序，改一处就得改三处。
+ */
+const BRUSH_LABELS = ["🔘", "🔘", "🔘", "🔘"];
+const BRUSH_TITLES = ["小", "中", "大", "特大"];
+const BRUSH_FONT_PX = [11, 14, 18, 23];
 
 // ===== 缩放模型常量 =====
 // zoom 语义：1 = 图片自然像素 1:1（不再靠 CSS 百分比偶然适配）
@@ -1371,10 +1379,8 @@ export function ImageCropper({
                 </DialogHeader>
 
                 {/* ===== 工具栏 ===== */}
+                {/* 【custom-v24】左上角“模式”二字已按用户要求撤掉 —— 图标型方框按钮本身就是模式开关，不需要再挂一个栏目标题。 */}
                 <div className="px-4 py-2 border-b shrink-0 flex flex-wrap items-center gap-2 bg-muted/30">
-                    <span className="text-xs text-muted-foreground mr-1">
-                        {t.common.cropper?.mode || "模式"}
-                    </span>
                     <button type="button" className={btn(mode === "crop")} onClick={() => switchMode("crop")}>
                         {t.common.cropper?.modeCrop || "裁剪"}
                     </button>
@@ -1397,7 +1403,8 @@ export function ImageCropper({
                     {/* 拉伸：进编辑器后才发现照片拍歪了的补救入口（问题③）。
                         ⚠️ 这里用字面文案而非 t.common.cropper.stretch —— t 的类型取自
                         translations['en']，新 key 必须所有语种一起补齐才能过类型检查，
-                        而编辑器界面本来就是中文，先不铺这一层。 */}
+                        而编辑器界面本来就是中文，先不铺这一层。
+                        【custom-v24】文案改「📐抻」（用户指定），与右侧 📐 图标语义一致。 */}
                     <button
                         type="button"
                         className={btn(false)}
@@ -1405,7 +1412,7 @@ export function ImageCropper({
                         disabled={analyzing}
                         title="把当前图送进拍摄扫描器：拖四角把斜拍的纸拉正，并可漂白 / 黑白"
                     >
-                        拉伸
+                        📐抻
                     </button>
 
                     <span className="w-px h-5 bg-border mx-1" />
@@ -1425,26 +1432,29 @@ export function ImageCropper({
                                     </span>
                                     {BRUSH_LABELS.map((label, i) => (
                                         <button
-                                            key={label}
+                                            key={i}
                                             type="button"
                                             className={btn(brushIdx === i)}
                                             onClick={() => setBrushIdx(i)}
+                                            title={BRUSH_TITLES[i]}
+                                            style={{ fontSize: BRUSH_FONT_PX[i], lineHeight: 1 }}
                                         >
                                             {label}
                                         </button>
                                     ))}
                                 </span>
                             )}
-                            <button type="button" className={btn(false)} onClick={undo} disabled={!hasShapes}>
-                                {t.common.cropper?.undo || "撤销 (Ctrl+Z)"}
+                            <button type="button" className={btn(false)} onClick={undo} disabled={!hasShapes} title="撤销 (Ctrl+Z)">
+                                {t.common.cropper?.undo || "🔙"}
                             </button>
                             <button
                                 type="button"
                                 className={btn(false)}
                                 onClick={erasePendingRect}
                                 disabled={!pendingRect}
+                                title="擦除选区 (Delete)"
                             >
-                                {t.common.cropper?.eraseSelection || "擦除选区 (Delete)"}
+                                {t.common.cropper?.eraseSelection || "🗑️"}
                             </button>
                         </>
                     )}
@@ -1475,8 +1485,9 @@ export function ImageCropper({
                                 className={btn(cropToRegions)}
                                 onClick={() => setCropToRegions((v) => !v)}
                                 disabled={boxes.length === 0}
+                                title="仅发送标注区域（省 token）"
                             >
-                                {t.common.cropper?.cropToRegions || "仅发送标注区域（省 token）"}
+                                {t.common.cropper?.cropToRegions || "省🔡"}
                             </button>
                         </>
                     )}
@@ -1486,8 +1497,9 @@ export function ImageCropper({
                             type="button"
                             className={btn(cropToRegions)}
                             onClick={() => setCropToRegions((v) => !v)}
+                            title="仅发送标注区域（省 token）"
                         >
-                            {t.common.cropper?.cropToRegions || "仅发送标注区域（省 token）"}
+                            {t.common.cropper?.cropToRegions || "省🔡"}
                         </button>
                     )}
                 </div>
@@ -1621,10 +1633,10 @@ export function ImageCropper({
                         <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg p-4 text-sm max-w-lg">
                             <div className="font-semibold mb-2">{t.common.cropper?.helpTitle || "操作说明"}</div>
                             <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
-                                <li>{t.common.cropper?.hint || "裁剪：在图片上拖拽框选要保留的区域，再切橡皮擦/标注；不框则保留整图"}</li>
-                                <li>{t.common.cropper?.hintErase || "橡皮擦：笔刷按住涂抹即擦掉（涂白）；矩形选区拖框后按 Delete 或点“擦除选区”。Ctrl+Z 撤销"}</li>
-                                <li>{t.common.cropper?.hintLabel || "区域标注：先选“题干（红框）”或“手写答案（蓝框）”，再在图上拖框；点中已有框可删除"}</li>
-                                <li>🔍 手机：双指捏合缩放、双指拖动平移（图片或黑底上均可）｜ 电脑：滚轮以鼠标为中心缩放、按住右键拖拽平移、也可开「平移」开关用左键平移、双击放大/复位</li>
+                                <li>{t.common.cropper?.hint || "✂️裁：在图片上拖拽框选要保留的区域，再切 🧽擦 / 📊框；不框则保留整图"}</li>
+                                <li>{t.common.cropper?.hintErase || "🧽擦：🖍️ 按住涂抹即擦掉（涂白）；🟧 拖框后按 Delete 或点 🗑️。🔙 撤销"}</li>
+                                <li>{t.common.cropper?.hintLabel || "📊框：先选 题🟥 或 答🟦，再在图上拖框；点中已有框可删除"}</li>
+                                <li>🔍 手机：双指捏合缩放、双指拖动平移（图片或黑底上均可）｜ 电脑：滚轮以鼠标为中心缩放、按住右键拖拽平移、也可开「🧭移」开关用左键平移、双击放大/复位</li>
                             </ul>
                             <div className="mt-2 text-xs text-muted-foreground">（点击任意位置关闭）</div>
                         </div>

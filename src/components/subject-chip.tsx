@@ -9,6 +9,13 @@ interface SubjectChipProps {
     variant?: "print" | "ui";
     /** 是否显示中文名（打印色块同时印学科名 + 简拼，冗余识别） */
     showLabel?: boolean;
+    /**
+     * 是否显示 2 字母简拼（SX/YY/WL…）。
+     * 【custom-v24】打印场景改传 false：色块后面紧跟着题号（SX20260912001），
+     * 题号前两位本来就是学科简拼，色块再印一遍属于重复占位（用户要求去掉）。
+     * UI 场景仍默认显示，屏幕上看色块 + 两字母最省事。
+     */
+    showCode?: boolean;
     className?: string;
 }
 
@@ -18,13 +25,18 @@ interface SubjectChipProps {
  * 打印：22mm×7mm 实心色块 + 白字，圆角 1.5mm —— 必须实心，细边框喷墨易晕。
  * UI  ：同色 12% 浅底 + 深色文字（屏幕上看起来柔和些，也不影响可读性）。
  *
- * ⚠️ 两种模式都必须同时带上 2 字母简拼（SX/YY/WL…）——这是「天然冗余」第三条原则：
+ * ⚠️ 默认两种模式都带上 2 字母简拼（SX/YY/WL…）——这是「天然冗余」第三条原则：
  *    黑白复印或色觉差异时，只看字母也能分辨学科。
+ *
+ * 【custom-v24 例外】打印场景改由调用方传 showCode={false}：
+ *    错题卡里色块右边紧跟题号（SX20260912001），题号前两位就是学科简拼，
+ *    同一行印两遍属于重复。冗余性原则不破 —— 简拼仍在，只是挪到了题号里。
  */
 export function SubjectChip({
     subjectKey,
     variant = "ui",
     showLabel = true,
+    showCode = true,
     className = "",
 }: SubjectChipProps) {
     const def = getSubjectColorDef(subjectKey);
@@ -51,7 +63,7 @@ export function SubjectChip({
                 }}
             >
                 {showLabel && <span>{def.label}</span>}
-                <span style={{ fontWeight: 800 }}>{def.code}</span>
+                {showCode && <span style={{ fontWeight: 800 }}>{def.code}</span>}
             </span>
         );
     }
@@ -65,7 +77,7 @@ export function SubjectChip({
             }}
         >
             {showLabel && <span>{def.label}</span>}
-            <span className="font-bold">{def.code}</span>
+            {showCode && <span className="font-bold">{def.code}</span>}
         </span>
     );
 }

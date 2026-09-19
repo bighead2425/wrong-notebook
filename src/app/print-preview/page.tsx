@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { House } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
@@ -67,7 +69,9 @@ function PrintPreviewContent() {
     const [showAnswers, setShowAnswers] = useState(true);
     const [showAnalysis, setShowAnalysis] = useState(true);
     const [showMistake, setShowMistake] = useState(true);
-    const [showTags, setShowTags] = useState(false);
+    // 【custom-v24】「知识点」默认勾选（用户指定）——打出来能直接看到这题考什么，
+    // 不必每次进打印页再补勾一次。
+    const [showTags, setShowTags] = useState(true);
     const [spaceMM, setSpaceMM] = useState(35);
     const [imageScale, setImageScale] = useState(70);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -291,7 +295,9 @@ function PrintPreviewContent() {
                 {/* ---------- 正面：题头 + 原题 + 原图 + 两栏 ---------- */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "3mm", marginBottom: "2mm" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "2mm", minWidth: 0 }}>
-                        <SubjectChip subjectKey={subjectKey} variant="print" />
+                        {/* 【custom-v24】showCode={false}：色块只印「语文」，不再印「语文YW」。
+                            紧跟在后面的题号本身就以学科简拼开头（如 YW20260919001），不必印两遍。 */}
+                        <SubjectChip subjectKey={subjectKey} variant="print" showCode={false} />
                         <span style={{ fontSize: "12pt", fontWeight: 700, letterSpacing: "0.5px" }}>{questionNo}</span>
                     </div>
                     {qrMap[item.id] ? (
@@ -404,6 +410,13 @@ function PrintPreviewContent() {
                         <Button onClick={handlePrint} size="sm" className="whitespace-nowrap" disabled={selectedItems.length === 0 || printing}>
                             {printing ? L("准备中…", "Preparing…") : L("打印 / 存为 PDF", "Print / Save PDF")}
                         </Button>
+                        {/* 【custom-v24】右上角补一个主页按钮，和其他页面右上角的小房子统一。
+                            控制栏整体是 no-print，所以它只会出现在屏幕上，不会被印到纸上。 */}
+                        <Link href="/">
+                            <Button variant="ghost" size="icon" title={L("回到主页", "Home")}>
+                                <House className="h-5 w-5" />
+                            </Button>
+                        </Link>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 sm:gap-4">

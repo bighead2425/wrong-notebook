@@ -223,42 +223,47 @@ export function UploadZone({ onImageSelect, isAnalyzing, onManualInput }: Upload
                     </div>
                 </CardContent>
             </Card>
-            {/* 拍照扫描 —— 蓝图 #2 路线B：软件内自研拍摄（自动找纸边拉正 + 漂白/黑白增强） */}
-            {isCameraAllowed() && (
-                <div className="flex flex-col items-center gap-2">
-                    <Button
-                        variant="outline"
-                        onClick={() => scannerRef.current?.openCamera()}
-                        disabled={isAnalyzing}
-                        className="flex items-center gap-2"
-                    >
-                        <Camera className="h-4 w-4" />
-                        拍照扫描
-                    </Button>
-                    <p className="text-xs text-muted-foreground text-center">
-                        自动识别纸张边缘并拉正，可选漂白 / 黑白，比直接拍照更清晰省墨
-                    </p>
-                </div>
-            )}
-            {/* 屏幕截图按钮 - 只在客户端渲染 */}
-            {isScreenshotSupported() && (
-                <div className="flex flex-col items-center gap-2">
-                    <Button
-                        variant="outline"
-                        onClick={handleScreenshot}
-                        disabled={isAnalyzing || isScreenshotting}
-                        className="flex items-center gap-2"
-                    >
-                        {isScreenshotting ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                            <Monitor className="h-4 w-4" />
-                        )}
-                        {isScreenshotting ? t.common.pleaseWait : t.upload.screenshot}
-                    </Button>
-                    <p className="text-xs text-muted-foreground text-center">
-                        {t.upload.screenshotDesc}
-                    </p>
+            {/*
+              拍照扫描 + 屏幕截图 —— 【custom-v24】并成一行。
+              ① 原来是两个 flex-col 竖排的块，各占一整行；现在合成一个 flex-row，
+                 两个按钮各 flex-1 等宽，文字短、窄屏也放得下，不会掉行。
+              ② 按钮下方的说明文字按用户要求撤掉 —— 点进去自然就明白，不必先读一段说明；
+                 说明改挂到 title 上，鼠标悬停仍能看到。
+              ③ 相机按钮只在安全上下文（https / localhost）可用，条件渲染必须留在
+                 **按钮自己**身上而不是外层容器：只剩一个按钮时它会自动独占整行。
+            */}
+            {(isCameraAllowed() || isScreenshotSupported()) && (
+                <div className="flex gap-3">
+                    {/* 拍照扫描 —— 蓝图 #2 路线B：软件内自研拍摄（自动找纸边拉正 + 漂白/黑白增强） */}
+                    {isCameraAllowed() && (
+                        <Button
+                            variant="outline"
+                            onClick={() => scannerRef.current?.openCamera()}
+                            disabled={isAnalyzing}
+                            className="flex-1 flex items-center justify-center gap-2"
+                            title="自动识别纸张边缘并拉正，可选漂白 / 黑白，比直接拍照更清晰省墨"
+                        >
+                            <Camera className="h-4 w-4" />
+                            拍照扫描
+                        </Button>
+                    )}
+                    {/* 屏幕截图按钮 - 只在客户端渲染 */}
+                    {isScreenshotSupported() && (
+                        <Button
+                            variant="outline"
+                            onClick={handleScreenshot}
+                            disabled={isAnalyzing || isScreenshotting}
+                            className="flex-1 flex items-center justify-center gap-2"
+                            title={t.upload.screenshotDesc}
+                        >
+                            {isScreenshotting ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                                <Monitor className="h-4 w-4" />
+                            )}
+                            {isScreenshotting ? t.common.pleaseWait : t.upload.screenshot}
+                        </Button>
+                    )}
                 </div>
             )}
             {/* H4：手动输入 —— 有的题手动敲比拍照识别更快，仍可接 AI 生成答案 */}
