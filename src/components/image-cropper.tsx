@@ -631,6 +631,22 @@ export function ImageCropper({
         }
     }, [boxes, selectedBoxId, pendingRect, mode, labelKind, cropRect, doneRects]);
 
+    /**
+     * 【custom-v26】redrawOverlay 的**稳定引用**桥。
+     *
+     * 为什么需要：redrawOverlay 的依赖里带着 mode / boxes / pendingRect / selectedBoxId /
+     * labelKind / cropRect —— 只要用户切一次工具、画一个框、点中一个框，它的函数引用就换一个新的。
+     * 于是任何把 `redrawOverlay` 写进依赖数组的 effect 都会**跟着重跑**。
+     * 而「拉伸浮层自愈」那个 effect 里恰好还调了 fitView() → 表现为：
+     * 放大到 300% 后切橡皮擦、点一下图片，画面"啪"地弹回适应大小。
+     *
+     * 需要"最新重绘函数"、又不希望被它的引用变化牵着跑的 effect，一律走这个 ref。
+     */
+    const redrawOverlayRef = useRef(redrawOverlay);
+    useEffect(() => {
+        redrawOverlayRef.current = redrawOverlay;
+    }, [redrawOverlay]);
+
     // 模式切换或画布初次就绪时，把 workCanvas 同步到 baseCanvas 并重绘 overlay
     useEffect(() => {
         if (!open) return;
@@ -974,17 +990,26 @@ export function ImageCropper({
      * → 编辑器一片空白。基准图（workCanvasRef）是游离在 DOM 之外的 canvas，不会丢，
      * 所以这里只要在**提交之后**重新同步一次即可自愈。
      * 正常情况下（没有重建）这两行也是幂等的，不会产生副作用。
+     *
+     * 【custom-v26 修掉"放大后一切工具就弹回适应大小"】
+     * 这里原来末尾还调了 fitView()，而依赖里带着 redrawOverlay —— 后者每次切工具 / 画框 /
+     * 选中框都会换新引用（见 redrawOverlayRef 处的说明），于是**本 effect 被间接反复触发**，
+     * 每次都把画面重算成适应大小。上一次修的是另一处 effect（撤掉 mode 依赖），
+     * 这一处补刀路径没堵住，所以症状依旧。
+     * 改法：① 去掉 fitView（拉伸真正提交时 handleStretchDone 自己会 fit，取消拉伸本就不该动视图）；
+     *       ② 依赖收缩到 [stretchOpen, open]，重画改走 redrawOverlayRef，
+     *          彻底不被"用户又在图上画了什么"牵着跑。
      */
     useEffect(() => {
         if (!open) return;
         const id = requestAnimationFrame(() => {
             if (!workCanvasRef.current) return;
             syncBase();
-            redrawOverlay();
-            fitView();
+            redrawOverlayRef.current();
         });
         return () => cancelAnimationFrame(id);
-    }, [stretchOpen, open, syncBase, redrawOverlay, fitView]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [stretchOpen, open]);
 
     // 视口尺寸变化（拖大窗口 / 手机横竖屏）：仍在自动适应则重新适应，否则只重新钳制
     useEffect(() => {
