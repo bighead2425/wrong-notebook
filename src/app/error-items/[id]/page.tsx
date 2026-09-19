@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X, Sparkles, Loader2 } from "lucide-react";
+import { ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X, Sparkles, Loader2, Printer } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import Link from "next/link";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -517,6 +517,15 @@ export default function ErrorDetailPage() {
                         >
                             {exportState === "doing" ? "导出中…" : "导出到ob"}
                         </Button>
+                        {/* 【custom-v26】单题直通打印：只带这一道的 id 进打印预览（默认错题卡排版）。
+                            ⚠️ 必须走 ?ids= 而不是 ?notebookId=：列表接口对 ids 分支不强制 deletedAt，
+                            所以回收箱里的题也能单独打出来（扫码跳单题打印走的是同一条路）。 */}
+                        <Link href={`/print-preview?ids=${item.id}&mode=card`}>
+                            <Button variant="outline" size="sm" title="只打印这一道题">
+                                <Printer className="mr-2 h-4 w-4" />
+                                打印本题
+                            </Button>
+                        </Link>
                         {exportState === "ok" && (
                             <span className="self-center text-green-600 text-sm">已导出</span>
                         )}

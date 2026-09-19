@@ -246,9 +246,16 @@ function PrintPreviewContent() {
         return (
             <>
                 {hasText && (
-                    <div style={{ marginBottom: hasImg ? "3mm" : 0 }}>
+                    <div style={{ marginBottom: hasImg ? "2mm" : 0 }}>
                         <MarkdownRenderer content={item.questionText as string} />
                     </div>
+                )}
+                {/* 【custom-v26】题干文字与题目原图之间加一条虚线。
+                    两者同处一个方框里，中间不留界的话，长题干下面接着一张图，
+                    一眼看过去会以为图也是题干的一部分（尤其图里还带着手写答案时）。
+                    用虚线而非实线：它是"同一块内容内部的分隔"，不该抢原题边框的层级。 */}
+                {hasText && hasImg && (
+                    <div style={{ borderTop: "1px dashed #888", marginBottom: "3mm" }} />
                 )}
                 {hasImg && (
                     <img
@@ -349,7 +356,7 @@ function PrintPreviewContent() {
                 </div>
 
                 {/* 解析左 / 空白右（B9），内容延伸到背面 */}
-                <div className="print-two-col" style={{ display: "flex", gap: "4mm", alignItems: "flex-start" }}>
+                <div className="print-two-col" style={{ display: "flex", gap: "3mm", alignItems: "flex-start" }}>
                     <div style={{ flex: "1 1 52%", minWidth: 0 }}>
                         {showAnalysis && item.analysis && (
                             <div className="print-sub-title" style={{ fontWeight: 600, fontSize: "10pt", marginBottom: "1mm" }}>
@@ -362,7 +369,19 @@ function PrintPreviewContent() {
                             </div>
                         )}
                     </div>
-                    <div style={{ flex: "1 1 48%", minWidth: 0 }}>
+                    {/* 【custom-v26】解析区与重做区之间加一条深灰竖线。
+                        用 borderLeft 而不是插一个空 div 当线：空 div 在 flex 里高度靠 stretch 撑，
+                        一旦这一栏跨页断开就会印出一条断头线；挂在右栏上，线必然与右栏同高。
+                        alignSelf:stretch 让竖线跟到两栏中较高的那一栏（通常是重做区）。 */}
+                    <div
+                        style={{
+                            flex: "1 1 48%",
+                            minWidth: 0,
+                            alignSelf: "stretch",
+                            borderLeft: "2px solid #555",
+                            paddingLeft: "3mm",
+                        }}
+                    >
                         <div style={{ fontSize: "9pt", color: "#666", marginBottom: "1mm" }}>
                             {L("重做区", "Redo here")}
                         </div>
