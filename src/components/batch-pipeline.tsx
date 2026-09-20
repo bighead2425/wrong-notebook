@@ -403,7 +403,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                 ...prev.map(it => it.id === id ? { ...it, treated: true } : it),
                 added,
             ]);
-            setActiveId(added.id); // 选中落到刚加工出的结果图，避免「① 当前这张」误选到未裁剪的原图
+            setActiveId(added.id); // 选中落到刚加工出的结果图：缩略图高亮跟着走，不会停在已变灰的原图上
         } else {
             if (target) URL.revokeObjectURL(target.previewUrl);
             setItems(prev => prev.map(it => it.id === id ? {
