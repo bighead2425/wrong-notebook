@@ -343,3 +343,63 @@
     display: none !important;
   }
 }
+
+/* ============================================================================
+ * Markdown 渲染（custom-v28）
+ * 详见 src/components/markdown-renderer.tsx
+ * ==========================================================================*/
+
+/* 行内代码 vs 代码块：react-markdown 10.x 删掉了 code 组件的 inline 参数，
+   现在靠「pre 包 code」的结构区分。外层 pre 已负责底色与内边距，
+   里面的 code 不能再来一层 —— 否则代码块里会出现一块更深色的「块中块」。 */
+.markdown-content pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* Obsidian 的 ==高亮==：半透明黄底 + 继承文字色，
+   浅色主题和深色主题下都能看清（实心亮黄配浅色字在深色主题里会糊成一片）。 */
+.markdown-content mark {
+  background-color: rgba(250, 204, 21, 0.35);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* 打印（B5 错题卡）时半透明黄底几乎看不出，换成实心浅黄并强制出色 */
+@media print {
+  .markdown-content mark {
+    background-color: #ffe58f !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+}
+
+/* ============================================================================
+ * 批量送 AI：正在分析的那张图的细进度条（custom-v28）
+ *
+ * 贴着缩略图底边的一条 3px 细线。HTTP 拿不到服务端生成的真实百分比
+ * （AI 是一次性返回、不是流式响应），所以只能做「不确定态」——一段短条来回滚，
+ * 作用是让用户看出**就是这张在跑**；整体进度靠列表上方的「3/6」与整条进度条。
+ * ==========================================================================*/
+@keyframes batchRunningBar {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+.batch-running-bar {
+  animation: batchRunningBar 1.2s ease-in-out infinite;
+}
+
+/* 动效敏感的机器上别转，改成常亮一小段（仍然能指出是哪张） */
+@media (prefers-reduced-motion: reduce) {
+  .batch-running-bar {
+    animation: none;
+    width: 100%;
+  }
+}

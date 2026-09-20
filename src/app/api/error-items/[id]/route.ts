@@ -78,6 +78,10 @@ export async function PUT(
         const {
             knowledgePoints, gradeSemester, paperLevel, questionText, answerText, analysis,
             notebookId, wrongAnswerText, mistakeAnalysis, mistakeStatus,
+            // 【custom-v28】批量里「重新分析已录入的题」时会带上新图（很可能重新裁过）。
+            // 旧实现不收这个字段 —— 于是题目文本换成新的、原图还是旧的，图文对不上。
+            // 注意：这里**不接受 source（题号）**，题号必须保持不变，见下方 updateData。
+            originalImageUrl,
             // ===== 状态字段（5.3 单一事实来源）=====
             attention,        // 关注档 1-5（难度档，G8 / T5）
             masteryLevel,     // 0 New / 1 Reviewing / 2 Mastered（=2 即四分法「已掌握」）
@@ -102,6 +106,12 @@ export async function PUT(
         if (gradeSemester !== undefined) updateData.gradeSemester = gradeSemester;
         if (paperLevel !== undefined) updateData.paperLevel = paperLevel;
         if (questionText !== undefined) updateData.questionText = questionText;
+        // 【custom-v28】重新分析时确实换过图（重新裁 / 重新擦）才更新原图；
+        // 空串视为「不动」，免得手滑把原图清掉。
+        // 题号 source 不在可更新字段里 —— 重新分析永远不改题号、不新增记录。
+        if (originalImageUrl !== undefined && originalImageUrl !== '') {
+            updateData.originalImageUrl = originalImageUrl;
+        }
         if (answerText !== undefined) updateData.answerText = answerText;
         if (analysis !== undefined) updateData.analysis = analysis;
         // ⚠️ Q4/G6：wrongAnswerText 已弃用，保留列但**不再写入**（仅接收用于推算 mistakeStatus）

@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
 import rehypeKatex from 'rehype-katex';
+import { preprocess, remarkHardBreaks, remarkHighlight } from '@/lib/markdown-plugins';
 import 'katex/dist/katex.min.css';
 
 interface MarkdownRendererProps {
@@ -10,35 +11,23 @@ interface MarkdownRendererProps {
     className?: string;
 }
 
+/**
+ * 题目文本 / 答案解析的 Markdown 渲染。
+ *
+ * 【custom-v28 两处修复，都写在 src/lib/markdown-plugins.ts 里，那边有单测】
+ *   1. 行内代码 vs 代码块 —— react-markdown 10.x 删掉了 code 组件的 `inline`
+ *      参数，旧写法导致**任何反引号都被渲染成独占一行的大灰块**。
+ *      现在改由「`pre` 包 `code`」的结构区分（见下方 components）。
+ *   2. 正文里的字面 `\n` 还原 —— 旧写法无差别全局替换，会把 `\ne` `\notin`
+ *      `\nabla` 这类 LaTeX 命令打断。现在先保护公式片段再替换。
+ */
 export function MarkdownRenderer({ content, className = '' }: MarkdownRendererProps) {
-    // Preprocess content to ensure proper paragraph breaks and LaTeX rendering
-    // Convert single line breaks to double line breaks for better readability
-    const processedContent = content
-        // First, convert literal \n sequences to actual newlines (fix for AI responses)
-        .replace(/\\n/g, '\n')
-        // Preserve existing double line breaks with a unique marker
-        .replace(/\n\n/g, '\n\n###PRESERVE_BREAK###\n\n')
-        // Convert patterns that should be new paragraphs
-        // ⚠️ 关键：如果下一行是「列表项」（1. / 1、/ 1) / - / * / +），
-        //    就**不能**插空行 —— 否则有序列表会从 tight 变 loose，
-        //    渲染成「序号独占一行、内容另起一行」（用户反馈的困扰点）。
-        .replace(/([。！？；])\n(?!\n)(?![ \t]*(?:\d+[.、)]|[-*+])\s)/g, '$1\n\n')  // Chinese punctuation followed by single newline
-        .replace(/([.!?;])\s*\n(?!\n)(?![ \t]*(?:\d+[.、)]|[-*+])\s)/g, '$1\n\n')   // English punctuation followed by single newline
-        .replace(/(\d+\))\s*\n(?!\n)/g, '$1\n\n')    // Numbered items like (1), (2)
-        .replace(/([\u2460-\u2473])\s*\n(?!\n)/g, '$1\n\n')  // Circled numbers ①②③
-        // Fix: Remove indentation for lines starting with circled numbers or (n) to prevent code block rendering
-        .replace(/\n\s+([\u2460-\u2473])/g, '\n$1')
-        .replace(/\n\s+(\d+\))/g, '\n$1')
-        // Fix LaTeX formulas: Ensure proper spacing around $ delimiters
-        // This handles cases where $ might be directly adjacent to text
-        .replace(/([^\s$])(\$[^$]+\$)([^\s$])/g, '$1 $2 $3')
-        // Restore preserved double line breaks (use flexible whitespace matching)
-        .replace(/\s*###PRESERVE_BREAK###\s*/g, '\n\n');
+    const processedContent = preprocess(content);
 
     return (
         <div className={`markdown-content overflow-x-auto min-w-0 ${className}`}>
             <ReactMarkdown
-                remarkPlugins={[remarkMath, remarkGfm]}
+                remarkPlugins={[remarkMath, remarkGfm, remarkHighlight, remarkHardBreaks]}
                 rehypePlugins={[rehypeKatex]}
                 components={{
                     // 自定义样式
@@ -54,16 +43,28 @@ export function MarkdownRenderer({ content, className = '' }: MarkdownRendererPr
                     blockquote: ({ node, ...props }) => (
                         <blockquote className="border-l-4 border-primary pl-4 italic my-4 text-muted-foreground" {...props} />
                     ),
-                    code: ({ node, inline, className, children, ...props }: any) => {
-                        if (inline) {
-                            return <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono text-foreground" {...props}>{children}</code>;
-                        }
-                        return (
-                            <code className="block bg-muted p-4 rounded-lg overflow-x-auto my-3 font-mono text-sm" {...props}>
-                                {children}
-                            </code>
-                        );
-                    },
+                    /**
+                     * 块级代码块：样式全在这层。react-markdown 10.x 已无 `code` 的
+                     * inline 参数，只能靠「pre 包 code」的结构来区分行内/块级。
+                     * pre 内部那份重复的行内底色由 globals.css 的
+                     * `.markdown-content pre code` 规则抹掉。
+                     */
+                    pre: ({ node, ...props }) => (
+                        <pre
+                            className="block bg-muted p-4 rounded-lg overflow-x-auto my-3 font-mono text-sm"
+                            {...props}
+                        />
+                    ),
+                    // 行内代码：小灰块，与 Obsidian 一致（不再撑成整行）
+                    code: ({ node, ...props }: any) => (
+                        <code
+                            className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono text-foreground"
+                            {...props}
+                        />
+                    ),
+                    // Obsidian 的 ==高亮==。底色/打印适配统一交给 globals.css
+                    // （浅色与深色主题需要不同的半透明度）
+                    mark: ({ node, ...props }) => <mark {...props} />,
                     table: ({ node, ...props }) => (
                         <div className="overflow-x-auto my-4">
                             <table className="min-w-full border-collapse border border-border" {...props} />
