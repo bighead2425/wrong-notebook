@@ -50,6 +50,14 @@ export interface BatchItem {
     previewUrl: string;
     /** 是否加工过（对应蓝图的「预处理文件夹」） */
     processed: boolean;
+    /**
+     * 【custom-v27】这张**待处理**原图是否已被加工过至少一次。
+     * 加工过就变灰显示，但它**仍留在待处理区**，可再次点开反复利用。
+     * 与 processed 的区别：processed 表示"它是加工产出的结果图、归在预处理区"。
+     */
+    treated?: boolean;
+    /** 【custom-v27】入库后拿到的题目 id —— 供"点缩略图开详情页"用 */
+    savedId?: string;
     /** 送 AI 时压缩后的图，入库时一并存 */
     base64?: string;
     result?: ParsedQuestion;
@@ -278,26 +286,83 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
     };
 
     /**
+     * 【custom-v27】点缩略图本体 → 按状态分派（用户要求：已分析成功的图不该再进图片编辑器）。
+     *   已分析成功（ready）→ 直接进"分析编辑页"（review 定位到这一道），不跳出批处理循环；
+     *   已入库（saved）  → **新标签页**打开详情页 —— 本页整批图只在内存里，
+     *                     若就地导航过去，整批未入库的图就全丢了；
+     *   其余（待处理 / 已预处理 / AI 失败）→ 进图片编辑器加工。
+     * 想"再编辑图片"时用右下角的笔头按钮（handleEditItem），与这里分开。
+     */
+    const handleOpenItem = (it: BatchItem) => {
+        setActiveId(it.id);
+        if (it.status === "ready") {
+            const idx = readyItems.findIndex(r => r.id === it.id);
+            if (idx >= 0) {
+                setReviewIdx(idx);
+                setStage("review");
+                return;
+            }
+        }
+        if (it.status === "saved") {
+            if (it.savedId) window.open(`/error-items/${it.savedId}`, "_blank", "noopener");
+            return;
+        }
+        setEditingId(it.id);
+    };
+
+    /** 右下角笔头按钮：无论什么状态，都是"进图片编辑器再加工" */
+    const handleEditItem = (it: BatchItem) => {
+        setActiveId(it.id);
+        setEditingId(it.id);
+    };
+
+    /**
      * 编辑器确认 → **只加工，不送 AI**（这是与单题流最大的差别）。
-     * 加工完回到队列，该张从「待处理」移进「预处理」。
+     *
+     * 【custom-v27 改法】原先把这张图"替换"进预处理区，待处理区那张就没了 ——
+     * 用户说"如果待处理的图片我还想用，就用不成了"。现在分两种情况：
+     *   · 编辑的是**待处理**图：原图**留在待处理区**并标记 treated（变灰），
+     *     加工结果作为**新的一张**落进预处理区。同一张原图可反复利用
+     *     （再拆一道 / 重画框再送），重复了由用户自己删。
+     *   · 编辑的是**预处理**图（点右下角笔头再来编辑）：仍是"替换"，
+     *     避免凭空多出一张一模一样的。
      */
     const handleCropComplete = async (blob: Blob) => {
         if (!editingId) return;
         const id = editingId;
         const target = items.find(i => i.id === id);
         const url = URL.createObjectURL(blob);
-        if (target) URL.revokeObjectURL(target.previewUrl);
-        setItems(prev => prev.map(it => it.id === id ? {
-            ...it,
-            file: new File([blob], `batch-${id}.jpg`, { type: "image/jpeg" }),
-            previewUrl: url,
-            processed: true,
-            status: "processed",
-            // 换过图之后，旧的 AI 结果与压缩图都作废
-            base64: undefined,
-            result: undefined,
-            error: undefined,
-        } : it));
+        const newFile = new File([blob], `crop-${Date.now()}.jpg`, { type: "image/jpeg" });
+        const isPending = !!target && !target.processed;
+
+        if (isPending) {
+            const added: BatchItem = {
+                id: `b${Date.now()}-c${Math.random().toString(36).slice(2, 7)}`,
+                file: newFile,
+                previewUrl: url,
+                processed: true,
+                status: "processed",
+            };
+            setItems(prev => [
+                ...prev.map(it => it.id === id ? { ...it, treated: true } : it),
+                added,
+            ]);
+            setActiveId(added.id); // 选中落到刚加工出的结果图，避免「① 当前这张」误选到未裁剪的原图
+        } else {
+            if (target) URL.revokeObjectURL(target.previewUrl);
+            setItems(prev => prev.map(it => it.id === id ? {
+                ...it,
+                file: newFile,
+                previewUrl: url,
+                processed: true,
+                treated: true,
+                status: "processed",
+                // 换过图之后，旧的 AI 结果与压缩图都作废
+                base64: undefined,
+                result: undefined,
+                error: undefined,
+            } : it));
+        }
         setEditingId(null);
     };
 
@@ -311,7 +376,11 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
     const handleCropBatch = (blobs: Blob[]) => {
         if (!blobs.length) return;
         const editing = editingId ? items.find(i => i.id === editingId) : null;
-        const room = MAX_BATCH - (items.length - (editing ? 1 : 0));
+        // 【custom-v27】待处理的整页图被绿框拆成多道后，同样**保留原页**（变灰），
+        // 以便再拆／重拆；只有编辑的是预处理图时才把它换掉。
+        const keepOriginal = !!editing && !editing.processed;
+        const removable = editing && !keepOriginal ? 1 : 0;
+        const room = MAX_BATCH - (items.length - removable);
         const accepted = room > 0 ? blobs.slice(0, room) : [];
         if (accepted.length < blobs.length) {
             alert((t.common.batch?.tooMany || "一批最多 {n} 张（建议 10~20 张），多出的没有加入")
@@ -324,9 +393,14 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             processed: true,
             status: "processed" as BatchStatus,
         }));
-        if (editing) URL.revokeObjectURL(editing.previewUrl);
-        setItems(prev => [...prev.filter(i => i.id !== editingId), ...added]);
-        setActiveId(added[added.length - 1]?.id ?? null);
+        if (editing && !keepOriginal) URL.revokeObjectURL(editing.previewUrl);
+        setItems(prev => [
+            ...(keepOriginal
+                ? prev.map(i => i.id === editingId ? { ...i, treated: true } : i)
+                : prev.filter(i => i.id !== editingId)),
+            ...added,
+        ]);
+        setActiveId(added[added.length - 1]?.id ?? (keepOriginal ? editingId : null));
         setEditingId(null);
         setStage("queue");
     };
@@ -354,12 +428,37 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                 setAnalysisStep("compressing");
                 const b64 = await processImageFile(it.file);
 
-                setAnalysisStep("analyzing");
-                const data = await apiClient.post<AnalyzeResponse>("/api/analyze", {
-                    imageBase64: b64,
-                    language,
-                    notebookId: defaultNotebookId || undefined,
-                }, { timeout: aiTimeout });
+                /**
+                 * 【custom-v27 关键修复】AI 失败**自动重试一次**。
+                 *
+                 * 为什么必须加：分析失败几乎都是"AI 返回内容里缺 <question_text> /
+                 * <answer_text> / <analysis> 标签"（复杂表格题容易被 max_tokens 截断，
+                 * 或模型偶尔不按 XML 格式输出）。单题流失败时用户会手动再点一次"确定"，
+                 * 而批量流是串行闷头跑、没有任何缓冲 —— 一次不中就直接标红，
+                 * 看着就像"某几张老是失败"。重试一次能吃掉绝大多数偶发格式问题。
+                 */
+                let data: AnalyzeResponse | null = null;
+                let lastErr: unknown = null;
+                for (let attempt = 0; attempt < 2 && !data; attempt++) {
+                    if (cancelRef.current) break;
+                    if (attempt > 0) {
+                        frontendLogger.warn('[BatchAnalyze]', 'Retry once after AI failure', {
+                            id: it.id,
+                            error: String(lastErr),
+                        });
+                    }
+                    try {
+                        setAnalysisStep("analyzing");
+                        data = await apiClient.post<AnalyzeResponse>("/api/analyze", {
+                            imageBase64: b64,
+                            language,
+                            notebookId: defaultNotebookId || undefined,
+                        }, { timeout: aiTimeout });
+                    } catch (err) {
+                        lastErr = err;
+                    }
+                }
+                if (!data) throw lastErr ?? new Error("AI analysis canceled");
 
                 setItems(prev => prev.map(x => x.id === it.id ? {
                     ...x,
@@ -408,7 +507,8 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             if (res.duplicate) {
                 frontendLogger.info('[BatchSave]', 'Duplicate submission detected, using existing record', { id: cur.id });
             }
-            setItems(prev => prev.map(x => x.id === cur.id ? { ...x, status: "saved" } : x));
+            // 【custom-v27】记下入库 id：缩略图点击时用它新开详情页
+            setItems(prev => prev.map(x => x.id === cur.id ? { ...x, status: "saved", savedId: res.id } : x));
             setSavedCount(c => c + 1);
             // 不递增索引：当前项已变 saved，会从 readyItems 里移除，
             // 原索引位置自然就是下一道。
@@ -660,10 +760,11 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                     {/* 两个文件夹：待处理 / 预处理（蓝图 #5） */}
                     <FolderGrid
                         title={t.common.batch?.pendingFolder || "待处理"}
-                        hint={t.common.batch?.pendingHint || "刚收进来的原图，点一下进编辑器加工"}
+                        hint={t.common.batch?.pendingHint || "原图（处理过的变灰，仍可再点开继续加工）"}
                         items={pendingItems}
                         activeId={activeId}
-                        onPick={(id) => { setActiveId(id); setEditingId(id); }}
+                        onOpen={handleOpenItem}
+                        onEdit={handleEditItem}
                         onRemove={removeItem}
                         actionIcon={<PenLine className="h-3.5 w-3.5" />}
                     />
@@ -672,7 +773,8 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                         hint={t.common.batch?.processedHint || "加工好了，等着送 AI"}
                         items={processedItems}
                         activeId={activeId}
-                        onPick={(id) => { setActiveId(id); setEditingId(id); }}
+                        onOpen={handleOpenItem}
+                        onEdit={handleEditItem}
                         onRemove={removeItem}
                         actionIcon={<PenLine className="h-3.5 w-3.5" />}
                     />
@@ -746,13 +848,16 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
 
 /** 一个「文件夹」的缩略图网格 */
 function FolderGrid({
-    title, hint, items, activeId, onPick, onRemove, actionIcon,
+    title, hint, items, activeId, onOpen, onEdit, onRemove, actionIcon,
 }: {
     title: string;
     hint: string;
     items: BatchItem[];
     activeId: string | null;
-    onPick: (id: string) => void;
+    /** 点缩略图本体：按状态分派（见 handleOpenItem） */
+    onOpen: (it: BatchItem) => void;
+    /** 点右下角笔头：始终进图片编辑器 */
+    onEdit: (it: BatchItem) => void;
     onRemove: (id: string) => void;
     actionIcon: React.ReactNode;
 }) {
@@ -764,16 +869,23 @@ function FolderGrid({
                 <span className="text-xs text-muted-foreground">{hint}</span>
             </div>
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                {items.map(it => (
+                {items.map(it => {
+                    // 【custom-v27】待处理原图已加工过 → 变灰（但保留在待处理区里，可再点开利用）
+                    const dimmed = !!it.treated && !it.processed;
+                    return (
                     <div
                         key={it.id}
                         className={`relative group rounded-lg overflow-hidden border-2 bg-muted cursor-pointer transition-all ${
                             activeId === it.id ? "border-primary" : "border-transparent hover:border-primary/40"
                         }`}
-                        onClick={() => onPick(it.id)}
+                        onClick={() => onOpen(it)}
                     >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={it.previewUrl} alt="" className="w-full aspect-[3/4] object-cover" />
+                        <img
+                            src={it.previewUrl}
+                            alt=""
+                            className={`w-full aspect-[3/4] object-cover ${dimmed ? "opacity-40 grayscale" : ""}`}
+                        />
                         <button
                             className="absolute top-1 right-1 bg-black/60 text-white rounded p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                             onClick={(e) => { e.stopPropagation(); onRemove(it.id); }}
@@ -796,11 +908,22 @@ function FolderGrid({
                                 AI 失败
                             </span>
                         )}
-                        <span className="absolute bottom-1 right-1 bg-black/50 text-white rounded p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {dimmed && it.status === "pending" && (
+                            <span className="absolute bottom-1 left-1 bg-gray-600 text-white text-[10px] rounded px-1">
+                                已处理
+                            </span>
+                        )}
+                        {/* 【custom-v27】笔头：始终可见，点它进图片编辑器（点图本体是按状态分派） */}
+                        <button
+                            className="absolute bottom-1 right-1 bg-black/60 text-white rounded p-1 hover:bg-black/80 transition-colors"
+                            onClick={(e) => { e.stopPropagation(); onEdit(it); }}
+                            title="编辑图片"
+                        >
                             {actionIcon}
-                        </span>
+                        </button>
                     </div>
-                ))}
+                    );
+                })}
             </div>
         </div>
     );

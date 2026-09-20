@@ -70,13 +70,25 @@ export class AzureOpenAIProvider implements AIService {
         const startTag = `<${tagName}>`;
         const endTag = `</${tagName}>`;
         const startIndex = text.indexOf(startTag);
-        const endIndex = text.lastIndexOf(endTag);
+        if (startIndex === -1) return null;
 
-        if (startIndex === -1 || endIndex === -1 || startIndex >= endIndex) {
-            return null;
+        const contentStartIndex = startIndex + startTag.length;
+        const endIndex = text.indexOf(endTag, contentStartIndex);
+        if (endIndex !== -1) {
+            if (contentStartIndex >= endIndex) return null;
+            return text.substring(contentStartIndex, endIndex).trim();
         }
 
-        return text.substring(startIndex + startTag.length, endIndex).trim();
+        // 【custom-v27】闭标签丢失（多为 max_tokens 截断）时的兜底：截到下一个标签边界；
+        // 说明详见 openai-provider.ts 中同名方法。
+        const rest = text.substring(contentStartIndex);
+        const nextTagAt = rest.search(/<\/?[a-zA-Z_][a-zA-Z0-9_]*>/);
+        if (nextTagAt === -1) {
+            logger.warn({ tagName }, 'Closing tag missing, reading to end (likely truncated)');
+            return rest.trim() || null;
+        }
+        logger.warn({ tagName, nextTagAt }, 'Closing tag missing, truncated at next tag boundary');
+        return rest.slice(0, nextTagAt).trim() || null;
     }
 
     private parseResponse(text: string): ParsedQuestion {

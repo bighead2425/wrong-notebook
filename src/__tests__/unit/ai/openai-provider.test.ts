@@ -150,6 +150,35 @@ describe('OpenAI Provider 响应解析', () => {
 
             expect(() => asPrivateProvider(provider).parseResponse(mockResponse)).toThrow('Missing critical XML tags');
         });
+
+        // 【custom-v27】闭标签丢失（多为 max_tokens 截断）不再直接判死，尽量救回内容
+        it('闭标签丢失时应截到下一个标签边界，而不是整条失败', () => {
+            const mockResponse = `
+<question_text>一个长方形的面积是多少</question_text>
+<answer_text>面积是 12 平方厘米
+<analysis>长 3 宽 4，相乘得 12。</analysis>
+<subject>数学</subject>
+            `.trim();
+
+            const result = asPrivateProvider(provider).parseResponse(mockResponse);
+
+            // answer_text 缺闭合标签 → 救回内容，且不把后面的 analysis 一起吞掉
+            expect(result.answerText).toBe('面积是 12 平方厘米');
+            expect(result.analysis).toContain('相乘得 12');
+            expect(result.subject).toBe('数学');
+        });
+
+        it('最后一个标签被截断时应读到末尾', () => {
+            const mockResponse = `
+<question_text>计算 1+1</question_text>
+<answer_text>2</answer_text>
+<analysis>这是基础加法，1+1=2，不需要进位`;
+
+            const result = asPrivateProvider(provider).parseResponse(mockResponse);
+
+            expect(result.answerText).toBe('2');
+            expect(result.analysis).toContain('不需要进位');
+        });
     });
 });
 

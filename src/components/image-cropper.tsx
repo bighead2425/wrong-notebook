@@ -274,9 +274,25 @@ export function ImageCropper({
     const pinchRef = useRef<{ dist: number; midX: number; midY: number } | null>(null);
     const panDragRef = useRef<{ sx: number; sy: number; px: number; py: number } | null>(null);
     const spaceRef = useRef(false);
+    /** 【custom-v27 仅画】按住 Shift 时临时进入「仅画」——见 drawOnly 的说明 */
+    const shiftRef = useRef(false);
 
     // ===== 平移开关 + 右键拖拽平移 =====
     const [panMode, setPanMode] = useState(false);
+    /**
+     * 【custom-v27 仅画】区域标注页的「强制画框」开关（用户命名「仅画」）。
+     *
+     * 选中后起手即画新框，不再"点中已有框就选中它" —— 解决"正想画框、
+     * 却因为落点靠近旧框而被吃成选中"这个难以根治的矛盾。
+     * 电脑端按住 Shift 亦**临时**进入此态（松开即回到由本开关决定），见 onPointerDown。
+     */
+    const [drawOnly, setDrawOnly] = useState(false);
+    /**
+     * 【custom-v27 十字基准线】指针在**视口坐标**下的位置。
+     * 用视口坐标而非容器坐标：容器被 scale(zoom) 缩放，缩放/平移后容器坐标会与光标脱节；
+     * 视口坐标不受缩放影响，渲染时再用 view/zoom 算出图片矩形即可对齐。
+     */
+    const [crossPos, setCrossPos] = useState<{ x: number; y: number } | null>(null);
     // 首次加载的「最原始整图」副本，供「原图」键一键恢复
     // （裁剪即提取会直接覆盖 origCanvas，所以必须另存一份干净的原始图）
     const firstImageRef = useRef<HTMLCanvasElement | null>(null);
@@ -1048,16 +1064,28 @@ export function ImageCropper({
     }, [open, zoomAt]);
 
     // 电脑端：按住空格 + 拖拽 = 平移（与 Photoshop 习惯一致）
+    // 【custom-v27】顺带跟踪 Shift：区域标注页按住 Shift = 临时「仅画」（见 onPointerDown）
     useEffect(() => {
         if (!open) return;
-        const down = (e: KeyboardEvent) => { if (e.code === "Space") spaceRef.current = true; };
-        const up = (e: KeyboardEvent) => { if (e.code === "Space") spaceRef.current = false; };
+        const down = (e: KeyboardEvent) => {
+            if (e.code === "Space") spaceRef.current = true;
+            if (e.key === "Shift") shiftRef.current = true;
+        };
+        const up = (e: KeyboardEvent) => {
+            if (e.code === "Space") spaceRef.current = false;
+            if (e.key === "Shift") shiftRef.current = false;
+        };
+        // 切到别的窗口再回来时收不到 keyup → Shift 会卡在按下态。用 blur 兜底复位。
+        const blur = () => { shiftRef.current = false; spaceRef.current = false; };
         window.addEventListener("keydown", down);
         window.addEventListener("keyup", up);
+        window.addEventListener("blur", blur);
         return () => {
             window.removeEventListener("keydown", down);
             window.removeEventListener("keyup", up);
+            window.removeEventListener("blur", blur);
             spaceRef.current = false;
+            shiftRef.current = false;
         };
     }, [open]);
 
@@ -1162,10 +1190,15 @@ export function ImageCropper({
         }
 
         if (mode === "label") {
-            const hit = hitBoxAt(p);
-            if (hit) {
-                setSelectedBoxId(hit.id);
-                return;
+            // 【custom-v27 仅画】开关选中、或按住 Shift 时，起手一律画新框，
+            // 跳过"点边框附近选中旧框"的判定 —— 用户要的就是"我就是要画框"。
+            const forceDraw = drawOnly || shiftRef.current;
+            if (!forceDraw) {
+                const hit = hitBoxAt(p);
+                if (hit) {
+                    setSelectedBoxId(hit.id);
+                    return;
+                }
             }
             setSelectedBoxId(null);
             drawingRef.current = { kind: "rect", x: p.x, y: p.y, w: 0, h: 0 };
@@ -1231,6 +1264,16 @@ export function ImageCropper({
             // 预览圈在被缩放的容器内，需换算回容器自身的坐标（除以 zoom）
             if (r) setCursorPos({ x: (e.clientX - r.left) / zoomRef.current, y: (e.clientY - r.top) / zoomRef.current });
         }
+        // 【custom-v27 十字基准线】三页通用：记下指针在视口内的位置（是否落在图片上由渲染时判）。
+        // 位置没变就返回 prev，避免指针每动一下都触发无谓重渲染。
+        {
+            const vp = viewportRef.current?.getBoundingClientRect();
+            if (vp) {
+                const nx = Math.round(e.clientX - vp.left);
+                const ny = Math.round(e.clientY - vp.top);
+                setCrossPos(prev => (prev && prev.x === nx && prev.y === ny) ? prev : { x: nx, y: ny });
+            }
+        }
         const d = drawingRef.current;
         if (!d) return;
         const p = toNatural(e);
@@ -1250,10 +1293,14 @@ export function ImageCropper({
             const r = ov?.getBoundingClientRect();
             if (r) setCursorPos({ x: (e.clientX - r.left) / zoomRef.current, y: (e.clientY - r.top) / zoomRef.current });
         }
+        // 【custom-v27】进入即定位十字线，不必等到第一次移动
+        const vp = viewportRef.current?.getBoundingClientRect();
+        if (vp) setCrossPos({ x: e.clientX - vp.left, y: e.clientY - vp.top });
     };
 
     const onPointerLeave = () => {
         setCursorPos(null);
+        setCrossPos(null);
     };
 
     const onPointerUp = (e?: React.PointerEvent<HTMLDivElement>) => {
@@ -1761,6 +1808,16 @@ export function ImageCropper({
                             >
                                 {t.common.cropper?.labelRegion || "区🟩"}
                             </button>
+                            {/* 【custom-v27 仅画】强制画框：选中后起手即画新框，不再"点中旧框就选中它"。
+                                电脑端按住 Shift 等效于此开关（松开即还原）。 */}
+                            <button
+                                type="button"
+                                className={btn(drawOnly)}
+                                onClick={() => setDrawOnly((v) => !v)}
+                                title="仅画：起手就画新框，不会选中已有框（电脑端按住 Shift 键同样生效）"
+                            >
+                                {t.common.cropper?.drawOnly || "仅画"}
+                            </button>
                             <button type="button" className={btn(false)} onClick={removeSelectedBox} disabled={!selectedBoxId}>
                                 {t.common.cropper?.deleteBox || "删除选中框"}
                             </button>
@@ -1871,6 +1928,46 @@ export function ImageCropper({
                             );
                         })()}
                     </div>
+
+                    {/*
+                      【custom-v27 十字基准线】三页通用：指针落在图片范围内时，
+                      给出贯穿图片编辑区的横纵两条浅青基准线（类似 AutoCAD 的十字光标）。
+                      用视口坐标定位、放在被缩放容器**之外**，缩放/平移后仍与光标对齐；
+                      线只画在图片矩形内（由 view/zoom 推算），落在黑底上即隐藏。
+                    */}
+                    {crossPos && (() => {
+                        const imgLeft = view.x;
+                        const imgTop = view.y;
+                        const imgW = (natSize.w || 0) * zoom;
+                        const imgH = (natSize.h || 0) * zoom;
+                        const inside =
+                            crossPos.x >= imgLeft && crossPos.x <= imgLeft + imgW &&
+                            crossPos.y >= imgTop && crossPos.y <= imgTop + imgH;
+                        if (!inside) return null;
+                        const lineColor = "rgba(0, 200, 220, 0.75)"; // 浅青：不抢原图，也不与红/绿/蓝框混淆
+                        return (
+                            <>
+                                <div
+                                    style={{
+                                        position: "absolute",
+                                        left: imgLeft, top: crossPos.y,
+                                        width: imgW, height: 1,
+                                        background: lineColor,
+                                        pointerEvents: "none",
+                                    }}
+                                />
+                                <div
+                                    style={{
+                                        position: "absolute",
+                                        left: crossPos.x, top: imgTop,
+                                        width: 1, height: imgH,
+                                        background: lineColor,
+                                        pointerEvents: "none",
+                                    }}
+                                />
+                            </>
+                        );
+                    })()}
                 </div>
 
                 {/* ===== 底部 ===== */}

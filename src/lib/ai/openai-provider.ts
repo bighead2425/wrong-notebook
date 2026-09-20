@@ -82,20 +82,31 @@ export class OpenAIProvider implements AIService {
         }
 
         const contentStartIndex = startIndex + startTag.length;
-        const endIndex = text.lastIndexOf(endTag);
+        const endIndex = text.indexOf(endTag, contentStartIndex);
 
-        // 特殊处理：如果闭合标签丢失（通常主要发生在最后的 analysis 标签被截断时）
-        // 我们尝试读取到字符串末尾
-        if (endIndex === -1 && tagName === 'analysis') {
-            logger.warn({ tagName }, 'Tag was verified unclosed, treating as truncated and reading to end');
-            return text.substring(contentStartIndex).trim();
+        if (endIndex !== -1) {
+            // 有闭标签但中间为空 —— 与旧行为一致，视为无效
+            if (contentStartIndex >= endIndex) return null;
+            return text.substring(contentStartIndex, endIndex).trim();
         }
 
-        if (endIndex === -1 || contentStartIndex >= endIndex) {
-            return null;
+        /**
+         * 【custom-v27】闭标签丢失的兜底。
+         *
+         * 丢失绝大多数是**响应被 max_tokens 截断**（复杂表格题、解析很长时尤其常见），
+         * 也可能是模型偶尔漏写。旧实现对这段只会返回 null → 上层判"缺关键标签"直接失败，
+         * 于是批量送 AI 时表现为"某几张老是失败"。
+         * 现在退一步：读到"下一个标签的起点"为止；后面没有标签了就读到末尾。
+         * 截断的响应因此能救回前半段内容，配合批量端自动重试，失败率显著下降。
+         */
+        const rest = text.substring(contentStartIndex);
+        const nextTagAt = rest.search(/<\/?[a-zA-Z_][a-zA-Z0-9_]*>/);
+        if (nextTagAt === -1) {
+            logger.warn({ tagName }, 'Closing tag missing, reading to end (likely truncated)');
+            return rest.trim() || null;
         }
-
-        return text.substring(contentStartIndex, endIndex).trim();
+        logger.warn({ tagName, nextTagAt }, 'Closing tag missing, truncated at next tag boundary');
+        return rest.slice(0, nextTagAt).trim() || null;
     }
 
     private parseResponse(text: string): ParsedQuestion {
