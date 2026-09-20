@@ -36,6 +36,7 @@ import { subjectLabel } from "@/lib/notebook-fields";
 import { frontendLogger } from "@/lib/frontend-logger";
 import { Progress } from "@/components/ui/progress";
 import { ProgressFeedback, ProgressStatus } from "@/components/ui/progress-feedback";
+import { ScanInboxBar } from "@/components/scan-inbox-bar";
 import {
     Upload, X, Check, Sparkles, ArrowLeft, Trash2, Layers, PenLine, Camera,
 } from "lucide-react";
@@ -315,6 +316,24 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
         addFiles([f]);
         if (action === "done") setBurstCount(0);
         else setBurstCount((c) => c + 1);
+    };
+
+    /**
+     * 【custom-v29】从「扫描收件箱」（NAS 上夸克等 App 分享进来的照片）拉一批进来。
+     *
+     * 这些照片本质上和「相册里选出来的文件」没区别，所以**不做任何特殊处理**，
+     * 直接走 `addFiles` 落到待处理区 —— 后面的加工、送 AI、入库全公用一条路。
+     * 唯一多做的一步是按文件名去重：同一张照片在被导走过之后仍留在目录里，
+     * 不当心重复导入就会变成两道一模一样的错题。
+     */
+    const handleInboxImport = (files: File[]) => {
+        const queued = new Set(items.map(i => i.file.name));
+        const fresh = files.filter(f => !queued.has(f.name));
+        if (!fresh.length) {
+            alert(t.common.batch?.inbox?.alreadyQueued || "这些照片已经在这一批里了");
+            return;
+        }
+        addFiles(fresh);
     };
 
     /** 【custom-v28】勾选框：点一下切换选中状态（不影响缩略图本体的点击行为） */
@@ -888,6 +907,15 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                     }}
                 />
             </div>
+
+            {/* 【custom-v29】扫描收件箱：手机上用夸克扫描王等 App 拍完、分享到 NAS
+                固定目录的照片，在这里一键拉进来。目录没挂载时组件自己整条不渲染，
+                所以不用担心多出一排点了没反应的按钮。 */}
+            <ScanInboxBar
+                existingNames={items.map(i => i.file.name)}
+                onImport={handleInboxImport}
+                busy={busy}
+            />
 
             {/* 【custom-v26 连拍】直接调用摄像头：拍一张 → 确认效果 → 收进待处理 → 接着拍。
                 相机不可用（非 https / 浏览器不支持）时整个按钮不出现，避免点了没反应。 */}

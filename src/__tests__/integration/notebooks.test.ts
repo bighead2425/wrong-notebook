@@ -17,6 +17,14 @@ const mocks = vi.hoisted(() => ({
         create: vi.fn(),
         update: vi.fn(),
         delete: vi.fn(),
+        count: vi.fn(),
+    },
+    /**
+     * 【custom-v25】删除错题本前要数**含回收箱**的全部错题，
+     * 所以 DELETE 接口依赖 errorItem.count —— mock 里缺它就会整段 500。
+     */
+    mockPrismaErrorItem: {
+        count: vi.fn(),
     },
     mockSession: {
         user: {
@@ -32,6 +40,7 @@ vi.mock('@/lib/prisma', () => ({
     prisma: {
         user: mocks.mockPrismaUser,
         notebook: mocks.mockPrismaNotebook,
+        errorItem: mocks.mockPrismaErrorItem,
     },
 }));
 
@@ -60,6 +69,8 @@ describe('/api/notebooks', () => {
         vi.clearAllMocks();
         mocks.mockPrismaUser.findUnique.mockResolvedValue(mockUser);
         mocks.mockPrismaUser.findFirst.mockResolvedValue(mockUser);
+        // 默认：错题本里一道题都没有（DELETE 需要先过这一关）
+        mocks.mockPrismaErrorItem.count.mockResolvedValue(0);
         vi.mocked(getServerSession).mockResolvedValue(mocks.mockSession);
     });
 
@@ -71,7 +82,7 @@ describe('/api/notebooks', () => {
             ];
             mocks.mockPrismaNotebook.findMany.mockResolvedValue(notebooks);
 
-            const response = await GET();
+            const response = await GET(new Request('http://localhost/api/notebooks'));
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -89,8 +100,10 @@ describe('/api/notebooks', () => {
                     { id: 'nb-2', displayName: '英语', userId: 'user-123', _count: { errorItems: 0 } },
                 ]);
             mocks.mockPrismaNotebook.create.mockResolvedValue({});
+            // 一次本子都没有 → 走「自动建默认本」分支（count 用来区分"全都归档了"和"真没有"）
+            mocks.mockPrismaNotebook.count.mockResolvedValue(0);
 
-            const response = await GET();
+            const response = await GET(new Request('http://localhost/api/notebooks'));
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -361,6 +374,8 @@ describe('/api/notebooks', () => {
                 _count: { errorItems: 5 }, // 有错题
             };
             mocks.mockPrismaNotebook.findUnique.mockResolvedValue(notebook);
+            // 接口实际按 errorItem.count 判断（含回收箱），不是按 _count
+            mocks.mockPrismaErrorItem.count.mockResolvedValue(5);
 
             const request = new Request('http://localhost/api/notebooks/nb-1', {
                 method: 'DELETE',
