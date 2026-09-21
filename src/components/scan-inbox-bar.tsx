@@ -60,6 +60,19 @@ interface ScanInboxBarProps {
     onImport: (files: File[]) => string[];
     /** 正在送 AI / 加工时锁住操作，别在这时候往队列里塞东西 */
     busy?: boolean;
+    /**
+     * 【custom-v31】把「收件箱到底能不能用」告诉上层。
+     *
+     * 上层（连续拍摄）要靠它决定照片的落点：能用就转存进收件箱（拍摄与加工之间留个断点），
+     * 不能用就退回老行为直接进待处理 —— 绝不能让照片没地方去。
+     * 本组件探测完就上报一次，没有挂载时会报 false。
+     */
+    onAvailability?: (available: boolean) => void;
+    /**
+     * 【custom-v31】刷新信号：数字一变就重新读一遍目录。
+     * 连拍转存完照片后，上层把它 +1，「收到 N 张新照片」立刻跟着变。
+     */
+    refreshToken?: number;
 }
 
 /** 2582314 → "2.5 MB" */
@@ -68,7 +81,13 @@ function humanSize(n: number): string {
     return `${Math.round(n / 1024)} KB`;
 }
 
-export function ScanInboxBar({ existingNames, onImport, busy }: ScanInboxBarProps) {
+export function ScanInboxBar({
+    existingNames,
+    onImport,
+    busy,
+    onAvailability,
+    refreshToken = 0,
+}: ScanInboxBarProps) {
     const { t } = useLanguage();
     const s = t.common.batch?.inbox || {};
 
@@ -95,7 +114,13 @@ export function ScanInboxBar({ existingNames, onImport, busy }: ScanInboxBarProp
         }
     }, []);
 
-    useEffect(() => { load(); }, [load]);
+    useEffect(() => { load(); }, [load, refreshToken]);
+
+    /** 【custom-v31】探测完就把"能不能用"报上去（上层据此决定连拍照片往哪落） */
+    useEffect(() => {
+        if (!listing) return;
+        onAvailability?.(listing.available);
+    }, [listing, onAvailability]);
 
     // 目录没挂载时整条都不出现（同样也适用于没有 files 的极端情况）
     if (!listing || !listing.available) return null;

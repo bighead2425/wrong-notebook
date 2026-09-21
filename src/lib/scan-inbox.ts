@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import fsSync from "fs";
 import path from "path";
+import { randomBytes } from "crypto";
 import { getAppConfig } from "./config";
 import { createLogger } from "./logger";
 
@@ -581,4 +582,138 @@ export async function deleteInboxFiles(names: string[]): Promise<DeleteResult> {
     pruneBucket(state, subPath);
     writeStateSync(state);
     return result;
+}
+
+/* ------------------------------------------------------------------ */
+/* 写入：错题本自己拍的照片，反向存进收件箱                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 【custom-v31】「连续拍摄」的落点改造。
+ *
+ * 起因：手机拍摄能力强、电脑美化/加工能力强，这两件事本来就不该捆在一步里做完。
+ * 以前连拍是"拍一张就往当批队列里堆一张"，拍完必须紧接着面对
+ * 待处理 → 预处理 → 送 AI → 录入这一长串，中间没法停。
+ * 现在改成：**拍完直接转存进 NAS 收件箱**，拍摄与加工之间多一个断点 ——
+ * 手机上拍完就能收工，回头在电脑上打开收件箱再导入，走的还是同一条流水线。
+ *
+ * 与「拉取」方向完全对称，安全闸也对称：
+ *   读出去  → 只认收件箱里的普通文件（防软链接读走配置）
+ *   写进来  → 只往收件箱的**真实路径**里写（防软链接把文件写到别处）
+ */
+
+/** 单张上限。连拍出的是压缩过的 JPEG（正常几百 KB），15 MB 是给足余量 */
+export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
+
+/**
+ * 从文件头几字节判断这是不是一张真图片，返回建议扩展名；不是则 null。
+ *
+ * 为什么不信扩展名和 Content-Type：这个接口会把**调用方给的字节直接写进 NAS**，
+ * 而收件箱里的东西之后会被当成图片读出来渲染。只看声明的类型，等于让调用方
+ * 自己声明"我是图片"—— 随便塞个 HTML 进来也算通过。文件头骗不了人。
+ */
+export function sniffImageExt(buf: Buffer): string | null {
+    if (buf.length < 12) return null;
+    if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return ".jpg";
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return ".png";
+    if (buf.toString("latin1", 0, 4) === "RIFF" && buf.toString("latin1", 8, 12) === "WEBP") {
+        return ".webp";
+    }
+    return null;
+}
+
+/** shot-20260921-113045-a1b2c3.jpg —— 服务端生成，客户端传什么都不用 */
+export function makeShotName(ext: string, at: Date): string {
+    const p = (n: number, w = 2) => String(n).padStart(w, "0");
+    const stamp =
+        `${at.getFullYear()}${p(at.getMonth() + 1)}${p(at.getDate())}` +
+        `-${p(at.getHours())}${p(at.getMinutes())}${p(at.getSeconds())}`;
+    return `shot-${stamp}-${randomBytes(3).toString("hex")}${ext}`;
+}
+
+/**
+ * 准备（必要时创建）收件箱子目录，并确认它的**真实路径**确实落在挂载根之下。
+ *
+ * 【为什么写入侧也要这道闸】读侧的软链接闸挡的是"读出去"，写入侧的风险是"写进去"：
+ * 如果子目录本身是个软链接（`scan2wrong -> /app/config`），
+ * 我们就会把照片写进配置目录 —— 哪怕只是照片，也是往不该写的地方写。
+ * 这里把目录 realpath 解一次，确认解出来的真实路径在根的真实路径之下，否则拒绝。
+ *
+ * 注：`mkdir -p` 若沿途遇到软链接段，可能先建出一个空目录再被下面的校验拦下。
+ * 留一个空目录无害，但**一个字节都不会写进去**。
+ */
+async function ensureWritableDir(): Promise<{ ok: true; dir: string } | { ok: false; reason: string }> {
+    const loc = getInboxLocation();
+    if (!(await isDir(loc.root))) {
+        return { ok: false, reason: `收件箱根目录不可用：${loc.root}（检查 Docker 挂载）` };
+    }
+    try {
+        await fs.mkdir(loc.dir, { recursive: true });
+    } catch (err) {
+        return { ok: false, reason: `建目录失败：${err instanceof Error ? err.message : String(err)}` };
+    }
+    try {
+        const realRoot = await fs.realpath(loc.root);
+        const realDir = await fs.realpath(loc.dir);
+        if (realDir !== realRoot && !realDir.startsWith(realRoot + path.sep)) {
+            return { ok: false, reason: "目标目录不在收件箱根目录内（疑似软链接），已拒绝写入" };
+        }
+        return { ok: true, dir: realDir };
+    } catch (err) {
+        return { ok: false, reason: `目录校验失败：${err instanceof Error ? err.message : String(err)}` };
+    }
+}
+
+export interface SaveImageResult {
+    ok: boolean;
+    /** 落盘后的文件名（服务端生成） */
+    name?: string;
+    error?: string;
+}
+
+/**
+ * 把一张图写进收件箱，返回服务端生成的文件名。
+ *
+ * 三个刻意的取舍：
+ *  ① **文件名一律服务端生成**：客户端传什么都不用 —— 名字里带路径分隔符、带 `..`、
+ *     或者与已有照片同名互相覆盖，这些坑一次性绕开。
+ *  ② **tmp + rename 原子落盘**：进程中途被杀只会留一个 tmp 残片（列表不认它），
+ *     不会让半截 JPEG 出现在收件箱里被当正常照片导进去。
+ *  ③ 写完**不记台账** —— 新拍的照片理应显示为"新"，等用户真的导入了才记。
+ *
+ * @param at 生成文件名用的时间，默认取当前时刻（测试里传固定值）
+ */
+export async function saveInboxImage(data: Buffer, at: Date = new Date()): Promise<SaveImageResult> {
+    if (!data || data.length === 0) return { ok: false, error: "空文件" };
+    if (data.length > MAX_UPLOAD_BYTES) {
+        return {
+            ok: false,
+            error: `超过单张上限 ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB`,
+        };
+    }
+    const ext = sniffImageExt(data);
+    if (!ext) return { ok: false, error: "不是可识别的图片（只支持 JPG / PNG / WebP）" };
+
+    const ready = await ensureWritableDir();
+    if (!ready.ok) return { ok: false, error: ready.reason };
+
+    const name = makeShotName(ext, at);
+    const finalPath = path.join(ready.dir, name);
+    const tmpPath = path.join(ready.dir, `tmp-${randomBytes(6).toString("hex")}`);
+
+    try {
+        await fs.writeFile(tmpPath, data, { flag: "wx" });
+    } catch (err) {
+        return { ok: false, error: `写入失败：${err instanceof Error ? err.message : String(err)}` };
+    }
+    try {
+        await fs.rename(tmpPath, finalPath);
+    } catch (err) {
+        // 落盘失败就把残片收掉，别在目录里留垃圾
+        await fs.unlink(tmpPath).catch(() => undefined);
+        return { ok: false, error: `落盘失败：${err instanceof Error ? err.message : String(err)}` };
+    }
+
+    logger.info({ name, bytes: data.length }, "连续拍摄转存到收件箱");
+    return { ok: true, name };
 }

@@ -453,3 +453,166 @@ describe('scan-inbox：链接（软链接/联接）防护', () => {
         expect(await lib.readInboxFile('hard.jpg')).not.toBeNull();
     });
 });
+
+/* ------------------------------------------------------------------ */
+/* 【custom-v31】写入侧：连拍转存                                        */
+/* ------------------------------------------------------------------ */
+
+/** 造一张"像真的"JPEG —— 文件头不对会被 sniffImageExt 拦下，所以头几字节必须真 */
+function jpegBytes(size = 4096): Buffer {
+    const b = Buffer.alloc(size, 7);
+    b[0] = 0xff; b[1] = 0xd8; b[2] = 0xff; b[3] = 0xe0;
+    return b;
+}
+
+function pngBytes(size = 4096): Buffer {
+    const b = Buffer.alloc(size, 7);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b, 0);
+    return b;
+}
+
+function webpBytes(size = 4096): Buffer {
+    const b = Buffer.alloc(size, 7);
+    b.write("RIFF", 0, "latin1");
+    b.write("WEBP", 8, "latin1");
+    return b;
+}
+
+describe('scan-inbox：写入（连拍转存）', () => {
+    it('sniffImageExt 只认真图片的文件头，不认扩展名也不认声明', async () => {
+        const { sniffImageExt } = await freshLib();
+        expect(sniffImageExt(jpegBytes())).toBe('.jpg');
+        expect(sniffImageExt(pngBytes())).toBe('.png');
+        expect(sniffImageExt(webpBytes())).toBe('.webp');
+        // 伪装删得再像也没用：内容不是图片就拒
+        expect(sniffImageExt(Buffer.from('<html><body>hi</body></html>'))).toBeNull();
+        expect(sniffImageExt(Buffer.from('GIF89a................'))).toBeNull();
+        expect(sniffImageExt(Buffer.from([0xff, 0xd8, 0xff]))).toBeNull(); // 太短
+        expect(sniffImageExt(Buffer.alloc(0))).toBeNull();
+    });
+
+    it('正常转存：文件名服务端生成、内容一字不差、在列表里显示为"新照片"', async () => {
+        writeConfig({ subPath: 'scan2wrong' });
+        const lib = await freshLib();
+        const data = jpegBytes(5000);
+        const res = await lib.saveInboxImage(data, new Date(2026, 8, 21, 11, 30, 45));
+
+        expect(res.ok).toBe(true);
+        expect(res.name).toMatch(/^shot-20260921-113045-[0-9a-f]{6}\.jpg$/);
+        expect(fs.readFileSync(path.join(inboxDir, res.name!)).equals(data)).toBe(true);
+
+        // 写入**不**记台账：新拍的照片理应还是"新"的，用户导入了才记
+        const listing = await lib.listInboxFiles();
+        const found = listing.files.find((f) => f.name === res.name);
+        expect(found).toBeTruthy();
+        expect(found!.imported).toBe(false);
+    });
+
+    it('原子写：目录里不留 tmp 残片', async () => {
+        writeConfig({ subPath: 'scan2wrong' });
+        const lib = await freshLib();
+        await lib.saveInboxImage(jpegBytes());
+        const leftovers = fs.readdirSync(inboxDir).filter((n) => n.startsWith('tmp-'));
+        expect(leftovers).toEqual([]);
+    });
+
+    it('同一秒连拍两张也不会互相覆盖（文件名带随机段）', async () => {
+        writeConfig({ subPath: 'scan2wrong' });
+        const lib = await freshLib();
+        const at = new Date(2026, 8, 21, 11, 30, 45);
+        const a = await lib.saveInboxImage(jpegBytes(2048), at);
+        const b = await lib.saveInboxImage(jpegBytes(2048), at);
+
+        expect(a.name).not.toBe(b.name);
+        expect(fs.existsSync(path.join(inboxDir, a.name!))).toBe(true);
+        expect(fs.existsSync(path.join(inboxDir, b.name!))).toBe(true);
+    });
+
+    it('子文件夹不存在时自动建 —— 设置里填个新名字就能直接用，不用先去飞牛建目录', async () => {
+        writeConfig({ subPath: '数学/九月' });
+        const lib = await freshLib();
+        const res = await lib.saveInboxImage(jpegBytes());
+
+        expect(res.ok).toBe(true);
+        expect(fs.existsSync(path.join(rootDir, '数学', '九月', res.name!))).toBe(true);
+    });
+
+    it('空文件与伪装成图片的文本一律拒绝', async () => {
+        writeConfig({ subPath: 'scan2wrong' });
+        const lib = await freshLib();
+
+        const empty = await lib.saveInboxImage(Buffer.alloc(0));
+        expect(empty.ok).toBe(false);
+
+        const fake = await lib.saveInboxImage(Buffer.from('<script>alert(1)</script>'));
+        expect(fake.ok).toBe(false);
+        expect(fake.error).toContain('图片');
+        expect(fs.readdirSync(inboxDir)).toEqual([]); // 目录里干干净净
+    });
+
+    it('超过单张上限直接拒绝', async () => {
+        writeConfig({ subPath: 'scan2wrong' });
+        const lib = await freshLib();
+        const { MAX_UPLOAD_BYTES } = lib;
+
+        const res = await lib.saveInboxImage(jpegBytes(MAX_UPLOAD_BYTES + 1));
+        expect(res.ok).toBe(false);
+        expect(res.error).toContain('上限');
+        expect(fs.readdirSync(inboxDir)).toEqual([]);
+    });
+
+    it('根目录不存在 → 给出可读原因，而不是抛异常', async () => {
+        process.env.SCAN_INBOX_ROOT = path.join(tmpRoot, 'not-mounted');
+        const lib = await freshLib();
+        const res = await lib.saveInboxImage(jpegBytes());
+        expect(res.ok).toBe(false);
+        expect(res.error).toContain('根目录');
+    });
+
+    /**
+     * 写入侧最关键的一道闸。
+     *
+     * 读侧的软链接闸挡的是"读出去"，这里挡的是"写进去"：
+     * 子目录若是个链接指向挂载根之外（比如 /app/config），照片就会被写到那儿去。
+     * Windows 建文件软链接要管理员权限，但**目录联接（junction）不需要** ——
+     * 所以这条路径在本机也能端到端验证，不是"跳过就算过了"。
+     */
+    const canDirLink = (() => {
+        const p = fs.mkdtempSync(path.join(os.tmpdir(), 'scan-inbox-dl-'));
+        try {
+            fs.mkdirSync(path.join(p, 't'));
+            fs.symlinkSync(path.join(p, 't'), path.join(p, 'l'), 'junction');
+            return true;
+        } catch {
+            return false;
+        } finally {
+            fs.rmSync(p, { recursive: true, force: true });
+        }
+    })();
+
+    it.skipIf(!canDirLink)('子目录是链接且指向挂载根之外 → 拒绝写入，一个字节都不落过去', async () => {
+        const outside = path.join(tmpRoot, 'outside');
+        fs.mkdirSync(outside, { recursive: true });
+        fs.symlinkSync(outside, path.join(rootDir, 'linked'), 'junction');
+        writeConfig({ subPath: 'linked' });
+
+        const lib = await freshLib();
+        const res = await lib.saveInboxImage(jpegBytes());
+
+        expect(res.ok).toBe(false);
+        expect(res.error).toContain('收件箱根目录内');
+        expect(fs.readdirSync(outside)).toEqual([]);
+    });
+
+    it.skipIf(!canDirLink)('链接指向根**之内**的另一个子目录：放行（没越界就不该拦）', async () => {
+        fs.symlinkSync(inboxDir, path.join(rootDir, 'inside-link'), 'junction');
+        writeConfig({ subPath: 'inside-link' });
+
+        const lib = await freshLib();
+        const res = await lib.saveInboxImage(jpegBytes());
+
+        expect(res.ok).toBe(true);
+        // 真实落点是被指向的那个目录（跟直接写 scan2wrong 等价）
+        expect(fs.existsSync(path.join(inboxDir, res.name!))).toBe(true);
+    });
+});

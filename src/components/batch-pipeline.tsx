@@ -39,6 +39,7 @@ import { ProgressFeedback, ProgressStatus } from "@/components/ui/progress-feedb
 import { ScanInboxBar } from "@/components/scan-inbox-bar";
 import {
     Upload, X, Check, Sparkles, ArrowLeft, Trash2, Layers, PenLine, Camera,
+    Loader2, Inbox,
 } from "lucide-react";
 
 /** 一张图在流水线里的状态 */
@@ -145,6 +146,44 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
     /** 【custom-v26 连拍】扫描器句柄 + 本轮已拍张数（显示在扫描器顶部条） */
     const scannerRef = useRef<DocScannerHandle>(null);
     const [burstCount, setBurstCount] = useState(0);
+
+    /* ===== 【custom-v31】连拍转存收件箱 =====
+     *
+     * 连拍的照片不再直接进当批队列，而是拍一张转存一张到 NAS 收件箱，
+     * 拍摄与加工之间留一个断点（手机上拍完就能收工，回头在电脑上导入）。
+     * 收件箱不可用时整条退回老行为（直接进待处理），见 handleBurstShot。
+     */
+    /** 收件箱能不能用 —— 由 ScanInboxBar 探测完上报 */
+    const [inboxReady, setInboxReady] = useState(false);
+    /** 转存完照片后 +1，让收件箱条重新读一遍目录（「收到 N 张」要跟着变） */
+    const [inboxToken, setInboxToken] = useState(0);
+    /** 转存进度：非 null 就在收图区上方显示「正在转存 i/n 张」 */
+    const [burstSaving, setBurstSaving] = useState<{ done: number; total: number } | null>(null);
+    /** 收工后的交代：转存了几张、几张失败（失败的已退回待处理） */
+    const [burstNotice, setBurstNotice] = useState<{ saved: number; failed: number } | null>(null);
+
+    /**
+     * 转存队列。
+     *
+     * 为什么串行而不是并发发：一次十几张同时挤上去，局域网的 NAS 也未必舒服，
+     * 而且进度会变成"一下子全在跑"没法显示。串行还能保证照片按拍摄顺序落盘。
+     */
+    const burstChainRef = useRef<Promise<void>>(Promise.resolve());
+    /**
+     * 一轮连拍的账：拍了多少张、转存成功多少张、哪几张失败待兜底、是否已收工。
+     *
+     * 为什么把计数装进**一个对象**而不是三个独立的 ref：照片是一张张拍、一张张传的，
+     * 而"收工"要等最后一张传完才能结算。计数如果散在全局 ref 里，用户点完「完成」
+     * 又马上开始下一轮拍摄时，上一轮的结算会把新一轮的账清零 —— 进度条和提示就串了。
+     * 装成一个对象、收工那一刻就换一个新对象，链上的回调各自抱着自己那一份，互不干扰。
+     */
+    type BurstSession = { total: number; saved: number; failed: File[]; closed: boolean };
+    const burstSessionRef = useRef<BurstSession>({
+        total: 0, saved: 0, failed: [], closed: false,
+    });
+    /** onBurstShot 是同步回调，闭包里拿不到最新的 inboxReady，用 ref 读 */
+    const routeToInboxRef = useRef(false);
+    useEffect(() => { routeToInboxRef.current = inboxReady; }, [inboxReady]);
     /** 相机可用才显示「连续拍摄」：必须是安全上下文（https / localhost）且浏览器支持 */
     const [camOk, setCamOk] = useState(false);
     useEffect(() => {
@@ -311,21 +350,86 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
         return accepted;
     };
 
+    /** 【custom-v31】把一张照片交给后端写进 NAS 收件箱（起名与校验都在服务端做） */
+    const uploadToInbox = async (f: File): Promise<boolean> => {
+        try {
+            const fd = new FormData();
+            fd.append("file", f, f.name);
+            const res = await fetch("/api/scan-inbox/upload", { method: "POST", body: fd });
+            if (!res.ok) {
+                frontendLogger.warn('[BurstSave]', 'Upload to inbox failed', { status: res.status });
+                return false;
+            }
+            const data = await res.json().catch(() => null);
+            return Boolean(data?.ok);
+        } catch (err) {
+            frontendLogger.warn('[BurstSave]', 'Upload to inbox errored', { error: String(err) });
+            return false;
+        }
+    };
+
     /**
-     * 【custom-v26 连拍】扫描器出的每一张都进「待处理」。
+     * 【custom-v26 连拍 / custom-v31 改造】扫描器出的每一张。
      *
-     * 为什么是待处理而不是预处理：扫描器只做了"拉正 + 漂白"，
-     * 关键的一步（把这一道从整页里抠出来 / 擦掉多余笔迹）还得进编辑器做，
-     * 所以按用户要求先堆在待处理，回头在队列里逐张加工。
+     * 落点由「收件箱能不能用」决定：
+     *   · 能用（正常情况）→ **每拍完一张立刻转存到 NAS 收件箱**，不进当批队列。
+     *     点「完成」就收工，不必接着面对"待处理 → 预处理 → 送 AI → 录入"这一长串 ——
+     *     拍摄和加工之间多出一个断点，可以换个时间、换台设备（手机上拍、电脑上美化）接着做。
+     *   · 不能用（没挂目录）→ 退回老行为，直接进待处理。宁可多走一步，也不能让照片没地方去。
+     *
+     * 为什么是"拍一张传一张"而不是"点完成时一次性传"：
+     *   连拍十几张时，页面崩了 / 手机没电 / 手滑关掉，攒在内存里的那一批就全没了。
+     *   拍一张落一张，最坏只丢当前这张。点「完成」只是**等队列跑完、给个交代**。
      *
      * @param action "again" = 用户还要接着拍（扫描器自己回取景，这里不用管）
-     *               "done"  = 收工（扫描器自己会关闭，这里把计数清零，下一轮从头数）
+     *               "done"  = 收工（扫描器自己会关闭，这里等转存队列跑完再收尾）
      */
     const handleBurstShot = (blob: Blob, action: "again" | "done") => {
         const f = new File([blob], `burst-${Date.now()}.jpg`, { type: "image/jpeg" });
-        addFiles([f]);
-        if (action === "done") setBurstCount(0);
-        else setBurstCount((c) => c + 1);
+        // 这一张属于哪个会话：闭包抱着它，后续的结算各认各的
+        const session = burstSessionRef.current;
+
+        if (routeToInboxRef.current) {
+            session.total += 1;
+            setBurstSaving({ done: session.saved + session.failed.length, total: session.total });
+            setBurstNotice(null);
+            burstChainRef.current = burstChainRef.current.then(async () => {
+                const ok = await uploadToInbox(f);
+                // 会话已收过尾就别再动界面了（那会儿的进度条和提示已经不归它管）
+                if (session.closed) return;
+                if (ok) session.saved += 1;
+                else session.failed.push(f);
+                setBurstSaving({
+                    done: session.saved + session.failed.length,
+                    total: session.total,
+                });
+            });
+        } else {
+            addFiles([f]);
+        }
+
+        if (action === "again") {
+            setBurstCount((c) => c + 1);
+            return;
+        }
+
+        // ===== 收工 =====
+        setBurstCount(0);
+        // 走老行为时照片已直接进队列，没啥可交代的
+        if (!routeToInboxRef.current) return;
+
+        // 先把这一轮的账封存，下一轮拍摄从一本新账开始
+        session.closed = true;
+        burstSessionRef.current = { total: 0, saved: 0, failed: [], closed: false };
+
+        // 等这一轮所有转存跑完，再告诉用户结果
+        burstChainRef.current = burstChainRef.current.then(() => {
+            setBurstSaving(null);
+            // 兜底：转存失败的照样进当批队列，一张都不丢（顶多多走一步老流程）
+            if (session.failed.length) addFiles(session.failed);
+            if (session.saved) setInboxToken((t) => t + 1);
+            setBurstNotice({ saved: session.saved, failed: session.failed.length });
+        });
     };
 
     /**
@@ -928,18 +1032,67 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                 existingNames={items.map(i => i.file.name)}
                 onImport={handleInboxImport}
                 busy={busy}
+                onAvailability={setInboxReady}
+                refreshToken={inboxToken}
             />
 
-            {/* 【custom-v26 连拍】直接调用摄像头：拍一张 → 确认效果 → 收进待处理 → 接着拍。
+            {/* 【custom-v31】连拍转存的两个提示：进行中 / 已收工。
+                它们只在真有转存发生时才出现，平时不占版面。 */}
+            {burstSaving && (
+                <div className="flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>
+                        {(t.common.batch?.burstSaving || "正在转存到收件箱 {i}/{n} 张…")
+                            .replace("{i}", String(burstSaving.done))
+                            .replace("{n}", String(burstSaving.total))}
+                    </span>
+                    <span className="text-sky-700/70">
+                        {t.common.batch?.burstSavingHint || "（可以继续拍，转存在后台排队进行）"}
+                    </span>
+                </div>
+            )}
+            {!burstSaving && burstNotice && (
+                <div
+                    className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
+                        burstNotice.failed
+                            ? "border-amber-200 bg-amber-50 text-amber-900"
+                            : "border-green-200 bg-green-50 text-green-900"
+                    }`}
+                >
+                    <Inbox className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                    <span>
+                        {burstNotice.failed
+                            ? (t.common.batch?.burstNoticeMixed || "已转存 {ok} 张到收件箱；{bad} 张没传上去，已放进待处理")
+                                .replace("{ok}", String(burstNotice.saved))
+                                .replace("{bad}", String(burstNotice.failed))
+                            : (t.common.batch?.burstNoticeOk || "已转存 {n} 张到收件箱 —— 拍摄到此为止，随时回来点「打开收件箱」导入")
+                                .replace("{n}", String(burstNotice.saved))}
+                    </span>
+                    <button
+                        type="button"
+                        onClick={() => setBurstNotice(null)}
+                        className="ml-auto shrink-0 opacity-60 hover:opacity-100"
+                        aria-label="dismiss"
+                    >
+                        <X className="h-3.5 w-3.5" />
+                    </button>
+                </div>
+            )}
+
+            {/* 【custom-v26 连拍 / custom-v31 改造】直接调用摄像头：拍一张 → 确认效果 → 接着拍。
+                拍完的照片**转存进 NAS 收件箱**（收藏夹之外多一个断点），而不是堆进当批队列；
+                收件箱不可用时退回"直接进待处理"，按钮文案也会跟着变。
                 相机不可用（非 https / 浏览器不支持）时整个按钮不出现，避免点了没反应。 */}
             {camOk && (
                 <button
                     type="button"
-                    onClick={() => scannerRef.current?.openCamera()}
+                    onClick={() => { setBurstNotice(null); scannerRef.current?.openCamera(); }}
                     className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed py-3 text-sm font-medium text-primary hover:bg-primary/5 transition-colors"
                 >
                     <Camera className="h-4 w-4" />
-                    {t.common.batch?.burst || "连续拍摄：拍一张收一张，拍完一起加工"}
+                    {inboxReady
+                        ? (t.common.batch?.burst || "连续拍摄：拍完存进收件箱，回头再加工")
+                        : (t.common.batch?.burstNoInbox || "连续拍摄：拍完直接进待处理（收件箱未挂载）")}
                 </button>
             )}
 
