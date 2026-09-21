@@ -161,3 +161,121 @@ describe('scan-inbox：清理（删除）', () => {
         expect(res.failed[0].name).toBe('../../etc/passwd');
     });
 });
+
+/**
+ * 【审计补测】软链接绕过。
+ *
+ * 收件箱是外部 App（夸克/飞牛/其它服务）可写的目录，谁都能在里面放一个软链接：
+ *   evil.jpg -> /app/config/app-config.json   （里面存着 AI 密钥）
+ * 名字像图片、扩展名过关，而 fs.readFile 默认跟随软链接 —— 不设防就等于
+ * 对外开了一个"读容器内任意文件"的接口。更阴的是软链接在列表里看不见
+ * （readdir 的 isFile() 用 lstat 语义，对软链接返回 false），界面上毫无痕迹。
+ */
+describe('scan-inbox：链接（软链接/联接）防护', () => {
+    /**
+     * 尽量造出"名字像图片、实际不是普通文件"的条目：
+     *   · Linux / 开了开发者模式的 Windows → 文件软链接（最贴近真实攻击：evil.jpg -> 敏感文件）
+     *   · 只有 junction 权限的 Windows      → 目录联接（同样 isFile()=false，走的是同一道闸）
+     *   · 两者都造不出来 → 跳过，绝不用"假设它会被拒"来充数。
+     */
+    const linkMode: 'file' | 'junction' | null = (() => {
+        const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'scan-inbox-probe-'));
+        try {
+            const target = path.join(probe, 'target.jpg');
+            const dirTarget = path.join(probe, 'dir');
+            fs.writeFileSync(target, 'x');
+            fs.mkdirSync(dirTarget);
+            try {
+                fs.symlinkSync(target, path.join(probe, 'a.jpg'));
+                return 'file';
+            } catch {
+                // Windows 没有开发者模式时会 EPERM，退一步试 junction
+            }
+            try {
+                fs.symlinkSync(dirTarget, path.join(probe, 'b.jpg'), 'junction');
+                return 'junction';
+            } catch {
+                return null;
+            }
+        } finally {
+            fs.rmSync(probe, { recursive: true, force: true });
+        }
+    })();
+
+    it.skipIf(!linkMode)('伪装成图片的链接：读不到、删不掉、列表里也不显示', async () => {
+        // 把"敏感文件"放在收件箱**外面**，模拟真实的攻击目标
+        const outsideSecret = path.join(tmpRoot, 'app-config.json');
+        fs.writeFileSync(outsideSecret, '{"apiKey":"SECRET-SHOULD-NOT-LEAK"}');
+        const outsideDir = path.join(tmpRoot, 'outside-dir');
+        fs.mkdirSync(outsideDir);
+
+        const link = path.join(inboxDir, 'evil.jpg');
+        if (linkMode === 'file') fs.symlinkSync(outsideSecret, link);
+        else fs.symlinkSync(outsideDir, link, 'junction');
+
+        const lib = await freshLib();
+
+        // ① 读：必须拒绝（修复前这里会把敏感文件的原文吐给任何人）
+        expect(await lib.readInboxFile('evil.jpg')).toBeNull();
+        expect(await lib.resolveSafeFilePath('evil.jpg')).toBeNull();
+
+        // ② 列表：链接条目不出现 —— 界面上看不见，就不会被当成照片导入
+        const listed = await lib.listInboxFiles();
+        expect(listed.files.map((f) => f.name)).not.toContain('evil.jpg');
+
+        // ③ 删：走同一道闸直接判失败，且**不会动到链接指向的目标**
+        const del = await lib.deleteInboxFiles(['evil.jpg']);
+        expect(del.deleted).toEqual([]);
+        expect(del.failed).toHaveLength(1);
+        expect(fs.existsSync(outsideSecret)).toBe(true);
+    });
+
+    it('isSafeInboxEntry：非普通文件 / 真实路径跑到目录外，一律不放行', async () => {
+        const { isSafeInboxEntry } = await freshLib();
+        const base = path.join(tmpRoot, 'inbox');
+
+        // 正常的收件箱内普通文件 → 放行
+        expect(isSafeInboxEntry(true, path.join(base, 'a.jpg'), base)).toBe(true);
+        // 软链接 / 目录 / 设备：lstat 结果不是普通文件
+        expect(isSafeInboxEntry(false, path.join(base, 'a.jpg'), base)).toBe(false);
+        // realpath 解到目录外（realpath 闸门）
+        expect(isSafeInboxEntry(true, path.join(tmpRoot, 'app-config.json'), base)).toBe(false);
+        // 子目录里的文件也不算"直接放在收件箱里"
+        expect(isSafeInboxEntry(true, path.join(base, 'sub', 'a.jpg'), base)).toBe(false);
+    });
+
+    /**
+     * 【把"拦不住什么"也钉住，免得以后误以为这道闸是万能的】
+     * 硬链接指向目录外的文件时，lstat 看着就是普通文件、realpath 也在收件箱内，
+     * 两道闸都不会响 —— 所以它是**已知残留风险**。
+     * 实际能不能利用，取决于内核 `fs.protected_hardlinks`（默认开启：非文件属主
+     * 不能给别人的文件建硬链接）+ 目标与收件箱同卷。也就是说，这是"得先有 root
+     * 级别的权限才造得出"的路径，不是本接口自己开的口子。
+     */
+    const canHardlink = (() => {
+        const p = fs.mkdtempSync(path.join(os.tmpdir(), 'scan-inbox-hl-'));
+        try {
+            fs.writeFileSync(path.join(p, 'a'), 'x');
+            fs.linkSync(path.join(p, 'a'), path.join(p, 'b'));
+            return true;
+        } catch {
+            return false;
+        } finally {
+            fs.rmSync(p, { recursive: true, force: true });
+        }
+    })();
+
+    it.skipIf(!canHardlink)('已知局限：同卷硬链接会被放行（需目标文件权限才造得出）', async () => {
+        const secret = path.join(tmpRoot, 'app-config.json');
+        fs.writeFileSync(secret, '{"apiKey":"SECRET"}');
+        try {
+            fs.linkSync(secret, path.join(inboxDir, 'hard.jpg'));
+        } catch {
+            return; // 跨卷（EXDEV）等环境限制：跳过这条环境相关断言
+        }
+
+        const lib = await freshLib();
+        // 如实断言：硬链接读得到 —— 这是我们**明确接受**的残留风险，不是漏测
+        expect(await lib.readInboxFile('hard.jpg')).not.toBeNull();
+    });
+});

@@ -267,21 +267,30 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
         onExit();
     };
 
-    /** 收图：一次可以选多张（连拍的那批） */
-    const addFiles = (files: File[]) => {
-        if (!files.length) return;
+    /**
+     * 收图：一次可以选多张（连拍的那批）。
+     *
+     * 【custom-v29】返回值 = **真正进了队列**的那些文件（`accepted`，可能因上限被截断）。
+     * 为什么必须回传：收件箱导入那边要按"实际进队列的名单"记台账 —— 直接把拉下来的
+     * 全部标成"已导入"，超上限被截掉的那几张就会从「收到 N 张新照片」里消失，
+     * 用户只能在面板的"已导入"堆里翻（白下载一趟，还找不到）。
+     */
+    const addFiles = (files: File[]): File[] => {
+        if (!files.length) return [];
         // 【custom-v26】拖放进来的可能夹着 PDF / 文档等，先按 MIME 过滤再进队列，
         // 否则后面预览是裂图、送 AI 也是白花钱。
         const imgs = files.filter(f => f.type.startsWith("image/"));
         if (imgs.length < files.length) {
             alert(t.common.batch?.notImage || "只能收图片（JPG / PNG），其它文件已忽略");
         }
-        if (!imgs.length) return;
-        const room = MAX_BATCH - items.length;
+        if (!imgs.length) return [];
+        // 用 ref 里的**最新**队列长度算余量：从收件箱拉几十张要下载一会儿，
+        // 这期间用户可能又点了相册收图，用渲染时的闭包长度会算多、最后超出上限。
+        const room = MAX_BATCH - itemsRef.current.length;
         if (room <= 0) {
             alert((t.common.batch?.tooMany || "一批最多 {n} 张（建议 10~20 张），请分批处理")
                 .replace("{n}", String(MAX_BATCH)));
-            return;
+            return [];
         }
         let accepted = imgs;
         if (imgs.length > room) {
@@ -299,6 +308,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
         setItems(prev => [...prev, ...added]);
         setActiveId(added[added.length - 1].id);
         setStage("queue");
+        return accepted;
     };
 
     /**
@@ -325,15 +335,18 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
      * 直接走 `addFiles` 落到待处理区 —— 后面的加工、送 AI、入库全公用一条路。
      * 唯一多做的一步是按文件名去重：同一张照片在被导走过之后仍留在目录里，
      * 不当心重复导入就会变成两道一模一样的错题。
+     *
+     * @returns 真正进了队列的文件名 —— 调用方按这份名单去记"已导入"台账，
+     *          被上限截掉的那些**不算导入过**，下次仍会出现在「收到 N 张新照片」里。
      */
-    const handleInboxImport = (files: File[]) => {
-        const queued = new Set(items.map(i => i.file.name));
+    const handleInboxImport = (files: File[]): string[] => {
+        const queued = new Set(itemsRef.current.map(i => i.file.name));
         const fresh = files.filter(f => !queued.has(f.name));
         if (!fresh.length) {
             alert(t.common.batch?.inbox?.alreadyQueued || "这些照片已经在这一批里了");
-            return;
+            return [];
         }
-        addFiles(fresh);
+        return addFiles(fresh).map(f => f.name);
     };
 
     /** 【custom-v28】勾选框：点一下切换选中状态（不影响缩略图本体的点击行为） */

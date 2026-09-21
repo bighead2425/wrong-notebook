@@ -97,7 +97,16 @@ function readStateSync(): StateShape {
 function writeStateSync(state: StateShape) {
     try {
         fsSync.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-        fsSync.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
+        /**
+         * 先写临时文件、再 rename 覆盖 —— 同目录 rename 是原子操作。
+         *
+         * 为什么不能直接 writeFileSync：容器重启 / NAS 断电打断在写入中途，
+         * 会留下半截 JSON。读取侧虽然有 catch 兜底，但兜底结果是「空台账」，
+         * 也就是**所有已经导过的照片会重新变回"新照片"**，一按就重复导入。
+         */
+        const tmp = `${STATE_FILE}.tmp`;
+        fsSync.writeFileSync(tmp, JSON.stringify(state, null, 2), "utf-8");
+        fsSync.renameSync(tmp, STATE_FILE);
     } catch (err) {
         // 台账写不了不该阻断主流程 —— 最坏结果是下次多显示几张"新照片"
         logger.error({ error: String(err) }, "写入收件箱台账失败");
@@ -126,6 +135,51 @@ export function resolveInboxPath(name: string): string | null {
 
 function mimeOf(name: string): string {
     return ALLOWED_EXT[path.extname(name).toLowerCase()] || "application/octet-stream";
+}
+
+/**
+ * 放行判定（纯函数，便于单测）：必须是**普通文件**，且真实路径就在收件箱目录里。
+ *
+ * @param isPlainFile `lstat` 的结果是否为普通文件 —— 软链接 / 目录 / 设备 / 管道都算 false
+ * @param realPath    `realpath` 解析出的真实路径
+ * @param baseDir     收件箱自身的真实路径
+ */
+export function isSafeInboxEntry(isPlainFile: boolean, realPath: string, baseDir: string): boolean {
+    if (!isPlainFile) return false;
+    return path.dirname(realPath) === baseDir;
+}
+
+/**
+ * 拿到一个**确认安全的**绝对路径：必须是收件箱目录里的真实普通文件。
+ *
+ * 【为什么光靠 resolveInboxPath 不够 —— 这是一条真实的任意文件读取通道】
+ * 收件箱是外部 App（夸克、飞牛、其它服务）可写的目录。谁都能在里面放一个
+ * **符号链接**，比如 `evil.jpg -> /app/config/app-config.json`（那里面存着 AI 密钥）。
+ * 名字看着是图片、扩展名也过关，`resolveInboxPath` 全部通过，而 `fs.readFile`
+ * **默认跟随软链接** —— 于是这个接口就等于"读容器内任意文件"。
+ * 更阴的是：`readdir({withFileTypes:true})` 的 `entry.isFile()` 用的是 lstat 语义，
+ * 软链接返回 false，会被列表过滤掉 —— 也就是**界面上看不见，接口却读得到**。
+ *
+ * 两道闸：
+ *   ① `lstat` 不跟随软链接，不是**普通文件**（软链接/目录/设备/管道）一律拒；
+ *   ② 再 realpath 一次，确认解出来的真实路径的父目录就是收件箱本身。
+ *
+ * 【这道闸拦不住什么（如实说明）】硬件链接（hard link）与 bind mount 进来、
+ * 指向目录外文件的情况仍然拦不住 —— 但那两种都需要 NAS 上的 root 权限才能造出来，
+ * 而有 root 的人本来就能读这些文件，不算本接口新开的口子。
+ */
+export async function resolveSafeFilePath(name: string): Promise<string | null> {
+    const full = resolveInboxPath(name);
+    if (!full) return null;
+    try {
+        const lst = await fs.lstat(full);
+        const real = await fs.realpath(full);
+        const baseDir = await fs.realpath(SCAN_INBOX_PATH);
+        return isSafeInboxEntry(lst.isFile(), real, baseDir) ? real : null;
+    } catch {
+        // 不存在 / 权限不足 / 目录被卸载 —— 一律当作"取不到"
+        return null;
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -209,9 +263,9 @@ export async function listInboxFiles(): Promise<ScanInboxListing> {
     return { available: true, path: SCAN_INBOX_PATH, files, ignored };
 }
 
-/** 读文件内容，返回给浏览器直接渲染成图片 */
+/** 读文件内容，返回给浏览器直接渲染成图片（只认普通文件，见 resolveSafeFilePath） */
 export async function readInboxFile(name: string): Promise<{ data: Buffer; mime: string } | null> {
-    const full = resolveInboxPath(name);
+    const full = await resolveSafeFilePath(name);
     if (!full) return null;
     try {
         const data = await fs.readFile(full);
@@ -251,9 +305,11 @@ export async function deleteInboxFiles(names: string[]): Promise<DeleteResult> {
 
     const state = readStateSync();
     for (const raw of names) {
-        const full = resolveInboxPath(raw);
+        // 与读文件同一道闸：只有收件箱里的**普通图片文件**才允许删。
+        // （unlink 本身不跟随软链接，但统一校验能保证"界面上看不见的，接口也动不了"。）
+        const full = await resolveSafeFilePath(raw);
         if (!full) {
-            result.failed.push({ name: raw, error: "文件名不合法或不是受支持的图片格式" });
+            result.failed.push({ name: raw, error: "不是收件箱里的普通图片文件" });
             continue;
         }
         try {

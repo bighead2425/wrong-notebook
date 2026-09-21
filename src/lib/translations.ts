@@ -123,6 +123,10 @@ export const translations = {
                     pullFailed: "None could be read; they may have been deleted by another tool",
                     pullPartial: "{n} picture(s) could not be read; they may have been deleted by another tool",
                     alreadyQueued: "These pictures are already in this batch",
+                    pulling: "Pulling {i}/{n}…",
+                    queueFull: "This batch cannot hold {n} more; they stay in the inbox for the next batch",
+                    deleteFailed: "Delete failed, please try again",
+                    deletePartial: "{n} could not be deleted (permission?)",
                 },
             },
             progress: {
@@ -900,6 +904,10 @@ export const translations = {
                     pullFailed: "一张都没读到，照片可能已被别的工具删掉了",
                     pullPartial: "有 {n} 张没读到，可能已被别的工具删掉",
                     alreadyQueued: "这些照片已经在这一批里了",
+                    pulling: "正在拉取 {i}/{n} 张…",
+                    queueFull: "这一批已经放不下 {n} 张了，它们还在收件箱里，下一批再导就行",
+                    deleteFailed: "删除失败，请稍后再试",
+                    deletePartial: "有 {n} 张没删掉（可能没有权限）",
                 },
             },
             progress: {

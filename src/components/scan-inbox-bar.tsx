@@ -51,8 +51,13 @@ interface InboxListing {
 interface ScanInboxBarProps {
     /** 当前这一批里已有哪些文件名 —— 用来避免同一张照片重复进队列 */
     existingNames: string[];
-    /** 拉到的照片交给上层（走现成的 addFiles 流程落进「待处理」） */
-    onImport: (files: File[], names: string[]) => void;
+    /**
+     * 拉到的照片交给上层（走现成的 addFiles 流程落进「待处理」）。
+     *
+     * @returns 真正进了队列的文件名。可能比传入的少（一批最多 30 张），
+     *          少掉的那些**不能**记为"已导入"，否则它们就从「收到 N 张新照片」里消失了。
+     */
+    onImport: (files: File[]) => string[];
     /** 正在送 AI / 加工时锁住操作，别在这时候往队列里塞东西 */
     busy?: boolean;
 }
@@ -72,6 +77,8 @@ export function ScanInboxBar({ existingNames, onImport, busy }: ScanInboxBarProp
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [loading, setLoading] = useState(false);
     const [working, setWorking] = useState(false);
+    /** 逐张下载的进度（几十张串行下载要等一会儿，光转圈会让人以为卡死） */
+    const [pulling, setPulling] = useState<{ i: number; n: number } | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -100,41 +107,55 @@ export function ScanInboxBar({ existingNames, onImport, busy }: ScanInboxBarProp
 
     const fileUrl = (name: string) => `/api/scan-inbox/file?name=${encodeURIComponent(name)}`;
 
-    /** 把一批照片从 NAS 拉下来 → 包成 File → 交给上层 → 记台账 */
+    /** 把一批照片从 NAS 拉下来 → 包成 File → 交给上层 → 按上层回传的名单记台账 */
     const doImport = async (names: string[]) => {
         if (!names.length) return;
         setWorking(true);
         try {
             const pulled: File[] = [];
             const missed: string[] = [];
-            for (const name of names) {
+            for (let i = 0; i < names.length; i++) {
+                setPulling({ i: i + 1, n: names.length });
                 try {
-                    const res = await fetch(fileUrl(name));
-                    if (!res.ok) { missed.push(name); continue; }
+                    const res = await fetch(fileUrl(names[i]));
+                    if (!res.ok) { missed.push(names[i]); continue; }
                     const blob = await res.blob();
-                    pulled.push(new File([blob], name, { type: blob.type || "image/jpeg" }));
+                    pulled.push(new File([blob], names[i], { type: blob.type || "image/jpeg" }));
                 } catch {
-                    missed.push(name);
+                    missed.push(names[i]);
                 }
             }
             if (!pulled.length) {
-                alert(s.pullFailed?.replace("{n}", String(missed.length)) || "一张都没读到，照片可能已被别的工具删掉了");
+                alert(s.pullFailed || "一张都没读到，照片可能已被别的工具删掉了");
                 await load();
                 return;
             }
-            // 台账（"已导入"）只在真的拉到了之后写，写早了遇到失败就再也找不回来
-            await apiClient.post<{ ok: boolean }, { names: string[] }>("/api/scan-inbox", {
-                names: pulled.map(f => f.name),
-            }).catch(() => undefined);
 
-            onImport(pulled, pulled.map(f => f.name));
+            // 先交给上层（addFiles 有"一批最多 30 张"的上限，会回传真正进队列的名单），
+            // **只把进队列的记为"已导入"**：被上限截掉的那几张下次仍会出现在「新照片」里，
+            // 否则它们会从"新照片"里消失，用户只能去面板的"已导入"堆里翻。
+            const accepted = onImport(pulled);
+            const acceptedSet = new Set(accepted);
+            const rejected = pulled.filter(f => !acceptedSet.has(f.name));
+
+            if (accepted.length) {
+                await apiClient.post<{ ok: boolean }, { names: string[] }>("/api/scan-inbox", {
+                    names: accepted,
+                }).catch(() => undefined);
+            }
+
             setSelected(new Set());
             setOpen(false);
             await load();
+
             if (missed.length) {
                 alert((s.pullPartial || "有 {n} 张没读到，可能已被其它工具删掉").replace("{n}", String(missed.length)));
+            } else if (rejected.length) {
+                alert((s.queueFull || "这一批已经放不下 {n} 张了，它们还在收件箱里，下一批再导就行")
+                    .replace("{n}", String(rejected.length)));
             }
         } finally {
+            setPulling(null);
             setWorking(false);
         }
     };
@@ -146,11 +167,23 @@ export function ScanInboxBar({ existingNames, onImport, busy }: ScanInboxBarProp
         if (!confirm(msg)) return;
         setWorking(true);
         try {
-            await fetch("/api/scan-inbox", {
+            const res = await fetch("/api/scan-inbox", {
                 method: "DELETE",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ names }),
             });
+            const data = res.ok ? await res.json().catch(() => null) : null;
+            /**
+             * 【为什么必须看返回】
+             * 删文件是会失败的（NAS 权限、文件被别的 App 占用、目录被卸载）。
+             * 原先不管成功失败都刷新列表 —— 删不掉的还好好躺在那儿，
+             * 用户以为删干净了，回头发现"怎么又冒出来"。
+             */
+            if (!data) {
+                alert(s.deleteFailed || "删除失败，请稍后再试");
+            } else if (Array.isArray(data.failed) && data.failed.length) {
+                alert((s.deletePartial || "有 {n} 张没删掉（可能没有权限）").replace("{n}", String(data.failed.length)));
+            }
             setSelected(new Set());
             await load();
         } finally {
@@ -181,9 +214,13 @@ export function ScanInboxBar({ existingNames, onImport, busy }: ScanInboxBarProp
                         {working
                             ? <Loader2 className="h-4 w-4 animate-spin" />
                             : <Download className="h-4 w-4" />}
-                        {newFiles.length > 0
-                            ? (s.quick || "📥 收到 {n} 张新照片").replace("{n}", String(newFiles.length))
-                            : (s.quickNone || "收件箱暂无新照片")}
+                        {pulling
+                            ? (s.pulling || "正在拉取 {i}/{n} 张…")
+                                .replace("{i}", String(pulling.i))
+                                .replace("{n}", String(pulling.n))
+                            : newFiles.length > 0
+                                ? (s.quick || "📥 收到 {n} 张新照片").replace("{n}", String(newFiles.length))
+                                : (s.quickNone || "收件箱暂无新照片")}
                     </button>
                     <button
                         type="button"
@@ -317,7 +354,11 @@ export function ScanInboxBar({ existingNames, onImport, busy }: ScanInboxBarProp
 
                     <DialogFooter className="gap-2 sm:gap-2">
                         <span className="mr-auto text-xs text-muted-foreground self-center">
-                            {(s.selectedCount || "已选 {n} 张").replace("{n}", String(selectedNames.length))}
+                            {pulling
+                                ? (s.pulling || "正在拉取 {i}/{n} 张…")
+                                    .replace("{i}", String(pulling.i))
+                                    .replace("{n}", String(pulling.n))
+                                : (s.selectedCount || "已选 {n} 张").replace("{n}", String(selectedNames.length))}
                         </span>
                         <Button
                             variant="outline"
