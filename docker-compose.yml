@@ -13,15 +13,19 @@ services:
       - NEXTAUTH_SECRET=your_secret_key
       # Obsidian 仓库挂载点（导出错题笔记的目标目录）
       - OBSIDIAN_VAULT_PATH=/app/obsidian-vault
-      # 【custom-v29】扫描收件箱：手机 App（夸克扫描王等）分享到飞牛的照片目录。
+      # 【custom-v30】扫描收件箱：手机 App（夸克扫描王等）分享到飞牛的照片。
+      # 这里只指定**容器内的根目录**；具体读根下的哪个子文件夹，在
+      # 「设置 → 通用 → 转存文件夹」里改，改完立即生效、不用重建容器。
       # 不配置这一项时，批量上传页上的「收件箱」入口会自动隐藏。
-      - SCAN_INBOX_PATH=/app/scan2wrong
+      - SCAN_INBOX_ROOT=/app/inbox
     volumes:
       # Persist the SQLite database
       - ./data:/app/data
       - ./config:/app/config
       # Obsidian 仓库（错题笔记导出目标）；请将左侧宿主机路径改为你 NAS 上 obsidian-vault 的真实绝对路径
       - /vol2/1000/obsidian-vault:/app/obsidian-vault
-      # 扫描收件箱（只放照片；左侧换成你 NAS 上真实的投递目录，必须与 SCAN_INBOX_PATH 对应）
-      - /vol2/1000/scan2wrong:/app/scan2wrong
+      # 扫描收件箱的**根目录**（只放照片）。
+      # 只挂这一个根就行，别挂整个存储卷 —— 容器只看得到这个目录里的东西，安全边界干净。
+      # 左侧换成你 NAS 上真实的收件箱根目录，必须与 SCAN_INBOX_ROOT 对应。
+      - /vol2/1000/scan-inbox:/app/inbox
 

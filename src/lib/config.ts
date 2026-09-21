@@ -41,6 +41,16 @@ export interface AppConfig {
     timeouts?: {
         analyze?: number; // 毫秒
     };
+    /**
+     * 【custom-v30】扫描收件箱
+     *
+     * 只存**根目录下的相对子路径**（如 "scan2wrong"），绝对路径不在这里 ——
+     * 容器能看到哪个根目录由 docker-compose 的 volumes 决定，改不了；
+     * 但这个子路径随时可改，改完立即生效、不用重建容器（"开一次门，门后随便挑"）。
+     */
+    scanInbox?: {
+        subPath?: string;
+    };
 }
 
 // 旧版 OpenAI 配置格式（用于迁移检测）
@@ -119,6 +129,10 @@ const DEFAULT_CONFIG: AppConfig = {
     timeouts: {
         analyze: 180000,
     },
+    scanInbox: {
+        // 沿用既有约定：老用户升级后不用做任何设置就是这个名字
+        subPath: 'scan2wrong',
+    },
 };
 
 export function getAppConfig(): AppConfig {
@@ -153,6 +167,7 @@ export function getAppConfig(): AppConfig {
                 azure: { ...DEFAULT_CONFIG.azure, ...userConfig.azure },
                 prompts: { ...DEFAULT_CONFIG.prompts, ...userConfig.prompts },
                 timeouts: { ...DEFAULT_CONFIG.timeouts, ...userConfig.timeouts },
+                scanInbox: { ...DEFAULT_CONFIG.scanInbox, ...userConfig.scanInbox },
             };
         } catch (error) {
             logger.error({ error }, 'Failed to read config file');
@@ -175,6 +190,7 @@ export function updateAppConfig(newConfig: Partial<AppConfig>) {
         azure: { ...currentConfig.azure, ...newConfig.azure },
         prompts: { ...currentConfig.prompts, ...newConfig.prompts },
         timeouts: { ...currentConfig.timeouts, ...newConfig.timeouts },
+        scanInbox: { ...currentConfig.scanInbox, ...newConfig.scanInbox },
     };
 
     try {

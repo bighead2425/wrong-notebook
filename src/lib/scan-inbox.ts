@@ -1,33 +1,49 @@
 import fs from "fs/promises";
 import fsSync from "fs";
 import path from "path";
+import { getAppConfig } from "./config";
 import { createLogger } from "./logger";
 
 /**
- * 【custom-v29 · 蓝图：外部扫描件投递隧道】「扫描收件箱」
+ * 【custom-v29/v30 · 蓝图：外部扫描件投递隧道】「扫描收件箱」
  *
  * 场景：手机上用夸克扫描王拍下的试卷/作业，通过夸克的「分享 → 飞牛」
- * 投进 NAS 的固定目录（当前约定 /vol2/1000/scan2wrong）。容器把这个目录
- * 挂到 /app/scan2wrong 之后，错题本就能直接把里面的照片拉进流水线，
- * **不用再从手机相册里一张张挑**。
+ * 投进 NAS 上的一个目录。容器把这个目录挂进来之后，错题本就能直接把里面的
+ * 照片拉进流水线，**不用再从手机相册里一张张挑**。
  *
- * 为什么这么设计：
- *   1. 采集层不重做 —— 拍照、拉正、去阴影交给夸克（它做得比我们好），
- *      本模块只负责"把成品照片搬进来"，属于**管理层**能力；
- *   2. 目录是**单向投递口**：夸克只管往里丢文件，错题本只管往外取，
- *      两边不需要互相认识，也不需要夸克开放任何接口；
- *   3. 取走不等于删除 —— 文件依然留着，随时可以重新拉进来（"留一个活口"），
- *      靠 **imported 状态**（记录在 config/scan-inbox-state.json）区分新旧。
+ * ── 为什么是「根目录 + 可配置子路径」两层，而不是一个写死的目录 ──────────
+ *
+ * Docker 挂载是**容器启动那一刻**由内核做好的，运行中的进程没有办法自己"凿"
+ * 出一个新的挂载点。所以"在设置页里改路径"**不能替代** compose 里的挂载 ——
+ * 门必须在启动时开好。但门的**数量**一旦定死，门后走哪条走廊是可以随时选的：
+ *
+ *   compose 挂一次： /vol2/1000/scan-inbox  →  /app/inbox   （根，只挂一次）
+ *   设置页里选：     scan2wrong / 数学 / 语文 …              （子路径，随便改）
+ *
+ * 好处：以后换目录**不用改 compose、不用重建容器、不用碰命令行**，
+ * 存盘即生效。这就是"开一次门，门后随便挑"。
  *
  * 环境变量：
- *   SCAN_INBOX_PATH  容器内挂载点，默认 /app/scan2wrong（见 docker-compose.yml）
- *   **未挂载时全部函数优雅降级**（返回 available=false），界面上按钮直接不出现。
+ *   SCAN_INBOX_ROOT  容器内的**根目录**（compose 的挂载点），默认 /app/inbox
+ *   SCAN_INBOX_PATH  【老式，仅保留兼容】直接挂到某个子目录上（如 /app/scan2wrong）。
+ *                    检测到它就按"不可配置的单目录"模式工作，设置页里只读显示，
+ *                    老 compose 不改也能照常跑。
+ *   **根目录不存在时全部函数优雅降级**（available=false / status=no-root），
+ *   界面上按钮直接不出现，而不是摆一个点了没反应的按钮。
  */
 
 const logger = createLogger("scan-inbox");
 
-/** 容器内挂载点；不配置就用一个不存在的默认路径，界面上自动隐藏入口 */
-export const SCAN_INBOX_PATH = process.env.SCAN_INBOX_PATH || "/app/scan2wrong";
+/** 容器内根目录（compose 挂载点）。设置页里换的是根下的子文件夹，不是它 */
+const ROOT_ENV = process.env.SCAN_INBOX_ROOT;
+/** 老式单目录挂载：只在没配 ROOT 时兜底，保证老 compose 不用改也能跑 */
+const LEGACY_PATH_ENV = process.env.SCAN_INBOX_PATH;
+/** 新式默认根目录 */
+const DEFAULT_ROOT = "/app/inbox";
+/** 默认子文件夹名（沿用既有约定，老用户升级后不用做任何事） */
+export const DEFAULT_INBOX_SUBPATH = "scan2wrong";
+/** 子路径最大长度，防止有人塞一个超长字符串进来刷日志 */
+const MAX_SUBPATH_LENGTH = 200;
 
 /** 已导入台账：和 AI 配置同在一个持久化卷里（./config:/app/config） */
 const STATE_FILE = path.join(process.cwd(), "config", "scan-inbox-state.json");
@@ -35,7 +51,7 @@ const STATE_FILE = path.join(process.cwd(), "config", "scan-inbox-state.json");
 /**
  * 只认浏览器能直接画的格式。
  *
- * 为什么要过滤：收件箱是"谁都能往里丢"的公共目录，难免混进 HEIC/ PDF / 视频。
+ * 为什么要过滤：收件箱是"谁都能往里丢"的公共目录，难免混进 HEIC / PDF / 视频。
  * HEIC 尤其坑 —— Chrome/Firefox 的 <img> 根本解不了，拉进来只会拿到一张裂图，
  * 还白白占一个 batch 名额。宁可不显示，也不要给用户一个点开就崩的缩略图。
  */
@@ -49,6 +65,9 @@ const ALLOWED_EXT: Record<string, string> = {
 /** 小于这个体积的文件基本是占位/残缺图，不值得占名额 */
 const MIN_SIZE_BYTES = 1024;
 
+/** 台账里每个目录最多记多少条，超了按时间淘汰最老的 */
+const MAX_STATE_ENTRIES = 500;
+
 export interface ScanInboxFile {
     /** 文件名（含扩展名），取文件时用它作为 key */
     name: string;
@@ -59,38 +78,164 @@ export interface ScanInboxFile {
     imported: boolean;
 }
 
+/**
+ * 收件箱的状态。**界面靠它给出"到底卡在哪一步"的可读提示** ——
+ * 只说"不可用"用户没法排查，说清楚是"根目录没挂进来"还是"子文件夹不存在"，
+ * 用户自己就能改对。
+ */
+export type InboxStatus =
+    | "ok"           // 正常
+    | "no-root"      // 根目录（挂载点）不存在 —— compose 的 volumes 没配对
+    | "no-subdir"    // 根在，但选中的子文件夹不存在 —— 去飞牛里建，或换个名字
+    | "invalid"      // 子路径名字不合法（绝对路径 / .. / 隐藏目录…）
+    | "error";       // 读目录时出错（权限等）
+
 export interface ScanInboxListing {
+    /** 能不能用（可用时界面上才显示入口） */
     available: boolean;
+    status: InboxStatus;
+    /** 实际读取的目录（容器内绝对路径） */
     path: string;
+    /** 同上，语义更清楚的新名字（path 保留兼容） */
+    dir: string;
+    /** 根目录（Docker 挂载点）；设置页里只读展示 */
+    root: string;
+    /** 根下的相对子路径；设置页里可改 */
+    subPath: string;
+    /** false = 老式单目录挂载，路径在设置页里改不了 */
+    configurable: boolean;
+    /** 根目录下已有的子文件夹，给设置页做"点一下就填"的选项 */
+    folders: string[];
     files: ScanInboxFile[];
-    /** 目录存在但被过滤掉的非图片/残缺文件数量，用于在界面上解释"为什么没显示" */
+    /** 目录存在但被过滤掉的非图片/残缺文件数量，用于解释"为什么没显示" */
     ignored: number;
     reason?: string;
 }
 
-interface StateShape {
-    /** 文件名 → 首次导入时间（ISO 字符串） */
-    imported: Record<string, string>;
+/** 当前生效的收件箱位置 */
+export interface InboxLocation {
+    root: string;
+    subPath: string;
+    dir: string;
+    configurable: boolean;
+}
+
+/* ------------------------------------------------------------------ */
+/* 路径解析                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 把用户填的子路径收敛成一个**安全的相对路径**；不合法返回 null。
+ *
+ * 这一层挡的是"用户手滑或被人诱导填了奇怪的东西"：
+ *   `/etc`、`../../config`、`~`、`a//b`、`.hidden`、超长串…
+ * 归一化后统一用 `/` 分隔、不留空段。
+ */
+export function normalizeSubPath(input: unknown): string | null {
+    if (typeof input !== "string") return null;
+    const raw = input.trim().replace(/\\/g, "/");
+    if (!raw) return null;
+    if (raw.length > MAX_SUBPATH_LENGTH) return null;
+    if (raw.startsWith("/") || raw.startsWith("~")) return null; // 绝对路径 / home → 拒
+    if (raw.includes("\0")) return null;
+
+    const segs = raw.split("/").filter((s) => s.length > 0);
+    if (!segs.length) return null;
+    for (const s of segs) {
+        if (s === "." || s === "..") return null; // 越权写法 → 拒
+        if (s.startsWith(".")) return null;       // 隐藏目录不收（不是给人用的）
+    }
+    return segs.join("/");
+}
+
+/**
+ * 解析当前生效的收件箱位置。
+ *
+ * 每次调用都重新读配置（配置就是一个小 JSON），所以**在设置页改完保存即刻生效**，
+ * 不需要重启容器 —— 这是整个设计的关键点。
+ *
+ * @param overrideSubPath 试连接用：临时用这个子路径替代已保存的配置。
+ *                        传 null / undefined 表示"用配置里的"。
+ */
+export function getInboxLocation(overrideSubPath?: string | null): InboxLocation {
+    // 老式：只有一个写死的挂载点，父目录不一定是挂进来的，不给改
+    if (!ROOT_ENV && LEGACY_PATH_ENV) {
+        return {
+            root: path.dirname(LEGACY_PATH_ENV),
+            subPath: path.basename(LEGACY_PATH_ENV),
+            dir: LEGACY_PATH_ENV,
+            configurable: false,
+        };
+    }
+
+    const root = path.resolve(ROOT_ENV || DEFAULT_ROOT);
+    const subPath =
+        normalizeSubPath(overrideSubPath) ||
+        normalizeSubPath(getAppConfig().scanInbox?.subPath) ||
+        DEFAULT_INBOX_SUBPATH;
+
+    return {
+        root,
+        subPath,
+        dir: path.join(root, ...subPath.split("/")),
+        configurable: true,
+    };
 }
 
 /* ------------------------------------------------------------------ */
 /* 台账（哪些文件已经拉过）                                             */
 /* ------------------------------------------------------------------ */
 
-const EMPTY_STATE: StateShape = { imported: {} };
+/**
+ * v2 结构：**按子路径分组**。
+ *
+ * 为什么必须分组：换目录之后，两个目录里完全可能有同名照片（相机/夸克都爱用
+ * `IMG_0001.jpg` 这种名字）。如果台账只有一层，B 目录里的新照片会被 A 目录的
+ * 旧记录误判成"已导入"，直接从「收到 N 张新照片」里消失。
+ */
+interface StateShape {
+    version: 2;
+    /** 相对子路径 → (文件名 → 首次导入时间 ISO) */
+    inbox: Record<string, Record<string, string>>;
+}
+
+const emptyState = (): StateShape => ({ version: 2, inbox: {} });
 
 function readStateSync(): StateShape {
     try {
-        if (!fsSync.existsSync(STATE_FILE)) return { ...EMPTY_STATE };
-        const raw = fsSync.readFileSync(STATE_FILE, "utf-8");
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== "object" || typeof parsed.imported !== "object") {
-            return { ...EMPTY_STATE };
+        if (!fsSync.existsSync(STATE_FILE)) return emptyState();
+        const parsed = JSON.parse(fsSync.readFileSync(STATE_FILE, "utf-8"));
+
+        // 旧格式（v1：{ imported: { 文件名: 时间 } }）→ 迁到当前子路径的分组下。
+        // 迁移时机放在读取时，用户升级后第一次打开页面就自动完成，不用手工做什么。
+        if (parsed && typeof parsed === "object" && !parsed.inbox && typeof parsed.imported === "object") {
+            const bucket = { ...(parsed.imported as Record<string, string>) };
+            const migrated: StateShape = {
+                version: 2,
+                inbox: { [getInboxLocation().subPath]: bucket },
+            };
+            writeStateSync(migrated);
+            logger.info(
+                { count: Object.keys(bucket).length },
+                "旧版收件箱台账已迁移为按目录分组的新格式",
+            );
+            return migrated;
         }
-        return { imported: { ...parsed.imported } };
+
+        if (!parsed || typeof parsed !== "object" || !parsed.inbox || typeof parsed.inbox !== "object") {
+            return emptyState();
+        }
+
+        const inbox: Record<string, Record<string, string>> = {};
+        for (const [dirKey, bucket] of Object.entries(parsed.inbox)) {
+            if (bucket && typeof bucket === "object") {
+                inbox[dirKey] = { ...(bucket as Record<string, string>) };
+            }
+        }
+        return { version: 2, inbox };
     } catch (err) {
         logger.warn({ error: String(err) }, "读取收件箱台账失败，按空台账处理");
-        return { ...EMPTY_STATE };
+        return emptyState();
     }
 }
 
@@ -113,6 +258,38 @@ function writeStateSync(state: StateShape) {
     }
 }
 
+/** 取出（必要时新建）某个子路径的记录桶 */
+function bucketOf(state: StateShape, subPath: string): Record<string, string> {
+    if (!state.inbox[subPath]) state.inbox[subPath] = {};
+    return state.inbox[subPath];
+}
+
+/**
+ * 清理某个分组的台账：去掉已不存在的文件、超出上限的老记录、清空的分组。
+ *
+ * @param alive 传了就按"只有这些文件还活着"来剔（用户在 NAS 上手工删过的）；
+ *              不传只做上限淘汰。
+ */
+function pruneBucket(state: StateShape, subPath: string, alive?: Set<string>) {
+    const bucket = state.inbox[subPath];
+    if (!bucket) return;
+
+    if (alive) {
+        for (const n of Object.keys(bucket)) if (!alive.has(n)) delete bucket[n];
+    }
+
+    const names = Object.keys(bucket);
+    if (names.length > MAX_STATE_ENTRIES) {
+        // 按导入时间从旧到新排，淘汰最老的
+        const sorted = names
+            .sort((a, b) => String(bucket[a]).localeCompare(String(bucket[b])));
+        for (const n of sorted.slice(0, names.length - MAX_STATE_ENTRIES)) delete bucket[n];
+    }
+
+    // 分组空了就连键一起删掉，别留一堆空对象
+    if (!Object.keys(bucket).length) delete state.inbox[subPath];
+}
+
 /* ------------------------------------------------------------------ */
 /* 安全校验                                                            */
 /* ------------------------------------------------------------------ */
@@ -123,14 +300,14 @@ function writeStateSync(state: StateShape) {
  * 收件箱对夸克是公开投递口，文件名可能被别的 App 写成奇怪的样子，
  * 所以这里必须挡住 `../`、绝对路径、以 `.` 开头的隐藏文件三种越权写法。
  */
-export function resolveInboxPath(name: string): string | null {
+export function resolveInboxPath(name: string, dir?: string): string | null {
     if (!name || typeof name !== "string") return null;
     const base = path.basename(name);
     if (!base || base !== name) return null;        // 带了目录分隔符 → 拒绝
     if (base.startsWith(".")) return null;          // 隐藏文件 → 拒绝
     const ext = path.extname(base).toLowerCase();
     if (!ALLOWED_EXT[ext]) return null;             // 非受支持的图片格式 → 拒绝
-    return path.join(SCAN_INBOX_PATH, base);
+    return path.join(dir ?? getInboxLocation().dir, base);
 }
 
 function mimeOf(name: string): string {
@@ -168,13 +345,14 @@ export function isSafeInboxEntry(isPlainFile: boolean, realPath: string, baseDir
  * 指向目录外文件的情况仍然拦不住 —— 但那两种都需要 NAS 上的 root 权限才能造出来，
  * 而有 root 的人本来就能读这些文件，不算本接口新开的口子。
  */
-export async function resolveSafeFilePath(name: string): Promise<string | null> {
-    const full = resolveInboxPath(name);
+export async function resolveSafeFilePath(name: string, dir?: string): Promise<string | null> {
+    const targetDir = dir ?? getInboxLocation().dir;
+    const full = resolveInboxPath(name, targetDir);
     if (!full) return null;
     try {
         const lst = await fs.lstat(full);
         const real = await fs.realpath(full);
-        const baseDir = await fs.realpath(SCAN_INBOX_PATH);
+        const baseDir = await fs.realpath(targetDir);
         return isSafeInboxEntry(lst.isFile(), real, baseDir) ? real : null;
     } catch {
         // 不存在 / 权限不足 / 目录被卸载 —— 一律当作"取不到"
@@ -186,43 +364,108 @@ export async function resolveSafeFilePath(name: string): Promise<string | null> 
 /* 对外能力                                                            */
 /* ------------------------------------------------------------------ */
 
-/** 目录是否可用（挂载了 + 有读权限）。界面靠它决定要不要显示入口 */
-export async function isInboxAvailable(): Promise<boolean> {
+async function isDir(p: string): Promise<boolean> {
     try {
-        await fs.access(SCAN_INBOX_PATH, fsSync.constants.R_OK);
-        const stat = await fs.stat(SCAN_INBOX_PATH);
-        return stat.isDirectory();
+        const st = await fs.stat(p);
+        return st.isDirectory();
     } catch {
         return false;
     }
 }
 
+/** 根目录下已有的子文件夹（给设置页做选项，省得用户凭记忆拼名字） */
+export async function listSubFolders(loc: InboxLocation = getInboxLocation()): Promise<string[]> {
+    try {
+        const entries = await fs.readdir(loc.root, { withFileTypes: true });
+        return entries
+            .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+            .map((e) => e.name)
+            .sort((a, b) => a.localeCompare(b, "zh-CN"));
+    } catch {
+        return [];
+    }
+}
+
+export interface ListOptions {
+    /**
+     * 试连接：临时改用这个子路径，并且**一个字节都不落盘**（不写台账）。
+     * 设置页的「检查连接」用它 —— 用户改了输入框还没保存，也想先知道能不能读到。
+     */
+    probeSubPath?: string;
+}
+
 /**
  * 列出收件箱里的图片。
  *
- * 顺带做两件"自洁"的事：
+ * 顺带做两件"自洁"的事（只在非 probe 模式下）：
  *   ① 台账里已不存在的文件会被剔除（用户在 NAS 上手工删过）；
- *   ② 台账至少保留最近 500 条，避免无限膨胀。
+ *   ② 每组台账最多留 500 条，避免无限膨胀。
  */
-export async function listInboxFiles(): Promise<ScanInboxListing> {
-    if (!(await isInboxAvailable())) {
-        return { available: false, path: SCAN_INBOX_PATH, files: [], ignored: 0 };
+export async function listInboxFiles(opts: ListOptions = {}): Promise<ScanInboxListing> {
+    const probing = opts.probeSubPath !== undefined;
+
+    const loc = getInboxLocation(opts.probeSubPath ?? null);
+    const base = {
+        path: loc.dir,
+        dir: loc.dir,
+        root: loc.root,
+        subPath: loc.subPath,
+        configurable: loc.configurable,
+        files: [] as ScanInboxFile[],
+        ignored: 0,
+    };
+
+    // 试连接时名字不合法就直说，别悄悄退回默认值让用户以为路径对了
+    if (probing && normalizeSubPath(opts.probeSubPath) === null) {
+        return {
+            ...base,
+            available: false,
+            status: "invalid",
+            folders: await listSubFolders(loc),
+            reason: "子路径不合法",
+        };
     }
 
+    const folders = await listSubFolders(loc);
+
+    // ① 根目录（挂载点）在不在 —— 不在就是 compose 的 volumes 没配好
+    if (!(await isDir(loc.root))) {
+        return {
+            ...base,
+            available: false,
+            status: "no-root",
+            folders,
+            reason: `${loc.root} 不存在或不可读`,
+        };
+    }
+
+    // ② 子文件夹在不在 —— 根挂好了但这个目录还没建
+    if (!(await isDir(loc.dir))) {
+        return {
+            ...base,
+            available: false,
+            status: "no-subdir",
+            folders,
+            reason: `${loc.dir} 不存在`,
+        };
+    }
+
+    // ③ 正常列文件
     let entries;
     try {
-        entries = await fs.readdir(SCAN_INBOX_PATH, { withFileTypes: true });
+        entries = await fs.readdir(loc.dir, { withFileTypes: true });
     } catch (err) {
         return {
+            ...base,
             available: false,
-            path: SCAN_INBOX_PATH,
-            files: [],
-            ignored: 0,
+            status: "error",
+            folders,
             reason: err instanceof Error ? err.message : String(err),
         };
     }
 
-    const state = readStateSync();
+    const state = probing ? emptyState() : readStateSync();
+    const bucket = state.inbox[loc.subPath] || {};
     const files: ScanInboxFile[] = [];
     let ignored = 0;
 
@@ -234,7 +477,7 @@ export async function listInboxFiles(): Promise<ScanInboxListing> {
             continue;
         }
         try {
-            const st = await fs.stat(path.join(SCAN_INBOX_PATH, entry.name));
+            const st = await fs.stat(path.join(loc.dir, entry.name));
             if (st.size < MIN_SIZE_BYTES) {
                 ignored++;
                 continue;
@@ -243,7 +486,7 @@ export async function listInboxFiles(): Promise<ScanInboxListing> {
                 name: entry.name,
                 size: st.size,
                 mtimeMs: st.mtimeMs,
-                imported: Boolean(state.imported[entry.name]),
+                imported: probing ? false : Boolean(bucket[entry.name]),
             });
         } catch {
             ignored++;
@@ -255,12 +498,21 @@ export async function listInboxFiles(): Promise<ScanInboxListing> {
 
     // 台账瘦身：用户在 NAS 上手工删过的文件要从记录里剔掉。
     // **剔完必须回写** —— 只改内存的话，下次进程重启那些名字又回来了，
-    // 台账会随着照片越攒越多一路膨胀（这正是要解决的问题）。
-    const before = Object.keys(state.imported).length;
-    pruneState(state, new Set(files.map((f) => f.name)));
-    if (Object.keys(state.imported).length !== before) writeStateSync(state);
+    // 台账会随着照片越攒越多一路膨胀。
+    if (!probing) {
+        const before = Object.keys(bucket).length;
+        pruneBucket(state, loc.subPath, new Set(files.map((f) => f.name)));
+        const after = state.inbox[loc.subPath] ? Object.keys(state.inbox[loc.subPath]).length : 0;
+        if (after !== before) writeStateSync(state);
+    }
 
-    return { available: true, path: SCAN_INBOX_PATH, files, ignored };
+    return { ...base, available: true, status: "ok", folders, files, ignored };
+}
+
+/** 目录是否可用（挂载了 + 子目录在 + 有读权限）。界面靠它决定要不要显示入口 */
+export async function isInboxAvailable(): Promise<boolean> {
+    const loc = getInboxLocation();
+    return (await isDir(loc.dir));
 }
 
 /** 读文件内容，返回给浏览器直接渲染成图片（只认普通文件，见 resolveSafeFilePath） */
@@ -279,16 +531,19 @@ export async function readInboxFile(name: string): Promise<{ data: Buffer; mime:
 /** 标记一批文件为"已导入过" —— 之后它们不再计入「新照片」，但仍可手工重导 */
 export async function markImported(names: string[]): Promise<number> {
     if (!names.length) return 0;
+    const { subPath } = getInboxLocation();
     const state = readStateSync();
+    const bucket = bucketOf(state, subPath);
     const now = new Date().toISOString();
+
     let n = 0;
     for (const raw of names) {
         const base = path.basename(raw || "");
         if (!base || base !== raw || base.startsWith(".")) continue;
-        if (!state.imported[base]) n++;
-        state.imported[base] = now;
+        if (!bucket[base]) n++;
+        bucket[base] = now;
     }
-    pruneState(state);
+    pruneBucket(state, subPath);
     writeStateSync(state);
     return n;
 }
@@ -303,11 +558,14 @@ export async function deleteInboxFiles(names: string[]): Promise<DeleteResult> {
     const result: DeleteResult = { deleted: [], failed: [] };
     if (!names.length) return result;
 
+    const { dir, subPath } = getInboxLocation();
     const state = readStateSync();
+    const bucket = state.inbox[subPath];
+
     for (const raw of names) {
         // 与读文件同一道闸：只有收件箱里的**普通图片文件**才允许删。
         // （unlink 本身不跟随软链接，但统一校验能保证"界面上看不见的，接口也动不了"。）
-        const full = await resolveSafeFilePath(raw);
+        const full = await resolveSafeFilePath(raw, dir);
         if (!full) {
             result.failed.push({ name: raw, error: "不是收件箱里的普通图片文件" });
             continue;
@@ -315,24 +573,12 @@ export async function deleteInboxFiles(names: string[]): Promise<DeleteResult> {
         try {
             await fs.unlink(full);
             result.deleted.push(raw);
-            delete state.imported[raw];
+            if (bucket) delete bucket[raw];
         } catch (err) {
             result.failed.push({ name: raw, error: err instanceof Error ? err.message : String(err) });
         }
     }
+    pruneBucket(state, subPath);
     writeStateSync(state);
     return result;
-}
-
-/** 清理台账：去掉已不存在的文件、超出 500 条的老记录 */
-function pruneState(state: StateShape, alive?: Set<string>) {
-    const names = Object.keys(state.imported);
-    if (alive) {
-        for (const n of names) if (!alive.has(n)) delete state.imported[n];
-    }
-    const remaining = Object.keys(state.imported);
-    if (remaining.length <= 500) return;
-    const sorted = remaining
-        .sort((a, b) => String(state.imported[a]).localeCompare(String(state.imported[b])));
-    for (const n of sorted.slice(0, remaining.length - 500)) delete state.imported[n];
 }

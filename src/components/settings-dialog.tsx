@@ -30,6 +30,7 @@ import { frontendLogger } from "@/lib/frontend-logger";
 import { AppConfig, UserProfile, UpdateUserProfileRequest, OpenAIInstance } from "@/types/api";
 import { ModelSelector } from "@/components/ui/model-selector";
 import { PromptSettings } from "@/components/settings/prompt-settings";
+import { ScanInboxSettings } from "@/components/settings/scan-inbox-settings";
 
 import { MessageSquareText, Info, ExternalLink, Github, ScrollText } from "lucide-react";
 const MAX_OPENAI_INSTANCES = 10;
@@ -767,6 +768,19 @@ export function SettingsDialog() {
                                     {t.settings?.general?.timeoutDesc || "Increase this value if you experience frequent timeouts during AI analysis."}
                                 </p>
                             </div>
+
+                            {/* 【custom-v30】转存文件夹。
+                                系统级设置（决定容器读 NAS 上哪个目录），只给管理员改；
+                                普通用户看到这一块只会困惑，直接不渲染。 */}
+                            {(session?.user as any)?.role === 'admin' && (
+                                <ScanInboxSettings
+                                    subPath={config.scanInbox?.subPath ?? ''}
+                                    onSubPathChange={(v) => setConfig(prev => ({
+                                        ...prev,
+                                        scanInbox: { ...prev.scanInbox, subPath: v },
+                                    }))}
+                                />
+                            )}
                         </div>
                         <Button onClick={handleSaveSettings} disabled={saving} className="w-full">
                             {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

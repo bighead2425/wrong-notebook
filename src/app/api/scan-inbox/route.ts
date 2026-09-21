@@ -18,6 +18,8 @@ const logger = createLogger("api:scan-inbox");
  * 三个动作：
  *   GET    列出目录里的图片（含"是否已导入"标记）；目录没挂载时返回 available=false，
  *          前端据此**整个隐藏入口**，而不是摆一个点了没反应的按钮。
+ *          【custom-v30】带 ?subPath=xxx 时是"试连接"：临时用这个子路径去读，
+ *          **不写任何台账**，供设置页在保存前先验证填的名字对不对。
  *   POST   把一批文件标成「已导入」—— 之后不再计入「新照片」，但文件仍在、可重导。
  *   DELETE 真的从 NAS 目录里删掉文件（定期清理用），逐个返回结果，失败的单独列出。
  */
@@ -27,12 +29,16 @@ async function currentUser() {
     return prisma.user.findUnique({ where: { email: session.user.email } });
 }
 
-export async function GET() {
+export async function GET(req: Request) {
     try {
         const user = await currentUser();
         if (!user) return unauthorized("Authentication required");
 
-        const listing = await listInboxFiles();
+        // 没有 subPath 参数 = 正常列目录；带参数 = 试连接（只读探测，不落盘）
+        const probe = new URL(req.url).searchParams.get("subPath");
+        const listing = probe === null
+            ? await listInboxFiles()
+            : await listInboxFiles({ probeSubPath: probe });
         return NextResponse.json(listing);
     } catch (err) {
         logger.error({ error: String(err) }, "列出收件箱失败");
