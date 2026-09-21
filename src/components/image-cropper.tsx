@@ -821,8 +821,10 @@ export function ImageCropper({
     //        view = 图片左上角在视口内的绝对位移（渲染用）；
     //        pan  = 相对「居中位置」的偏移，钳制在 ±(显示尺寸-视口)/2
     //               → 图片比视口大就能拖动，比视口小则该轴锁死居中，不会拖乱。
-    //  canvas 坐标换算仍走 getBoundingClientRect（天然含 transform），故屏幕→自然
-    //  坐标的换算一行都不用改。
+    //  显示尺寸 = 自然像素 × zoom —— 这个等式是全套换算的地基：
+    //  渲染靠 wrapper 的宽高直接写成显示尺寸（v36 起，不再用 scale 变换），
+    //  屏幕→自然坐标一律用「覆盖层实际屏幕宽度」反推（getBoundingClientRect），
+    //  所以换模型时这些换算一行都不用改。
     // ============================================================
     /** 应用缩放与平移：唯一的写入口，缩放区间与平移边界都收在这里 */
     const applyView = useCallback((zRaw: number, p: { x: number; y: number }) => {
