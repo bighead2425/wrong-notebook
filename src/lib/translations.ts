@@ -31,6 +31,15 @@ export const translations = {
                 // 【custom-v33】整页逆时针转 90°（拍歪了的补救，与 📐抻 各管一头：
                 // 抻管"梯形拉正"，转管"方向躺倒"）
                 rotate: "🔄Turn",
+                // 【custom-v35】翻转会清空还没提交的标记（擦除痕迹 / 标注框 / 裁剪框）。
+                // 逻辑上翻转一定发生在画框之前（先摆正方向才好框），所以"带着痕迹翻转"
+                // 本就是个用不到的功能，却要为此搬运六处坐标 —— 少搬一处就擦错位置。
+                // 与其继续补漏，不如转完就从干净画面重来；但清空是破坏性的，得先问一句。
+                rotateClearConfirm:
+                    "Turning the picture clears everything you have not submitted yet (eraser marks, boxes, the crop area).\n\nTurn anyway?",
+                rotateCleared: "Turned — the marks you had not submitted were cleared",
+                rotateTip:
+                    "Turn the whole page 90° counter-clockwise (keep tapping to keep turning). Eraser marks, boxes and the crop area that you have not submitted yet will be cleared — so straighten the page first, then start marking",
                 brush: "🖍️",
                 rectSelect: "🟧",
                 brushSize: "Size",
@@ -872,6 +881,11 @@ export const translations = {
                 // 【custom-v33】整页逆时针转 90°（拍歪了的补救，与 📐抻 各管一头：
                 // 抻管"梯形拉正"，转管"方向躺倒"）
                 rotate: "🔄转",
+                rotateClearConfirm:
+                    "翻转会清掉你还没提交的标记（擦除痕迹、标注框、裁剪框）。\n\n已经录入过的绿框不受影响，会跟着一起转。\n\n确定要翻转吗？",
+                rotateCleared: "已翻转，还没提交的标记已清空",
+                rotateTip:
+                    "整页逆时针转 90°（再点一次继续转）。还没提交的擦除痕迹、标注框、裁剪框会被清空 —— 所以先转正，再动笔",
                 brush: "🖍️",
                 rectSelect: "🟧",
                 brushSize: "粗细",

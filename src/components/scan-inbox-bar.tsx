@@ -39,6 +39,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { apiClient } from "@/lib/api-client";
+import { reconcileSelection } from "@/lib/inbox-selection";
 import { Check, Download, FolderOpen, ImageUp, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { InboxImageViewer } from "@/components/inbox-image-viewer";
 
@@ -126,6 +127,16 @@ export function ScanInboxBar({
     const [viewerIndex, setViewerIndex] = useState<number | null>(null);
 
     /**
+     * 【custom-v35】上一次列表里有哪些文件名（null = 还没读过列表）。
+     *
+     * 它唯一的作用：重读列表时区分「这次新出现的」和「上次就在的」——
+     * 只有新出现的未导入照片才自动勾上，老面孔一律尊重用户自己点过的勾。
+     * 没有它，每次重读都会把用户的勾选冲掉（退出预览页就会触发一次重读，
+     * 于是"新图被勾上、旧图被清掉"，像面板被重启了一样）。
+     */
+    const knownNamesRef = useRef<Set<string> | null>(null);
+
+    /**
      * 预览页改了属性（旋转方向 / 是否已录入）→ 就地更新这一条。
      *
      * 为什么乐观更新而不是等服务端回话再重读整份列表：重读会换掉 files 数组的引用，
@@ -143,8 +154,13 @@ export function ScanInboxBar({
         try {
             const data = await apiClient.get<InboxListing>("/api/scan-inbox");
             setListing(data);
-            const fresh = data.files.filter(f => !f.imported).map(f => f.name);
-            setSelected(new Set(fresh));
+            // 【custom-v35】选中态**对账**，不是重算：
+            // 老面孔保留用户点过的勾，只给"这次新出现且没导入过的"补上默认勾选。
+            // 曾经这里写的是"所有未导入的一律勾上"—— 退出预览页会触发重读，
+            // 于是新图被勾回、旧图被清掉，用户在预览页里点的选中全白点。
+            const prevKnown = knownNamesRef.current;
+            knownNamesRef.current = new Set(data.files.map(f => f.name));
+            setSelected(prev => reconcileSelection(prev, prevKnown, data.files));
         } catch {
             // 探测失败就当没挂在这个目录 —— 不要弹错误打扰用户
             setListing({ available: false, path: "", files: [], ignored: 0 });

@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
-import { rotateCanvasSize, rotatePointCCW, rotateRectCCW } from "@/lib/image-rotation";
+import { rotateCanvasSize, rotateRectCCW } from "@/lib/image-rotation";
 
 interface ImageCropperProps {
     imageSrc: string;
@@ -899,21 +899,43 @@ export function ImageCropper({
         const noc = turn(oc);
         const nwc = turn(wc);
         if (!noc || !nwc) return;
+
+        /**
+         * 【custom-v35】翻转前先清场：擦除痕迹、标注框、裁剪框、待定框一律清空，
+         * 转完从一张干净的图重新开始。
+         *
+         * 为什么不再"把标记跟着一起转"（v33 是这么做的）：
+         *   ① 逻辑上就站不住 —— 翻转是因为方向躺倒了没法读，**一定是先转正、再画框**；
+         *      "框都画好了再转"这条路，画的时候方向本来就是错的，照样得重画。
+         *   ② 工程上是个坑 —— 要让痕迹跟着转就得同时搬运六处坐标（擦除笔画、标注框、
+         *      裁剪框、待定框、绿框、整页已抠框），漏掉一处或参照系搞混，就会出现
+         *      "擦 A 处、结果白的是 B 处"这种**不报错、只画错**的 bug（v34 正是这么来的）。
+         *   ③ 收益为零 —— 没这功能用户也要重画；有了它反而多一个出错的面。
+         *
+         * 绿框不一样：它是"已经录入过的题"这一**已完成的事实**，不能跟着丢，
+         * 所以只有它仍然跟着转（下面那段）。清空只针对还没提交的半成品。
+         */
+        const hasPendingMarks =
+            shapesRef.current.length > 0 || boxes.length > 0 || !!cropRect || !!pendingRect;
+        if (hasPendingMarks) {
+            const msg = t.common.cropper?.rotateClearConfirm
+                || "翻转会清掉你还没提交的标记（擦除痕迹、标注框、裁剪框）。确定要翻转吗？";
+            if (!window.confirm(msg)) return;
+        }
+
         origCanvasRef.current = noc;
         // 工作画布也一起换成转好的那份（尺寸随之对调）。下面 redrawWork() 会拿
-        // "新基准图 + 已搬过家的擦除痕迹"重放，结果与直接留用它一致，
+        // "新基准图 + 清空后的痕迹"重放，结果与直接留用它一致，
         // 但尺寸必须先对上，否则就是上面注释里那个被裁成方形的 bug。
         workCanvasRef.current = nwc;
-        shapesRef.current = shapesRef.current.map((s) =>
-            s.kind === "rect"
-                ? { kind: "rect" as const, ...rotateRectCCW({ x: s.x, y: s.y, w: s.w, h: s.h }, srcW) }
-                : { kind: "stroke" as const, pts: s.pts.map((p) => rotatePointCCW(p, srcW)), width: s.width },
-        );
 
-        setBoxes((prev) => prev.map((b) => ({ ...b, ...rotateRectCCW(b, srcW) })));
-        setCropRect((prev) => (prev ? rotateRectCCW(prev, srcW) : prev));
-        setPendingRect((prev) => (prev ? rotateRectCCW(prev, srcW) : prev));
+        shapesRef.current = [];
+        setHasShapes(false);
+        setBoxes([]);
+        setCropRect(null);
+        setPendingRect(null);
         setSelectedBoxId(null);
+        drawingRef.current = null;
 
         // 绿框只在"整页坐标系仍然成立"时才会画（见 redrawOverlay）；
         // 那两个前提不成立时它本来就看不见，搬了也白搬，索性一并不动。
@@ -929,7 +951,7 @@ export function ImageCropper({
         redrawOverlay();
         // 转完长宽对调，旧的显示比例已经不适用 —— 一律回到"适应大小"
         fitView();
-    }, [redrawWork, syncBase, redrawOverlay, fitView]);
+    }, [redrawWork, syncBase, redrawOverlay, fitView, boxes, cropRect, pendingRect, t]);
 
     /** 「原图」键：一键恢复到刚上传时的整图状态（清空裁剪/橡皮/标注、复位缩放），仍留在编辑器内 */
     const resetToOriginal = useCallback(() => {
@@ -1758,7 +1780,10 @@ export function ImageCropper({
                         className={btn(false)}
                         onClick={rotateLeft}
                         disabled={analyzing}
-                        title="整页逆时针转 90°（再点一次继续转）"
+                        title={
+                            (t.common.cropper?.rotateTip
+                                || "整页逆时针转 90°（再点一次继续转）。还没提交的擦除痕迹、标注框、裁剪框会被清空——所以请先转正，再动笔")
+                        }
                     >
                         {t.common.cropper?.rotate || "🔄转"}
                     </button>
@@ -2094,6 +2119,9 @@ export function ImageCropper({
                                 <li>{t.common.cropper?.hintLabel || "📊框：先选 题🟥 或 答🟦，再在图上拖框；点边框附近即选中该框"}</li>
                                 <li>{t.common.cropper?.hintRegion || "区🟩 一个框 = 一道题：重叠的绿框自动合并；确认时每个区各裁一块分别送 AI，框外不要"}</li>
                                 <li>🔍 手机：双指捏合缩放、双指拖动平移（图片或黑底上均可）｜ 电脑：滚轮以鼠标为中心缩放、按住右键拖拽平移、也可开下方的「平移」开关用左键平移、双击放大/复位</li>
+                                {/* 【custom-v35】翻转会清空半成品标记，这件事必须提前说清楚，
+                                    否则用户擦了半天、点一下转就全没了。 */}
+                                <li>🔄转：整页逆时针转 90°（可连续转）。**先把方向转正再动笔** —— 翻转会清掉还没提交的擦除痕迹、标注框和裁剪框；已录入的绿框不受影响，会跟着一起转</li>
                             </ul>
                             <div className="mt-2 text-xs text-muted-foreground">（点击任意位置关闭）</div>
                         </div>
