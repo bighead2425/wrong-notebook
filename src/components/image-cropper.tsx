@@ -9,6 +9,21 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
 import { rotateCanvasSize, rotateRectCCW } from "@/lib/image-rotation";
+import { fitEditSize } from "@/lib/edit-canvas-size";
+
+/**
+ * 【custom-v36】画布上下文统一走这条：willReadFrequently 让 Chromium 用**软件光栅**
+ * 维护这些画布，改内容后整体重传，不走 GPU 分块纹理。
+ *
+ * 为什么：v35 实测大图点「🔄转」后画面被切成竖条拼凑、橡皮擦跟着错乱 ——
+ * 数学没错（image-rotation 单测钉着），乱在超大画布 + CSS 缩放下的 GPU 纹理
+ * 分块重传不完整（详见 lib/edit-canvas-size.ts 头注）。软件光栅绕开整类毛病，
+ * 顺带让 toBlob/getImageData 这类读回操作更快。flag 只在**首次** getContext 生效，
+ * 所以创建画布的地方必须都带上。
+ */
+function ctx2d(c: HTMLCanvasElement): CanvasRenderingContext2D | null {
+    return c.getContext("2d", { willReadFrequently: true });
+}
 
 interface ImageCropperProps {
     imageSrc: string;
@@ -359,7 +374,7 @@ export function ImageCropper({
                 const fc = document.createElement("canvas");
                 fc.width = origCanvasRef.current.width;
                 fc.height = origCanvasRef.current.height;
-                fc.getContext("2d")?.drawImage(origCanvasRef.current, 0, 0);
+                ctx2d(fc)?.drawImage(origCanvasRef.current, 0, 0);
                 firstImageRef.current = fc;
             }
             redrawWork();
@@ -376,20 +391,25 @@ export function ImageCropper({
     const ensureCanvases = useCallback((img: HTMLImageElement) => {
         const nw = img.naturalWidth;
         const nh = img.naturalHeight;
+        // 【custom-v36】超大图等比收到长边 MAX_EDIT_EDGE 以内再进工作画布：
+        // 全分辨率画布是"转一下就碎成拼条"的直接诱因（见 ctx2d 注释），
+        // 3200 也远高于下游实际用量（AI 1920 / 落库 1920），画质不吃亏。
+        // 原始文件不动，缩的只是裁剪窗里的工作副本。
+        const size = fitEditSize(nw, nh);
         // 原图只建立一次；后续擦除结果不会覆盖它
         if (!origCanvasRef.current) {
             const oc = document.createElement("canvas");
-            oc.width = nw;
-            oc.height = nh;
-            oc.getContext("2d")?.drawImage(img, 0, 0);
+            oc.width = size.w;
+            oc.height = size.h;
+            ctx2d(oc)?.drawImage(img, 0, 0, size.w, size.h);
             origCanvasRef.current = oc;
         }
         if (!workCanvasRef.current) {
             const wc = document.createElement("canvas");
-            wc.width = nw;
-            wc.height = nh;
+            wc.width = size.w;
+            wc.height = size.h;
             // 初始化即画原图，避免从 crop 切出时 workCanvas 是空的（黑屏）
-            wc.getContext("2d")?.drawImage(origCanvasRef.current, 0, 0);
+            ctx2d(wc)?.drawImage(origCanvasRef.current, 0, 0);
             workCanvasRef.current = wc;
         }
         return workCanvasRef.current;
@@ -400,7 +420,7 @@ export function ImageCropper({
         const wc = workCanvasRef.current;
         const oc = origCanvasRef.current;
         if (!wc || !oc) return;
-        const ctx = wc.getContext("2d");
+        const ctx = ctx2d(wc);
         if (!ctx) return;
         ctx.clearRect(0, 0, wc.width, wc.height);
         ctx.drawImage(oc, 0, 0);
@@ -434,7 +454,7 @@ export function ImageCropper({
             base.width = wc.width;
             base.height = wc.height;
         }
-        const ctx = base.getContext("2d");
+        const ctx = ctx2d(base);
         if (!ctx) return;
         ctx.clearRect(0, 0, base.width, base.height);
         ctx.drawImage(wc, 0, 0);
@@ -454,7 +474,7 @@ export function ImageCropper({
             ov.width = wc.width;
             ov.height = wc.height;
         }
-        const ctx = ov.getContext("2d");
+        const ctx = ctx2d(ov);
         if (!ctx) return;
         ctx.clearRect(0, 0, ov.width, ov.height);
 
@@ -667,7 +687,7 @@ export function ImageCropper({
         const cropped = document.createElement("canvas");
         cropped.width = Math.max(1, Math.round(r.w));
         cropped.height = Math.max(1, Math.round(r.h));
-        const cctx = cropped.getContext("2d");
+        const cctx = ctx2d(cropped);
         if (!cctx) return;
         // 从原始基准图提取，确保 crop 模式下 workCanvas 尚未重绘也不会拿到黑图
         cctx.drawImage(oc, r.x, r.y, r.w, r.h, 0, 0, cropped.width, cropped.height);
@@ -677,7 +697,7 @@ export function ImageCropper({
         const newWc = document.createElement("canvas");
         newWc.width = cropped.width;
         newWc.height = cropped.height;
-        newWc.getContext("2d")?.drawImage(cropped, 0, 0);
+        ctx2d(newWc)?.drawImage(cropped, 0, 0);
         workCanvasRef.current = newWc;
         shapesRef.current = [];
         setHasShapes(false);
@@ -886,7 +906,7 @@ export function ImageCropper({
             const nc = document.createElement("canvas");
             nc.width = size.w;
             nc.height = size.h;
-            const ctx = nc.getContext("2d");
+            const ctx = ctx2d(nc);
             if (!ctx) return null;
             // setTransform(a,b,c,d,e,f) 对应 x' = a·x + c·y + e，y' = b·x + d·y + f。
             // 取 (0,-1,1,0,0,src.width) 即 x'=y、y'=src.width−x —— 正是视觉上的逆时针 90°。
@@ -960,12 +980,12 @@ export function ImageCropper({
         const cloneOrig = document.createElement("canvas");
         cloneOrig.width = fi.width;
         cloneOrig.height = fi.height;
-        cloneOrig.getContext("2d")?.drawImage(fi, 0, 0);
+        ctx2d(cloneOrig)?.drawImage(fi, 0, 0);
         origCanvasRef.current = cloneOrig;
         const wc = document.createElement("canvas");
         wc.width = fi.width;
         wc.height = fi.height;
-        wc.getContext("2d")?.drawImage(fi, 0, 0);
+        ctx2d(wc)?.drawImage(fi, 0, 0);
         workCanvasRef.current = wc;
         shapesRef.current = [];
         setHasShapes(false);
@@ -1027,13 +1047,13 @@ export function ImageCropper({
                 const base = document.createElement("canvas");
                 base.width = img.naturalWidth;
                 base.height = img.naturalHeight;
-                base.getContext("2d")?.drawImage(img, 0, 0);
+                ctx2d(base)?.drawImage(img, 0, 0);
 
                 origCanvasRef.current = base;
                 const wc = document.createElement("canvas");
                 wc.width = base.width;
                 wc.height = base.height;
-                wc.getContext("2d")?.drawImage(base, 0, 0);
+                ctx2d(wc)?.drawImage(base, 0, 0);
                 workCanvasRef.current = wc;
 
                 shapesRef.current = [];
