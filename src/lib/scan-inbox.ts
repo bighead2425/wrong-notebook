@@ -4,6 +4,7 @@ import path from "path";
 import { randomBytes } from "crypto";
 import { getAppConfig } from "./config";
 import { createLogger } from "./logger";
+import { normalizeRotation } from "./image-rotation";
 
 /**
  * 【custom-v29/v30 · 蓝图：外部扫描件投递隧道】「扫描收件箱」
@@ -77,6 +78,14 @@ export interface ScanInboxFile {
     mtimeMs: number;
     /** 之前是否已经导入过（导入过的仍可重导，只是不再计为"新照片"） */
     imported: boolean;
+    /**
+     * 【custom-v33】显示方向：逆时针累计角度，0 / 90 / 180 / 270。
+     *
+     * 注意它**不改 NAS 上的文件**，只是"以后按这个方向显示 / 导入"。
+     * 之所以不把照片转正了写回去：原始扫描件留原样，转错了还能转回来；
+     * 而且每次旋转都重写文件会刷新修改时间，把"按拍照顺序排列"这个隐含约定搞乱。
+     */
+    rotation: number;
 }
 
 /**
@@ -188,52 +197,91 @@ export function getInboxLocation(overrideSubPath?: string | null): InboxLocation
 /* ------------------------------------------------------------------ */
 
 /**
- * v2 结构：**按子路径分组**。
+ * v3 结构：**按子路径分组**，每条记录是一个对象。
  *
  * 为什么必须分组：换目录之后，两个目录里完全可能有同名照片（相机/夸克都爱用
  * `IMG_0001.jpg` 这种名字）。如果台账只有一层，B 目录里的新照片会被 A 目录的
  * 旧记录误判成"已导入"，直接从「收到 N 张新照片」里消失。
+ *
+ * 为什么 v3 要把值从「导入时间字符串」改成对象：
+ *   ① 预览页能把照片**逆时针转 90°**，这个方向要记住 —— 下次打开、下次导入
+ *      都是正的了。但旋转不动 NAS 上的文件，只是"以后按这个方向看"；
+ *   ② 「已录入」原来只有"导入过"这一个来源。现在用户可以在预览页里把一张
+ *      标回"新"（AI 漏识别、想重导一次），所以要有个能被人工覆盖的标记。
+ * 老的字符串值在读取时自动迁移，用户升级后第一次打开页面就完成，不用做任何事。
  */
-interface StateShape {
-    version: 2;
-    /** 相对子路径 → (文件名 → 首次导入时间 ISO) */
-    inbox: Record<string, Record<string, string>>;
+interface InboxEntry {
+    /** 最后一次变更时间（ISO）—— 台账超量时按它淘汰最老的 */
+    at: string;
+    /** 是否算「已录入」：流水线导过即 true，也可由用户在预览页手工翻转 */
+    imported: boolean;
+    /** 显示方向：逆时针累计角度，0 / 90 / 180 / 270 */
+    rotation: number;
 }
 
-const emptyState = (): StateShape => ({ version: 2, inbox: {} });
+interface StateShape {
+    version: 3;
+    /** 相对子路径 → (文件名 → 记录) */
+    inbox: Record<string, Record<string, InboxEntry>>;
+}
+
+const emptyState = (): StateShape => ({ version: 3, inbox: {} });
+
+/**
+ * 把一条记录（可能是 v1/v2 的旧格式）收敛成合法的 InboxEntry；完全认不出则返回 null。
+ *
+ * 旧格式的值就是一串导入时间 —— 在那个年代"有记录"就等于"已导入过"，
+ * 所以补 imported=true、rotation=0，语义和升级前完全一致。
+ */
+function normalizeEntry(val: unknown): InboxEntry | null {
+    if (typeof val === "string") return { at: val, imported: true, rotation: 0 };
+    if (!val || typeof val !== "object") return null;
+    const v = val as Record<string, unknown>;
+    return {
+        // 时间戳坏了无所谓（只影响淘汰顺序），但类型必须是字符串
+        at: typeof v.at === "string" ? v.at : new Date(0).toISOString(),
+        imported: v.imported === true,
+        rotation: normalizeRotation(v.rotation),
+    };
+}
 
 function readStateSync(): StateShape {
     try {
         if (!fsSync.existsSync(STATE_FILE)) return emptyState();
         const parsed = JSON.parse(fsSync.readFileSync(STATE_FILE, "utf-8"));
+        if (!parsed || typeof parsed !== "object") return emptyState();
 
-        // 旧格式（v1：{ imported: { 文件名: 时间 } }）→ 迁到当前子路径的分组下。
+        // v1（{ imported: { 文件名: 时间 } }）没有分组这一层 → 整桶归到当前子路径下。
         // 迁移时机放在读取时，用户升级后第一次打开页面就自动完成，不用手工做什么。
-        if (parsed && typeof parsed === "object" && !parsed.inbox && typeof parsed.imported === "object") {
-            const bucket = { ...(parsed.imported as Record<string, string>) };
-            const migrated: StateShape = {
-                version: 2,
-                inbox: { [getInboxLocation().subPath]: bucket },
-            };
-            writeStateSync(migrated);
-            logger.info(
-                { count: Object.keys(bucket).length },
-                "旧版收件箱台账已迁移为按目录分组的新格式",
-            );
-            return migrated;
-        }
+        const rawInbox: Record<string, unknown> =
+            !parsed.inbox && parsed.imported && typeof parsed.imported === "object"
+                ? { [getInboxLocation().subPath]: parsed.imported }
+                : (parsed.inbox && typeof parsed.inbox === "object" ? parsed.inbox : {});
 
-        if (!parsed || typeof parsed !== "object" || !parsed.inbox || typeof parsed.inbox !== "object") {
-            return emptyState();
-        }
+        const inbox: Record<string, Record<string, InboxEntry>> = {};
+        // 不是 v3 就说明是从旧版读上来的，读完顺手回写一次，别让迁移每次读都重算
+        let dirty = parsed.version !== 3;
 
-        const inbox: Record<string, Record<string, string>> = {};
-        for (const [dirKey, bucket] of Object.entries(parsed.inbox)) {
-            if (bucket && typeof bucket === "object") {
-                inbox[dirKey] = { ...(bucket as Record<string, string>) };
+        for (const [dirKey, rawBucket] of Object.entries(rawInbox)) {
+            if (!rawBucket || typeof rawBucket !== "object") continue;
+            const out: Record<string, InboxEntry> = {};
+            for (const [name, val] of Object.entries(rawBucket as Record<string, unknown>)) {
+                const entry = normalizeEntry(val);
+                if (!entry) { dirty = true; continue; }
+                out[name] = entry;
             }
+            inbox[dirKey] = out;
         }
-        return { version: 2, inbox };
+
+        const state: StateShape = { version: 3, inbox };
+        if (dirty) {
+            writeStateSync(state);
+            logger.info(
+                { from: parsed.version ?? "v1" },
+                "收件箱台账已升级为 v3（记住旋转方向 + 可人工改已录入）",
+            );
+        }
+        return state;
     } catch (err) {
         logger.warn({ error: String(err) }, "读取收件箱台账失败，按空台账处理");
         return emptyState();
@@ -260,7 +308,7 @@ function writeStateSync(state: StateShape) {
 }
 
 /** 取出（必要时新建）某个子路径的记录桶 */
-function bucketOf(state: StateShape, subPath: string): Record<string, string> {
+function bucketOf(state: StateShape, subPath: string): Record<string, InboxEntry> {
     if (!state.inbox[subPath]) state.inbox[subPath] = {};
     return state.inbox[subPath];
 }
@@ -281,9 +329,20 @@ function pruneBucket(state: StateShape, subPath: string, alive?: Set<string>) {
 
     const names = Object.keys(bucket);
     if (names.length > MAX_STATE_ENTRIES) {
-        // 按导入时间从旧到新排，淘汰最老的
-        const sorted = names
-            .sort((a, b) => String(bucket[a]).localeCompare(String(bucket[b])));
+        /**
+         * 超量时从旧到新淘汰。排序刻意让**转过方向的**排后面（更晚被淘汰）：
+         * 导入记录丢了顶多多显示几张"新照片"，重导一次就补回来了；
+         * 而旋转状态丢了，用户会看到一张又躺回去的歪照片 —— 那个更让人恼火。
+         *
+         * 注意取值要用 `.at`，不能再 String(整条记录) —— v3 的记录是对象，
+         * 字符串化之后全是 "[object Object]"，排序会整个失效。
+         */
+        const sorted = names.sort((a, b) => {
+            const ra = bucket[a].rotation !== 0 ? 1 : 0;
+            const rb = bucket[b].rotation !== 0 ? 1 : 0;
+            if (ra !== rb) return ra - rb;
+            return String(bucket[a].at).localeCompare(String(bucket[b].at));
+        });
         for (const n of sorted.slice(0, names.length - MAX_STATE_ENTRIES)) delete bucket[n];
     }
 
@@ -483,11 +542,13 @@ export async function listInboxFiles(opts: ListOptions = {}): Promise<ScanInboxL
                 ignored++;
                 continue;
             }
+            const meta = bucket[entry.name];
             files.push({
                 name: entry.name,
                 size: st.size,
                 mtimeMs: st.mtimeMs,
-                imported: probing ? false : Boolean(bucket[entry.name]),
+                imported: probing ? false : Boolean(meta?.imported),
+                rotation: probing ? 0 : normalizeRotation(meta?.rotation),
             });
         } catch {
             ignored++;
@@ -529,24 +590,69 @@ export async function readInboxFile(name: string): Promise<{ data: Buffer; mime:
     }
 }
 
-/** 标记一批文件为"已导入过" —— 之后它们不再计入「新照片」，但仍可手工重导 */
-export async function markImported(names: string[]): Promise<number> {
+/** 人工/自动可改的两项属性（其余字段由台账自己维护） */
+export interface InboxMetaPatch {
+    /** true = 标为已录入；false = 标回"新照片"（下次仍会出现在「收到 N 张新照片」里） */
+    imported?: boolean;
+    /** 显示方向：逆时针累计角度。传进来会归一化到 0/90/180/270 */
+    rotation?: number;
+}
+
+/**
+ * 【custom-v33】改一批文件在台账里的属性：是否已录入 / 显示方向。
+ *
+ * 为什么旋转不改文件本身：一是原始扫描件留着原样，转错了还能转回来；
+ * 二是每次旋转都重写一遍 NAS 上的文件，既慢又平白让"修改时间"变新，
+ * 连"按拍照顺序排列"都会乱掉。方向记在台账里就够用了。
+ *
+ * **没提到的字段一律不动**（而不是"给个默认值"）。
+ *
+ * 这一点是踩出来的：这函数原先抄了"不传 imported 就置 true"的老规矩，看着很体贴，
+ * 结果预览页只想转个方向时（只传 rotation），顺手就把照片标成了「已录入」——
+ * 用户转一下歪照片，那张就从"新照片"里消失了。**改属性要改什么就明说什么**，
+ * 谁也别替调用方做主。想标记已导入就显式传 imported: true。
+ *
+ * @returns 实际写入的记录条数（非法文件名会被跳过）
+ */
+export async function setInboxMeta(names: string[], patch: InboxMetaPatch = {}): Promise<number> {
     if (!names.length) return 0;
     const { subPath } = getInboxLocation();
     const state = readStateSync();
     const bucket = bucketOf(state, subPath);
     const now = new Date().toISOString();
+    const hasImported = typeof patch.imported === "boolean";
+    const hasRotation = typeof patch.rotation === "number" && Number.isFinite(patch.rotation);
 
     let n = 0;
     for (const raw of names) {
         const base = path.basename(raw || "");
+        // 与读文件同一道闸：只有收件箱里的普通文件名才配写台账
         if (!base || base !== raw || base.startsWith(".")) continue;
-        if (!bucket[base]) n++;
-        bucket[base] = now;
+        const prev = bucket[base];
+        const next: InboxEntry = {
+            at: now,
+            imported: hasImported ? (patch.imported as boolean) : (prev?.imported ?? false),
+            rotation: hasRotation ? normalizeRotation(patch.rotation) : (prev?.rotation ?? 0),
+        };
+        /**
+         * "既没导入过、也没转过向"的记录不留 —— 它和"台账里压根没这条"效果完全一样
+         * （都显示为「新」），留着只会让台账白白膨胀、挤掉真正有用的记录。
+         */
+        if (!next.imported && next.rotation === 0) delete bucket[base];
+        else bucket[base] = next;
+        n++;
     }
     pruneBucket(state, subPath);
     writeStateSync(state);
     return n;
+}
+
+/**
+ * 标记一批文件为"已导入过" —— 之后它们不再计入「新照片」，但仍可手工重导。
+ * 保留这个薄包装，是因为导入流水线那几处调用读起来更直白（markImported 比 setInboxMeta 好懂）。
+ */
+export async function markImported(names: string[]): Promise<number> {
+    return setInboxMeta(names, { imported: true });
 }
 
 export interface DeleteResult {

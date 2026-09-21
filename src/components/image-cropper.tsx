@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
+import { rotatePointCCW, rotateRectCCW } from "@/lib/image-rotation";
 
 interface ImageCropperProps {
     imageSrc: string;
@@ -246,6 +247,16 @@ export function ImageCropper({
     const [cropToRegions, setCropToRegions] = useState(false);
     const [hasShapes, setHasShapes] = useState(false);
     const [ready, setReady] = useState(false);
+    /**
+     * 【custom-v33】「本页已录入」绿框的本地副本。
+     *
+     * 原先直接画 prop 传进来的 doneRects 就够了，加了「🔄转」之后不行了 ——
+     * 旋转会让整页坐标系转一次，绿框若不跟着转，就会停在错的位置上。
+     * prop 我们不能改，所以留一份副本：prop 一变就整体同步过来，旋转时把副本里的框一起搬。
+     */
+    const [doneRectsView, setDoneRectsView] = useState<DoneRect[]>([]);
+    // 调用方一给新值（比如又录进去一道题）就整体同步，本地不做增量合并
+    useEffect(() => { setDoneRectsView(doneRects ?? []); }, [doneRects]);
     const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
 
     // ===== 画布引用 =====
@@ -558,9 +569,9 @@ export function ImageCropper({
         //   · !isCroppedRef —— 裁过之后工作画布已换成裁剪后的小图；
         //   · !rectSpaceStaleRef —— 拉伸之后基准图已换成矫正图。
         // 两种情况下整页坐标都不再对应，画上去只会是错位的一团。
-        if (doneRects && doneRects.length > 0 && !isCroppedRef.current && !rectSpaceStaleRef.current) {
+        if (doneRectsView.length > 0 && !isCroppedRef.current && !rectSpaceStaleRef.current) {
             ctx.save();
-            for (const d of doneRects) {
+            for (const d of doneRectsView) {
                 ctx.fillStyle = "rgba(0, 200, 83, 0.16)";
                 ctx.fillRect(d.x, d.y, d.w, d.h);
                 ctx.strokeStyle = "rgba(0, 200, 83, 0.85)";
@@ -572,7 +583,7 @@ export function ImageCropper({
             ctx.restore();
             // 圈号半径按画面短边取，避免小图上字号失控、大图上又看不清
             const rr = Math.max(10, Math.min(ov.width, ov.height) * 0.022);
-            for (const d of doneRects) {
+            for (const d of doneRectsView) {
                 // 靠左上角画；但夹在画幅内，避免第一行/第一列的圈号被裁掉半个
                 const cx = Math.min(Math.max(d.x + rr * 1.3, rr), ov.width - rr);
                 const cy = Math.min(Math.max(d.y + rr * 1.3, rr), ov.height - rr);
@@ -645,7 +656,7 @@ export function ImageCropper({
                 ctx.restore();
             }
         }
-    }, [boxes, selectedBoxId, pendingRect, mode, labelKind, cropRect, doneRects]);
+    }, [boxes, selectedBoxId, pendingRect, mode, labelKind, cropRect, doneRectsView]);
 
     /**
      * 【custom-v26】redrawOverlay 的**稳定引用**桥。
@@ -876,6 +887,77 @@ export function ImageCropper({
         applyView(computeFitZoom(), { x: 0, y: 0 });
     }, [applyView, computeFitZoom]);
 
+    /**
+     * 【custom-v33】整页逆时针转 90°（工具栏「🔄转」）。
+     *
+     * 用途：扫描件方向躺倒了。与「📐抻」分工不同 —— 抻治"歪"（梯形透视），
+     * 转治"倒"（方向），两件事各管一头。
+     *
+     * ── 为什么这件事比看上去麻烦 ──────────────────────────────
+     * 画布转一下只是一行 drawImage，真正容易出错的是**挂在坐标系上的那些东西**：
+     *   · 擦除痕迹（shapes）—— 撤销要靠它重放，坐标必须跟着走，否则一撤销就全错位；
+     *   · 标注框（boxes）、裁剪框（cropRect）、拖拽中的临时框；
+     *   · 本页已录入的绿框（doneRectsView）；
+     *   · 以及"整页已抠坐标"那份记录（lastCropRectRef，回传给调用方标记已抠区域用的）。
+     * 少搬任何一样，它就会留在旧位置 —— 框线错位比不转还糟，用户会照着错位的框去操作。
+     * 所以这里一次性全搬，宁可代码长一点。
+     *
+     * 逆时针 90° 的映射用 lib/image-rotation 里那四个纯函数（单测钉着），不在这里另算一套。
+     */
+    const rotateLeft = useCallback(() => {
+        const oc = origCanvasRef.current;
+        const wc = workCanvasRef.current;
+        if (!oc || !wc) return;
+        const srcW = wc.width;
+        const srcH = wc.height;
+        if (!srcW || !srcH) return;
+
+        /** 复制一份转好的画布：长宽对调，用矩阵一次把"逆时针 90°"写进去 */
+        const turn = (src: HTMLCanvasElement): HTMLCanvasElement | null => {
+            const nc = document.createElement("canvas");
+            nc.width = src.height;
+            nc.height = src.width;
+            const ctx = nc.getContext("2d");
+            if (!ctx) return null;
+            // setTransform(a,b,c,d,e,f) 对应 x' = a·x + c·y + e，y' = b·x + d·y + f。
+            // 取 (0,-1,1,0,0,srcW) 即 x'=y、y'=srcW−x —— 正是视觉上的逆时针 90°。
+            ctx.setTransform(0, -1, 1, 0, 0, srcW);
+            ctx.drawImage(src, 0, 0);
+            return nc;
+        };
+
+        const noc = turn(oc);
+        if (!noc) return;
+        origCanvasRef.current = noc;
+        // 工作画布不单独转：下面 redrawWork() 会拿"新基准图 + 已搬过家的擦除痕迹"重放，
+        // 结果与直接转 workCanvas 一致，但少一条容易不同步的路径
+        shapesRef.current = shapesRef.current.map((s) =>
+            s.kind === "rect"
+                ? { kind: "rect" as const, ...rotateRectCCW({ x: s.x, y: s.y, w: s.w, h: s.h }, srcW) }
+                : { kind: "stroke" as const, pts: s.pts.map((p) => rotatePointCCW(p, srcW)), width: s.width },
+        );
+
+        setBoxes((prev) => prev.map((b) => ({ ...b, ...rotateRectCCW(b, srcW) })));
+        setCropRect((prev) => (prev ? rotateRectCCW(prev, srcW) : prev));
+        setPendingRect((prev) => (prev ? rotateRectCCW(prev, srcW) : prev));
+        setSelectedBoxId(null);
+
+        // 绿框只在"整页坐标系仍然成立"时才会画（见 redrawOverlay）；
+        // 那两个前提不成立时它本来就看不见，搬了也白搬，索性一并不动。
+        if (!isCroppedRef.current && !rectSpaceStaleRef.current) {
+            setDoneRectsView((prev) => prev.map((d) => ({ ...d, ...rotateRectCCW(d, srcW) })));
+            lastCropRectRef.current = lastCropRectRef.current
+                ? rotateRectCCW(lastCropRectRef.current, srcW)
+                : null;
+        }
+
+        redrawWork();
+        syncBase();
+        redrawOverlay();
+        // 转完长宽对调，旧的显示比例已经不适用 —— 一律回到"适应大小"
+        fitView();
+    }, [redrawWork, syncBase, redrawOverlay, fitView]);
+
     /** 「原图」键：一键恢复到刚上传时的整图状态（清空裁剪/橡皮/标注、复位缩放），仍留在编辑器内 */
     const resetToOriginal = useCallback(() => {
         const fi = firstImageRef.current;
@@ -903,10 +985,14 @@ export function ImageCropper({
         panDragRef.current = null;
         // 【custom-v22 循环模式】回到"最初整页" → 已抠标记的坐标系重新成立
         rectSpaceStaleRef.current = false;
+        // 坐标系既然回到最初，绿框也恢复成调用方给的原值（「🔄转」期间搬过的位置作废），
+        // 那条"整页已抠坐标"同样不再成立
+        setDoneRectsView(doneRects ?? []);
+        lastCropRectRef.current = null;
         syncBase();
         redrawOverlay();
         fitView();
-    }, [fitView, syncBase, redrawOverlay]);
+    }, [fitView, syncBase, redrawOverlay, doneRects]);
 
     // ============================================================
     //  拉伸：当前图 → 拍摄扫描器（拖四角拉正 + 漂白/黑白）→ 回传新图作为基准
@@ -995,7 +1081,6 @@ export function ImageCropper({
      */
     useEffect(() => {
         if (open) fitView();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, imageSrc, fitView]);
 
     /**
@@ -1709,6 +1794,18 @@ export function ImageCropper({
                     </button>
                     <button type="button" className={btn(mode === "label")} onClick={() => switchMode("label")}>
                         {t.common.cropper?.modeLabel || "区域标注"}
+                    </button>
+
+                    {/* 【custom-v33】整页逆时针转 90°（用户指定的位置：📊框 之后、🧭移 之前）。
+                        每点一次转 90°，转完自动适应窗口。 */}
+                    <button
+                        type="button"
+                        className={btn(false)}
+                        onClick={rotateLeft}
+                        disabled={analyzing}
+                        title="整页逆时针转 90°（再点一次继续转）"
+                    >
+                        {t.common.cropper?.rotate || "🔄转"}
                     </button>
 
                     <button

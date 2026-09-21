@@ -40,12 +40,15 @@ import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { apiClient } from "@/lib/api-client";
 import { Check, Download, FolderOpen, ImageUp, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { InboxImageViewer } from "@/components/inbox-image-viewer";
 
 interface InboxFile {
     name: string;
     size: number;
     mtimeMs: number;
     imported: boolean;
+    /** 【custom-v33】逆时针累计角度（0/90/180/270）—— 缩略图也照它转，两边显示一致 */
+    rotation: number;
 }
 
 interface InboxListing {
@@ -114,6 +117,27 @@ export function ScanInboxBar({
     /** 刚传完的交代 —— 手机上列表在下面，传完不一定看得见变化，给一句结果 */
     const [uploadedNote, setUploadedNote] = useState<{ ok: number; bad: number } | null>(null);
 
+    /**
+     * 【custom-v33】预览页正在看第几张；null = 没开。
+     *
+     * 索引由本组件持有（而不是预览页自己记）：删除照片后列表会重读、数组会变短，
+     * "当前看的是谁"必须交给一个知道列表全貌的地方来收敛。
+     */
+    const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+
+    /**
+     * 预览页改了属性（旋转方向 / 是否已录入）→ 就地更新这一条。
+     *
+     * 为什么乐观更新而不是等服务端回话再重读整份列表：重读会换掉 files 数组的引用，
+     * 整个网格重渲染、缩略图重新请求，转一下抖一下很难受。就地改一条最平滑；
+     * 预览页那边若保存失败，会在关闭时调 onReload 把真实状态拉回来。
+     */
+    const patchFile = useCallback((name: string, patch: Partial<InboxFile>) => {
+        setListing(prev => (prev
+            ? { ...prev, files: prev.files.map(f => (f.name === name ? { ...f, ...patch } : f)) }
+            : prev));
+    }, []);
+
     const load = useCallback(async () => {
         setLoading(true);
         try {
@@ -179,9 +203,12 @@ export function ScanInboxBar({
             const rejected = pulled.filter(f => !acceptedSet.has(f.name));
 
             if (accepted.length) {
-                await apiClient.post<{ ok: boolean }, { names: string[] }>("/api/scan-inbox", {
-                    names: accepted,
-                }).catch(() => undefined);
+                // 必须**显式**写 imported: true —— 接口的规矩是"没提到的字段一概不动"
+                // （见 lib/scan-inbox 的 setInboxMeta）。这里就是要标记已导入，只传 names 是不够的。
+                await apiClient.post<{ ok: boolean }, { names: string[]; imported: boolean }>(
+                    "/api/scan-inbox",
+                    { names: accepted, imported: true },
+                ).catch(() => undefined);
             }
 
             setSelected(new Set());
@@ -440,23 +467,43 @@ export function ScanInboxBar({
                         </p>
                     ) : (
                         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
-                            {files.map(f => {
+                            {files.map((f, i) => {
                                 const checked = selected.has(f.name);
+                                /** 转过 90°/270° 的图，长宽是对调的 —— 缩略图约束得跟着换 */
+                                const turned = f.rotation % 180 !== 0;
                                 return (
                                     <div key={f.name} className="space-y-1">
                                         <div
-                                            className={`relative rounded-lg overflow-hidden border-2 bg-muted cursor-pointer transition-all ${
+                                            className={`relative rounded-lg overflow-hidden border-2 bg-muted transition-all ${
                                                 checked ? "border-sky-500 ring-2 ring-sky-500/30" : "border-transparent hover:border-primary/40"
                                             }`}
-                                            onClick={() => { if (!disabled) toggle(f.name); }}
                                         >
-                                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                                            <img
-                                                src={fileUrl(f.name)}
-                                                alt={f.name}
-                                                loading="lazy"
-                                                className="w-full aspect-[3/4] object-cover"
-                                            />
+                                            {/* 点图片 = 看大图。选和看是两种意图，拆开（见文件头注释） */}
+                                            <div
+                                                className="w-full aspect-[3/4] flex items-center justify-center cursor-zoom-in"
+                                                onClick={() => { if (!disabled) setViewerIndex(i); }}
+                                                title={s.viewerOpenHint || "点击查看大图"}
+                                            >
+                                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                <img
+                                                    src={fileUrl(f.name)}
+                                                    alt={f.name}
+                                                    loading="lazy"
+                                                    draggable={false}
+                                                    style={{
+                                                        transform: `rotate(${f.rotation}deg)`,
+                                                        // 容器固定 3:4（宽:高）。转 90° 后要让"宽"受容器**高**约束、
+                                                        // "高"受容器**宽**约束，所以两个上限正好互换（4/3 与 3/4）。
+                                                        // 不换的话，竖图转横以后会被裁掉左右两条。
+                                                        ...(turned
+                                                            ? { maxWidth: "133.333%", maxHeight: "75%" }
+                                                            : { maxWidth: "100%", maxHeight: "100%" }),
+                                                        minWidth: 0,
+                                                        minHeight: 0,
+                                                    }}
+                                                />
+                                            </div>
+                                            {/* 左上角方框 = 只管选中 */}
                                             <button
                                                 type="button"
                                                 className={`absolute top-1 left-1 h-5 w-5 rounded border-2 flex items-center justify-center shadow-sm ${
@@ -465,7 +512,9 @@ export function ScanInboxBar({
                                                         : "bg-black/35 border-white/90 text-transparent"
                                                 }`}
                                                 onClick={(e) => { e.stopPropagation(); if (!disabled) toggle(f.name); }}
-                                                title={checked ? "取消选中" : "选中"}
+                                                title={checked
+                                                    ? (s.viewerUnselect || "取消选中")
+                                                    : (s.viewerSelect || "选中")}
                                             >
                                                 <Check className="h-3 w-3" />
                                             </button>
@@ -519,6 +568,24 @@ export function ScanInboxBar({
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            {/* 【custom-v33】照片预览页：整屏看大图、转方向、改状态、下载、删除。
+                它挂在收件箱对话框**外面** —— 两个 Dialog 各自独立，关掉预览页
+                仍然回到收件箱，而不是把收件箱一起带走。 */}
+            {viewerIndex !== null && (
+                <InboxImageViewer
+                    open
+                    files={files}
+                    index={viewerIndex}
+                    onIndexChange={setViewerIndex}
+                    selected={selected}
+                    onToggleSelect={toggle}
+                    inQueue={inQueue}
+                    onMetaChange={patchFile}
+                    onReload={load}
+                    onClose={() => setViewerIndex(null)}
+                />
+            )}
         </>
     );
 }

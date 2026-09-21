@@ -267,7 +267,7 @@ describe('scan-inbox：新旧台账', () => {
         expect(back.files[0].imported).toBe(true);
     });
 
-    it('旧版（v1）台账自动迁移到按目录分组的新格式', async () => {
+    it('旧版（v1）台账自动迁移到 v3：先按目录分组，再补上方向与已录入标记', async () => {
         fakeImage(inboxDir, 'old.jpg', 2048);
         const dir = path.join(cwdDir, 'config');
         fs.mkdirSync(dir, { recursive: true });
@@ -281,11 +281,116 @@ describe('scan-inbox：新旧台账', () => {
 
         // 迁移后"之前导过"这件事不能丢
         expect(res.files[0].imported).toBe(true);
+        expect(res.files[0].rotation).toBe(0);
 
         const migrated = readState();
-        expect(migrated.version).toBe(2);
+        expect(migrated.version).toBe(3);
         expect(migrated.imported).toBeUndefined();
-        expect(migrated.inbox['scan2wrong']['old.jpg']).toBe('2020-01-01T00:00:00.000Z');
+        expect(migrated.inbox['scan2wrong']['old.jpg']).toEqual({
+            at: '2020-01-01T00:00:00.000Z',
+            imported: true,
+            rotation: 0,
+        });
+    });
+
+    /**
+     * 【custom-v33】v2 的"值"就是导入时间字符串。升级到 v3 时必须保持语义不变：
+     * 原来"有记录 = 已导入"，所以 imported 一律补 true、方向补 0。
+     * 这条一旦写错，老用户升级后会发现**所有导过的照片都变回"新照片"**，一按就重复导入。
+     */
+    it('v2 台账（值为导入时间字符串）升级到 v3：已录入不变、方向默认 0', async () => {
+        fakeImage(inboxDir, 'mid.jpg', 2048);
+        fs.mkdirSync(path.join(cwdDir, 'config'), { recursive: true });
+        fs.writeFileSync(stateFile(), JSON.stringify({
+            version: 2,
+            inbox: { scan2wrong: { 'mid.jpg': '2021-02-03T00:00:00.000Z' } },
+        }));
+
+        const lib = await freshLib();
+        const res = await lib.listInboxFiles();
+        expect(res.files[0].imported).toBe(true);
+        expect(res.files[0].rotation).toBe(0);
+
+        const state = readState();
+        expect(state.version).toBe(3);
+        expect(state.inbox['scan2wrong']['mid.jpg'].at).toBe('2021-02-03T00:00:00.000Z');
+    });
+});
+
+describe('scan-inbox：属性更新（旋转方向 / 人工改已录入）', () => {
+    it('记下旋转方向，列表原样读回来；只转方向不会把它变成"已录入"', async () => {
+        fakeImage(inboxDir, 'rot.jpg', 2048);
+        const lib = await freshLib();
+
+        await lib.setInboxMeta(['rot.jpg'], { rotation: 90 });
+        let res = await lib.listInboxFiles();
+        expect(res.files[0].rotation).toBe(90);
+        expect(res.files[0].imported).toBe(false);
+
+        // 再转会累计（预览页每点一次就存一次，角度得能叠上去）
+        await lib.setInboxMeta(['rot.jpg'], { rotation: 180 });
+        res = await lib.listInboxFiles();
+        expect(res.files[0].rotation).toBe(180);
+    });
+
+    it('人工把「已录入」标回「新」：重新出现在新照片里，方向也不丢', async () => {
+        fakeImage(inboxDir, 'back.jpg', 2048);
+        const lib = await freshLib();
+        await lib.markImported(['back.jpg']);
+        await lib.setInboxMeta(['back.jpg'], { rotation: 270 });
+
+        await lib.setInboxMeta(['back.jpg'], { imported: false });
+
+        const res = await lib.listInboxFiles();
+        expect(res.files[0].imported).toBe(false);
+        expect(res.files[0].rotation).toBe(270);
+    });
+
+    /**
+     * "既没导过、也没转过方向"的记录对用户是**不可见**的（显示效果与"没这条记录"一样），
+     * 留着只会让台账白白膨胀、挤掉真正有用的记录。所以这种条目不该落盘。
+     */
+    it('没有信息的条目不会留在台账里', async () => {
+        fakeImage(inboxDir, 'plain.jpg', 2048);
+        const lib = await freshLib();
+
+        await lib.setInboxMeta(['plain.jpg'], { imported: false });
+        await lib.listInboxFiles(); // 触发一次自洁
+
+        expect(readState().inbox['scan2wrong']).toBeUndefined();
+    });
+
+    it('非法文件名一律跳过，不写进台账', async () => {
+        const lib = await freshLib();
+        const n = await lib.setInboxMeta(
+            ['../evil.jpg', '/etc/passwd', '.hidden.jpg', ''],
+            { rotation: 90 },
+        );
+        expect(n).toBe(0);
+        expect(readState().inbox['scan2wrong']).toBeUndefined();
+    });
+
+    /**
+     * 【custom-v33 修正】这里原先抄了"不传 imported 就置 true"的体贴默认值，
+     * 结果预览页只想转个方向时（只传 rotation），顺手把照片标成了「已录入」——
+     * 用户转一下歪照片，那张就从"新照片"里消失了。
+     * 现在的规矩是：**没提到的字段一律不动**。这条用例把两个方向都钉住。
+     */
+    it('没提到的字段一律不动（转方向不会顺手标成已录入，标已录入也不会清掉方向）', async () => {
+        fakeImage(inboxDir, 'keep.jpg', 2048);
+        const lib = await freshLib();
+
+        // 一张新照片，只转方向
+        await lib.setInboxMeta(['keep.jpg'], { rotation: 90 });
+        let res = await lib.listInboxFiles();
+        expect(res.files[0].rotation).toBe(90);
+        expect(res.files[0].imported).toBe(false);
+
+        // 再只标已录入
+        await lib.setInboxMeta(['keep.jpg'], { imported: true });
+        res = await lib.listInboxFiles();
+        expect(res.files[0].imported).toBe(true);
+        expect(res.files[0].rotation).toBe(90);
     });
 });
 

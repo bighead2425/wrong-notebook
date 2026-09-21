@@ -7,7 +7,7 @@ import { createLogger } from "@/lib/logger";
 import {
     deleteInboxFiles,
     listInboxFiles,
-    markImported,
+    setInboxMeta,
 } from "@/lib/scan-inbox";
 
 const logger = createLogger("api:scan-inbox");
@@ -55,9 +55,20 @@ export async function POST(req: Request) {
         const names = Array.isArray(body?.names) ? body.names : [];
         if (!names.length) return badRequest("Missing field: names");
 
-        const n = await markImported(names);
-        logger.info({ count: n }, "收件箱文件标记为已导入");
-        return NextResponse.json({ ok: true, imported: n });
+        /**
+         * 两个字段刻意**分开校验**而不是照单全收：
+         * 前端把 "0"、null、undefined 混着传进来的情况太多了，这里只认真正的
+         * boolean / number，其余一律当"没提这个要求"，免得把已录入的照片误标回"新"。
+         */
+        const patch: { imported?: boolean; rotation?: number } = {};
+        if (typeof body?.imported === "boolean") patch.imported = body.imported;
+        if (typeof body?.rotation === "number" && Number.isFinite(body.rotation)) {
+            patch.rotation = body.rotation;
+        }
+
+        const n = await setInboxMeta(names, patch);
+        logger.info({ count: n, ...patch }, "更新收件箱文件属性");
+        return NextResponse.json({ ok: true, updated: n });
     } catch (err) {
         logger.error({ error: String(err) }, "标记已导入失败");
         return internalError("Failed to mark files as imported");
