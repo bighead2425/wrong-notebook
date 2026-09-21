@@ -41,6 +41,7 @@ import { ScanInboxBar } from "@/components/scan-inbox-bar";
 import {
     createBurstSession, noteBurstShot, noteBurstResult, burstDone, type BurstSession,
 } from "@/lib/burst-session";
+import { countWillBeLost } from "@/lib/batch-queue";
 import {
     Upload, X, Check, Sparkles, ArrowLeft, Trash2, Layers, PenLine, Camera,
     Loader2, Inbox, SquareCheck, Eraser, ScanSearch,
@@ -298,9 +299,18 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
         setActiveId(added[added.length - 1].id);
     }, [initialFiles]);
 
-    /** 退出前拦一道：没入库的图退出即丢，不能一声不响 */
+    /**
+     * 退出前拦一道：没入库的图退出即丢，不能一声不响。
+     *
+     * 【custom-v34 修 bug】原先数的是 `status !== "saved"`，把**已经加工过的待处理原图**
+     * 也算进去了。那批原图只是"留着以便再拆一道"的备份（treated 标记，界面上是灰的），
+     * 它们加工出的预处理图在下面的计数里已经有了 —— 于是"2 张原图各裁一道、两道都成功入库"
+     * 之后，仍然会弹"还有 2 张没入库"（用户实测报的就是这个）。
+     * 现在口径收紧为：**还没变成任何成品、且自己也没入库的图，才算"会丢"**。
+     */
     const requestExit = () => {
-        const unsaved = items.filter(i => i.status !== "saved").length;
+        // 判定规则抽在 lib/batch-queue 里（纯函数 + 单测钉住），这里只负责弹窗
+        const unsaved = countWillBeLost(items);
         if (unsaved > 0) {
             const msg = (t.common.batch?.confirmExit
                 || "还有 {n} 张没入库，退出后这些图就没了（图片只存在当前页面）。确定退出？")
@@ -546,6 +556,15 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                 added,
             ]);
             setActiveId(added.id); // 选中落到刚加工出的结果图：缩略图高亮跟着走，不会停在已变灰的原图上
+            /**
+             * 【custom-v34】刚加工好的这张**自动勾上**。
+             *
+             * 用户的动线是"加工一道 → 送一道"：美化完的图一定是要送 AI 的，
+             * 却每次都要再点一下勾选框 —— 而"没勾"和"勾了"在缩略图上只差左上角一个小方块，
+             * 漏勾的后果是点了「送 AI」却一张都没送去。
+             * 默认勾上是顺着动线走；不想要的（比如这张不进题库）自己取消即可。
+             */
+            setSelectedIds(prev => new Set(prev).add(added.id));
         } else {
             if (target) URL.revokeObjectURL(target.previewUrl);
             setItems(prev => prev.map(it => it.id === id ? {
@@ -599,6 +618,12 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             ...added,
         ]);
         setActiveId(added[added.length - 1]?.id ?? (keepOriginal ? editingId : null));
+        // 同 handleCropComplete：绿框拆出来的这几道也是"马上要送 AI 的"，一并勾上
+        if (added.length) setSelectedIds(prev => {
+            const next = new Set(prev);
+            for (const a of added) next.add(a.id);
+            return next;
+        });
         setEditingId(null);
         setStage("queue");
     };
@@ -632,6 +657,8 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
 
         let okCount = 0;
         let canceled = false;
+        /** 【custom-v34】跑成功的那些，收尾时要把它们的勾去掉（失败的留着，见函数末尾） */
+        const succeededIds: string[] = [];
         for (let k = 0; k < targets.length; k++) {
             if (cancelRef.current) { canceled = true; break; }
             const it = targets[k];
@@ -704,18 +731,20 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                     error: undefined,
                 } : x));
                 okCount++;
-            } catch (e: any) {
+                succeededIds.push(it.id);
+            } catch (e) {
                 // 用户点了「取消剩余」：别把这张半途停下的图标成「AI 失败」，
                 // 保持它原来的样子（未送 / 已录），免得白挨一个红标
                 if (cancelRef.current) { canceled = true; break; }
+                const msg = e instanceof Error ? e.message : String(e);
                 frontendLogger.error('[BatchAnalyze]', 'One image failed', {
                     id: it.id,
-                    error: e?.message || String(e),
+                    error: msg,
                 });
                 setItems(prev => prev.map(x => x.id === it.id ? {
                     ...x,
                     status: "error" as BatchStatus,
-                    error: e?.message || String(e),
+                    error: msg,
                 } : x));
             }
         }
@@ -727,8 +756,20 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
         setAttempt(0);
         setCanceling(false);
         cancelRef.current = false;
-        // 跑完清空勾选：免得手滑把同一批再送一遍，白烧 token
-        setSelectedIds(new Set());
+        /**
+         * 【custom-v34】跑完只把**分析成功的**取消勾选，失败的保留勾选。
+         *
+         * 原先是无差别清空（"免得手滑把同一批再送一遍"）。但用户的实际动线是：
+         * 批量跑完 → 看哪几张失败了 → 再送一次。无差别清空等于每次都要求用户
+         * 把失败的那几张**重新一张张找出来再勾上** —— 而那几张恰恰是最需要重送的。
+         * 现在成功的（已经进审阅流程）取消勾选，失败的留在勾上，重送就是一次点击。
+         * 被「取消剩余」打断的那几张也保留勾选：它们同样还没被分析过。
+         */
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            for (const id of succeededIds) next.delete(id);
+            return next;
+        });
         frontendLogger.info('[BatchAnalyze]', 'Batch finished', {
             total: targets.length, ok: okCount, canceled,
         });
@@ -788,8 +829,10 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             setSavedCount(c => c + 1);
             // 不递增索引：当前项已变 saved，会从 readyItems 里移除，
             // 原索引位置自然就是下一道。
-        } catch (e: any) {
-            frontendLogger.error('[BatchSave]', 'Save failed', { error: e?.message || String(e) });
+        } catch (e) {
+            frontendLogger.error('[BatchSave]', 'Save failed', {
+                error: e instanceof Error ? e.message : String(e),
+            });
             alert(t.common?.messages?.saveFailed || "保存失败");
         }
     };

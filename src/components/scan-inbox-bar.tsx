@@ -322,13 +322,17 @@ export function ScanInboxBar({
             <div className="space-y-2">
                 {/* 【custom-v32】这两个按钮按首页那四个（批量上传 / 查看题册 / 标签管理 / 统计中心）
                     的尺寸来：h-11 + text-sm + 16px 简笔画。原先又大一圈、还同时挂了 emoji 和简笔画
-                    （emoji 已从文案里去掉，只留简笔画）。 */}
+                    （emoji 已从文案里去掉，只留简笔画）。
+                    【custom-v34】宽度改为"按内容自适应 + 左右内边距"，不再 flex-1 撑满：
+                    原来第一个按钮 flex-1 会一直撑到容器右边缘，第二个按钮就被挤到下一行、
+                    或者两者之间空出一大截。现在两个都是内容宽度，窄屏也尽量并在同一行
+                    （flex-wrap 兜底，实在放不下才换行）。 */}
                 <div className="flex flex-wrap items-center gap-3">
                     <button
                         type="button"
                         disabled={disabled || newFiles.length === 0}
                         onClick={() => doImport(newFiles.map(f => f.name))}
-                        className="h-11 text-sm flex-1 min-w-[200px] flex items-center justify-center gap-2 rounded-md border border-dashed border-primary/60 font-medium text-primary shadow-sm transition-all hover:bg-primary/5 hover:shadow-md disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:shadow-sm"
+                        className="h-11 text-sm px-4 flex items-center justify-center gap-2 rounded-md border border-dashed border-primary/60 font-medium text-primary shadow-sm transition-all hover:bg-primary/5 hover:shadow-md disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:shadow-sm"
                     >
                         {working
                             ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" />

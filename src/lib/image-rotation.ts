@@ -41,6 +41,20 @@ export function rotatedSize(w: number, h: number, deg: number): { w: number; h: 
     return r === 90 || r === 270 ? { w: h, h: w } : { w, h };
 }
 
+/**
+ * 【custom-v34】转 90° 之后，**画布**该用什么尺寸。
+ *
+ * 与 rotatedSize(w,h,90) 是同一件事，单独给它一个名字是因为它承担一个明确的约束：
+ * 裁剪窗里有两张画布（原始基准图 origCanvas 与工作画布 workCanvas），转的时候
+ * **两张都得换成这个尺寸**。曾经只换了原图、工作画布留在旧尺寸上 ——
+ * redrawWork 把转后的图往旧尺寸画布里画，多出来的部分被直接裁掉，
+ * 界面上就是"转一下图片被截成了方形"。所以这里把它单独拎出来，
+ * 用一句话把"两张画布共用同一个尺寸"这个不变量写下来，并由单测钉住。
+ */
+export function rotateCanvasSize(w: number, h: number): { w: number; h: number } {
+    return { w: h, h: w };
+}
+
 export interface Rect {
     x: number;
     y: number;

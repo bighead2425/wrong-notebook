@@ -5,10 +5,10 @@ import { createPortal } from "react-dom";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
-import { rotatePointCCW, rotateRectCCW } from "@/lib/image-rotation";
+import { rotateCanvasSize, rotatePointCCW, rotateRectCCW } from "@/lib/image-rotation";
 
 interface ImageCropperProps {
     imageSrc: string;
@@ -310,9 +310,6 @@ export function ImageCropper({
     // 说明弹窗显隐
     const [showHelp, setShowHelp] = useState(false);
 
-    // ===== 对话框拖拽位移（按住标题栏拖动） =====
-    const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
-
     // ===== 拉伸：把当前图送进拍摄扫描器，拖四角拉正 + 漂白/黑白 =====
     // 解决"照片本身拍歪了"——进编辑器后仍能补救（问题③）。
     const [stretchOpen, setStretchOpen] = useState(false);
@@ -323,42 +320,8 @@ export function ImageCropper({
         setPortalReady(true);
     }, []);
 
-    /**
-     * 按住标题栏拖动对话框。
-     * 监听挂在 window 上（而不是标题栏自身），这样指针移出标题栏也能继续拖，不会「拖到一半卡住」。
-     * 同时做边界保护：至少保留 80px 在视口内，避免把对话框拖丢找不回来。
-     */
-    const startDialogDrag = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-        if (e.button !== 0) return; // 仅左键
-        const dlg = e.currentTarget.closest('[role="dialog"]') as HTMLElement | null;
-        const rect = dlg?.getBoundingClientRect();
-        const start = dragOffset ?? { x: 0, y: 0 };
-        const fromX = e.clientX;
-        const fromY = e.clientY;
-        const MARGIN = 80;
-        const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
-
-        const onMove = (ev: PointerEvent) => {
-            let dx = start.x + (ev.clientX - fromX);
-            let dy = start.y + (ev.clientY - fromY);
-            if (rect) {
-                // rect 是「已含当前偏移」的视觉位置，减去偏移得到未变换的基准位置
-                const baseLeft = rect.left - start.x;
-                const baseTop = rect.top - start.y;
-                dx = clamp(dx, -(baseLeft + rect.width - MARGIN), window.innerWidth - MARGIN - baseLeft);
-                dy = clamp(dy, -(baseTop + rect.height - MARGIN), window.innerHeight - MARGIN - baseTop);
-            }
-            setDragOffset({ x: dx, y: dy });
-        };
-        const onUp = () => {
-            window.removeEventListener("pointermove", onMove);
-            window.removeEventListener("pointerup", onUp);
-            window.removeEventListener("pointercancel", onUp);
-        };
-        window.addEventListener("pointermove", onMove);
-        window.addEventListener("pointerup", onUp);
-        window.addEventListener("pointercancel", onUp);
-    }, [dragOffset]);
+    // 【custom-v34】原先这里还有一套"按住标题栏拖动对话框"的实现。
+    // 对话框改成整屏铺满之后没有可拖的余地，已整套撤掉（省掉一个状态和三个 window 监听）。
 
     // ============================================================
     //  初始化 / 重置
@@ -383,8 +346,6 @@ export function ImageCropper({
         lastCropRectRef.current = null;
         // 新一轮加载的就是原始整页 → 坐标系重新成立
         rectSpaceStaleRef.current = false;
-        // 每次打开都复位拖拽位置，避免沿用上一次的偏移
-        setDragOffset(null);
     }, [open, imageSrc]);
 
     // 对话框打开后加载原图并初始化画布（不再依赖 <img> 的 onLoad）
@@ -912,25 +873,37 @@ export function ImageCropper({
         const srcH = wc.height;
         if (!srcW || !srcH) return;
 
-        /** 复制一份转好的画布：长宽对调，用矩阵一次把"逆时针 90°"写进去 */
+        /**
+         * 复制一份转好的画布：长宽对调，用矩阵一次把"逆时针 90°"写进去。
+         *
+         * ⚠️【custom-v34 修 bug】尺寸必须走 rotateCanvasSize（长宽对调），而且
+         * **原图与工作画布两张都要换**。曾经只换了原图、忘了换工作画布 →
+         * redrawWork 把"转后 H×W"的图往"旧 W×H"的画布里画，右边/下边直接被裁掉，
+         * 看上去就像"转一下图被截成了正方形"，而且再怎么转都救不回来（只有「原图」键能恢复）。
+         */
         const turn = (src: HTMLCanvasElement): HTMLCanvasElement | null => {
+            const size = rotateCanvasSize(src.width, src.height);
             const nc = document.createElement("canvas");
-            nc.width = src.height;
-            nc.height = src.width;
+            nc.width = size.w;
+            nc.height = size.h;
             const ctx = nc.getContext("2d");
             if (!ctx) return null;
             // setTransform(a,b,c,d,e,f) 对应 x' = a·x + c·y + e，y' = b·x + d·y + f。
-            // 取 (0,-1,1,0,0,srcW) 即 x'=y、y'=srcW−x —— 正是视觉上的逆时针 90°。
-            ctx.setTransform(0, -1, 1, 0, 0, srcW);
+            // 取 (0,-1,1,0,0,src.width) 即 x'=y、y'=src.width−x —— 正是视觉上的逆时针 90°。
+            // 平移量用**这张画布自己的宽**：两张画布的尺寸未必相同，用外面那张的宽会直接错位。
+            ctx.setTransform(0, -1, 1, 0, 0, src.width);
             ctx.drawImage(src, 0, 0);
             return nc;
         };
 
         const noc = turn(oc);
-        if (!noc) return;
+        const nwc = turn(wc);
+        if (!noc || !nwc) return;
         origCanvasRef.current = noc;
-        // 工作画布不单独转：下面 redrawWork() 会拿"新基准图 + 已搬过家的擦除痕迹"重放，
-        // 结果与直接转 workCanvas 一致，但少一条容易不同步的路径
+        // 工作画布也一起换成转好的那份（尺寸随之对调）。下面 redrawWork() 会拿
+        // "新基准图 + 已搬过家的擦除痕迹"重放，结果与直接留用它一致，
+        // 但尺寸必须先对上，否则就是上面注释里那个被裁成方形的 bug。
+        workCanvasRef.current = nwc;
         shapesRef.current = shapesRef.current.map((s) =>
             s.kind === "rect"
                 ? { kind: "rect" as const, ...rotateRectCCW({ x: s.x, y: s.y, w: s.w, h: s.h }, srcW) }
@@ -1744,44 +1717,24 @@ export function ImageCropper({
                     // relative 与基类的 fixed 同组冲突，会把 fixed 挤掉，
                     // 导致对话框掉进文档流被排到页面下方（「偏下且拖不上来」的根因）。
                     // 需要绝对定位基准时，基类的 fixed 本身就已提供。
-                    // 固定窗口：高度恒为 90dvh、宽度上限 1024px（max-w-5xl）。
-                    // 基类自带 w-full，所以手机上宽度仍是全屏，只有桌面才被 1024px 封顶。
-                    // 图片区是 flex-1，窗口不会随图片大小（尤其裁剪后的窄条）变化。
-                    "max-w-5xl h-[90dvh] flex flex-col p-0 gap-0 overflow-hidden",
-                    dragOffset && "translate-x-0 translate-y-0",
+                    //
+                    // 【custom-v34】改成**整屏铺满**：编辑期间用户本来也点不到对话框背后
+                    // （基类的 DialogOverlay 全屏盖着），留出四周黑边和标题栏只是白白浪费面积。
+                    // 图片才是主角，面积全给它。尺寸写法与收件箱的照片预览页保持一致。
+                    "max-w-none h-[100dvh] sm:rounded-none flex flex-col p-0 gap-0 overflow-hidden [&>button]:hidden",
                 )}
-                style={
-                    dragOffset
-                        ? {
-                              left: `calc(50% + ${dragOffset.x}px)`,
-                              top: `calc(50% + ${dragOffset.y}px)`,
-                              transform: "translate(-50%, -50%)",
-                          }
-                        : undefined
-                }
             >
-                <DialogHeader
-                    className="p-4 border-b shrink-0 cursor-move select-none"
-                    onPointerDown={startDialogDrag}
-                >
-                    <DialogTitle>
-                        {t.common.cropper?.title || "Crop Image"}
-                        {/* 【custom-v22 循环模式】本页进度：录了几道、已抠区域怎么标 */}
-                        {loopCount !== undefined && (
-                            <span className="ml-2 text-sm font-normal text-muted-foreground">
-                                {t.common.cropper?.loopProgress
-                                    ? t.common.cropper.loopProgress.replace("{n}", String(loopCount))
-                                    : `本页已录 ${loopCount} 道`}
-                            </span>
-                        )}
-                    </DialogTitle>
-                    {/* 只在**确实画了绿框**时才解释绿框是什么意思 */}
-                    {(loopCount ?? 0) > 0 && doneRects && doneRects.length > 0 && (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                            {t.common.cropper?.loopHint || "绿色框是已录入的题，避开它们框下一道；保存后会自动回到本页"}
-                        </p>
-                    )}
-                </DialogHeader>
+                {/* 标题栏（含"裁剪图片"四个字与"本页已录 N 道"）已按用户要求撤掉 —— 腾给图片。
+                    但 Radix 的 Dialog 需要 Title 才能正确播报，所以留一个只读屏的标题；
+                    本页进度挪到底部操作条里，紧挨「原图 / 取消 / 确认」。 */}
+                <DialogTitle className="sr-only">
+                    {t.common.cropper?.title || "Crop Image"}
+                    {loopCount !== undefined
+                        ? `　${(t.common.cropper?.loopProgress
+                            ? t.common.cropper.loopProgress.replace("{n}", String(loopCount))
+                            : `本页已录 ${loopCount} 道`)}`
+                        : ""}
+                </DialogTitle>
 
                 {/* ===== 工具栏 ===== */}
                 {/* 【custom-v24】左上角“模式”二字已按用户要求撤掉 —— 图标型方框按钮本身就是模式开关，不需要再挂一个栏目标题。 */}
@@ -1796,8 +1749,10 @@ export function ImageCropper({
                         {t.common.cropper?.modeLabel || "区域标注"}
                     </button>
 
-                    {/* 【custom-v33】整页逆时针转 90°（用户指定的位置：📊框 之后、🧭移 之前）。
-                        每点一次转 90°，转完自动适应窗口。 */}
+                    {/* 【custom-v33】整页逆时针转 90°（用户指定的位置：📊框 之后）。
+                        【custom-v34】原先跟在这里的「🧭移」已按用户要求挪到底部操作条，
+                        并改名为「平移」—— 上面这一排全是对图片的**加工**，只有它不是，
+                        所以不该混在里面。 */}
                     <button
                         type="button"
                         className={btn(false)}
@@ -1806,15 +1761,6 @@ export function ImageCropper({
                         title="整页逆时针转 90°（再点一次继续转）"
                     >
                         {t.common.cropper?.rotate || "🔄转"}
-                    </button>
-
-                    <button
-                        type="button"
-                        className={btn(panMode)}
-                        onClick={() => setPanMode((v) => !v)}
-                        title="开启后鼠标左键仅用于平移图片（也可随时按住右键拖拽平移）"
-                    >
-                        {t.common.cropper?.pan || "平移"}
                     </button>
 
                     {/* 拉伸：进编辑器后才发现照片拍歪了的补救入口（问题③）。
@@ -2077,7 +2023,7 @@ export function ImageCropper({
                             正在分析…编辑已保留；若失败可直接再点「确定」重试
                         </p>
                     )}
-                    <div className="flex justify-between items-center gap-4">
+                    <div className="flex flex-wrap justify-between items-center gap-x-4 gap-y-2">
                         <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); setShowHelp(true); }}
@@ -2085,7 +2031,39 @@ export function ImageCropper({
                         >
                             {t.common.cropper?.help || "说明 ⓘ"}
                         </button>
-                        <div className="flex gap-2 shrink-0">
+                        {/* 【custom-v34】原来挂标题栏上的「本页已录 N 道」挪到这里 ——
+                            标题栏已撤掉，而这个进度在「循环录题」模式下是唯一的进度锚点，
+                            不能跟着一起消失。绿框说明收进 title，不占地方。 */}
+                        {(loopCount ?? 0) > 0 && (
+                            <span
+                                className="text-xs text-muted-foreground truncate min-w-0"
+                                title={t.common.cropper?.loopHint
+                                    || "绿色框是已录入的题，避开它们框下一道；保存后会自动回到本页"}
+                            >
+                                {t.common.cropper?.loopProgress
+                                    ? t.common.cropper.loopProgress.replace("{n}", String(loopCount))
+                                    : `本页已录 ${loopCount} 道`}
+                            </span>
+                        )}
+                        {/* 【custom-v34】按钮从 3 个变 4 个（多了「平移」），窄屏会挤出边界 →
+                            让这一排允许换行。对话框现在是整屏的，宽度就是手机屏宽，
+                            这一排必须自己会折行，不能指望有富余。 */}
+                        <div className="flex flex-wrap justify-end gap-2 shrink-0">
+                            {/* 【custom-v34】原在工具栏最右的「🧭移」挪到这里并改名「平移」：
+                                它不是对图片的加工，只是"鼠标左键用来做什么"的临时开关，
+                                放在加工按钮那一排里既容易误触、又拉长了那一排。 */}
+                            <Button
+                                variant="outline"
+                                onClick={() => setPanMode((v) => !v)}
+                                disabled={analyzing}
+                                aria-pressed={panMode}
+                                title="开启后鼠标左键仅用于平移图片（也可随时按住右键拖拽平移）"
+                                className={panMode
+                                    ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground"
+                                    : undefined}
+                            >
+                                {t.common.cropper?.pan || "平移"}
+                            </Button>
                             <Button variant="outline" onClick={resetToOriginal} disabled={analyzing}>
                                 {t.common.cropper?.original || "原图"}
                             </Button>
@@ -2115,7 +2093,7 @@ export function ImageCropper({
                                 <li>{t.common.cropper?.hintErase || "🧽擦：🖍️ 按住涂抹即擦掉（涂白）；🟧 拖框后按 Delete 或点 🗑️。🔙 撤销"}</li>
                                 <li>{t.common.cropper?.hintLabel || "📊框：先选 题🟥 或 答🟦，再在图上拖框；点边框附近即选中该框"}</li>
                                 <li>{t.common.cropper?.hintRegion || "区🟩 一个框 = 一道题：重叠的绿框自动合并；确认时每个区各裁一块分别送 AI，框外不要"}</li>
-                                <li>🔍 手机：双指捏合缩放、双指拖动平移（图片或黑底上均可）｜ 电脑：滚轮以鼠标为中心缩放、按住右键拖拽平移、也可开「🧭移」开关用左键平移、双击放大/复位</li>
+                                <li>🔍 手机：双指捏合缩放、双指拖动平移（图片或黑底上均可）｜ 电脑：滚轮以鼠标为中心缩放、按住右键拖拽平移、也可开下方的「平移」开关用左键平移、双击放大/复位</li>
                             </ul>
                             <div className="mt-2 text-xs text-muted-foreground">（点击任意位置关闭）</div>
                         </div>

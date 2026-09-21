@@ -27,6 +27,18 @@
  *
  * · 图片用 `<img>` + CSS transform 而不是 canvas：这里只需要"看"，不需要改像素。
  *   旋转交给 CSS 的 rotate，缩放平移交给外层容器的 transform，两者互不干扰。
+ *
+ * ── 【custom-v34】按设备分工的两套翻页/缩放方式 ──────────────────
+ *
+ * · **电脑**：左右两侧各一个半透明圆圈（鼠标移进图片区才淡入），点它等同"上一张/下一张"；
+ *   双击放大 ↔ 复位。鼠标拖动始终是平移。
+ * · **手机**：屏幕上**不出现**那两个圆圈，改成单指横扫 —— 从右往左划看下一张、
+ *   从左往右划看上一张；双击放大 / 再双击复位；双指仍是捏合缩放。
+ *   两者都靠 `pointerType === "touch"` 分流，互相不干扰。
+ *
+ * 横扫的判据见 onPointerMove：不看"划了多远"，而看"有多少被边界吃掉了"。
+ * 这样一条规则同时管住两种情况 —— 图适应大小时随手一划就翻页，
+ * 图放大后要"划到头再接着划"才翻页，中间区域仍是老老实实的平移。
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -83,6 +95,14 @@ const MAX_ZOOM = 8;
 const FIT_PAD = 16;
 const FIT_MAX = 2;
 
+/** 【custom-v34】手机端手势的三个阈值：横扫翻页的距离、双击允许的手指抖动、双击的时间窗 */
+const SWIPE_PX = 70;
+const TAP_SLOP = 24;
+const DOUBLE_TAP_MS = 320;
+/** 双击放大到"当前的多少倍" —— 按当前显示倍数放大，而不是写死绝对倍率：
+ *  大图适应窗口后可能是 0.3 倍，写死 2 倍反而会缩小。 */
+const DOUBLE_TAP_FACTOR = 2.5;
+
 /** 工具栏图标按钮的统一长相 */
 const iconBtn =
     "h-9 w-9 shrink-0 inline-flex items-center justify-center rounded-md border bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50 disabled:hover:bg-background disabled:hover:text-muted-foreground";
@@ -126,6 +146,20 @@ export function InboxImageViewer({
     const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
     const pinchRef = useRef<{ dist: number; midX: number; midY: number } | null>(null);
     const panDragRef = useRef<{ sx: number; sy: number; px: number; py: number } | null>(null);
+
+    /* 【custom-v34】手机端手势：单指横扫切照片、双击放大/复位。
+     * 两者都只在 `pointerType === "touch"` 时生效 —— 电脑端有左右按钮和滚轮，
+     * 不该让鼠标拖动变成"翻页"，也不该让双击和滚轮抢。
+     * swipeRef 兼作"这一指是不是原地点击"的判据（看走了多远）。 */
+    const swipeRef = useRef<{ sx: number; sy: number } | null>(null);
+    const lastTapRef = useRef<{ t: number; x: number; y: number } | null>(null);
+    /** 触摸设备（没有 hover 能力）上不显示左右那两个半透明圆圈 —— 手机用滑动翻页 */
+    const [touchOnly, setTouchOnly] = useState(false);
+
+    useEffect(() => {
+        if (typeof window === "undefined" || !window.matchMedia) return;
+        setTouchOnly(window.matchMedia("(hover: none)").matches);
+    }, []);
     /**
      * 是否仍处于「自动适应」状态（与 image-cropper 同一套判断）。
      * 用户一旦自己缩放/平移就退出自动适应 —— 否则手机收个地址栏、窗口高度变一下，
@@ -300,7 +334,13 @@ export function InboxImageViewer({
 
         // 右键 / 中键：平移（左键同样平移 —— 这里没有绘制功能，不需要区分工具）
         if (e.button === 0 || e.button === 1 || e.button === 2) {
-            autoFitRef.current = false; // 用户手动平移，退出「自动适应」
+            // 【custom-v34】这里**不再**立刻把 autoFitRef 关掉：单纯点一下（尤其手机上
+            // 双击放大的第一下）不该被当成"用户自己调过视角"，否则收个地址栏、转个屏
+            // 就不再自动适应了。改成"真的发生位移时才关"（见 onPointerMove）。
+            // 触摸时顺手记下起手位置：判断这一指是"划"（翻页）还是"点"（双击）。
+            swipeRef.current = e.pointerType === "touch"
+                ? { sx: e.clientX, sy: e.clientY }
+                : null;
             panDragRef.current = {
                 sx: e.clientX,
                 sy: e.clientY,
@@ -334,15 +374,78 @@ export function InboxImageViewer({
 
         if (panDragRef.current) {
             const pd = panDragRef.current;
-            applyView(zoomRef.current, {
-                x: pd.px + (e.clientX - pd.sx),
-                y: pd.py + (e.clientY - pd.sy),
-            });
+            const wantX = pd.px + (e.clientX - pd.sx);
+            const wantY = pd.py + (e.clientY - pd.sy);
+            autoFitRef.current = false; // 真的拖动过了，退出「自动适应」
+            applyView(zoomRef.current, { x: wantX, y: wantY });
+
+            /**
+             * 【custom-v34】手机端单指横扫切换照片。
+             *
+             * 判据不是"划了多少"，而是"有多少被边界吃掉了"（overshoot）——
+             * applyView 会把平移量夹在边界内，所以「想要的位移 − 实际得到的位移」
+             * 正好是"顶到边还在继续推"的那部分。这一条规则同时覆盖两种情况：
+             *   · 图处于适应大小（比屏幕小、根本推不动）：横向拖动被全额吃掉，
+             *     划够 SWIPE_PX 即翻页；
+             *   · 图被放大过、已经推到最右/最左：再同方向继续推才翻页 ——
+             *     这正是看大图时"划到头接着划就翻页"的习惯动作，
+             *     而中间区域照常是平移，不会误翻。
+             * 另要求横向明显大于纵向（1.5 倍），免得斜着拖被误判成翻页。
+             */
+            if (e.pointerType === "touch" && swipeRef.current) {
+                const sw = swipeRef.current;
+                const overshoot = wantX - panRef.current.x;
+                const dx = e.clientX - sw.sx;
+                const dy = e.clientY - sw.sy;
+                if (Math.abs(dx) > Math.abs(dy) * 1.5 && Math.abs(overshoot) > SWIPE_PX) {
+                    swipeRef.current = null; // 一次手势只翻一张，免得一划到底连翻好几张
+                    lastTapRef.current = null;
+                    panDragRef.current = null;
+                    // overshoot < 0 = 手指向左划 = 看下一张（与用户指定的方向一致）
+                    goStep(overshoot < 0 ? 1 : -1);
+                    return;
+                }
+            }
         }
     };
 
     const onPointerUp = (e?: React.PointerEvent<HTMLDivElement>) => {
-        if (e) pointersRef.current.delete(e.pointerId);
+        if (e) {
+            pointersRef.current.delete(e.pointerId);
+            /**
+             * 【custom-v34】手机端双击 = 放大 / 复位。
+             *
+             * 为什么要自己判双击：视口上有 `touch-action: none` 且 pointerdown 里
+             * preventDefault，浏览器合成的 dblclick 在触屏上基本不触发；就算触发，
+             * 也带不出准确定位。所以用"两次间隔够短 + 两次落点够近 + 两下都没怎么移动"来判。
+             * 划动过的手势走不进这里（moved 超过容差就直接清掉计时）。
+             */
+            if (e.pointerType === "touch") {
+                const sw = swipeRef.current;
+                const moved = sw ? Math.hypot(e.clientX - sw.sx, e.clientY - sw.sy) : 999;
+                swipeRef.current = null;
+                const last = lastTapRef.current;
+                if (
+                    moved < TAP_SLOP && last &&
+                    Date.now() - last.t < DOUBLE_TAP_MS &&
+                    Math.abs(e.clientX - last.x) < TAP_SLOP &&
+                    Math.abs(e.clientY - last.y) < TAP_SLOP
+                ) {
+                    lastTapRef.current = null;
+                    const fitZ = computeFitZoom();
+                    // 本来就在适应大小 → 按当前倍数放大；否则一律回到适应大小
+                    if (Math.abs(zoomRef.current - fitZ) < 0.02 * Math.max(1, fitZ)) {
+                        zoomAt(fitZ * DOUBLE_TAP_FACTOR, e.clientX, e.clientY);
+                    } else {
+                        fitView();
+                    }
+                } else if (moved < TAP_SLOP) {
+                    lastTapRef.current = { t: Date.now(), x: e.clientX, y: e.clientY };
+                } else {
+                    lastTapRef.current = null;
+                }
+            }
+        }
         if (pointersRef.current.size < 2) pinchRef.current = null;
         if (pointersRef.current.size === 0) panDragRef.current = null;
     };
@@ -366,16 +469,53 @@ export function InboxImageViewer({
         saveMeta(cur.name, { imported: !cur.imported });
     };
 
-    const doDownload = () => {
+    /**
+     * 下载 / 保存这张照片。
+     *
+     * 【custom-v34】手机端原来点了"没反应" —— 这是浏览器的限制，不是没写对：
+     * 手机浏览器普遍忽略 `<a download>`（iOS Safari 直接把它当导航、把图片打开在
+     * 新标签里，什么都不落盘；Android 也大多没有任何可见反馈），而网页**没有权限**
+     * 直接往相册里写。能触达相册的唯一正路是**系统分享面板**（那里才有"存储到图像 /
+     * 保存到文件"）。所以手机端先走 navigator.share 交文件；分享不可用再退回浏览器
+     * 下载，并明确告诉用户去哪儿找。电脑端保持原样 —— 那边 `<a download>` 是好用的，
+     * 弹的是"另存为"对话框，比分享面板顺手。
+     */
+    const doDownload = async () => {
         if (!cur) return;
-        // 同源 + 带登录态：交给浏览器走它自己的下载流程
-        // （电脑端弹"另存为"，手机端落到下载目录，用户再从那儿存进相册）
+        const url = `/api/scan-inbox/file?name=${encodeURIComponent(cur.name)}`;
+        const isTouch = touchOnly
+            || (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0);
+
+        if (isTouch && typeof navigator !== "undefined" && navigator.share) {
+            try {
+                const res = await fetch(url);
+                if (res.ok) {
+                    const blob = await res.blob();
+                    const file = new File([blob], cur.name, { type: blob.type || "image/jpeg" });
+                    const data: ShareData = { files: [file] };
+                    if (navigator.canShare?.(data)) {
+                        await navigator.share(data);
+                        return; // 已经交给系统面板（存相册 / 存文件都在那里），不再重复下载
+                    }
+                }
+            } catch (err) {
+                // 用户自己把分享面板划掉不算失败，静默结束
+                if ((err as { name?: string } | null)?.name === "AbortError") return;
+                // 其它情况（浏览器不支持带文件的分享等）→ 往下走浏览器下载这条路兜底
+            }
+        }
+
         const a = document.createElement("a");
-        a.href = `/api/scan-inbox/file?name=${encodeURIComponent(cur.name)}`;
+        a.href = url;
         a.download = cur.name;
         document.body.appendChild(a);
         a.click();
         a.remove();
+        // 手机上这条路大概率是"静默的"（点了像没反应），所以给一句明确交代
+        if (isTouch) {
+            alert(s.viewerDownloadHint
+                || "已交给浏览器下载。手机上如果相册里没有，请到「文件 / 下载」里找。");
+        }
     };
 
     const doDelete = async () => {
@@ -433,11 +573,14 @@ export function InboxImageViewer({
 
     const disp = rotatedSize(nat.w, nat.h, rot);
 
+    /* 【custom-v34】状态按钮上的字改成 New / Old（用户指定）：
+       中文两个字、英文一个词，短且等长，按钮不会随状态换宽。
+       网格缩略图角标上仍是「新 / 已导入」—— 那里空间小，中文更省地方。 */
     const statusText = isQueued
         ? (s.badgeQueued || "已在队列")
         : cur.imported
-            ? (s.badgeImported || "已录入")
-            : (s.badgeNew || "新");
+            ? (s.viewerStatusOld || "Old")
+            : (s.viewerStatusNew || "New");
 
     return (
         <Dialog open={open} onOpenChange={(v) => { if (!v) close(); }}>
@@ -452,24 +595,36 @@ export function InboxImageViewer({
 
                 {/* ===== 工具栏 ===== */}
                 <div className="flex items-center gap-2 px-3 py-2 border-b bg-background shrink-0 flex-wrap">
-                    {/* 选中方框：和网格里的那个长得一样，点它同步到父窗口 */}
+                    {/* 选中状态：**方框 + 文字做成一个按钮，宽度钉死**。
+                        原先方框是按钮、文字是旁边的 span，两段文字长短不一
+                        （"未选中" vs "已选中，导入时会带上这张"）—— 点一下就换行宽，
+                        后面那一串按钮跟着左右跳。现在文字收进按钮里、宽度固定，怎么点都不动。 */}
                     <button
                         type="button"
                         onClick={() => onToggleSelect(name)}
-                        className={`h-6 w-6 shrink-0 rounded border-2 flex items-center justify-center transition-colors ${
+                        aria-pressed={isChecked}
+                        className={`h-9 w-[122px] shrink-0 px-2.5 inline-flex items-center justify-start gap-2 rounded-md border text-sm transition-colors ${
                             isChecked
-                                ? "bg-sky-500 border-sky-500 text-white"
-                                : "border-muted-foreground/50 text-transparent hover:border-sky-500"
+                                ? "border-sky-500 bg-sky-500/10 text-sky-600"
+                                : "border-input bg-background text-muted-foreground hover:border-sky-500"
                         }`}
                         title={isChecked ? (s.viewerUnselect || "取消选中") : (s.viewerSelect || "选中")}
                     >
-                        <Check className="h-3.5 w-3.5" />
+                        <span
+                            className={`h-4 w-4 shrink-0 rounded border-2 flex items-center justify-center ${
+                                isChecked
+                                    ? "bg-sky-500 border-sky-500 text-white"
+                                    : "border-muted-foreground/50 text-transparent"
+                            }`}
+                        >
+                            <Check className="h-3 w-3" />
+                        </span>
+                        <span className="truncate">
+                            {isChecked
+                                ? (s.viewerChecked || "已选中")
+                                : (s.viewerUnchecked || "未选中")}
+                        </span>
                     </button>
-                    <span className="text-xs text-muted-foreground">
-                        {isChecked
-                            ? (s.viewerChecked || "已选中，导入时会带上这张")
-                            : (s.viewerUnchecked || "未选中")}
-                    </span>
 
                     <span className="w-px h-5 bg-border mx-1" />
 
@@ -509,7 +664,7 @@ export function InboxImageViewer({
                         title={isQueued
                             ? (s.viewerQueuedHint || "这张已经进了待处理队列，状态改不了了")
                             : (s.viewerStatusHint || "点一下，在「新照片」和「已录入」之间切换")}
-                        className={`h-9 px-3 shrink-0 inline-flex items-center gap-1.5 rounded-md border text-sm transition-colors disabled:opacity-70 ${
+                        className={`h-9 min-w-[68px] px-3 shrink-0 inline-flex items-center justify-center gap-1.5 rounded-md border text-sm transition-colors disabled:opacity-70 ${
                             isQueued
                                 ? "bg-teal-600 border-teal-600 text-white"
                                 : cur.imported
@@ -564,7 +719,7 @@ export function InboxImageViewer({
                     onPointerUp={onPointerUp}
                     onPointerCancel={onPointerUp}
                     onContextMenu={(e) => e.preventDefault()}
-                    className="flex-1 min-h-0 bg-black w-full"
+                    className="group flex-1 min-h-0 bg-black w-full"
                     style={{ position: "relative", overflow: "hidden", touchAction: "none", cursor: "grab" }}
                 >
                     <div
@@ -607,6 +762,32 @@ export function InboxImageViewer({
                             }}
                         />
                     </div>
+
+                    {/* 【custom-v34】电脑端左右两侧的"翻页圆圈"：鼠标移进图片区才淡入
+                        （`group-hover`），不抢画面。手机端**不渲染** —— 那边用左右滑动翻页
+                        （见 onPointerMove 的 overshoot 判定），再多两个圆圈只会挡图。
+                        指针事件在这里 stopPropagation：不让点击圆圈顺带起一次平移。 */}
+                    {!touchOnly && count > 1 && (
+                        <>
+                            {([
+                                { d: -1, Icon: ChevronLeft, label: s.viewerPrev || "上一张", pos: "left-3" },
+                                { d: 1, Icon: ChevronRight, label: s.viewerNext || "下一张", pos: "right-3" },
+                            ] as const).map(({ d, Icon, label, pos }) => (
+                                <button
+                                    key={d}
+                                    type="button"
+                                    disabled={busy}
+                                    title={label}
+                                    aria-label={label}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    onClick={() => goStep(d)}
+                                    className={`absolute ${pos} top-1/2 -translate-y-1/2 h-12 w-12 rounded-full bg-black/40 hover:bg-black/70 text-white/90 flex items-center justify-center opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity disabled:opacity-0`}
+                                >
+                                    <Icon className="h-6 w-6" />
+                                </button>
+                            ))}
+                        </>
+                    )}
                 </div>
 
                 {/* ===== 底部：文件名与操作提示 ===== */}

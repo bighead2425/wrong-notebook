@@ -14,6 +14,7 @@ import {
     normalizeRotation,
     rotateCCW,
     rotatedSize,
+    rotateCanvasSize,
     rotatePointCCW,
     rotateRect,
     rotateRectCCW,
@@ -54,6 +55,35 @@ describe('image-rotation：尺寸与坐标', () => {
         expect(rotatedSize(1200, 800, 90)).toEqual({ w: 800, h: 1200 });
         expect(rotatedSize(1200, 800, 180)).toEqual({ w: 1200, h: 800 });
         expect(rotatedSize(1200, 800, 270)).toEqual({ w: 800, h: 1200 });
+    });
+
+    /**
+     * 【custom-v34 回归】转完之后**画布**的尺寸。
+     *
+     * 裁剪窗里有两张画布（原始基准图 + 工作画布），转的时候两张都必须换成
+     * rotateCanvasSize 给出的尺寸。曾经只换了原图、工作画布留在旧尺寸上 ——
+     * redrawWork 把"转后 H×W"的图往"旧 W×H"的画布里画，多出来的部分被直接裁掉，
+     * 界面上就是"转一下图被截成了正方形"，而且再转也救不回来（只有「原图」键能恢复）。
+     *
+     * 这里钉住两个等式：①必须是长宽对调；②两张画布拿到的**必须是同一个尺寸**
+     * （用同一个函数算天然成立 —— 这条断言的价值在于：以后谁想给某一张画布开小灶，
+     * 就得先来解释为什么）。
+     */
+    it('旋转后两张画布（原图 / 工作画布）拿到同一个对调尺寸', () => {
+        const W = 2480;
+        const H = 3508;
+        const orig = rotateCanvasSize(W, H);
+        const work = rotateCanvasSize(W, H);
+        expect(orig).toEqual({ w: H, h: W });
+        expect(work).toEqual(orig);
+        // 与 rotatedSize(w,h,90) 说的是同一件事，两边必须一致（免得日后改岔了）
+        expect(orig).toEqual(rotatedSize(W, H, 90));
+    });
+
+    it('正方形画布转完还是正方形，且面积不变', () => {
+        const s = rotateCanvasSize(1000, 1000);
+        expect(s).toEqual({ w: 1000, h: 1000 });
+        expect(s.w * s.h).toBe(1000 * 1000);
     });
 
     /**
