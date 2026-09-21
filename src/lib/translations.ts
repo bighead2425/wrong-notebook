@@ -104,10 +104,10 @@ export const translations = {
                 finish: "Finish batch",
                 // 【custom-v29】扫描收件箱：手机 App 分享到 NAS 的照片入口
                 inbox: {
-                    hint: "Pictures shared from your phone (Quark Scanner etc.) land in this NAS folder",
-                    quick: "📥 {n} new picture(s) received",
-                    quickNone: "📥 No new pictures in the inbox",
-                    open: "📂 Open inbox ({n})",
+                    hint: "Pictures shared from your phone (Quark Scanner etc.) — or uploaded right here — land in this folder",
+                    quick: "{n} new picture(s) received",
+                    quickNone: "No new pictures in the inbox",
+                    open: "Open inbox ({n})",
                     title: "Scan inbox",
                     desc: "Nothing here is deleted automatically — imported pictures can be pulled again any time; delete them manually when you are done.",
                     total: "{n} picture(s) in total",
@@ -132,6 +132,13 @@ export const translations = {
                     queueFull: "This batch cannot hold {n} more; they stay in the inbox for the next batch",
                     deleteFailed: "Delete failed, please try again",
                     deletePartial: "{n} could not be deleted (permission?)",
+                    // 【custom-v33】从本机（手机相册 / 电脑文件夹）传进收件箱
+                    uploadBtn: "Add photos from this device",
+                    uploadHint: "Opens your photo library on a phone, the file picker on a computer — multi-select is fine",
+                    uploading: "Uploading {i}/{n}…",
+                    uploadDone: "{n} uploaded — pick them below to import",
+                    uploadPartial: "{ok} uploaded, {bad} failed",
+                    uploadNotImage: "Images only (JPG / PNG / WebP); other files were ignored",
                 },
             },
             progress: {
@@ -909,10 +916,10 @@ export const translations = {
                 finish: "结束批量",
                 // 【custom-v29】扫描收件箱：手机 App 分享到 NAS 的照片入口
                 inbox: {
-                    hint: "手机 App（夸克扫描王等）分享到飞牛的照片会落进这个文件夹",
-                    quick: "📥 收到 {n} 张新照片",
-                    quickNone: "📥 收件箱暂无新照片",
-                    open: "📂 打开收件箱（{n}）",
+                    hint: "手机 App（夸克扫描王等）分享进来的、以及在本页直接传上来的照片，都会落进这个文件夹",
+                    quick: "收到 {n} 张新照片",
+                    quickNone: "收件箱暂无新照片",
+                    open: "打开收件箱（{n}）",
                     title: "扫描收件箱",
                     desc: "这里的照片不会被自动删掉，导过的随时能重导；不需要了手动删掉清场。",
                     total: "共 {n} 张",
@@ -937,6 +944,13 @@ export const translations = {
                     queueFull: "这一批已经放不下 {n} 张了，它们还在收件箱里，下一批再导就行",
                     deleteFailed: "删除失败，请稍后再试",
                     deletePartial: "有 {n} 张没删掉（可能没有权限）",
+                    // 【custom-v33】从本机（手机相册 / 电脑文件夹）传进收件箱
+                    uploadBtn: "从本机选照片传进收件箱",
+                    uploadHint: "手机上打开相册、电脑上打开文件夹，可一次多选",
+                    uploading: "正在传入 {i}/{n} 张…",
+                    uploadDone: "已传入 {n} 张，可在下面勾选导入",
+                    uploadPartial: "已传入 {ok} 张，{bad} 张没传上去",
+                    uploadNotImage: "只能传图片（JPG / PNG / WebP），其它文件已忽略",
                 },
             },
             progress: {

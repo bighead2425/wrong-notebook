@@ -15,11 +15,19 @@
  *   ② 「旧照片还要再拉一遍」的活口必须留着 —— 目录里导过的照片**不会自动消失**，
  *      任何时候都能从面板里勾回来重导，也可以一次性删掉清场。
  *
+ * 【custom-v33】收件箱现在有**四条进图通道**，面板里补上唯一缺的那条：
+ *   ① 手机 App 分享（夸克扫描王 → 飞牛）   —— 原本就有，工作流的主体
+ *   ② 在 NAS 上直接把文件贴进目录          —— 原本就有
+ *   ③ 连拍转存（拍一张存一张，见 batch-pipeline 的 handleBurstShot）
+ *   ④ **在本面板顶部「从本机选照片传进收件箱」**（custom-v33 新增）：手机弹相册、
+ *      电脑弹文件夹，可一次多选，逐张传到收件箱，走的是和 ③ 同一个接口。
+ *      ④ 的意义是不必绕手机 App —— 电脑上已有的图、别人微信发来的图，都能直接进来。
+ *
  * 目录没挂载怎么办：后端返回 available=false，这里**整条都不渲染**。
  * 与其摆一个点了报错的按钮，不如让它安静地不存在。
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
     Dialog,
     DialogContent,
@@ -31,7 +39,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { apiClient } from "@/lib/api-client";
-import { Check, Download, FolderOpen, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { Check, Download, FolderOpen, ImageUp, Loader2, RefreshCw, Trash2 } from "lucide-react";
 
 interface InboxFile {
     name: string;
@@ -98,6 +106,13 @@ export function ScanInboxBar({
     const [working, setWorking] = useState(false);
     /** 逐张下载的进度（几十张串行下载要等一会儿，光转圈会让人以为卡死） */
     const [pulling, setPulling] = useState<{ i: number; n: number } | null>(null);
+
+    /* ===== 【custom-v33】从本机传入收件箱 ===== */
+    const uploadInputRef = useRef<HTMLInputElement>(null);
+    /** 逐张上传的进度（同一条理由：几十张串行上传，得让人看见在动） */
+    const [uploading, setUploading] = useState<{ i: number; n: number } | null>(null);
+    /** 刚传完的交代 —— 手机上列表在下面，传完不一定看得见变化，给一句结果 */
+    const [uploadedNote, setUploadedNote] = useState<{ ok: number; bad: number } | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -216,6 +231,55 @@ export function ScanInboxBar({
         }
     };
 
+    /**
+     * 【custom-v33】把**本机**的照片传进收件箱（手机相册 / 电脑文件夹）。
+     *
+     * 走的是连拍转存用的同一个接口（POST /api/scan-inbox/upload），所以安全闸完全一致：
+     * 必须是登录用户、文件名由服务端生成、文件头必须是真图片、单张有上限、
+     * 目标目录 realpath 必须在挂载根之下。这里只负责挑文件、逐张传、报进度。
+     *
+     * 为什么逐张串行：一次几十张并发挤上去，局域网的 NAS 未必舒服，
+     * 进度也没法显示成「i/n」——用户只会看到"所有条一起转"。
+     *
+     * 传完是**留在收件箱里**（状态是「新」），不直接进待处理 —— 收件箱是暂存区，
+     * 什么时候拉进流水线由用户在下面勾选决定，和从夸克分享进来的一视同仁。
+     */
+    const doUpload = async (files: File[]) => {
+        // 同一个文件选择框既可能选到图、也可能选到别的东西（尤其电脑端）
+        const imgs = files.filter(f => f.type.startsWith("image/"));
+        if (imgs.length < files.length) {
+            alert(s.uploadNotImage || "只能传图片（JPG / PNG / WebP），其它文件已忽略");
+        }
+        if (!imgs.length) return;
+
+        setWorking(true);
+        setUploadedNote(null);
+        let ok = 0;
+        let bad = 0;
+        try {
+            for (let i = 0; i < imgs.length; i++) {
+                setUploading({ i: i + 1, n: imgs.length });
+                try {
+                    const fd = new FormData();
+                    fd.append("file", imgs[i], imgs[i].name);
+                    const res = await fetch("/api/scan-inbox/upload", { method: "POST", body: fd });
+                    const data = res.ok ? await res.json().catch(() => null) : null;
+                    if (data?.ok) ok++;
+                    else bad++;
+                } catch {
+                    bad++;
+                }
+            }
+        } finally {
+            setUploading(null);
+            setWorking(false);
+        }
+
+        setUploadedNote({ ok, bad });
+        // 传完重新读一遍目录：新传上来的会带着「新」的角标出现在下面，并可点「导入选中的」
+        await load();
+    };
+
     const toggle = (name: string) => setSelected(prev => {
         const next = new Set(prev);
         if (next.has(name)) next.delete(name);
@@ -229,36 +293,41 @@ export function ScanInboxBar({
     return (
         <>
             <div className="space-y-2">
-                <div className="flex items-center gap-2 flex-wrap">
+                {/* 【custom-v32】这两个按钮按首页那四个（批量上传 / 查看题册 / 标签管理 / 统计中心）
+                    的尺寸来：h-11 + text-sm + 16px 简笔画。原先又大一圈、还同时挂了 emoji 和简笔画
+                    （emoji 已从文案里去掉，只留简笔画）。 */}
+                <div className="flex flex-wrap items-center gap-3">
                     <button
                         type="button"
                         disabled={disabled || newFiles.length === 0}
                         onClick={() => doImport(newFiles.map(f => f.name))}
-                        className="flex-1 min-w-[220px] flex items-center justify-center gap-2 rounded-xl border border-dashed py-3 text-sm font-medium transition-colors disabled:opacity-50 border-primary/60 text-primary hover:bg-primary/5 disabled:hover:bg-transparent"
+                        className="h-11 text-sm flex-1 min-w-[200px] flex items-center justify-center gap-2 rounded-md border border-dashed border-primary/60 font-medium text-primary shadow-sm transition-all hover:bg-primary/5 hover:shadow-md disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:shadow-sm"
                     >
                         {working
-                            ? <Loader2 className="h-4 w-4 animate-spin" />
-                            : <Download className="h-4 w-4" />}
-                        {pulling
-                            ? (s.pulling || "正在拉取 {i}/{n} 张…")
-                                .replace("{i}", String(pulling.i))
-                                .replace("{n}", String(pulling.n))
-                            : newFiles.length > 0
-                                ? (s.quick || "📥 收到 {n} 张新照片").replace("{n}", String(newFiles.length))
-                                : (s.quickNone || "收件箱暂无新照片")}
+                            ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                            : <Download className="h-4 w-4 shrink-0" />}
+                        <span className="truncate">
+                            {pulling
+                                ? (s.pulling || "正在拉取 {i}/{n} 张…")
+                                    .replace("{i}", String(pulling.i))
+                                    .replace("{n}", String(pulling.n))
+                                : newFiles.length > 0
+                                    ? (s.quick || "收到 {n} 张新照片").replace("{n}", String(newFiles.length))
+                                    : (s.quickNone || "收件箱暂无新照片")}
+                        </span>
                     </button>
                     <button
                         type="button"
                         disabled={disabled}
                         onClick={() => { load(); setOpen(true); }}
-                        className="flex items-center justify-center gap-2 rounded-xl border py-3 px-4 text-sm font-medium text-muted-foreground hover:bg-accent/40 transition-colors disabled:opacity-50"
+                        className="h-11 text-sm flex items-center justify-center gap-2 rounded-md border bg-background px-4 font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/50 hover:bg-accent/40 hover:text-foreground hover:shadow-md disabled:opacity-50"
                     >
-                        <FolderOpen className="h-4 w-4" />
-                        {(s.open || "打开收件箱（{n}）").replace("{n}", String(files.length))}
+                        <FolderOpen className="h-4 w-4 shrink-0" />
+                        <span className="truncate">{(s.open || "打开收件箱（{n}）").replace("{n}", String(files.length))}</span>
                     </button>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                    {s.hint || "手机 App（夸克扫描王等）分享到飞牛的照片会落在这里"}
+                    {s.hint || "手机 App（夸克扫描王等）分享进来的、以及在本页直接传上来的照片，都会落进这个文件夹"}
                 </p>
             </div>
 
@@ -271,6 +340,53 @@ export function ScanInboxBar({
                                 .replace("{n}", String(files.length))}
                         </DialogDescription>
                     </DialogHeader>
+
+                    {/* 【custom-v33】收件箱面板顶部的「输入」入口 —— 补上第四条进图通道。
+                        同一个 input 两端通吃：`accept="image/*"` + `multiple` 让手机弹相册、
+                        电脑弹文件夹、可一次多选。**故意不加 `capture`** —— 加了会强制开摄像头，
+                        在手机上是"拍一张"，反而打不开相册。 */}
+                    <div className="flex items-center gap-3 flex-wrap">
+                        <Button
+                            variant="outline"
+                            className="h-9 shadow-xs hover:border-primary/50"
+                            disabled={disabled}
+                            onClick={() => { setUploadedNote(null); uploadInputRef.current?.click(); }}
+                        >
+                            {uploading
+                                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                : <ImageUp className="mr-2 h-4 w-4" />}
+                            {uploading
+                                ? (s.uploading || "正在传入 {i}/{n} 张…")
+                                    .replace("{i}", String(uploading.i))
+                                    .replace("{n}", String(uploading.n))
+                                : (s.uploadBtn || "从本机选照片传进收件箱")}
+                        </Button>
+                        <span className="text-xs text-muted-foreground">
+                            {s.uploadHint || "手机上打开相册、电脑上打开文件夹，可一次多选"}
+                        </span>
+                        {uploadedNote && !uploading && (
+                            <span className={`text-xs ${uploadedNote.bad ? "text-amber-600" : "text-green-600"}`}>
+                                {uploadedNote.bad
+                                    ? (s.uploadPartial || "已传入 {ok} 张，{bad} 张没传上去")
+                                        .replace("{ok}", String(uploadedNote.ok))
+                                        .replace("{bad}", String(uploadedNote.bad))
+                                    : (s.uploadDone || "已传入 {n} 张，可在下面勾选导入")
+                                        .replace("{n}", String(uploadedNote.ok))}
+                            </span>
+                        )}
+                        <input
+                            ref={uploadInputRef}
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={(e) => {
+                                const picked = Array.from(e.target.files || []);
+                                e.target.value = ""; // 允许重复选同一批
+                                if (picked.length) doUpload(picked);
+                            }}
+                        />
+                    </div>
 
                     <div className="flex items-center gap-2 flex-wrap text-xs">
                         <span className="text-muted-foreground">

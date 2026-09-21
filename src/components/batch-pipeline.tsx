@@ -10,7 +10,8 @@
  * 蓝图 #5 的骨架在这里落地：
  *   - 两文件夹：待处理（刚收进来的原图）/ 预处理（加工好、等送 AI 的图）
  *   - 【custom-v28】送 AI 改为**按勾选送**：预处理区每张图左上角有勾选框，
- *     标题行右侧配「全选 / 清除 / 未分析」三个按钮，送哪几张完全由用户掌控。
+ *     标题行说明文字后面配「全选 / 清除 / 未分析」三个按钮（custom-v32 从最右侧挪到左边），
+ *     送哪几张完全由用户掌控。
  *     原来的「四选项对话框」（①当前 ②已预处理 ③全部 ④取消）已撤掉。
  *     **待处理区的图不参与送 AI** —— 必须先过编辑器加工成预处理图。
  *   - 每张最多尝试 3 次，每次请求前停 5 秒；正在跑的那张缩略图下面有细进度条。
@@ -38,8 +39,11 @@ import { Progress } from "@/components/ui/progress";
 import { ProgressFeedback, ProgressStatus } from "@/components/ui/progress-feedback";
 import { ScanInboxBar } from "@/components/scan-inbox-bar";
 import {
+    createBurstSession, noteBurstShot, noteBurstResult, burstDone, type BurstSession,
+} from "@/lib/burst-session";
+import {
     Upload, X, Check, Sparkles, ArrowLeft, Trash2, Layers, PenLine, Camera,
-    Loader2, Inbox,
+    Loader2, Inbox, SquareCheck, Eraser, ScanSearch,
 } from "lucide-react";
 
 /** 一张图在流水线里的状态 */
@@ -176,11 +180,11 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
      * 而"收工"要等最后一张传完才能结算。计数如果散在全局 ref 里，用户点完「完成」
      * 又马上开始下一轮拍摄时，上一轮的结算会把新一轮的账清零 —— 进度条和提示就串了。
      * 装成一个对象、收工那一刻就换一个新对象，链上的回调各自抱着自己那一份，互不干扰。
+     *
+     * 【custom-v32】记账规则（含那个「最后一张不算数」的 bug）搬进了
+     * `@/lib/burst-session`，由单测钉住，见 `src/__tests__/unit/burst-session.test.ts`。
      */
-    type BurstSession = { total: number; saved: number; failed: File[]; closed: boolean };
-    const burstSessionRef = useRef<BurstSession>({
-        total: 0, saved: 0, failed: [], closed: false,
-    });
+    const burstSessionRef = useRef<BurstSession>(createBurstSession());
     /** onBurstShot 是同步回调，闭包里拿不到最新的 inboxReady，用 ref 读 */
     const routeToInboxRef = useRef(false);
     useEffect(() => { routeToInboxRef.current = inboxReady; }, [inboxReady]);
@@ -390,19 +394,21 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
         const session = burstSessionRef.current;
 
         if (routeToInboxRef.current) {
-            session.total += 1;
-            setBurstSaving({ done: session.saved + session.failed.length, total: session.total });
+            noteBurstShot(session);
+            setBurstSaving({ done: burstDone(session), total: session.total });
             setBurstNotice(null);
             burstChainRef.current = burstChainRef.current.then(async () => {
                 const ok = await uploadToInbox(f);
-                // 会话已收过尾就别再动界面了（那会儿的进度条和提示已经不归它管）
-                if (session.closed) return;
-                if (ok) session.saved += 1;
-                else session.failed.push(f);
-                setBurstSaving({
-                    done: session.saved + session.failed.length,
-                    total: session.total,
-                });
+                /**
+                 * 【custom-v32 修 bug】这里曾经先判 `session.closed` 再记账，
+                 * 于是「完成」那一张（closed 早就置 true 了）永远记不上：
+                 * 拍 1 张提示「已转存 0 张」；更糟的是它一旦上传失败，
+                 * 连 failed 都进不去 —— 照片既没进收件箱也不退回待处理，直接消失。
+                 * 现在改成**无条件记账**，`closed` 只决定要不要顺手刷进度界面。
+                 */
+                const touchUi = noteBurstResult(session, ok, f);
+                if (!touchUi) return;
+                setBurstSaving({ done: burstDone(session), total: session.total });
             });
         } else {
             addFiles([f]);
@@ -420,7 +426,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
 
         // 先把这一轮的账封存，下一轮拍摄从一本新账开始
         session.closed = true;
-        burstSessionRef.current = { total: 0, saved: 0, failed: [], closed: false };
+        burstSessionRef.current = createBurstSession();
 
         // 等这一轮所有转存跑完，再告诉用户结果
         burstChainRef.current = burstChainRef.current.then(() => {
@@ -1140,12 +1146,15 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                         onToggleSelect={toggleSelect}
                         runningId={runningId}
                         headerExtra={
+                            /* 【custom-v32】三个批量勾选按钮改成紧跟在「预处理 + 小字说明」后面（原先
+                               靠 ml-auto 顶在最右边，屏幕一大就看不见这里有按钮了），并各配一个小简笔画。 */
                             <>
                                 <Button
                                     variant="outline" size="sm" className="h-7 px-2 text-xs"
                                     disabled={busy || !processedItems.length}
                                     onClick={selectAllProcessed}
                                 >
+                                    <SquareCheck className="mr-1 h-3.5 w-3.5 shrink-0" />
                                     {t.common.batch?.selectAll || "全选"}
                                 </Button>
                                 <Button
@@ -1153,6 +1162,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                                     disabled={busy || selectedIds.size === 0}
                                     onClick={clearSelection}
                                 >
+                                    <Eraser className="mr-1 h-3.5 w-3.5 shrink-0" />
                                     {t.common.batch?.selectClear || "清除"}
                                 </Button>
                                 <Button
@@ -1160,6 +1170,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                                     disabled={busy}
                                     onClick={selectUnanalyzed}
                                 >
+                                    <ScanSearch className="mr-1 h-3.5 w-3.5 shrink-0" />
                                     {t.common.batch?.selectUnanalyzed || "未分析"}
                                 </Button>
                             </>
@@ -1243,10 +1254,12 @@ function FolderGrid({
     if (!items.length) return null;
     return (
         <div className="space-y-2">
-            <div className="flex items-baseline gap-2 flex-wrap">
+            {/* 【custom-v32】按钮（全选/清除/未分析）紧跟在小字说明后面，不再用 ml-auto 甩到最右边 ——
+                大屏上那一排离标题太远，用户根本注意不到。 */}
+            <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-sm font-semibold">{title}</h3>
                 <span className="text-xs text-muted-foreground">{hint}</span>
-                {headerExtra && <div className="ml-auto flex items-center gap-1.5">{headerExtra}</div>}
+                {headerExtra && <div className="flex items-center gap-1.5 ml-1">{headerExtra}</div>}
             </div>
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
                 {items.map(it => {
