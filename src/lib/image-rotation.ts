@@ -62,6 +62,34 @@ export interface Rect {
     h: number;
 }
 
+/**
+ * 【custom-v36】逆时针 90° 的 canvas 变换矩阵（6 个分量，喂给 ctx.setTransform）。
+ *
+ * 为什么把这 6 个数从组件里搬出来：旋转在代码里有**两个独立实现**——
+ *   ① 转图片：组件里手写 ctx.setTransform(a,b,c,d,e,f)；
+ *   ② 转挂在上面的东西（绿框、整页已抠框）：lib 里的 rotateRectCCW。
+ * 两者必须用同一个参照系（**旋转前那张图的宽度**），否则就会出现"图转了、框没转"
+ * 或者"擦 A 处、白的是 B 处"这类**不报错、只画错**的 bug（v33/v34 都栽在这上面）。
+ * 搬进 lib 后两者都能被单测钉住，还能**交叉验证**：把整张图的矩形按矩阵映射一遍，
+ * 结果必须与 rotateRectCCW 给出的一致。
+ *
+ * setTransform(a,b,c,d,e,f) 的语义：x' = a·x + c·y + e，y' = b·x + d·y + f。
+ * 取 (0, -1, 1, 0, 0, srcW) 即 x' = y、y' = srcW − x —— 视觉上的逆时针 90°，
+ * 且正好落在 0 ≤ x' ≤ srcH、0 ≤ y' ≤ srcW 的新画布框内（不会画出去被裁掉）。
+ */
+export function ccwCanvasMatrix(srcW: number): [number, number, number, number, number, number] {
+    return [0, -1, 1, 0, 0, srcW];
+}
+
+/** 把一个点按 canvas 矩阵映射一次（单测里验算角点用，运行时不需要） */
+export function applyMatrixToPoint(
+    m: readonly [number, number, number, number, number, number],
+    p: { x: number; y: number }
+): { x: number; y: number } {
+    const [a, b, c, d, e, f] = m;
+    return { x: a * p.x + c * p.y + e, y: b * p.x + d * p.y + f };
+}
+
 /** 单步逆时针 90°：一个点的落点 */
 export function rotatePointCCW(p: { x: number; y: number }, srcW: number): { x: number; y: number } {
     return { x: p.y, y: srcW - p.x };

@@ -18,6 +18,8 @@ import {
     rotatePointCCW,
     rotateRect,
     rotateRectCCW,
+    ccwCanvasMatrix,
+    applyMatrixToPoint,
 } from '@/lib/image-rotation';
 
 describe('image-rotation：角度归一化', () => {
@@ -154,5 +156,91 @@ describe('image-rotation：多次旋转', () => {
 
     it('0° 原样返回，不做任何多余换算', () => {
         expect(rotateRect(src, W, H, 0)).toEqual(src);
+    });
+});
+
+/**
+ * 【custom-v36 审计新增】canvas 变换矩阵的交叉验证。
+ *
+ * 背景：旋转在代码里有**两个独立实现** —— 转图片用手写的 setTransform 6 个参数，
+ * 转"挂在上面的东西"（绿框、整页已抠框）用 rotateRectCCW。两者一旦不一致，
+ * 表现就是"图转正了、框还在原地"或"擦 A 处白的是 B 处"，**不报错、只画错**，
+ * 是最难查的一类故障。所以这里不验"像不像"，只钉**两者必须给出同一结果**：
+ *   · 矩阵映射四角 → 与 rotatePointCCW 一致；
+ *   · 整张图的矩形经矩阵映射后的包围盒 → 与 rotateRectCCW 完全相等；
+ *   · 映射后必须落在新画布框内（否则 content 会被裁掉，正是"转一下被截成方形"那类 bug）。
+ */
+describe('image-rotation：canvas 矩阵与矩形映射必须一致', () => {
+    it('四角映射：与 rotatePointCCW 逐点相同', () => {
+        const W = 400;
+        const H = 300;
+        const m = ccwCanvasMatrix(W);
+        for (const p of [{ x: 0, y: 0 }, { x: W, y: 0 }, { x: 0, y: H }, { x: W, y: H }, { x: 137, y: 42 }]) {
+            expect(applyMatrixToPoint(m, p)).toEqual(rotatePointCCW(p, W));
+        }
+    });
+
+    it('矩阵把整张图映射进新画布框内（不越界、不被裁）', () => {
+        const W = 400;
+        const H = 300;
+        const m = ccwCanvasMatrix(W);
+        const pts = [
+            { x: 0, y: 0 }, { x: W, y: 0 }, { x: 0, y: H }, { x: W, y: H },
+            { x: W / 2, y: H / 2 }, { x: 399.5, y: 0.5 },
+        ];
+        for (const p of pts) {
+            const q = applyMatrixToPoint(m, p);
+            expect(q.x).toBeGreaterThanOrEqual(0);
+            expect(q.x).toBeLessThanOrEqual(H);   // 新宽度 = 原高
+            expect(q.y).toBeGreaterThanOrEqual(0);
+            expect(q.y).toBeLessThanOrEqual(W);   // 新高度 = 原宽
+        }
+    });
+
+    it('矩形交叉验证：矩阵包围盒 == rotateRectCCW（图转法 == 框搬法）', () => {
+        const W = 800;
+        const H = 600;
+        const m = ccwCanvasMatrix(W);
+        const rects = [
+            { x: 0, y: 0, w: W, h: H },        // 整张图
+            { x: 100, y: 50, w: 200, h: 120 },
+            { x: 0, y: 0, w: 10, h: 10 },
+        ];
+        for (const r of rects) {
+            const corners = [
+                { x: r.x, y: r.y },
+                { x: r.x + r.w, y: r.y },
+                { x: r.x, y: r.y + r.h },
+                { x: r.x + r.w, y: r.y + r.h },
+            ].map((p) => applyMatrixToPoint(m, p));
+            const xs = corners.map((p) => p.x);
+            const ys = corners.map((p) => p.y);
+            const bbox = {
+                x: Math.min(...xs),
+                y: Math.min(...ys),
+                w: Math.max(...xs) - Math.min(...xs),
+                h: Math.max(...ys) - Math.min(...ys),
+            };
+            const expected = rotateRectCCW(r, W);
+            // 浮点尾差容忍
+            expect(bbox.x).toBeCloseTo(expected.x, 6);
+            expect(bbox.y).toBeCloseTo(expected.y, 6);
+            expect(bbox.w).toBeCloseTo(expected.w, 6);
+            expect(bbox.h).toBeCloseTo(expected.h, 6);
+        }
+    });
+
+    it('整张图转完的包围盒 == rotateCanvasSize（图框尺寸也对得上）', () => {
+        const W = 800;
+        const H = 600;
+        const m = ccwCanvasMatrix(W);
+        const corners = [
+            { x: 0, y: 0 }, { x: W, y: 0 }, { x: 0, y: H }, { x: W, y: H },
+        ].map((p) => applyMatrixToPoint(m, p));
+        const w = Math.max(...corners.map((p) => p.x)) - Math.min(...corners.map((p) => p.x));
+        const h = Math.max(...corners.map((p) => p.y)) - Math.min(...corners.map((p) => p.y));
+        const size = rotateCanvasSize(W, H);
+        expect(w).toBeCloseTo(size.w, 6);
+        expect(h).toBeCloseTo(size.h, 6);
     });
 });

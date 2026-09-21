@@ -8,20 +8,31 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
-import { rotateCanvasSize, rotateRectCCW } from "@/lib/image-rotation";
+import { ccwCanvasMatrix, rotateCanvasSize, rotateRectCCW } from "@/lib/image-rotation";
 import { fitEditSize } from "@/lib/edit-canvas-size";
 
 /**
- * 【custom-v36】画布上下文统一走这条：willReadFrequently 让 Chromium 用**软件光栅**
- * 维护这些画布，改内容后整体重传，不走 GPU 分块纹理。
+ * 取 2D 上下文。**两种后端，按画布用途选**（v36 审计后改的口径，别再混用）：
  *
- * 为什么：v35 实测大图点「🔄转」后画面被切成竖条拼凑、橡皮擦跟着错乱 ——
- * 数学没错（image-rotation 单测钉着），乱在超大画布 + CSS 缩放下的 GPU 纹理
- * 分块重传不完整（详见 lib/edit-canvas-size.ts 头注）。软件光栅绕开整类毛病，
- * 顺带让 toBlob/getImageData 这类读回操作更快。flag 只在**首次** getContext 生效，
- * 所以创建画布的地方必须都带上。
+ * · ctx2d()     —— 默认后端，给**会被显示出来的**画布（base / overlay）。
+ *   Chromium 对 GPU 后端画布走"直接合成"快路径，不需要分块栅格化，是更稳的一条路。
+ * · ctx2dSoft() —— 软件后端（willReadFrequently: true），给**只在内存里算**的离屏画布
+ *   （orig / work / 各种克隆）。这些画布从不显示，软件后端让 getImageData / toBlob
+ *   这类读回操作更快，也避免占用显存。
+ *
+ * ⚠️ 上一版（v36 第一稿）图省事把 willReadFrequently 加到了所有画布上，包括被显示的
+ * base/overlay —— 那恰好走反了：Chromium issue #870222 里写得很清楚，**软件后端的画布
+ * 会退化成需要分块栅格化的 PictureLayer，超大画布时"栅格化做一半就放弃"**，
+ * 表现就是画面被切成几条、新旧内容混排。显示用画布一律不要带这个 flag。
+ *
+ * flag 只在**首次 getContext** 时生效，所以必须在创建画布的地方就带上。
  */
 function ctx2d(c: HTMLCanvasElement): CanvasRenderingContext2D | null {
+    return c.getContext("2d");
+}
+
+/** 离屏工作画布专用：软件后端，读回快、不占显存（见 ctx2d 注释） */
+function ctx2dSoft(c: HTMLCanvasElement): CanvasRenderingContext2D | null {
     return c.getContext("2d", { willReadFrequently: true });
 }
 
@@ -288,7 +299,8 @@ export function ImageCropper({
     // pan：相对「居中位置」的偏移（手势用，钳制到 ±(显示尺寸-视口)/2）
     const [zoom, setZoom] = useState(1);
     const [view, setView] = useState({ x: 0, y: 0 });
-    const [natSize, setNatSize] = useState({ w: 0, h: 0 }); // 画布自然像素，供 wrapper/overlay 定尺
+    // 画布内部像素尺寸（自然分辨率）。wrapper 的**布局**尺寸 = 它 × zoom（见 wrap 的长注释）
+    const [natSize, setNatSize] = useState({ w: 0, h: 0 });
     const viewportRef = useRef<HTMLDivElement | null>(null);
     const wrapRef = useRef<HTMLDivElement | null>(null);
     const zoomRef = useRef(1);
@@ -315,7 +327,8 @@ export function ImageCropper({
     const [drawOnly, setDrawOnly] = useState(false);
     /**
      * 【custom-v27 十字基准线】指针在**视口坐标**下的位置。
-     * 用视口坐标而非容器坐标：容器被 scale(zoom) 缩放，缩放/平移后容器坐标会与光标脱节；
+     * 用视口坐标而非容器坐标：容器随缩放/平移移动，容器坐标会与光标脱节；
+     * 视口坐标直接与十字线定位（view/zoom 推算）对齐，画在容器**之外**也不受其影响。
      * 视口坐标不受缩放影响，渲染时再用 view/zoom 算出图片矩形即可对齐。
      */
     const [crossPos, setCrossPos] = useState<{ x: number; y: number } | null>(null);
@@ -374,7 +387,7 @@ export function ImageCropper({
                 const fc = document.createElement("canvas");
                 fc.width = origCanvasRef.current.width;
                 fc.height = origCanvasRef.current.height;
-                ctx2d(fc)?.drawImage(origCanvasRef.current, 0, 0);
+                ctx2dSoft(fc)?.drawImage(origCanvasRef.current, 0, 0);
                 firstImageRef.current = fc;
             }
             redrawWork();
@@ -401,7 +414,7 @@ export function ImageCropper({
             const oc = document.createElement("canvas");
             oc.width = size.w;
             oc.height = size.h;
-            ctx2d(oc)?.drawImage(img, 0, 0, size.w, size.h);
+            ctx2dSoft(oc)?.drawImage(img, 0, 0, size.w, size.h);
             origCanvasRef.current = oc;
         }
         if (!workCanvasRef.current) {
@@ -409,7 +422,7 @@ export function ImageCropper({
             wc.width = size.w;
             wc.height = size.h;
             // 初始化即画原图，避免从 crop 切出时 workCanvas 是空的（黑屏）
-            ctx2d(wc)?.drawImage(origCanvasRef.current, 0, 0);
+            ctx2dSoft(wc)?.drawImage(origCanvasRef.current, 0, 0);
             workCanvasRef.current = wc;
         }
         return workCanvasRef.current;
@@ -420,7 +433,7 @@ export function ImageCropper({
         const wc = workCanvasRef.current;
         const oc = origCanvasRef.current;
         if (!wc || !oc) return;
-        const ctx = ctx2d(wc);
+        const ctx = ctx2dSoft(wc);
         if (!ctx) return;
         ctx.clearRect(0, 0, wc.width, wc.height);
         ctx.drawImage(oc, 0, 0);
@@ -687,7 +700,7 @@ export function ImageCropper({
         const cropped = document.createElement("canvas");
         cropped.width = Math.max(1, Math.round(r.w));
         cropped.height = Math.max(1, Math.round(r.h));
-        const cctx = ctx2d(cropped);
+        const cctx = ctx2dSoft(cropped);
         if (!cctx) return;
         // 从原始基准图提取，确保 crop 模式下 workCanvas 尚未重绘也不会拿到黑图
         cctx.drawImage(oc, r.x, r.y, r.w, r.h, 0, 0, cropped.width, cropped.height);
@@ -697,7 +710,7 @@ export function ImageCropper({
         const newWc = document.createElement("canvas");
         newWc.width = cropped.width;
         newWc.height = cropped.height;
-        ctx2d(newWc)?.drawImage(cropped, 0, 0);
+        ctx2dSoft(newWc)?.drawImage(cropped, 0, 0);
         workCanvasRef.current = newWc;
         shapesRef.current = [];
         setHasShapes(false);
@@ -869,21 +882,20 @@ export function ImageCropper({
     }, [applyView, computeFitZoom]);
 
     /**
-     * 【custom-v33】整页逆时针转 90°（工具栏「🔄转」）。
+     * 【custom-v33 立；custom-v35 改口径；custom-v36 审计调整】整页逆时针转 90°（工具栏「转」）。
      *
-     * 用途：扫描件方向躺倒了。与「📐抻」分工不同 —— 抻治"歪"（梯形透视），
-     * 转治"倒"（方向），两件事各管一头。
+     * 用途：扫描件方向躺倒了。与「抻」分工不同 —— 抻治"歪"（梯形透视），转治"倒"（方向）。
      *
-     * ── 为什么这件事比看上去麻烦 ──────────────────────────────
-     * 画布转一下只是一行 drawImage，真正容易出错的是**挂在坐标系上的那些东西**：
-     *   · 擦除痕迹（shapes）—— 撤销要靠它重放，坐标必须跟着走，否则一撤销就全错位；
-     *   · 标注框（boxes）、裁剪框（cropRect）、拖拽中的临时框；
-     *   · 本页已录入的绿框（doneRectsView）；
-     *   · 以及"整页已抠坐标"那份记录（lastCropRectRef，回传给调用方标记已抠区域用的）。
-     * 少搬任何一样，它就会留在旧位置 —— 框线错位比不转还糟，用户会照着错位的框去操作。
-     * 所以这里一次性全搬，宁可代码长一点。
+     * ── 挂在坐标系上的东西怎么办（口径变过两次，以现在为准）─────────────
+     * 曾经（v33）是把擦除痕迹、标注框、裁剪框、绿框一起"搬"到新坐标系，代价是要同时搬运
+     * 六处坐标，漏一处或参照系搞混就是"擦 A 处、白的是 B 处"这种**不报错、只画错**的 bug。
+     * v35 起改成：**尚未提交的标记一律清空**（用户本来就是"先转正、再动笔"），
+     * 只有代表既成事实的绿框（本页已录入的题）与"整页已抠坐标"继续跟着转。
+     * 清空是有前提的 —— 因为它意味着 wc ≡ oc，v36 顺势把工作画布改成**克隆转好的基准图**，
+     * 不再让两张画布各转一次（见下面 turn/cloneCanvas 的注释）。
      *
-     * 逆时针 90° 的映射用 lib/image-rotation 里那四个纯函数（单测钉着），不在这里另算一套。
+     * 逆时针 90° 的映射一律取自 lib/image-rotation（纯函数 + 单测钉着），
+     * 图片走 ccwCanvasMatrix、框走 rotateRectCCW，两者有交叉验证保证同一参照系。
      */
     const rotateLeft = useCallback(() => {
         const oc = origCanvasRef.current;
@@ -894,34 +906,70 @@ export function ImageCropper({
         if (!srcW || !srcH) return;
 
         /**
-         * 复制一份转好的画布：长宽对调，用矩阵一次把"逆时针 90°"写进去。
+         * 【custom-v36 审计调整】先问后做：确认弹窗挪到**建画布之前**。
          *
-         * ⚠️【custom-v34 修 bug】尺寸必须走 rotateCanvasSize（长宽对调），而且
-         * **原图与工作画布两张都要换**。曾经只换了原图、忘了换工作画布 →
-         * redrawWork 把"转后 H×W"的图往"旧 W×H"的画布里画，右边/下边直接被裁掉，
-         * 看上去就像"转一下图被截成了正方形"，而且再怎么转都救不回来（只有「原图」键能恢复）。
+         * 上一版是先转好两张全分辨率画布、再问用户"确定要翻转吗"。用户点"取消"时
+         * 那两张画布已经白建了 —— 在本机/手机上等于凭空申请几十上百 MB，
+         * 而我们正是在内存吃紧的机器上排查问题，没必要自己给自己加压。
+         */
+        const hasPendingMarks =
+            shapesRef.current.length > 0 || boxes.length > 0 || !!cropRect || !!pendingRect;
+        if (hasPendingMarks) {
+            const msg = t.common.cropper?.rotateClearConfirm
+                || "翻转会清掉你还没提交的标记（擦除痕迹、标注框、裁剪框）。确定要翻转吗？";
+            if (!window.confirm(msg)) return;
+        }
+
+        /**
+         * 转基准图。长宽对调（rotateCanvasSize），矩阵来自 lib（见 turn 内注释）。
+         *
+         * ⚠️【custom-v34 教训】转完**基准图与工作画布两张都得换成新尺寸**。
+         * 曾经只换基准图、工作画布留在旧尺寸 → redrawWork 把"转后 H×W"的图往
+         * "旧 W×H"的画布里画，右边/下边被直接裁掉，看上去就像"转一下图被截成了方形"。
+         *
+         * 【custom-v36 审计调整】工作画布不再"自己转一遍"，而是**克隆转好的基准图**。
+         * 为什么这样更对：按 v35 的既定口径，翻转会把尚未提交的痕迹全部清空，
+         * 那么转完之后 工作画布 ≡ 基准图（内容与尺寸完全一致）—— 这是可以直接构造的，
+         * 没必要让两张画布各自跑一次同样的变换、再指望它们必然一致。
+         * 两张画布一旦因为任何原因漂移（历史 bug 家族：尺寸不同步、参照系搞混），
+         * redrawWork 就变成"把大图往小画布里画"，**不报错、只把内容裁掉**，
+         * 是最难查的一类故障。克隆法让这类漂移从结构上不可能发生，顺带少画一张大画布。
          */
         const turn = (src: HTMLCanvasElement): HTMLCanvasElement | null => {
             const size = rotateCanvasSize(src.width, src.height);
             const nc = document.createElement("canvas");
             nc.width = size.w;
             nc.height = size.h;
-            const ctx = ctx2d(nc);
+            const ctx = ctx2dSoft(nc);
             if (!ctx) return null;
-            // setTransform(a,b,c,d,e,f) 对应 x' = a·x + c·y + e，y' = b·x + d·y + f。
-            // 取 (0,-1,1,0,0,src.width) 即 x'=y、y'=src.width−x —— 正是视觉上的逆时针 90°。
+            // 逆时针 90° 的矩阵来自 lib/image-rotation（单测钉着，与搬框用的
+            // rotateRectCCW 是同一套参照系 —— 两者必须一致，否则框线会与图错开）。
             // 平移量用**这张画布自己的宽**：两张画布的尺寸未必相同，用外面那张的宽会直接错位。
-            ctx.setTransform(0, -1, 1, 0, 0, src.width);
+            const m = ccwCanvasMatrix(src.width);
+            ctx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
+            ctx.drawImage(src, 0, 0);
+            return nc;
+        };
+
+        /** 无变换地整张复制（尺寸/内容与源完全一致） */
+        const cloneCanvas = (src: HTMLCanvasElement): HTMLCanvasElement | null => {
+            const nc = document.createElement("canvas");
+            nc.width = src.width;
+            nc.height = src.height;
+            const ctx = ctx2dSoft(nc);
+            if (!ctx) return null;
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.drawImage(src, 0, 0);
             return nc;
         };
 
         const noc = turn(oc);
-        const nwc = turn(wc);
-        if (!noc || !nwc) return;
+        if (!noc) return;
+        const nwc = cloneCanvas(noc);
+        if (!nwc) return;
 
         /**
-         * 【custom-v35】翻转前先清场：擦除痕迹、标注框、裁剪框、待定框一律清空，
+         * 【custom-v35】翻转前清场：擦除痕迹、标注框、裁剪框、待定框一律清空，
          * 转完从一张干净的图重新开始。
          *
          * 为什么不再"把标记跟着一起转"（v33 是这么做的）：
@@ -935,18 +983,10 @@ export function ImageCropper({
          * 绿框不一样：它是"已经录入过的题"这一**已完成的事实**，不能跟着丢，
          * 所以只有它仍然跟着转（下面那段）。清空只针对还没提交的半成品。
          */
-        const hasPendingMarks =
-            shapesRef.current.length > 0 || boxes.length > 0 || !!cropRect || !!pendingRect;
-        if (hasPendingMarks) {
-            const msg = t.common.cropper?.rotateClearConfirm
-                || "翻转会清掉你还没提交的标记（擦除痕迹、标注框、裁剪框）。确定要翻转吗？";
-            if (!window.confirm(msg)) return;
-        }
-
         origCanvasRef.current = noc;
-        // 工作画布也一起换成转好的那份（尺寸随之对调）。下面 redrawWork() 会拿
-        // "新基准图 + 清空后的痕迹"重放，结果与直接留用它一致，
-        // 但尺寸必须先对上，否则就是上面注释里那个被裁成方形的 bug。
+        // 工作画布是上面克隆出来的"转好的基准图"，尺寸/内容与 noc 完全一致 ——
+        // 下面 redrawWork() 只是把清空后的痕迹（空集）重放一遍，结果不变，但保持了
+        // "工作画布 = 基准图 + 已提交痕迹"这条不变量，不留下特例。
         workCanvasRef.current = nwc;
 
         shapesRef.current = [];
@@ -980,12 +1020,12 @@ export function ImageCropper({
         const cloneOrig = document.createElement("canvas");
         cloneOrig.width = fi.width;
         cloneOrig.height = fi.height;
-        ctx2d(cloneOrig)?.drawImage(fi, 0, 0);
+        ctx2dSoft(cloneOrig)?.drawImage(fi, 0, 0);
         origCanvasRef.current = cloneOrig;
         const wc = document.createElement("canvas");
         wc.width = fi.width;
         wc.height = fi.height;
-        ctx2d(wc)?.drawImage(fi, 0, 0);
+        ctx2dSoft(wc)?.drawImage(fi, 0, 0);
         workCanvasRef.current = wc;
         shapesRef.current = [];
         setHasShapes(false);
@@ -1044,16 +1084,25 @@ export function ImageCropper({
             const img = new Image();
             img.onload = () => {
                 URL.revokeObjectURL(url);
+                /**
+                 * 【custom-v36 审计补齐】「抻」回来的图同样要过 fitEditSize。
+                 *
+                 * 今天 doc-scan 的出图上限是 MAX_OUTPUT_EDGE = 1920，所以这一步看不出差别；
+                 * 但"编辑器里的画布尺寸不超过 MAX_EDIT_EDGE"必须是一条**没有例外**的不变量 ——
+                 * 只要有一条入口能塞进来一张超大图，画布/内存那套毛病就又从这条缝里回来。
+                 * 与其依赖"上游恰好也限制尺寸"，不如在自己这道门上再收一次边（幂等，小图不动）。
+                 */
+                const size = fitEditSize(img.naturalWidth, img.naturalHeight);
                 const base = document.createElement("canvas");
-                base.width = img.naturalWidth;
-                base.height = img.naturalHeight;
-                ctx2d(base)?.drawImage(img, 0, 0);
+                base.width = size.w;
+                base.height = size.h;
+                ctx2dSoft(base)?.drawImage(img, 0, 0, size.w, size.h);
 
                 origCanvasRef.current = base;
                 const wc = document.createElement("canvas");
                 wc.width = base.width;
                 wc.height = base.height;
-                ctx2d(wc)?.drawImage(base, 0, 0);
+                ctx2dSoft(wc)?.drawImage(base, 0, 0);
                 workCanvasRef.current = wc;
 
                 shapesRef.current = [];
@@ -1963,18 +2012,35 @@ export function ImageCropper({
                             position: "absolute",
                             top: 0,
                             left: 0,
-                            // 显式定尺 = 图片自然像素：绝对定位元素若不设宽高，
-                            // shrink-to-fit 会把盒宽截断成包含块宽度，导致 overlay 尺寸算错、坐标错位
-                            width: natSize.w || undefined,
-                            height: natSize.h || undefined,
+                            /**
+                             * 【custom-v36 审计重做】布局尺寸 = **显示尺寸**（自然像素 × zoom），
+                             * 缩放靠"改尺寸"实现，不再用 `transform: scale()`。
+                             *
+                             * 这是"转一下画面碎成拼条"的正主。上一版把布局尺寸设成图片自然像素
+                             * （4000×3000 CSS px），再用 scale(0.2) 缩小显示；而 Chromium 的
+                             * 栅格化预算是按 **元素布局尺寸 × 设备像素比** 算的 —— 布局 4000px
+                             * 宽、DPR 1.25~2 时，一次"按原生比例栅格化"就要 75~300MB，超过 tile
+                             * 内存上限后它**栅格化做一半就放弃**（Chromium issue #870222 的原话），
+                             * 屏幕上就是"一部分是新内容、一部分是旧内容碎片、比例还各不相同"
+                             * —— 正是用户看到的样子。
+                             *
+                             * 改成布局尺寸 = 显示尺寸后，栅格化尺寸永远被视口封顶，与图片分辨率、
+                             * 设备像素比都无关，这条故障路从结构上被堵死。画布内部分辨率不受影响
+                             * （仍是自然像素，见 syncBase），只是由浏览器做一次降采样显示。
+                             *
+                             * 平移仍走 transform（只 translate、不改比例）：合成器挪现成图层即可，
+                             * 拖动手感不变，也不会触发重新栅格化。
+                             */
+                            width: natSize.w ? natSize.w * zoom : undefined,
+                            height: natSize.h ? natSize.h * zoom : undefined,
                             lineHeight: 0,
-                            transform: `translate(${view.x}px, ${view.y}px) scale(${zoom})`,
-                            transformOrigin: "0 0",
+                            transform: `translate(${view.x}px, ${view.y}px)`,
                         }}
                     >
                         <canvas
                             ref={baseCanvasRef}
-                            style={{ display: "block" }}
+                            // CSS 盒 = 显示尺寸（撑满容器），内部像素仍是自然分辨率
+                            style={{ display: "block", width: "100%", height: "100%" }}
                         />
                         <canvas
                             ref={overlayCanvasRef}
@@ -1982,8 +2048,8 @@ export function ImageCropper({
                                 position: "absolute",
                                 top: 0,
                                 left: 0,
-                                width: natSize.w || undefined,
-                                height: natSize.h || undefined,
+                                width: "100%",
+                                height: "100%",
                                 cursor: panMode
                                     ? "grab"
                                     : mode === "erase" && eraseTool === "brush"
@@ -1994,20 +2060,22 @@ export function ImageCropper({
                         />
                         {/* 笔刷光标预览圈：跟随鼠标，大小随粗细变化 */}
                         {mode === "erase" && eraseTool === "brush" && cursorPos && (() => {
-                            // BRUSH_SIZES 表示“显示像素直径”，光标直接用该大小，
-                            // 实际涂抹按同尺寸换算成自然坐标，保证光标与擦除范围一致
-                            // 预览圈位于被缩放的容器内，尺寸需除以 zoom 才能在屏幕上保持原大小
-                            const brushSizePx = BRUSH_SIZES[brushIdx] / zoom;
+                            // BRUSH_SIZES 表示"显示像素直径"，光标直接用该大小，
+                            // 实际涂抹按同尺寸换算成自然坐标，保证光标与擦除范围一致。
+                            // 【custom-v36 审计】容器不再被 scale 缩放，容器坐标空间就是显示像素，
+                            // 所以尺寸**不再需要除以 zoom**、位置要把自然坐标乘回 zoom
+                            // （cursorPos 存的是自然坐标，见 onPointerMove 的换算）。
+                            const brushSizePx = BRUSH_SIZES[brushIdx];
                             return (
                                 <div
                                     style={{
                                         position: "absolute",
-                                        left: cursorPos.x,
-                                        top: cursorPos.y,
+                                        left: cursorPos.x * zoom,
+                                        top: cursorPos.y * zoom,
                                         width: brushSizePx,
                                         height: brushSizePx,
                                         transform: "translate(-50%, -50%)",
-                                        border: `${1.5 / zoom}px solid #00c853`,
+                                        border: "1.5px solid #00c853",
                                         borderRadius: "50%",
                                         pointerEvents: "none",
                                         boxSizing: "border-box",

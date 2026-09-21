@@ -7,6 +7,8 @@
  *   · 结果至少 1px（0 尺寸画布会直接抛错）。
  * 裁剪窗所有坐标系都建立在"加载时的画布尺寸"上，这里钉错了，
  * 擦除/框选/裁剪会整体错位 —— 所以宁可多钉几条等式。
+ *
+ * 期望值一律由 MAX_EDIT_EDGE 推导，常量改了测试自己跟着走，不会留下假绿。
  */
 import { describe, it, expect } from 'vitest';
 import { fitEditSize, MAX_EDIT_EDGE } from '@/lib/edit-canvas-size';
@@ -21,17 +23,29 @@ describe('edit-canvas-size：小图不放大', () => {
     });
 
     it('恰好等于上限也不缩', () => {
-        expect(fitEditSize(3200, 100)).toEqual({ w: 3200, h: 100, scaled: false });
+        expect(fitEditSize(MAX_EDIT_EDGE, 100)).toEqual({
+            w: MAX_EDIT_EDGE, h: 100, scaled: false,
+        });
     });
 });
 
 describe('edit-canvas-size：超限等比收缩', () => {
-    it('12MP 手机照片：4000×3000 → 3200×2400', () => {
-        expect(fitEditSize(4000, 3000)).toEqual({ w: 3200, h: 2400, scaled: true });
+    it('12MP 手机照片（4:3）收到长边上限，另一条边同比例', () => {
+        const out = fitEditSize(4000, 3000);
+        expect(out).toEqual({
+            w: MAX_EDIT_EDGE,
+            h: Math.round(MAX_EDIT_EDGE * 0.75),
+            scaled: true,
+        });
     });
 
-    it('竖图同样按长边收：3000×4000 → 2400×3200', () => {
-        expect(fitEditSize(3000, 4000)).toEqual({ w: 2400, h: 3200, scaled: true });
+    it('竖图同样按长边收（长宽对调后仍然对得上）', () => {
+        const out = fitEditSize(3000, 4000);
+        expect(out).toEqual({
+            w: Math.round(MAX_EDIT_EDGE * 0.75),
+            h: MAX_EDIT_EDGE,
+            scaled: true,
+        });
     });
 
     it('比例严格保持：收缩前后 w/h 相等（交叉验证）', () => {
