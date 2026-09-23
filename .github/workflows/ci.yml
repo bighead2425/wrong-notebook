@@ -10,6 +10,36 @@ on:
 
 jobs:
   # ============================================
+  # Lint 门禁（2026-09-24 新增 · 波 0）
+  #
+  # 项目自己的纪律写了"避免 any、组件 >200 行要拆"，但此前**没有任何门禁**：
+  # 规则文件还因为文件名拼错（.cursorrulers）从未被工具读到过。
+  #
+  # 采用**基线式**而非一次清零：现存 189 error（167 条是历史 any，散在 66 个文件），
+  # 现在去大改这些文件会和紧接着的卡片版面重排（M3）撞车。
+  # 基线门禁的效果是——存量不阻塞任何人，**新写的代码再加一个 any 就红**。
+  # 详见 scripts/lint-baseline.mjs 头注。
+  # ============================================
+  lint:
+    runs-on: ubuntu-latest
+    name: Lint Gate
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint gate (no new errors vs baseline)
+        run: npm run lint:gate
+
+  # ============================================
   # 测试阶段（仅 main 分支 push 或 PR）
   # ============================================
   unit-test:

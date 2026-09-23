@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <!--
+    打样用占位图：模拟一张「作业本上拍下来的原题照片」。
+    ⚠️ 这里刻意**不放任何真实作业照片**。孩子的作业照片属于个人隐私，
+       绝不能提交进 git（仓库可能公开）。真实数据打样时用 --sqlite 或
+       --items 指向本地文件，产物目录 out/ 也已在 .gitignore 里排除。
+  -->
+  <rect width="800" height="600" fill="#fbfbf7"/>
+  <rect x="24" y="24" width="752" height="552" fill="none" stroke="#ddd8cc" stroke-width="2"/>
+  <!-- 模拟横格线 -->
+  <g stroke="#e6e2d8" stroke-width="1">
+    <line x1="60" y1="120" x2="740" y2="120"/>
+    <line x1="60" y1="180" x2="740" y2="180"/>
+    <line x1="60" y1="240" x2="740" y2="240"/>
+    <line x1="60" y1="300" x2="740" y2="300"/>
+    <line x1="60" y1="360" x2="740" y2="360"/>
+    <line x1="60" y1="420" x2="740" y2="420"/>
+    <line x1="60" y1="480" x2="740" y2="480"/>
+  </g>
+  <!-- 梯形示意图（题目配图） -->
+  <g transform="translate(240,110)">
+    <polygon points="40,150 260,150 220,20 80,20" fill="#eef4fb" stroke="#4a6fa5" stroke-width="3"/>
+    <g stroke="#4a6fa5" stroke-width="2" stroke-dasharray="6 4">
+      <line x1="80" y1="20" x2="80" y2="150"/>
+    </g>
+    <text x="140" y="14" font-family="sans-serif" font-size="20" fill="#4a6fa5">上底 12 米</text>
+    <text x="140" y="176" font-family="sans-serif" font-size="20" fill="#4a6fa5">下底 20 米</text>
+    <text x="26" y="92" font-family="sans-serif" font-size="20" fill="#4a6fa5">高 9</text>
+  </g>
+  <!-- 模拟铅笔手写痕迹（示意，非真实笔迹） -->
+  <g stroke="#b9b28f" stroke-width="3" fill="none" opacity="0.65" stroke-linecap="round">
+    <path d="M70 520 L180 505 L300 530 L420 508"/>
+    <path d="M70 552 L140 545 L230 560"/>
+  </g>
+  <text x="470" y="545" font-family="sans-serif" font-size="22" fill="#a89f78" opacity="0.8">（示意笔迹）</text>
+  <text x="60" y="76" font-family="sans-serif" font-size="24" fill="#9a9483">原题照片占位图 · placeholder.svg</text>
+</svg>

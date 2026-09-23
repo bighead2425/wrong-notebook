@@ -13,7 +13,49 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # ============================================
+  # 测试门禁（2026-09-24 新增 · 波 0）
+  #
+  # 加之前这里是个洞：发版走的正是本工作流，而它**一个测试 job 都没有** ——
+  # 生产镜像未经任何测试就推到 GHCR，再由 NAS 的 watchtower 自动上线。
+  # （文档原先写成"修 ci.yml:19 的 if 让 tag 发版跳过测试"——**靶心错了**：
+  #   ci.yml 的 on.push.tags 只匹配 `v*`，而发版 tag 形如 `custom-v36`，不触发那条链。）
+  #
+  # 只挂 Unit / Integration / lint —— 这三项在 CI 上长期是绿的（2026-09-24 实测）。
+  # **刻意不挂 E2E**：e2e/ 用例停在 2026-09-15，此后 UI 历经 v29–v36 大改，
+  # 该 job 近 16 次运行全红（0 次成功）。挂上去等于永久卡死发版，
+  # 它是一条独立的债，另行处置。
+  # ============================================
+  verify:
+    runs-on: ubuntu-latest
+    name: Test Gate
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Lint gate (no new errors vs baseline)
+        run: npm run lint:gate
+
+      - name: Run unit tests
+        run: npm run test:unit
+
+      - name: Run integration tests
+        run: npm run test:integration
+
   build-and-push:
+    needs: verify
     runs-on: ubuntu-latest
     permissions:
       contents: read

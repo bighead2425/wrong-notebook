@@ -13,7 +13,9 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "test:report": "playwright show-report --host 0.0.0.0"
+    "test:report": "playwright show-report --host 0.0.0.0",
+    "print:sample": "node scripts/print-sample/render.mjs",
+    "lint:gate": "node scripts/lint-baseline.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.34.0",

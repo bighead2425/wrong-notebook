@@ -1,0 +1,8 @@
+{
+  "errors": 189,
+  "warnings": 88,
+  "_measured_at": "2026-09-24",
+  "_measured_on": "custom-v36 (main @ 7e49b8f)",
+  "_command": "npx eslint src -f json",
+  "_note": "只作为『不许上涨』的闸门。顺手还债后用 `npm run lint:gate -- --update` 收紧。error 侧 167/189 是 no-explicit-any。"
+}

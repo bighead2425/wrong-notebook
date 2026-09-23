@@ -69,3 +69,6 @@ upload_test_output*.txt
 # data
 /data/
 .next-prebuilt/
+
+# 打样产物（会包含真实题目的渲染结果，不得提交）
+/scripts/print-sample/out/
