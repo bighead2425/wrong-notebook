@@ -145,6 +145,22 @@ model ErrorItem {
   inputMethod      String?               // 录入方式: photo(拍照) / album(相册) / manual(手动)（H4）
                                           // ⚠️ 与上面 source(试卷来源) 不是一回事，勿混用
 
+  /// 【M0 增补 → M3 落地】框坐标落库（P7「存坐标、不烧像素」）。
+  /// 形状：
+  ///   {"boxes":[{"kind":"scope|question|handwriting|figure","x":..,"y":..,"w":..,"h":..}],
+  ///    "base":{"w":..,"h":..,"rotation":0|90|180|270}}
+  /// kind 四种对应录入时的四色框：scope=绿（作用域）/ question=红（题干）/
+  /// handwriting=蓝（她的手写）/ figure=橙（题图，不可 OCR）。取值见 src/lib/crop-regions.ts。
+  ///
+  /// ⚠️ 坐标**必须连基准图宽高 + 旋转一起存**（`base`）：图片一旦旋转或拉伸，坐标系就换了。
+  ///    只存 x/y/w/h、不存基准尺寸，迟到一次旋转就会「不报错、只画错」
+  ///    （同 image-cropper.tsx 的 rectSpaceStaleRef 教训：宁可没标记，也不要错的框）。
+  ///
+  /// 存坐标而不是把框烧进像素的收益：一张原图 + 一份坐标可派生
+  /// **正面图 / 净版 / 题图 / OCR 输入** 四种视图，且原图永远干净。
+  /// 反面印的「净版」= 按 handwriting / figure 的坐标涂白（M2 主路，确定性操作）。
+  cropRegions      String?
+
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

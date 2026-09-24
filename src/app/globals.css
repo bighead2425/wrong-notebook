@@ -137,6 +137,43 @@
   }
 }
 
+/* ===== T1 深挖纸（M3 / P5）=====
+   与旧版「错题卡」是两套东西：深挖纸**纸上零 AI 内容**（P3/P19），
+   解析 / 错因 / 答案一律不印。这里放**屏幕上也该看见**的部分，
+   分页规则在下面 @media print 里。 */
+.print-deep {
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+/* 每一面都给定高（见 lib/deep-dive-card 的 SIDE_HEIGHT_MM），是"固定版式"的落点：
+   页脚细线与页脚靠 flex:1 的书写区顶到底部，而不是随题目长短漂。 */
+.print-deep-side {
+  position: relative;
+  overflow: hidden;
+}
+
+/* 十字象限：**只是参考位置**，不赋四格语义（P6）。
+   浅绿横 + 浅粉竖；竖线在黄金比 61.8% 处（左略大、右略小）。 */
+.print-deep-cross-h {
+  background: #cfe8cf;
+}
+
+.print-deep-cross-v {
+  background: #f3d5db;
+}
+
+/* 复习进度格：一个空格，她自己在里面打勾 / 打叉 */
+.print-deep-slot {
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+/* 手写内容区：**故意留白不加横线** —— 模拟真实考场（P5）。 */
+.print-deep-writing {
+  background: transparent;
+}
+
 /* ===== 错题练习卷：纸张容器 =====
    宽度 152mm = B5(182mm) - 左右各 15mm 页边距，屏幕预览即打印所得。
    这里把主题变量重设为浅色，保证深色主题下预览和打印都是白纸黑字。 */
@@ -320,6 +357,39 @@
   .print-qr svg {
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
+  }
+
+  /* ===== T1 深挖纸（M3 / P5）=====
+     反面必须显式另起一页：否则正反两面被压进同一页，孩子做题时会直接看到
+     "遮挡线以下"的内容，遮挡线也就白设了。
+     ⚠️ 两面都给了显式高度（SIDE_HEIGHT_MM），所以这里要 allow 卡内分页
+     （.print-card 已经 break-inside: auto），但**每一面自身**必须 avoid —— 
+     一面被拆到两张纸上，固定版式就散了。 */
+  .print-deep-side {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .print-deep-back {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  /* 手动双面：翻面提示是独立一张，不能被"反面另起一页"的规则吞掉 */
+  .print-deep-back .print-flip-hint {
+    break-before: auto;
+    page-break-before: auto;
+  }
+
+  /* 题图（按橙框从原图裁出，挂在题干下方左侧）：不许被拆到两页 */
+  .print-deep-figures {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .print-deep-figures img {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
   /* 手动双面：翻面提示卡。用户家里打印机不支持自动双面，

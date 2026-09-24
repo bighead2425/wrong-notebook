@@ -83,6 +83,14 @@ export interface ErrorItem {
     lastPrintedAt?: string | null;
     inputMethod?: string | null;
 
+    /**
+     * 【M3】框坐标落库（P7「存坐标、不烧像素」）。
+     * JSON 字符串：{"boxes":[{kind,x,y,w,h}],"base":{w,h,rotation}}，
+     * 解析一律走 `lib/crop-regions.ts` 的 parseCropRegions（形状不对返回 null，
+     * 绝不在调用处随手 JSON.parse）。
+     */
+    cropRegions?: string | null;
+
     createdAt: string;
     updatedAt: string;
 }

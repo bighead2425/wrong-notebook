@@ -6,52 +6,43 @@ import Link from "next/link";
 import { House } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
-import { MarkdownRenderer } from "@/components/markdown-renderer";
-import { SubjectChip } from "@/components/subject-chip";
 import { apiClient } from "@/lib/api-client";
 import { ErrorItem, PaginatedResponse } from "@/types/api";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { PRINT_PREVIEW_PAGE_SIZE } from "@/lib/constants/pagination";
-import { getPrintPreviewCountLabel, getPrintPreviewEmptyState, getSelectedPrintItems } from "@/lib/print-preview";
+import {
+    getPrintPreviewCountLabel,
+    getPrintPreviewEmptyState,
+    getSelectedPrintItems,
+    getTags,
+    normalizeGrade,
+} from "@/lib/print-preview";
+import { formatIsoDate } from "@/lib/date-format";
 import { makeQrDataUrl } from "@/lib/qr";
+import { ErrorCard } from "@/components/print/error-card";
+import { DeepDiveCard } from "@/components/print/deep-dive-card";
+import {
+    AnswerBody,
+    QuestionBody,
+    type PrintBodyOptions,
+} from "@/components/print/question-bodies";
 
 /* 纸张容器样式见 globals.css 的 .print-sheet：
    国内市售 B5 = 182mm × 257mm（JIS B5），页边距 15mm → 内容区宽 152mm，
    并强制为浅色，保证深色主题下预览与打印都是白纸黑字。 */
 
-type PrintMode = "practice" | "explain" | "card";
-
-/** 年级字段归一化：库里混有「五年级」「五年级上」「Grade 6, 1st Semester」等写法 */
-function normalizeGrade(raw?: string | null): string {
-    if (!raw) return "";
-    const en = raw.match(/^\s*grade\s*(\d+)/i);
-    if (en) {
-        const cn: Record<string, string> = {
-            "1": "一年级", "2": "二年级", "3": "三年级",
-            "4": "四年级", "5": "五年级", "6": "六年级",
-        };
-        return cn[en[1]] || raw;
-    }
-    return raw.replace(/_/g, " ").trim();
-}
-
-function fmtDateSlash(d: Date): string {
-    return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
-}
-
 /**
- * 剥离解析里的【错因分析】段落。
- * AI 会把错因同时写进 analysis 和 mistakeAnalysis 两个字段，
- * 全开就会重复印两遍，所以独立错因字段有内容时，从解析里去掉这一段。
+ * 【M3】新增 `deep` = **T1 深挖纸**（P5），本轮唯一在做的纸型。
+ *
+ * 它和另外三种的根本差别：**纸上零 AI 内容**（P3/P19）——
+ * 解析 / 错因 / 参考答案一律不印，AI 的活全部挪到回收之后。
+ *
+ * ⚠️ 为什么没有把 deep 设成默认、也没删掉旧「错题卡」：
+ *    回收判定（M5）与回信（M6）还没做。此刻把旧卡的答案撤掉，孩子做完题
+ *    **拿不到任何反馈** —— 那不是设计意图，是断档。等 M5/M6 通了，
+ *    再把默认切到 deep、旧卡退役（一行改动）。
  */
-function stripMistakeSection(analysis: string): string {
-    const start = analysis.indexOf("【错因分析】");
-    if (start < 0) return analysis;
-    const rest = analysis.slice(start);
-    const nextTitle = rest.indexOf("\n【", 1);
-    if (nextTitle < 0) return analysis.slice(0, start).trimEnd();
-    return (analysis.slice(0, start) + rest.slice(nextTitle + 1)).trim();
-}
+type PrintMode = "deep" | "card" | "practice" | "explain";
 
 function PrintPreviewContent() {
     const searchParams = useSearchParams();
@@ -87,6 +78,13 @@ function PrintPreviewContent() {
     // 手动双面：家里打印机不支持自动双面，靠爹手动翻
     const [manualDuplex, setManualDuplex] = useState(false);
 
+    /**
+     * 【M3】打印日 —— 深挖纸反面三个日期格（+1 / +7 / +21）以它为基准。
+     * 一次打印里所有题共用同一个值，免得跨越午夜时同一批纸印出两个基准日。
+     * `handlePrint` 里会**再刷一次**：页面跨天开着时，"印于"必须是今天。
+     */
+    const [printDate, setPrintDate] = useState(() => new Date());
+
     useEffect(() => {
         fetchItems();
     }, []);
@@ -97,7 +95,7 @@ function PrintPreviewContent() {
     // 直接读 window.location 而非 useSearchParams，避免静态渲染下取值为空的时序问题。
     useEffect(() => {
         const m = new URLSearchParams(window.location.search).get("mode");
-        if (m === "card" || m === "practice" || m === "explain") {
+        if (m === "deep" || m === "card" || m === "practice" || m === "explain") {
             setMode(m);
         }
     }, []);
@@ -132,6 +130,7 @@ function PrintPreviewContent() {
     const selectedItems = getSelectedPrintItems(items, selectedIds);
     const countLabel = getPrintPreviewCountLabel(items.length, selectedItems.length);
     const emptyState = getPrintPreviewEmptyState(items.length, selectedItems.length);
+    const isDeep = mode === "deep";
     const isCard = mode === "card";
     const isPractice = mode === "practice";
 
@@ -171,6 +170,8 @@ function PrintPreviewContent() {
     const handlePrint = useCallback(async () => {
         if (selectedItems.length === 0) return;
         setPrinting(true);
+        // 【M3】把"打印日"刷成此刻：页面跨天开着时，纸面日期/三个日期格必须是今天
+        setPrintDate(new Date());
         try {
             await apiClient.post("/api/error-items/mark-printed", {
                 ids: selectedItems.map((i) => i.id),
@@ -178,36 +179,14 @@ function PrintPreviewContent() {
         } catch (error) {
             console.error("Failed to record print count:", error);
         }
-        // 让 printCount 的新值先渲染到纸上（若纸面要显示次数）
+        // 让 printCount / 打印日的新值先渲染到纸上（若纸面要显示次数）
         setTimeout(() => {
             window.print();
             setPrinting(false);
         }, 120);
     }, [selectedItems]);
 
-    const getTags = (item: ErrorItem): string[] => {
-        if (item.tags && item.tags.length > 0) return item.tags.map((x) => x.name);
-        try {
-            const arr = JSON.parse(item.knowledgePoints || "[]");
-            return Array.isArray(arr) ? arr.filter((x: unknown) => typeof x === "string") : [];
-        } catch {
-            return [];
-        }
-    };
-
     /** 错题所属本 → 用于页头年级学期与学科色标 */
-    const nbInfo = (item: ErrorItem) => {
-        const nb = item.notebook;
-        if (!nb) {
-            return { gradeText: normalizeGrade(item.gradeSemester) || L("未分本", "Unfiled"), subjectKey: "other" };
-        }
-        const grade = nb.grade || normalizeGrade(item.gradeSemester);
-        const sem = nb.semester ? (nb.semester === "下" ? "下" : "上") : "";
-        const gradeText = [grade, sem ? `${sem}学期` : ""].filter(Boolean).join(" · ")
-            || nb.displayName;
-        return { gradeText, subjectKey: nb.subject || "other" };
-    };
-
     const sheetInfo = useMemo(() => {
         const subjects = [...new Set(selectedItems.map((i) => i.notebook?.displayName).filter(Boolean) as string[])];
         const grades = [...new Set(selectedItems.map((i) => normalizeGrade(i.gradeSemester)).filter(Boolean))];
@@ -219,6 +198,14 @@ function PrintPreviewContent() {
             to: times.length ? new Date(Math.max(...times)) : null,
         };
     }, [selectedItems]);
+
+    /** 练习卷 / 讲解卷共用的正文渲染参数（错题卡与深挖纸各有自己的取法） */
+    const bodyOptions: PrintBodyOptions = useMemo(
+        () => ({ showQuestionText, showImage, showAnswers, showAnalysis, showMistake, imageScale, L }),
+        // L 随语言变化，zh 已覆盖；其余是原始值
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [showQuestionText, showImage, showAnswers, showAnalysis, showMistake, imageScale, zh],
+    );
 
     if (loading) {
         return (
@@ -236,200 +223,6 @@ function PrintPreviewContent() {
         [L("错因分析", "Mistake"), showMistake, setShowMistake],
         [L("知识点", "Tags"), showTags, setShowTags],
     ];
-
-    const QuestionBody = ({ item }: { item: ErrorItem }) => {
-        const hasText = showQuestionText && !!item.questionText;
-        const hasImg = showImage && !!item.originalImageUrl;
-        if (!hasText && !hasImg) {
-            return <div style={{ color: "#999" }}>{L("（该题没有可打印的题干）", "(nothing to print)")}</div>;
-        }
-        return (
-            <>
-                {hasText && (
-                    <div style={{ marginBottom: hasImg ? "2mm" : 0 }}>
-                        <MarkdownRenderer content={item.questionText as string} />
-                    </div>
-                )}
-                {/* 【custom-v26】题干文字与题目原图之间加一条虚线。
-                    两者同处一个方框里，中间不留界的话，长题干下面接着一张图，
-                    一眼看过去会以为图也是题干的一部分（尤其图里还带着手写答案时）。
-                    用虚线而非实线：它是"同一块内容内部的分隔"，不该抢原题边框的层级。 */}
-                {hasText && hasImg && (
-                    <div style={{ borderTop: "1px dashed #888", marginBottom: "3mm" }} />
-                )}
-                {hasImg && (
-                    <img
-                        src={item.originalImageUrl as string}
-                        alt=""
-                        style={{ maxWidth: `${imageScale}%`, height: "auto", display: "block" }}
-                    />
-                )}
-            </>
-        );
-    };
-
-    const AnswerBody = ({ item }: { item: ErrorItem }) => {
-        const hasMistakeField = showMistake && !!item.mistakeAnalysis;
-        const analysisText = item.analysis
-            ? hasMistakeField
-                ? stripMistakeSection(item.analysis)
-                : item.analysis
-            : "";
-        return (
-            <>
-                {showAnswers && item.answerText && (
-                    <div style={{ marginBottom: "2mm" }}>
-                        <div className="print-sub-title" style={{ fontWeight: 600 }}>
-                            {L("参考答案", "Answer")}
-                        </div>
-                        <MarkdownRenderer content={item.answerText} />
-                    </div>
-                )}
-                {showAnalysis && analysisText && (
-                    <div style={{ marginBottom: "2mm" }}>
-                        <div className="print-sub-title" style={{ fontWeight: 600 }}>
-                            {L("解析", "Analysis")}
-                        </div>
-                        <MarkdownRenderer content={analysisText} />
-                    </div>
-                )}
-                {hasMistakeField && (
-                    <div>
-                        <div className="print-sub-title" style={{ fontWeight: 600 }}>
-                            {L("错因分析", "Why wrong")}
-                        </div>
-                        <MarkdownRenderer content={item.mistakeAnalysis as string} />
-                    </div>
-                )}
-            </>
-        );
-    };
-
-    /** ===== 错题卡（G7 模板）：一道题一张纸的正反两面 ===== */
-    const ErrorCard = ({ item, index }: { item: ErrorItem; index: number }) => {
-        const tags = getTags(item);
-        const { gradeText, subjectKey } = nbInfo(item);
-        const questionNo = item.source || `#${index + 1}`;
-        const hasCause = showMistake && !!item.mistakeAnalysis;
-
-        return (
-            <div className={`print-card ${soloIds.has(item.id) ? "" : ""}`}>
-                {/* ---------- 正面：题头 + 原题 + 原图 + 两栏 ---------- */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "3mm", marginBottom: "2mm" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "2mm", minWidth: 0 }}>
-                        {/* 【custom-v24】showCode={false}：色块只印「语文」，不再印「语文YW」。
-                            紧跟在后面的题号本身就以学科简拼开头（如 YW20260919001），不必印两遍。 */}
-                        <SubjectChip subjectKey={subjectKey} variant="print" showCode={false} />
-                        <span style={{ fontSize: "12pt", fontWeight: 700, letterSpacing: "0.5px" }}>{questionNo}</span>
-                    </div>
-                    {qrMap[item.id] ? (
-                        <img
-                            className="print-qr"
-                            src={qrMap[item.id]}
-                            alt={questionNo}
-                            style={{ width: "18mm", height: "18mm", flexShrink: 0 }}
-                        />
-                    ) : (
-                        <div style={{ width: "18mm", height: "18mm", flexShrink: 0 }} />
-                    )}
-                </div>
-
-                <div style={{ display: "flex", justifyContent: "space-between", gap: "4mm", fontSize: "9pt", color: "#444", marginBottom: "2.5mm" }}>
-                    <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {L("第", "No.")} {index + 1} {L("题", "")} ｜ {gradeText}
-                        {showTags && tags.length > 0 ? ` ｜ ${tags.join("；")}` : ""}
-                    </span>
-                    <span style={{ whiteSpace: "nowrap", flexShrink: 0 }}>
-                        {fmtDateSlash(new Date())}{" "}
-                        {typeof item.printCount === "number" && item.printCount > 0
-                            ? `｜${L("已打", "Printed")} ${item.printCount}${L("次", "×")}`
-                            : ""}
-                    </span>
-                </div>
-
-                {/* 原题：圆角框 */}
-                <div
-                    className="print-rounded-box"
-                    style={{ border: "1.5px solid #333", borderRadius: "2mm", padding: "2.5mm", marginBottom: "3mm" }}
-                >
-                    <QuestionBody item={item} />
-                </div>
-
-                {/* 解析左 / 空白右（B9），内容延伸到背面 */}
-                <div className="print-two-col" style={{ display: "flex", gap: "3mm", alignItems: "flex-start" }}>
-                    <div style={{ flex: "1 1 52%", minWidth: 0 }}>
-                        {showAnalysis && item.analysis && (
-                            <div className="print-sub-title" style={{ fontWeight: 600, fontSize: "10pt", marginBottom: "1mm" }}>
-                                {L("解析", "Analysis")}
-                            </div>
-                        )}
-                        {showAnalysis && item.analysis && (
-                            <div style={{ fontSize: "10pt" }}>
-                                <MarkdownRenderer content={stripMistakeSection(item.analysis)} />
-                            </div>
-                        )}
-                    </div>
-                    {/* 【custom-v26】解析区与重做区之间加一条深灰竖线。
-                        用 borderLeft 而不是插一个空 div 当线：空 div 在 flex 里高度靠 stretch 撑，
-                        一旦这一栏跨页断开就会印出一条断头线；挂在右栏上，线必然与右栏同高。
-                        alignSelf:stretch 让竖线跟到两栏中较高的那一栏（通常是重做区）。 */}
-                    <div
-                        style={{
-                            flex: "1 1 48%",
-                            minWidth: 0,
-                            alignSelf: "stretch",
-                            borderLeft: "2px solid #555",
-                            paddingLeft: "3mm",
-                        }}
-                    >
-                        <div style={{ fontSize: "9pt", color: "#666", marginBottom: "1mm" }}>
-                            {L("重做区", "Redo here")}
-                        </div>
-                        <div className="print-answer-space" style={{ height: `${Math.max(spaceMM, 30)}mm` }} />
-                    </div>
-                </div>
-
-                {/* ---------- 背面：继续重做 + 从后往前的错因/答案 ---------- */}
-                <div className="print-tail" style={{ marginTop: "6mm" }}>
-                    {manualDuplex && (
-                        <div
-                            className="print-flip-hint"
-                            style={{ border: "1px dashed #888", borderRadius: "2mm", padding: "2.5mm", marginBottom: "4mm", fontSize: "9pt", color: "#555" }}
-                        >
-                            ↩ {L("请在此处翻面", "Flip the page here")} —— {L("下面是本题的背面（把纸按「短边翻转」放回纸盒）", "below is the back side of this question (flip short-edge)")}
-                        </div>
-                    )}
-                    <div style={{ fontSize: "9pt", color: "#666", marginBottom: "1mm" }}>
-                        {L("重做区（续）", "More room to redo")}
-                    </div>
-                    <div className="print-answer-space" style={{ height: `${Math.max(spaceMM, 30)}mm`, marginBottom: "4mm" }} />
-
-                    {hasCause && (
-                        <div
-                            className="print-rounded-box"
-                            style={{ border: "1.5px solid #999", borderRadius: "2mm", padding: "2.5mm", marginBottom: "3mm" }}
-                        >
-                            <div className="print-sub-title" style={{ fontWeight: 600, fontSize: "10pt", marginBottom: "1mm" }}>
-                                {L("错因分析", "Why wrong")}
-                            </div>
-                            <div style={{ fontSize: "10pt" }}>
-                                <MarkdownRenderer content={item.mistakeAnalysis as string} />
-                            </div>
-                        </div>
-                    )}
-
-                    {showAnswers && item.answerText && (
-                        <div className="print-faint" style={{ fontSize: "11pt" }}>
-                            <div className="print-sub-title" style={{ fontWeight: 700, marginBottom: "1mm" }}>
-                                {L("参考答案", "Answer")}
-                            </div>
-                            <MarkdownRenderer content={item.answerText} />
-                        </div>
-                    )}
-                </div>
-            </div>
-        );
-    };
 
     return (
         <>
@@ -456,6 +249,7 @@ function PrintPreviewContent() {
                     <div className="flex flex-wrap items-center gap-2 sm:gap-4">
                         <div className="flex items-center gap-1 bg-muted/50 rounded-md p-1">
                             {([
+                                ["deep", L("深挖纸 ★", "Deep dive ★")],
                                 ["card", L("错题卡", "Error card")],
                                 ["practice", L("练习卷", "Practice")],
                                 ["explain", L("讲解卷", "Study")],
@@ -472,28 +266,35 @@ function PrintPreviewContent() {
                             ))}
                         </div>
 
-                        {toggles.map(([label, val, setter]) => (
-                            <label key={label} className="flex items-center gap-1.5 text-xs sm:text-sm cursor-pointer whitespace-nowrap">
-                                <input
-                                    type="checkbox"
-                                    checked={val}
-                                    onChange={(e) => setter(e.target.checked)}
-                                    className="rounded border-gray-300 w-3.5 h-3.5 sm:w-4 sm:h-4"
-                                />
-                                {label}
-                            </label>
-                        ))}
+                        {!isDeep &&
+                            toggles.map(([label, val, setter]) => (
+                                <label key={label} className="flex items-center gap-1.5 text-xs sm:text-sm cursor-pointer whitespace-nowrap">
+                                    <input
+                                        type="checkbox"
+                                        checked={val}
+                                        onChange={(e) => setter(e.target.checked)}
+                                        className="rounded border-gray-300 w-3.5 h-3.5 sm:w-4 sm:h-4"
+                                    />
+                                    {label}
+                                </label>
+                            ))}
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-                        <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-md">
-                            <span className="whitespace-nowrap">{L("留白高度", "Space")}: {spaceMM}mm</span>
-                            <input type="range" min={15} max={80} step={5} value={spaceMM} onChange={(e) => setSpaceMM(Number(e.target.value))} className="w-16 sm:w-20" />
-                        </div>
-                        <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-md">
-                            <span className="whitespace-nowrap">{L("图片宽度", "Image")}: {imageScale}%</span>
-                            <input type="range" min={30} max={100} value={imageScale} onChange={(e) => setImageScale(Number(e.target.value))} className="w-16 sm:w-20" />
-                        </div>
+                        {/* 深挖纸的留白与图片宽度由版面自己定，不给滑块 ——
+                            一律按 P9 的尺寸算，免得手一滑把"装得下"调坏了 */}
+                        {!isDeep && (
+                            <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-md">
+                                <span className="whitespace-nowrap">{L("留白高度", "Space")}: {spaceMM}mm</span>
+                                <input type="range" min={15} max={80} step={5} value={spaceMM} onChange={(e) => setSpaceMM(Number(e.target.value))} className="w-16 sm:w-20" />
+                            </div>
+                        )}
+                        {!isDeep && (
+                            <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-md">
+                                <span className="whitespace-nowrap">{L("图片宽度", "Image")}: {imageScale}%</span>
+                                <input type="range" min={30} max={100} value={imageScale} onChange={(e) => setImageScale(Number(e.target.value))} className="w-16 sm:w-20" />
+                            </div>
+                        )}
                         <label className="flex items-center gap-1.5 text-xs sm:text-sm cursor-pointer whitespace-nowrap">
                             <input
                                 type="checkbox"
@@ -506,14 +307,19 @@ function PrintPreviewContent() {
                     </div>
 
                     <p className="text-xs text-muted-foreground">
-                        {mode === "card"
+                        {isDeep
                             ? L(
-                                  "错题卡：一道题占一张纸的正反两面——正面重做、背面给错因和答案（灰淡字）。打印那一刻会计一次数。",
-                                  "Error card: one question per sheet — front for redoing, back for cause & answer.",
+                                  "深挖纸（T1，★ 新版）：一道题占一张纸的正反两面。正面=原题照片+反思留白（框只活在软件里，不印到纸上）；反面=干净题面+遮挡线夹出的重做区+页脚三个日期格（打印日 +1/+7/+21）。纸上不印解析、错因、答案——那是回收之后 AI 的活。",
+                                  "Deep-dive sheet (T1, new): one question per double-sided sheet.",
                               )
-                            : isPractice
-                                ? L("练习卷：答案与解析统一排在最后，从新的一页开始", "Answers start on a new page")
-                                : L("讲解卷：答案与解析紧跟每题", "Answers follow each question")}
+                            : mode === "card"
+                                ? L(
+                                      "错题卡：一道题占一张纸的正反两面——正面重做、背面给错因和答案（灰淡字）。打印那一刻会计一次数。",
+                                      "Error card: one question per sheet — front for redoing, back for cause & answer.",
+                                  )
+                                : isPractice
+                                    ? L("练习卷：答案与解析统一排在最后，从新的一页开始", "Answers start on a new page")
+                                    : L("讲解卷：答案与解析紧跟每题", "Answers follow each question")}
                         {manualDuplex && " · " + L(
                             "打印机不支持自动双面：打印对话框里先填奇数页 1,3,5…，打完后把纸按「短边翻转」放回纸盒，再填偶数页 2,4,6…",
                             "No auto duplex: print odd pages 1,3,5… first, flip short-edge, then print even pages 2,4,6…",
@@ -558,10 +364,34 @@ function PrintPreviewContent() {
             {/* ===== 打印内容：屏幕预览 = 纸张实际效果 ===== */}
             <div className="py-6 px-4 print:p-0 print:py-0">
                 <div className="print-sheet">
-                    {isCard ? (
+                    {isDeep ? (
                         <>
                             {selectedItems.map((item, index) => (
-                                <ErrorCard key={item.id} item={item} index={index} />
+                                <DeepDiveCard
+                                    key={item.id}
+                                    item={item}
+                                    index={index}
+                                    qrMap={qrMap}
+                                    printDate={printDate}
+                                    manualDuplex={manualDuplex}
+                                    L={L}
+                                />
+                            ))}
+                        </>
+                    ) : isCard ? (
+                        <>
+                            {selectedItems.map((item, index) => (
+                                <ErrorCard
+                                    key={item.id}
+                                    item={item}
+                                    index={index}
+                                    qrMap={qrMap}
+                                    soloIds={soloIds}
+                                    showTags={showTags}
+                                    spaceMM={spaceMM}
+                                    manualDuplex={manualDuplex}
+                                    options={bodyOptions}
+                                />
                             ))}
                         </>
                     ) : (
@@ -575,8 +405,8 @@ function PrintPreviewContent() {
                                     {sheetInfo.grades.length > 0 && <span>{L("年级", "Grade")}：{sheetInfo.grades.join("/")}</span>}
                                     {sheetInfo.from && sheetInfo.to && (
                                         <span>
-                                            {L("范围", "Range")}：{fmtDateSlash(sheetInfo.from)}
-                                            {fmtDateSlash(sheetInfo.from) !== fmtDateSlash(sheetInfo.to) ? ` ~ ${fmtDateSlash(sheetInfo.to)}` : ""}
+                                            {L("范围", "Range")}：{formatIsoDate(sheetInfo.from)}
+                                            {formatIsoDate(sheetInfo.from) !== formatIsoDate(sheetInfo.to) ? ` ~ ${formatIsoDate(sheetInfo.to)}` : ""}
                                         </span>
                                     )}
                                     <span>{L("共", "Total")} {selectedItems.length} {L("题", "Q")}</span>
@@ -601,12 +431,12 @@ function PrintPreviewContent() {
                                             <span style={{ fontSize: "9pt", color: "#666" }}>{item.source}</span>
                                             {showTags && tags.length > 0 && <span style={{ fontSize: "9pt", color: "#666" }}>[{tags.join(" / ")}]</span>}
                                         </div>
-                                        <QuestionBody item={item} />
+                                        <QuestionBody item={item} options={bodyOptions} />
                                         {isPractice ? (
                                             <div className="print-answer-space" style={{ height: `${spaceMM}mm`, marginTop: "3mm" }} />
                                         ) : (
                                             <div style={{ marginTop: "3mm" }}>
-                                                <AnswerBody item={item} />
+                                                <AnswerBody item={item} options={bodyOptions} />
                                             </div>
                                         )}
                                     </div>
@@ -630,7 +460,7 @@ function PrintPreviewContent() {
                                             <div className="print-sub-title" style={{ fontWeight: 700, marginBottom: "1mm" }}>
                                                 {L("第", "Q")} {index + 1} {L("题", "")}
                                             </div>
-                                            <AnswerBody item={item} />
+                                            <AnswerBody item={item} options={bodyOptions} />
                                         </div>
                                     ))}
                                 </div>

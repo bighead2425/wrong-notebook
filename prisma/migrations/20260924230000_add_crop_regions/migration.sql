@@ -1,0 +1,12 @@
+-- M3：框坐标落库（P7「存坐标、不烧像素」）。
+--
+-- 保守迁移：**只 ADD COLUMN，不重建表**。
+-- SQLite 的 ADD COLUMN 不触碰既有数据；而 prisma migrate 按 schema 差异自动生成的
+-- 版本会 DROP + RENAME 重建 ErrorItem（因为加了带注释的列），生产库里有真实错题数据，
+-- 重建一旦中断就是数据丢失。这一个列是纯新增、无默认值、无约束，手写最稳。
+--
+-- 形状（见 src/lib/crop-regions.ts）：
+--   {"boxes":[{"kind":"scope|question|handwriting|figure","x":..,"y":..,"w":..,"h":..}],
+--    "base":{"w":..,"h":..,"rotation":0|90|180|270}}
+-- 存量行留 NULL：解析层把它当成「没有框」处理，派生视图退回原图，不会报错。
+ALTER TABLE "ErrorItem" ADD COLUMN "cropRegions" TEXT;
