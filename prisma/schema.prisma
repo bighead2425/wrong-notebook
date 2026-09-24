@@ -30,6 +30,7 @@ model User {
   notebooks  Notebook[]
   practiceRecords PracticeRecord[]
   customTags KnowledgeTag[] // User's custom tags
+  printBatches PrintBatch[] // 打印批次（一次交付 = 一批）
 }
 
 // 统一知识点标签表 (支持无限层级)
@@ -123,6 +124,12 @@ model ErrorItem {
   source           String? // e.g. "Midterm Exam"
   errorType        String? // e.g. "Calculation", "Concept"
   userNotes        String?
+
+  /// 【M0 新增】AI 统一打标的错因分类（P16：她自由书写，AI 归类）。
+  /// ⚠️ 刻意与 errorType 分开：那个是**外部导入透传**的英文自由文本（api/import、
+  /// openclaw/batch-upload 会写），语义不受控；本列只装**受控枚举**，取值见
+  /// src/lib/mistake-category.ts。一个字段只担一种语义，避免"不报错只静默错"。
+  mistakeCategory  String?
   
   masteryLevel     Int     @default(0) // 0: New, 1: Reviewing, 2: Mastered（5.3：=2 即四分法「已掌握」）
   gradeSemester    String? // [遗留·不再写入] 年级学期由 Notebook 承载，保留列仅为兼容旧数据
@@ -142,6 +149,8 @@ model ErrorItem {
   updatedAt        DateTime @updatedAt
 
   reviewSchedules ReviewSchedule[]
+  printJobs       PrintJob[]        // 该题的每一次打印（同一题会重印多次，见 PrintJob）
+  stateChangeLogs StateChangeLog[]  // 状态变更日志（R15）
 
   @@index([notebookId])
   @@index([deletedAt])
@@ -152,12 +161,26 @@ model ReviewSchedule {
   id          String    @id @default(cuid())
   errorItemId String
   errorItem   ErrorItem @relation(fields: [errorItemId], references: [id], onDelete: Cascade)
-  
+
+  /// 【M0 新增】第几轮独立检查（R14：1 = 第 0 天首次深挖 / 2 = 第 7 天 / 3 = 第 21 天）。
+  /// ⚠️ 刻意**不加** @@unique([errorItemId, round])：存量数据由 /api/import 写入，
+  /// 其去重口径是「同一 errorItem + 相同 scheduledFor」（import/route.ts:341 用 findFirst 而非 upset 去重），
+  /// 说明库里可能存在同题多条记录。加唯一约束会让 SQLite 重建整表，风险大于收益。
+  /// 唯一性改由 M7 的写入侧保证。
+  round       Int       @default(1)
+
   scheduledFor DateTime
   completedAt  DateTime?
   isCorrect    Boolean? // Result of the review
-  
+
+  /// 【M0 新增】该轮用哪张纸（第 7 / 21 天走 T0 极简重做卡），以及她做完扫回来的那一面
+  printJobId   String?
+  scanReturnId String?
+
   createdAt    DateTime @default(now())
+
+  @@index([errorItemId, round])
+  @@index([scheduledFor])
 }
 
 model PracticeRecord {
@@ -170,4 +193,142 @@ model PracticeRecord {
   isCorrect Boolean?
   
   createdAt DateTime @default(now())
+}
+
+// ============================================================================
+// 【M0 · 2026-09-24】纸面回流链的数据底座（设计依据：打印结论 P19–P25）
+//
+// 为什么需要这一组表：
+// 旧模型只有 ErrorItem.printCount 一个计数器 —— 知道"这题印过 3 次"，
+// 却**不知道每一张纸各自是什么**。而新规范要求二维码里带"第几次打印 + 哪一面"
+// （P25.1，如 SX20260916001-R2-B），扫回来还要落到具体的某一面纸上。
+// 计数器做不到这件事，所以要补"打印实例"这一层。
+//
+// 依赖方向：PrintBatch（一批交付）→ PrintJob（一次打印）→ ScanReturn（扫回来的一面）。
+// ============================================================================
+
+/// 打印批次：一次交付即一批（P23 / R4：hill 的动作永远可分批）。
+model PrintBatch {
+  id          String @id @default(cuid())
+
+  userId      String
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// 本批是否含 T5 回信页（回信随下一批卡交付，R7）
+  hasReplyPage Boolean @default(false)
+
+  /// 本批题数（冗余列，供列表直显；以 printJobs 关系为权威）
+  itemCount   Int      @default(0)
+
+  printedAt   DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  printJobs   PrintJob[]
+
+  @@index([userId, printedAt])
+}
+
+/// 打印实例：一道题每被打印一次，产生一条。
+model PrintJob {
+  id          String    @id @default(cuid())
+
+  errorItemId String
+  errorItem   ErrorItem @relation(fields: [errorItemId], references: [id], onDelete: Cascade)
+
+  /// 题号快照（= ErrorItem.source，如 SX20260916001）。二维码里印的就是它。
+  /// 存快照的理由：合并错题会改 source（api/error-items/merge），
+  /// 日后核对"当年那张纸上印的是什么"只能靠快照。
+  questionNo  String
+
+  /// 该题第几次打印：R1 / R2 / R3 …
+  /// ⚠️ 与 ErrorItem.printCount 的关系：printCount 是"计数缓存"，本列是权威。
+  /// 建实例时两者在**同一事务内**同步递增，避免漂移。
+  instanceNo  Int
+
+  /// 纸型（T1–T5）：本轮只实现 T1 深挖纸；T0 极简重做卡（第 7/21 天）预留
+  paperType   String @default("T1")
+
+  /// 这一张纸的用途：initial(第 0 天首次深挖) / day7 / day21
+  /// ⚠️ 与 paperType 分开：T0 既能用于 day7 也能用于 day21，两者不是一回事
+  stage       String @default("initial")
+
+  batchId     String?
+  batch       PrintBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  printedAt   DateTime @default(now())
+
+  /// 回收状态。软件**只记它确实知道的两件事**：
+  ///   printed  = 已打印（纸进了待做匣。她做没做，软件不猜 —— R16 不监控）
+  ///   returned = 已回收（hill 扫回来了。R18：没她痕迹的纸不扫，也就不会有这条流转）
+  /// 中间的"她正在做"刻意不存在。
+  status      String @default("printed")
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  scanReturns ScanReturn[]
+
+  /// 同一题的同一实例号只能有一条
+  @@unique([errorItemId, instanceNo])
+  @@index([batchId])
+  @@index([status])
+}
+
+/// 回收件：扫描回来的**一面**纸（P25：两面各印一个码，故按面分别入库）。
+model ScanReturn {
+  id         String   @id @default(cuid())
+
+  printJobId String
+  printJob   PrintJob @relation(fields: [printJobId], references: [id], onDelete: Cascade)
+
+  /// 哪一面：F = 正面（反思面）/ B = 背面（重做面）
+  side       String
+
+  /// 扫描件地址。**原件优先**（R17：AI 优先看扫描图，OCR 只是省力副本）
+  imageUrl   String
+  ocrText    String?
+
+  scannedAt  DateTime @default(now())
+
+  /// AI 判定结果（波 3 才写入，M0 只建位）
+  aiVerdict  String?  // 已掌握 / 仍有错 / 无法判定
+  aiPayload  String?  // 结构化原始结果（JSON 字符串）
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  /// 同一实例的同一面只应有一条。
+  /// 重复扫到同一面时**撞唯一约束报错**，而不是静默覆盖 ——
+  /// 正是 P25.5 要求的"报警交人确认，不做静默覆盖"。
+  /// （污损重扫的更新路径留给波 2）
+  @@unique([printJobId, side])
+  @@index([printJobId])
+}
+
+/// 状态变更日志（R15）：哪道题、什么时候、被谁、标成了什么。
+/// 原则：记**状态变更**，不记学习行为；按需查，不做全量监控（R16）。
+model StateChangeLog {
+  id           String    @id @default(cuid())
+
+  errorItemId  String
+  errorItem    ErrorItem @relation(fields: [errorItemId], references: [id], onDelete: Cascade)
+
+  /// 变更的字段：masteryLevel / deletedAt / mistakeCategory …
+  field        String
+  fromValue    String?
+  toValue      String?
+
+  /// 谁改的：user / ai / scan / system
+  actor        String
+  actorUserId  String?
+
+  /// 追到是哪张纸触发的（可空：在电脑上手动勾选就没有纸）
+  printJobId   String?
+  scanReturnId String?
+
+  note         String?
+  createdAt    DateTime @default(now())
+
+  @@index([errorItemId, createdAt])
+  @@index([actor, createdAt])
 }
