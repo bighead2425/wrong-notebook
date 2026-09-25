@@ -345,3 +345,68 @@ describe('crop-regions · 只留与裁剪区有交集的框', () => {
         expect(kept).toEqual([]);
     });
 });
+
+/**
+ * 净版生成的前提判定（M1 / 2026-09-26）。
+ *
+ * `useNetVersionImage` 只在 `needsWipe` 为真时才动手画 canvas。
+ * 这里把"什么情况下该画、什么情况下不该画"钉住 —— 判错的代价是
+ * 要么白画一张（内存，手机浏览器上不便宜），要么把"原图本身就是净版"
+ * 当成"无法生成净版"，让调用方错误地走了"翻回正面看题"的兜底。
+ */
+describe('crop-regions · 净版该不该生成', () => {
+    it('有蓝框 → 该涂白（这就是净版的主路）', () => {
+        const plan = planNetVersion(
+            regions([
+                { kind: 'question', x: 0, y: 0, w: 400, h: 300 },
+                { kind: 'handwriting', x: 50, y: 200, w: 120, h: 60 },
+            ]),
+        );
+        expect(needsWipe(plan)).toBe(true);
+        expect(plan.fills).toHaveLength(1);
+    });
+
+    it('只有橙框（没作答、但有题图）→ 也要涂白（题图得从中裁出来，位置要留白）', () => {
+        const plan = planNetVersion(
+            regions([
+                { kind: 'question', x: 0, y: 0, w: 400, h: 300 },
+                { kind: 'figure', x: 250, y: 30, w: 100, h: 80 },
+            ]),
+        );
+        expect(needsWipe(plan)).toBe(true);
+        expect(plan.figures).toHaveLength(1);
+    });
+
+    it('只有红框（她压根没作答、也没题图）→ 不生成：原图本身就是净版', () => {
+        const plan = planNetVersion(
+            regions([{ kind: 'question', x: 0, y: 0, w: 400, h: 300 }]),
+        );
+        expect(needsWipe(plan)).toBe(false);
+    });
+
+    it('蓝框连成一片时应并成一个填白区，不逐个填（少几次 canvas 绘制）', () => {
+        // 两个相交的蓝框 = 一段手写的两笔
+        const plan = planNetVersion(
+            regions([
+                { kind: 'question', x: 0, y: 0, w: 400, h: 300 },
+                { kind: 'handwriting', x: 50, y: 200, w: 100, h: 60 },
+                { kind: 'handwriting', x: 120, y: 210, w: 100, h: 60 },
+            ]),
+        );
+        expect(plan.fills).toHaveLength(1);
+        // 并出来的包围盒应覆盖两块
+        expect(plan.fills[0].x).toBe(50);
+        expect(plan.fills[0].x + plan.fills[0].w).toBe(220);
+    });
+
+    it('完全分开的两处手写应各留一块（不能并成一个大白块，那会擦掉题目）', () => {
+        const plan = planNetVersion(
+            regions([
+                { kind: 'question', x: 0, y: 0, w: 400, h: 300 },
+                { kind: 'handwriting', x: 10, y: 10, w: 50, h: 30 },
+                { kind: 'handwriting', x: 300, y: 250, w: 50, h: 30 },
+            ]),
+        );
+        expect(plan.fills).toHaveLength(2);
+    });
+});
