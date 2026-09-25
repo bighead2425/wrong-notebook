@@ -69,18 +69,50 @@ export function sidePaddingMM(side: SheetSide): { left: number; right: number } 
 export const T1_LAYOUT_MM = {
     /** 身份条（学科色标 + 题号 + 年级学期 + 二维码）—— P9 定的 9mm */
     identityBar: 9,
-    /** 身份条下面那一行「知识点」（靠左，各知识点用 · 隔开） */
+    /**
+     * 身份条下面那一行「知识点」（靠左，各知识点用 · 隔开）—— **一行**的高度。
+     *
+     * ⚠️ 2026-09-26：他嫌知识点"位置太靠下"，两处一起改 ——
+     *   ① 文字**贴着上面的横线**（组件里 `align-items: flex-start` + 0.4mm 上内边距，
+     *      不再是垂直居中：居中会在这行上下各留 1.6mm 空气，看着就"掉下来了"）；
+     *   ② 一行放不下时允许折到**第二行**（见 `knowledgeRowMax`）。
+     */
     knowledgeRow: 6,
+    /** 知识点最多占的高度（**两行**）。再多就不印了 —— 说明知识点标签打得太碎，该合并。 */
+    knowledgeRowMax: 9.5,
+    /**
+     * 正面各块之间的竖向间隙合计：照片上 1.5mm + 分析区上 1.5mm（见组件）。
+     * 这条**必须**进尺寸自检：不把它算进去，两行知识点时最后一排会溢出被裁掉。
+     */
+    frontGaps: 3,
     /** 正面原题照片高度区间（P9：45–95mm） */
     photoMin: 45,
     photoMax: 95,
     /** 正面十字象限留白下限（P9：≥110mm） */
     crosshairMin: 110,
-    /** 反面页脚（二维码 + 三个日期格）高度 */
-    footer: 20,
+    /**
+     * 反面页脚高度。
+     * ⚠️ 2026-09-26 从 20mm 加到 26mm：页脚改成上下两行
+     *    （上行 = 二维码 + 横线共享页宽；下行 = 三个日期格 + 末尾虚线框）。
+     */
+    footer: 26,
     /** 反面手写内容区下限 —— 低于这个值说明题目太长，该拆成两张了 */
     writingMin: 60,
 } as const;
+
+/**
+ * 反面页脚最末那个**虚线框**（印章 / 她手写"已会"）。
+ *
+ * ⚠️ 版面上**不许写它的用途**（他 2026-09-26 的原话）：
+ *    写上"已会"就等于替她把答案定了，也把这块框死了；
+ *    留白，她想盖章就盖章、想写"已会"就写、想画个勾也行。
+ *
+ * 尺寸：比颜色格（5.5mm 见方）**宽得多、略高一点**，是个扁长方形。
+ */
+export const STAMP_BOX_MM = { w: 28, h: 8, radius: 1.5 } as const;
+
+/** 颜色格边长（虚线框要比它大，这条是参照系） */
+export const SLOT_SIZE_MM = 5.5;
 
 /**
  * 正面尺寸自检（P9）：身份条 + 照片 + 十字留白 必须装得进内容区。
@@ -101,15 +133,39 @@ export function frontSideSlackMM(photoHeightMM: number): number {
 /**
  * 正面照片**最大可印**的高度。
  *
- * 两个上限取小：① P9 定的照片上限 95mm；② 别把十字留白挤到 110mm 以下。
+ * 三个上限取小：① P9 定的照片上限 95mm；② 别把十字留白挤到 110mm 以下；
+ * ③ **按"知识点占两行"的最坏情况算**（2026-09-26）——
+ *    原来只按一行算，知识点一折行，最后 1.5mm 就被侧边 `overflow:hidden` 裁掉，
+ *    裁掉的正好是分析区的**下边框和下面两个角标**（OCR 靠它们定方向）。
+ *    代价是照片少 1.5mm（93.5 而不是 95），肉眼无感，换来"两行也不会出事"。
+ *
  * 组件直接拿它当 `max-height`，于是"装得下"是**算出来的**，不是打印出来拿尺子量才知道。
  */
 export function maxFrontPhotoHeightMM(): number {
     const maxAllowed =
-        SIDE_HEIGHT_MM - T1_LAYOUT_MM.identityBar - T1_LAYOUT_MM.knowledgeRow - T1_LAYOUT_MM.crosshairMin;
+        SIDE_HEIGHT_MM -
+        T1_LAYOUT_MM.identityBar -
+        T1_LAYOUT_MM.knowledgeRowMax -
+        T1_LAYOUT_MM.crosshairMin -
+        T1_LAYOUT_MM.frontGaps;
     return Math.max(
         T1_LAYOUT_MM.photoMin,
         Math.min(T1_LAYOUT_MM.photoMax, maxAllowed),
+    );
+}
+
+/**
+ * 正面尺寸自检 · **最坏情况**（知识点占满两行）。
+ * 返回富余的毫米数；负数表示装不下（会把分析区下沿裁掉）。
+ */
+export function frontSideSlackWorstMM(photoHeightMM: number): number {
+    return (
+        SIDE_HEIGHT_MM -
+        T1_LAYOUT_MM.identityBar -
+        T1_LAYOUT_MM.knowledgeRowMax -
+        photoHeightMM -
+        T1_LAYOUT_MM.crosshairMin -
+        T1_LAYOUT_MM.frontGaps
     );
 }
 
@@ -208,6 +264,9 @@ export function reviewDateSlots(printDate: Date): ReviewSlot[] {
 /**
  * T0–T5 的**架构口子**（P4）。
  * ⚠️ 本轮**只做 T1**；其余纸型没有设计，`implemented: false` 的不要排在打印列表里。
+ *
+ * ⚠️ 2026-09-26 T2 / T3 的**名字已按新方案改口**（他当天定的"三类题 × 三种纸"）：
+ *    T2 = 复练纸（RE…）· T3 = 积累纸（BU…）。名字先对齐，**实现仍为 false**。
  */
 export interface PaperTypeDef {
     code: 'T0' | 'T1' | 'T2' | 'T3' | 'T4' | 'T5';
@@ -218,8 +277,8 @@ export interface PaperTypeDef {
 export const PAPER_TYPES: readonly PaperTypeDef[] = [
     { code: 'T0', name: '极简重做卡', implemented: false },
     { code: 'T1', name: '深挖纸', implemented: true },
-    { code: 'T2', name: '错题汇总', implemented: false },
-    { code: 'T3', name: '知识点画像', implemented: false },
+    { code: 'T2', name: '复练纸', implemented: false },
+    { code: 'T3', name: '积累纸', implemented: false },
     { code: 'T4', name: '家长档案', implemented: false },
     { code: 'T5', name: '给她的信', implemented: false },
 ];

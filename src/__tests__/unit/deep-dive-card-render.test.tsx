@@ -89,7 +89,24 @@ describe('T1 深挖纸 · 该印的必须印出来', () => {
     });
 
     it('身份条横线下面**靠左**写知识点，各知识点用 · 隔开', () => {
-        expect(renderWith()).toContain('周长 · 面积');
+        const html = renderWith();
+        expect(html).toContain('周长');
+        expect(html).toContain('面积');
+        expect(html).toContain('·');
+    });
+
+    it('知识点**贴着上面的横线**（2026-09-26：原来垂直居中，看着"掉下来了"）', () => {
+        const html = renderWith();
+        // 知识点块：顶部只留 0.4mm，且用 flex-start 而不是 center
+        expect(html).toContain('padding-top:0.4mm');
+        expect(html).toContain('align-items:flex-start');
+    });
+
+    it('知识点写不下可折行，但**每个知识点是 nowrap 的整块**（不许劈成两半）', () => {
+        const html = renderWith();
+        expect(html).toContain('flex-wrap:wrap');
+        // 每个知识点一个 nowrap 的 span ⇒ 两个知识点至少两处 nowrap
+        expect((html.match(/white-space:nowrap/g) ?? []).length).toBeGreaterThanOrEqual(2);
     });
 
     it('三个进度格必须各自带颜色（浅粉 / 嫩绿 / 金黄的底色都要出现）', () => {
@@ -97,6 +114,31 @@ describe('T1 深挖纸 · 该印的必须印出来', () => {
         expect(html).toContain('#ffe3ec');
         expect(html).toContain('#e4f5d8');
         expect(html).toContain('#fff0c2');
+    });
+});
+
+describe('T1 深挖纸 · 反面页脚（2026-09-26 改版）', () => {
+    it('最后一个日期后面要有一个虚线框', () => {
+        const html = renderWith();
+        expect(html).toContain('print-deep-stamp');
+        // 灰白底 + 虚线边 + 圆角
+        expect(html).toContain('dashed');
+        expect(html).toContain('border-radius:1.5mm');
+    });
+
+    it('⚠️ 版面上**不许写这个框是干什么的** —— 用途由她自己定', () => {
+        const html = renderWith();
+        for (const word of ['已会', '印章', '盖章', '会了', '家长签字']) {
+            expect(html).not.toContain(word);
+        }
+    });
+
+    it('二维码与横线**共享页宽**（横线是 flex:1，跟在二维码右边，不是压在它上面）', () => {
+        const html = renderWith();
+        // 页脚改成上下两行：上行 = 二维码 + 横线，下行 = 日期格 + 虚线框
+        expect(html).toContain('flex-direction:column');
+        expect(html).toContain('print-deep-footer-rule');
+        expect(html).toContain('print-deep-slots');
     });
 });
 

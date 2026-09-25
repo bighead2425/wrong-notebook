@@ -25,8 +25,10 @@
  *     ┌──────────────────┐
  *     │  她手写内容区（不加十字线：模拟真实考场）      │
  *     └──────────────────┘
- *     ──────────────────   细线 · 位置固定
- *     页脚：[二维码 · 左下]  [□ 2026-09-25] [□ 2026-10-01] [□ 2026-10-15]
+ *     页脚（2026-09-26 改，做成正面的**镜像**）：
+ *       [二维码 · 左] ───────────────────  ← 二维码与横线**共享页宽**
+ *       [□ 2026-09-25] [□ 2026-10-01] [□ 2026-10-15] ┈┈┈┈
+ *                                          └ 虚线框：**不印用途**（盖章 / 手写"已会"）
  *
  * ── 为什么"遮挡线"三个字要印出来 ────────────────────────────────
  * 它同时是**给孩子看的**（说明这条线是干什么的）和**给机器看的**：
@@ -46,6 +48,8 @@ import { getNotebookPrintInfo, getTags } from '@/lib/print-preview';
 import {
     SIDE_HEIGHT_MM,
     SLOT_COLORS,
+    SLOT_SIZE_MM,
+    STAMP_BOX_MM,
     T1_LAYOUT_MM,
     maxFrontPhotoHeightMM,
     reviewDateSlots,
@@ -185,22 +189,49 @@ export function DeepDiveCard({
                     )}
                 </div>
 
-                {/* 身份条横线**下面、靠左**：知识点，各知识点用 · 隔开 */}
+                {/*
+                    身份条横线**下面、靠左**：知识点，各知识点用 · 隔开。
+
+                    2026-09-26 他的两条意见，一起落在这块上：
+                      ① **贴着上面的横线**：原来 6mm 的盒子垂直居中，上下各空 1.6mm，
+                         看着"知识点掉下来了"；改成 `flex-start` + 0.4mm 上内边距。
+                      ② **写不下就折行，但绝不在某个知识点中间折**：
+                         所以每个知识点是**一个 nowrap 的整体**（`·` 也跟着前一个走），
+                         容器 `flex-wrap: wrap` —— 折点只会落在知识点之间的缝隙上。
+                      ③ 最多两行（容器 `maxHeight` 锁住），多出的宁可不印：
+                         两行还放不下 = 知识点标签打得太碎，该合并而不是挤第三行。
+
+                    ⚠️ 高度用 `minHeight` 而不是 `height`：绝大多数题**一行就够**，
+                       此时这一块仍是 6mm，上面横线和下面题图的位置**一动不动**。
+                */}
                 {tags.length > 0 && (
                     <div
                         className="print-deep-tags"
                         style={{
-                            height: `${T1_LAYOUT_MM.knowledgeRow}mm`,
+                            minHeight: `${T1_LAYOUT_MM.knowledgeRow}mm`,
+                            maxHeight: `${T1_LAYOUT_MM.knowledgeRowMax}mm`,
                             display: 'flex',
-                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                            alignItems: 'flex-start',
+                            columnGap: '1.6mm',
+                            rowGap: 0,
+                            paddingTop: '0.4mm',
                             fontSize: '8pt',
+                            lineHeight: 1.35,
                             color: '#555',
                             overflow: 'hidden',
-                            whiteSpace: 'nowrap',
                             flex: '0 0 auto',
                         }}
                     >
-                        {tags.join(' · ')}
+                        {tags.map((t, i) => (
+                            <span
+                                key={`${t}-${i}`}
+                                style={{ display: 'inline-flex', whiteSpace: 'nowrap' }}
+                            >
+                                {i > 0 && <span style={{ marginRight: '1.6mm' }}>·</span>}
+                                {t}
+                            </span>
+                        ))}
                     </div>
                 )}
 
@@ -339,29 +370,56 @@ export function DeepDiveCard({
                     style={{ flex: 1, minHeight: `${T1_LAYOUT_MM.writingMin}mm` }}
                 />
 
-                {/* 页脚细线：**位置固定**，与遮挡线夹出她的书写区 */}
-                <div
-                    className="print-deep-footer-rule"
-                    style={{ height: '0.2mm', background: '#666', flexShrink: 0 }}
-                />
+                {/*
+                    页脚（2026-09-26 改版）—— 原来是"整幅横线在上、二维码在左下"，
+                    他看完纸样的原话：**符合设计思路，但不舒服**。
 
-                {/* 页脚：二维码 · 左下 + 三个日期格（打印日 +1 / +7 / +21，yyyy-mm-dd） */}
+                    正面是「横线在左、二维码在右」，两者**共享页宽**，他觉得这个好；
+                    于是反面做成它的**镜像**：**二维码在左、横线在右**，同样共享页宽。
+
+                    连带两处：
+                      ① 三个日期格**往下挪一行**（落到横线下面），不再和二维码挤在同一行；
+                      ② 最后一个日期后面加**虚线框**（灰白、略带圆角的扁长方形，
+                         比颜色格宽得多、略高一点）——留给印章，或她手写"已会"。
+                         ⚠️ **板上不写这个框是干什么的**：写了就等于替她把用途定死。
+
+                    ⚠️ 那条横线虽然短了（从二维码右边起），但**位置仍然固定** ——
+                       它和上面的遮挡线一起夹出她的手写区，是 OCR 取的**下界**。
+                */}
                 <div
                     className="print-deep-footer"
                     style={{
                         height: `${T1_LAYOUT_MM.footer}mm`,
                         display: 'flex',
-                        alignItems: 'center',
-                        gap: '4mm',
+                        flexDirection: 'column',
+                        justifyContent: 'flex-end',
+                        gap: '2mm',
                         flexShrink: 0,
                     }}
                 >
-                    {qr ? (
-                        <img className="print-qr" src={qr} alt="" style={{ width: '14mm', height: '14mm' }} />
-                    ) : (
-                        <div style={{ width: '14mm', height: '14mm' }} />
-                    )}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '5mm' }}>
+                    {/* 上行：二维码在左 + 横线在右，共享页宽 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '2.5mm', flexShrink: 0 }}>
+                        {qr ? (
+                            <img
+                                className="print-qr"
+                                src={qr}
+                                alt=""
+                                style={{ width: '14mm', height: '14mm', flexShrink: 0 }}
+                            />
+                        ) : (
+                            <div style={{ width: '14mm', height: '14mm', flexShrink: 0 }} />
+                        )}
+                        <span
+                            className="print-deep-footer-rule"
+                            style={{ flex: 1, height: '0.2mm', background: '#666' }}
+                        />
+                    </div>
+
+                    {/* 下行：三个日期格（打印日 +1 / +7 / +21，yyyy-mm-dd）+ 末尾虚线框 */}
+                    <div
+                        className="print-deep-slots"
+                        style={{ display: 'flex', alignItems: 'center', gap: '5mm', flexShrink: 0 }}
+                    >
                         {slots.map((s) => {
                             const c = slotColor(s.index);
                             return (
@@ -378,8 +436,8 @@ export function DeepDiveCard({
                                         className="print-deep-slot"
                                         style={{
                                             display: 'inline-block',
-                                            width: '5.5mm',
-                                            height: '5.5mm',
+                                            width: `${SLOT_SIZE_MM}mm`,
+                                            height: `${SLOT_SIZE_MM}mm`,
                                             border: `0.35mm solid ${c.border}`,
                                             background: c.fill,
                                         }}
@@ -390,6 +448,18 @@ export function DeepDiveCard({
                                 </span>
                             );
                         })}
+                        {/* 虚线框：**不印用途**。盖章 / 手写"已会" / 画勾，随她。 */}
+                        <span
+                            className="print-deep-stamp"
+                            style={{
+                                display: 'inline-block',
+                                width: `${STAMP_BOX_MM.w}mm`,
+                                height: `${STAMP_BOX_MM.h}mm`,
+                                border: '0.3mm dashed #b6b6b0',
+                                borderRadius: `${STAMP_BOX_MM.radius}mm`,
+                                background: '#fafaf6',
+                            }}
+                        />
                     </div>
                 </div>
             </div>

@@ -7,10 +7,14 @@ import {
     PUNCH_GUTTER_MM,
     REVIEW_OFFSETS_DAYS,
     SLOT_COLORS,
+    SLOT_SIZE_MM,
+    STAMP_BOX_MM,
     SIDE_HEIGHT_MM,
+    T1_LAYOUT_MM,
     USABLE_WIDTH_MM,
     addDays,
     frontSideSlackMM,
+    frontSideSlackWorstMM,
     maxFrontPhotoHeightMM,
     reviewDateSlots,
     sidePaddingMM,
@@ -35,9 +39,31 @@ describe('T1 深挖纸 · 纸张与内容区尺寸', () => {
 
     it('照片上限必须同时满足 P9 的 95mm 与"十字留白不缩水"', () => {
         const maxH = maxFrontPhotoHeightMM();
-        expect(maxH).toBe(95);
+        expect(maxH).toBeLessThanOrEqual(95);
+        expect(maxH).toBeGreaterThan(90);
         expect(frontSideSlackMM(maxH)).toBeGreaterThanOrEqual(0);
         expect(SIDE_HEIGHT_MM - 9 - 6 - maxH).toBeGreaterThanOrEqual(110);
+    });
+
+    it('知识点折成**两行**时也不能把分析区下沿裁掉（2026-09-26）', () => {
+        // 裁掉的正是分析区的下边框 + 下面两个角标 —— OCR 靠角标定方向，不能裁。
+        // 所以照片上限是按"两行"算的，不是按"一行"算的。
+        expect(frontSideSlackWorstMM(maxFrontPhotoHeightMM())).toBeGreaterThanOrEqual(0);
+        expect(frontSideSlackWorstMM(45)).toBeGreaterThan(0);
+        // 两行的富余必须比一行少，但绝不能是负的
+        expect(frontSideSlackWorstMM(45)).toBeLessThan(frontSideSlackMM(45));
+    });
+
+    it('知识点行：一行 6mm、最多两行（写不下宁可不印，也不挤第三行）', () => {
+        expect(T1_LAYOUT_MM.knowledgeRowMax).toBeGreaterThan(T1_LAYOUT_MM.knowledgeRow);
+        expect(T1_LAYOUT_MM.knowledgeRowMax).toBeLessThan(T1_LAYOUT_MM.knowledgeRow * 2);
+    });
+
+    it('反面末尾的虚线框：比颜色格宽得多、略高一点，且**不写用途**', () => {
+        expect(STAMP_BOX_MM.w).toBeGreaterThan(SLOT_SIZE_MM * 3);
+        expect(STAMP_BOX_MM.h).toBeGreaterThan(SLOT_SIZE_MM);
+        expect(STAMP_BOX_MM.h).toBeLessThan(SLOT_SIZE_MM * 2);
+        expect(STAMP_BOX_MM.radius).toBeGreaterThan(0);
     });
 
     it('打孔位：正面让左、反面让右，两面让出的是同一条物理边', () => {
