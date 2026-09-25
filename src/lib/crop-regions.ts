@@ -32,8 +32,60 @@
 
 import { normalizeRotation, rotatedSize, rotateRect, type Rect } from './image-rotation';
 
-/** 四种框的语义（与 image-cropper 的画框 UI 一一对应） */
+/**
+ * 四种框的语义（本模块与数据库里的**规范命名**）。
+ *
+ * ⚠️ 【M1 / 2026-09-26 澄清】组件 `image-cropper.tsx` 的 UI 用的是**另一套历史名字**：
+ *      question ←→ question   （红，一致）
+ *      answer   ←→ handwriting（蓝，"手写答案"早期叫 answer）
+ *      region   ←→ scope      （绿，"一道题的范围"早期叫 region）
+ *      figure   ←→ figure     （橙，M1 新增，两套同名）
+ *    两套名字指的是同一件事，**转换只允许经 `toCropBoxKind` / `toLabelKind` 这一对函数**，
+ *    不许在别处手写映射 —— 这类"名字像但不是同一个"的地方最容易静默错位。
+ */
 export type CropBoxKind = 'scope' | 'question' | 'handwriting' | 'figure';
+
+/** 组件 UI 侧的框类型（历史命名）。只用于跨层转换，业务代码一律用 `CropBoxKind`。 */
+export type LabelKind = 'question' | 'answer' | 'region' | 'figure';
+
+/** UI 名 → 规范名。认不出的返回 null（调用方自己决定当"没框"还是报错）。 */
+export function toCropBoxKind(kind: string): CropBoxKind | null {
+    switch (kind) {
+        case 'question':
+            return 'question';
+        case 'answer':
+            return 'handwriting';
+        case 'region':
+            return 'scope';
+        case 'figure':
+            return 'figure';
+        default:
+            return null;
+    }
+}
+
+/** 规范名 → UI 名。 */
+export function toLabelKind(kind: CropBoxKind): LabelKind {
+    switch (kind) {
+        case 'question':
+            return 'question';
+        case 'handwriting':
+            return 'answer';
+        case 'scope':
+            return 'region';
+        case 'figure':
+            return 'figure';
+    }
+}
+
+/**
+ * 分区层：只划范围、**不参与**「告诉 AI 这段是什么」的判定。
+ *   scope 绿 = 一道题的范围（同时是裁剪边界）
+ *   figure 橙 = 题图（净版要涂白，再单独裁出来用）
+ */
+export function isPartitionKind(kind: CropBoxKind): boolean {
+    return kind === 'scope' || kind === 'figure';
+}
 
 export const CROP_BOX_KINDS: readonly CropBoxKind[] = [
     'scope',

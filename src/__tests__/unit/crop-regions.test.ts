@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+    isPartitionKind,
     mergeConnectedRects,
     needsWipe,
     mapRect,
     parseCropRegions,
     planNetVersion,
     serializeCropRegions,
+    toCropBoxKind,
+    toLabelKind,
     unionRect,
     validateCropRegions,
     type CropBase,
@@ -227,5 +230,41 @@ describe('净版计划 · 按框涂白（M2 主路，确定性操作）', () => 
             ]),
         );
         expect(plan.counts).toEqual({ scope: 1, question: 1, handwriting: 2, figure: 1 });
+    });
+});
+
+/**
+ * 两套命名的互转（M1 / 2026-09-26）。
+ *
+ * 组件 UI 用 question/answer/region/figure，本模块与数据库用 question/handwriting/scope/figure。
+ * 这是"同一件事、两套名字"的典型场景 ⇒ 必须钉住，否则会出现
+ * 「存进去的是 answer、读出来按 handwriting 找 ⇒ 找不到 ⇒ 静默当没有框」。
+ */
+describe('crop-regions · 框类型命名互转', () => {
+    it('UI 名 → 规范名：answer 要变成 handwriting、region 要变成 scope', () => {
+        expect(toCropBoxKind('question')).toBe('question');
+        expect(toCropBoxKind('answer')).toBe('handwriting');
+        expect(toCropBoxKind('region')).toBe('scope');
+        expect(toCropBoxKind('figure')).toBe('figure');
+    });
+
+    it('规范名 → UI 名：往返必须回到原点（四种都要过）', () => {
+        const all = ['question', 'handwriting', 'scope', 'figure'] as const;
+        for (const kind of all) {
+            expect(toCropBoxKind(toLabelKind(kind))).toBe(kind);
+        }
+    });
+
+    it('认不出的类型返回 null，绝不猜一个最近的', () => {
+        expect(toCropBoxKind('answer2')).toBeNull();
+        expect(toCropBoxKind('')).toBeNull();
+        expect(toCropBoxKind('QUESTION')).toBeNull(); // 大小写敏感，不做宽容匹配
+    });
+
+    it('分区层 = 绿(scope) + 橙(figure)；红蓝不是', () => {
+        expect(isPartitionKind('scope')).toBe(true);
+        expect(isPartitionKind('figure')).toBe(true);
+        expect(isPartitionKind('question')).toBe(false);
+        expect(isPartitionKind('handwriting')).toBe(false);
     });
 });

@@ -97,8 +97,13 @@ type Mode = "crop" | "erase" | "label";
  * 【custom-v25】region = 绿框「区🟩」。
  * 语义与前两种**不同**：红/蓝框是"把这段内容告诉 AI 是什么"，绿框是"这一块就是一道题"，
  * 它同时承担了裁剪边界 —— 有绿框时 cropRect 不再参与导出。
+ *
+ * 【M1 / 2026-09-26】figure = 橙框「图🟧」= 题图（不可 OCR 的图像部分）。
+ * 与绿框同属"分区"层，不进「题干/手写」的判定：它是给净版用的 ——
+ * 净版要把 蓝（手写）∪ 橙（题图）一起涂白，题图再单独裁出来放到题干下方。
+ * 见 `lib/crop-regions.ts` 的 `planNetVersion`。
  */
-type LabelKind = "question" | "answer" | "region";
+type LabelKind = "question" | "answer" | "region" | "figure";
 type EraseTool = "brush" | "rect";
 
 /** 已提交的擦除图形（自然坐标）。白色填充可重叠且幂等，因此可按顺序重放来实现精确撤销。 */
@@ -124,6 +129,37 @@ const ANSWER_COLOR = "#0055ff";   // 蓝 = 手写答案
  * 这里用实线 + 深一点的颜色，两者同框出现时也能一眼分开。
  */
 const REGION_COLOR = "#009a4c";
+/**
+ * 【M1 / 2026-09-26】橙 = 题图（图🟧，不可 OCR 的图像部分）。
+ * 选饱和橙：与红的题干 (#e50000) 拉得开 —— 红偏暗、橙偏亮，叠在同一页也能分清。
+ * ⚠️ 与"擦除-矩形选区"的 🟧 是同一个色系，但两者不在同一模式下同时出现，不会混。
+ */
+const FIGURE_COLOR = "#ff7a00";
+/**
+ * 【M1】四种框 → 颜色的**唯一**映射表。
+ * 原先三处各写一遍 `kind === "question" ? ... : kind === "answer" ? ... : REGION_COLOR`，
+ * 加第四种时必然漏改某一处（且漏改不报错、只是画错颜色）。收成一张表，只此一份。
+ */
+const LABEL_COLORS: Record<LabelKind, string> = {
+    question: QUESTION_COLOR,
+    answer: ANSWER_COLOR,
+    region: REGION_COLOR,
+    figure: FIGURE_COLOR,
+};
+/**
+ * 【M1】哪些框是"分区层"—— 它们**不参与**「告诉 AI 这段是什么」的判定。
+ *
+ * 两类分区框：
+ *   region 绿 = 这道题的范围（裁剪边界）
+ *   figure 橙 = 题图（不可 OCR 的图像区，净版要涂白、再单独裁出来用）
+ *
+ * ⚠️ 凡是写 `kind !== "region"` 来"滤掉分区层"的地方，都要改用这个函数 ——
+ *    否则加了橙框之后，橙框会被当成"要讲给 AI 的内容"画进导出图里。
+ */
+const PARTITION_KINDS: readonly LabelKind[] = ["region", "figure"];
+function isPartitionKind(kind: LabelKind): boolean {
+    return PARTITION_KINDS.includes(kind);
+}
 const BRUSH_SIZES = [10, 20, 40, 80];
 /**
  * 【custom-v24】笔头粗细四档的按钮文案。
@@ -539,9 +575,7 @@ export function ImageCropper({
 
         // 已确认的标注框
         for (const b of boxes) {
-            const color = b.kind === "question" ? QUESTION_COLOR
-                : b.kind === "answer" ? ANSWER_COLOR
-                    : REGION_COLOR;
+            const color = LABEL_COLORS[b.kind];
             drawFrame(b.x, b.y, b.w, b.h, color, false);
             if (b.id === selectedBoxId) {
                 ctx.save();
@@ -614,9 +648,7 @@ export function ImageCropper({
         if (d) {
             if (d.kind === "rect") {
                 if (mode === "label") {
-                    const color = labelKind === "question" ? QUESTION_COLOR
-                        : labelKind === "answer" ? ANSWER_COLOR
-                            : REGION_COLOR;
+                    const color = LABEL_COLORS[labelKind];
                     drawFrame(d.x, d.y, d.w, d.h, color, true);
                 } else if (mode === "crop") {
                     // 裁剪拖拽预览：暗色外部 + 亮框
@@ -1592,7 +1624,7 @@ export function ImageCropper({
 
         // 与这块区域有交集的红/蓝框才算属于这一道，并平移到区域坐标系
         const inside = boxes.filter(
-            (b) => b.kind !== "region" && rectsIntersect(b, { x: sx, y: sy, w: sw, h: sh }),
+            (b) => !isPartitionKind(b.kind) && rectsIntersect(b, { x: sx, y: sy, w: sw, h: sh }),
         );
         const questions = inside.filter((b) => b.kind === "question")
             .map((b) => ({ ...b, x: b.x - sx, y: b.y - sy }));
@@ -1608,7 +1640,7 @@ export function ImageCropper({
             const lw = Math.max(1.5, 2);
             for (const b of [...questions, ...answers]) {
                 sctx.save();
-                sctx.strokeStyle = b.kind === "question" ? QUESTION_COLOR : ANSWER_COLOR;
+                sctx.strokeStyle = LABEL_COLORS[b.kind];
                 sctx.lineWidth = lw;
                 sctx.strokeRect(b.x, b.y, b.w, b.h);
                 sctx.restore();
@@ -1652,10 +1684,11 @@ export function ImageCropper({
         }
 
         /**
-         * 绿框之外的框才参与"题干/答案"的判定。
-         * 绿框是分区用的，混进 cropToRegions 的包围盒会把导出区撑成整幅图。
+         * 分区框（绿/橙）之外的框才参与"题干/答案"的判定。
+         * 分区框是划范围的，混进 cropToRegions 的包围盒会把导出区撑成整幅图。
+         * ⚠️ M1 起橙框也属分区层，所以这里用 isPartitionKind 而不是只排除绿框。
          */
-        const labelBoxes = boxes.filter((b) => b.kind !== "region");
+        const labelBoxes = boxes.filter((b) => !isPartitionKind(b.kind));
         /** 兜底：调用方没接 onCropBatch（理论上不存在）时，至少按第一个绿框裁一张 */
         const regionClip = regionBoxes.length > 0 ? (mergeRegions(regionBoxes)[0] ?? null) : null;
 
@@ -1715,7 +1748,7 @@ export function ImageCropper({
             // 烘焙到原图分辨率：2px 细线，不写字，避免遮挡表格/填空题
             const lw = Math.max(1.5, 2);
             for (const b of labelBoxes) {
-                const color = b.kind === "question" ? QUESTION_COLOR : ANSWER_COLOR;
+                const color = LABEL_COLORS[b.kind];
                 bctx.save();
                 bctx.strokeStyle = color;
                 bctx.lineWidth = lw;
@@ -1924,7 +1957,7 @@ export function ImageCropper({
                                 type="button"
                                 className={btn(labelKind === "question")}
                                 onClick={() => setLabelKind("question")}
-                                style={labelKind === "question" ? { background: QUESTION_COLOR, borderColor: QUESTION_COLOR, color: "#fff" } : undefined}
+                                style={labelKind === "question" ? { background: LABEL_COLORS.question, borderColor: LABEL_COLORS.question, color: "#fff" } : undefined}
                             >
                                 {t.common.cropper?.labelQuestion || "题干（红框）"}
                             </button>
@@ -1932,7 +1965,7 @@ export function ImageCropper({
                                 type="button"
                                 className={btn(labelKind === "answer")}
                                 onClick={() => setLabelKind("answer")}
-                                style={labelKind === "answer" ? { background: ANSWER_COLOR, borderColor: ANSWER_COLOR, color: "#fff" } : undefined}
+                                style={labelKind === "answer" ? { background: LABEL_COLORS.answer, borderColor: LABEL_COLORS.answer, color: "#fff" } : undefined}
                             >
                                 {t.common.cropper?.labelAnswer || "手写答案（蓝框）"}
                             </button>
@@ -1942,10 +1975,22 @@ export function ImageCropper({
                                 type="button"
                                 className={btn(labelKind === "region")}
                                 onClick={() => setLabelKind("region")}
-                                style={labelKind === "region" ? { background: REGION_COLOR, borderColor: REGION_COLOR, color: "#fff" } : undefined}
+                                style={labelKind === "region" ? { background: LABEL_COLORS.region, borderColor: LABEL_COLORS.region, color: "#fff" } : undefined}
                                 title="一个绿框 = 一道题；重叠的绿框会合并成一道。确认时会把绿框逐块裁出来分别送 AI，绿框以外不要"
                             >
                                 {t.common.cropper?.labelRegion || "区🟩"}
+                            </button>
+                            {/* 【M1】图🟧 = 题图（不能 OCR 的图像部分，如示意图/几何图）。
+                                框了它，印"净版"时这块会被涂白、再单独裁出来放在题干下方 ——
+                                不框也不影响出题，只是净版里会留着一张图。 */}
+                            <button
+                                type="button"
+                                className={btn(labelKind === "figure")}
+                                onClick={() => setLabelKind("figure")}
+                                style={labelKind === "figure" ? { background: LABEL_COLORS.figure, borderColor: LABEL_COLORS.figure, color: "#fff" } : undefined}
+                                title="框住题目里那张图（示意图/几何图等）。印净版时这块会被涂白，再单独裁出来放到题干下方。不框也行，只是净版里会留着它"
+                            >
+                                {t.common.cropper?.labelFigure || "图🟧"}
                             </button>
                             {/* 【custom-v27 仅画】强制画框：选中后起手即画新框，不再"点中旧框就选中它"。
                                 电脑端按住 Shift 等效于此开关（松开即还原）。 */}
