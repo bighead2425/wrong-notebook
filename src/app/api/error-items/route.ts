@@ -32,7 +32,38 @@ export async function POST(req: Request) {
             paperLevel,
             source,
             inputMethod,
+            cropRegions,
         } = body;
+
+        /**
+         * 【M1】框坐标（净版涂白 / 题图裁切的依据）。
+         *
+         * 这里**只做形状校验，不做几何校验** —— 坐标合不合理（框是不是在图片范围内、
+         * 有没有互相包含）由 `lib/crop-regions.ts` 的读取端判定，那是唯一真源；
+         * 在这里重写一遍判断，早晚会和那边跑偏。
+         *
+         * 校验目的很窄：别让一个坏字符串进出数据库，害得打印端每次读都要 try/catch。
+         * 非法值一律当"没提供"（undefined）处理，而不是报错拒存 ——
+         * 用户题干已经编辑好了，不该因为一张附加的坐标而整道题存不下去。
+         */
+        let finalCropRegions: string | null | undefined;
+        if (typeof cropRegions === 'string' && cropRegions.trim()) {
+            try {
+                const parsed = JSON.parse(cropRegions);
+                const okShape =
+                    parsed && typeof parsed === 'object' &&
+                    Array.isArray(parsed.boxes) &&
+                    parsed.base && typeof parsed.base === 'object' &&
+                    Number.isFinite(parsed.base.w) && Number.isFinite(parsed.base.h);
+                if (okShape) {
+                    finalCropRegions = cropRegions;
+                } else {
+                    logger.warn({ parsed: typeof parsed }, 'cropRegions shape invalid, ignored');
+                }
+            } catch {
+                logger.warn('cropRegions not valid JSON, ignored');
+            }
+        }
 
         // 记录请求参数（不记录完整图片数据）
         logger.debug({
@@ -51,6 +82,7 @@ export async function POST(req: Request) {
             paperLevel,
             source,
             inputMethod,
+            cropRegionsLength: typeof cropRegions === 'string' ? cropRegions.length : 0,
         }, 'Request parameters received');
 
         // 查找用户
@@ -193,6 +225,9 @@ export async function POST(req: Request) {
                     paperLevel: paperLevel,
                     source: finalSource,
                     inputMethod: inputMethod || null,
+                    // 【M1】框坐标：undefined（没传/形状不对）时**不写这一列**，
+                    // 保持 Prisma 的"未涉及字段不改"语义 —— 详情页改题干重存时不会把原坐标抹掉。
+                    cropRegions: finalCropRegions,
                     masteryLevel: 0,
                     tags: {
                         connect: tagConnections,

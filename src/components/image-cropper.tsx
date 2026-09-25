@@ -10,6 +10,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
 import { ccwCanvasMatrix, rotateCanvasSize, rotateRectCCW } from "@/lib/image-rotation";
 import { fitEditSize } from "@/lib/edit-canvas-size";
+import { toCropBoxKind, rebaseCropRegions, clipCropBoxes, type CropRegions } from "@/lib/crop-regions";
 
 /**
  * 取 2D 上下文。**两种后端，按画布用途选**（v36 审计后改的口径，别再混用）：
@@ -77,6 +78,49 @@ interface ImageCropperProps {
      *    绝不能只取 blobs[0] 把其余几张默默丢掉。
      */
     onCropBatch?: (blobs: Blob[]) => void;
+    /**
+     * 【M1 / 2026-09-26】确认时回传**四类框的坐标 + 基准图尺寸**。
+     *
+     * 为什么必须新开一个回调，而不是复用 `onCropRegion`：
+     * `onCropRegion` 回的是"**这一道**在整页上的范围"（单个矩形，给循环模式画已抠标记用），
+     * 而这里要的是"**这张图上有哪些框、各是什么语义**"（题干/手写/作用域/题图）。
+     * 两者的数据形状和用途都不同，混用必然有一方被将就。
+     *
+     * ⚠️ **坐标系合同（2026-09-26 二修，最要紧的一条）**：
+     * `boxes` 与 `base` 都是相对于**最终存下来的那张图**（= `originalImageUrl`），
+     * 不是相对于工作画布、更不是相对于整页。
+     * 因为读取端 `useFigureImages` 会拿 `item.originalImageUrl` 的自然尺寸去对 `base`，
+     * 两边若不同系，就是"不报错、只裁歪"。编辑器内部已经替调用方把
+     * "减去导出区原点"这步算掉了，调用方**拿到就能直接序列化存库**。
+     *
+     * 传 null 的三种情形（调用方据此走"没有净版"的兜底，**不是**"写一份空坐标"）：
+     *   ① 一个框都没画；② 走的"红蓝重叠分图"那一路（框被重排到新位置，原坐标作废）。
+     *
+     * 传了它 → 确认时会把框坐标一并回传；没传 → 完全保持旧行为，老调用方不受影响。
+     */
+    onCropRegions?: (payload: CropRegionsPayload | null) => void;
+    /**
+     * 【M1 / 2026-09-26】绿框"一图多题"路专用：**每张裁出来的图各拿一份坐标**。
+     *
+     * 与 `onCropRegions` 的分工：那条路一次产出好几张图、每张都会**各存各的**
+     * `originalImageUrl`，所以坐标也必须**一图一份**（数组下标与 `onCropBatch`
+     * 传出的 `blobs` **一一对应**；某张没框则该项为 null）。
+     * 组件会把它与 `onCropBatch` **同一次调用里**传出，调用方应成对消费。
+     *
+     * 只接了 `onCropRegions` 而没接这个：那条路不写坐标（退化成无净版），
+     * 但不会写错 —— 这是有意留的安全边。
+     */
+    onCropRegionsMulti?: (payloads: (CropRegionsPayload | null)[]) => void;
+}
+
+/**
+ * 【M1】回传给调用方的框坐标包。
+ * 形状**刻意与 `lib/crop-regions.ts` 的 `CropRegions` 一致**，
+ * 好让调用方直接 `serializeCropRegions()` 存库，中间不再有一层手工转换。
+ */
+export interface CropRegionsPayload {
+    boxes: { kind: 'scope' | 'question' | 'handwriting' | 'figure'; x: number; y: number; w: number; h: number }[];
+    base: { w: number; h: number; rotation: number };
 }
 
 /** 循环模式下已抠走的区域（整页自然坐标） */
@@ -269,6 +313,8 @@ export function ImageCropper({
     onCropRegion,
     loopCount,
     onCropBatch,
+    onCropRegions,
+    onCropRegionsMulti,
 }: ImageCropperProps) {
     const { t } = useLanguage();
 
@@ -1649,6 +1695,70 @@ export function ImageCropper({
         return sub;
     }
 
+    /**
+     * 【M1 / 2026-09-26】把当前所有框收成"可落库"的坐标包。
+     *
+     * 三件事必须一起做对，否则就是"不报错、只画错"：
+     *   ① 用 `toCropBoxKind` 把 UI 名翻成规范名（answer→handwriting、region→scope）；
+     *   ② 带上**基准图尺寸** —— 只存框不存尺寸，图一换尺寸框就全错位；
+     *   ③ 认不出的框类型**整包判废**（返回 null），不半信半疑地塞进去。
+     *      宁可这一道没有坐标（退化成"没有净版"），也不能给一份错坐标
+     *      （错坐标的后果是手写没擦干净、孩子看见自己的答案）。
+     *
+     * ── ⚠️ 2026-09-26 补：基准必须与**存下来的那张图**对齐 ──────────────
+     * 本函数只能拿到"当前工作画布"的尺寸，而存进 `originalImageUrl` 的图是
+     * **这一幕之后被裁过的**（见 handleConfirm 的分支 sx/sy/sw/sh，之后 processImageFile
+     * 还可能再压缩一次）。若直接拿工作画布尺寸当 base，读的那一头
+     * （`useFigureImages` 从 `originalImageUrl` 上按 base 换算）就会把框裁歪。
+     *
+     * 所以这里改成**由调用方决定坐标系**：
+     *   · `base` 传"存下来的那张图"的尺寸；
+     *   · 画布坐标 → 存图坐标的换算（减去裁剪原点 + 按缩放比缩放）一并交给本函数，
+     *     因为它跟 `boxes` 一样是"这一刻的地理"，外面拿不到更准的值。
+     *
+     * 调用方在**扣掉框线烘焙之前**调用（`bctx.strokeRect` 只是把线画在导出的副本上，
+     * 不改 `boxes`，所以那一刻取坐标仍然干净）。
+     */
+    const collectCropRegions = (
+        canvas: HTMLCanvasElement,
+        frame?: { offsetX: number; offsetY: number; scaleX?: number; scaleY?: number },
+    ): CropRegionsPayload | null => {
+        const out: CropRegionsPayload['boxes'] = [];
+        for (const b of boxes) {
+            const kind = toCropBoxKind(b.kind);
+            if (!kind) return null; // 认不出 → 整包不要，别猜
+            if (!(b.w > 0) || !(b.h > 0)) continue; // 零面积框丢弃：留着只会污染涂白并集
+            out.push({ kind, x: b.x, y: b.y, w: b.w, h: b.h });
+        }
+        // 没有任何框：不回传（调用方据此知道"这道没有坐标"，走兜底）
+        if (out.length === 0) return null;
+
+        // 基准 = **存下来的那张图**的尺寸；rotation 记 0 ——
+        // 当前实现里旋转是**烘进画布像素**的（见 rotateCanvasSize 的用法），
+        // 导出时画布已是"转过之后"的样子，坐标与它同系，读取端不必再转。
+        const raw: CropRegions = {
+            boxes: out,
+            base: { w: canvas.width, h: canvas.height, rotation: 0 },
+        };
+
+        // 无 frame（整页语义，读取端拿到的就是这张画布）→ 原样返回
+        if (!frame) return raw;
+
+        // 有 frame（导出区≠整画布）→ 走**同一个**换算函数。
+        // ⚠️ 换算必须复用 `rebaseCropRegions` 而不是在这儿再写一遍加减法：
+        //    这类"看着对、差一格"的活，两处实现就是两份未来的 bug。
+        const sx = frame.scaleX ?? 1;
+        const sy = frame.scaleY ?? 1;
+        return rebaseCropRegions(raw, {
+            offsetX: frame.offsetX,
+            offsetY: frame.offsetY,
+            scaleX: sx,
+            scaleY: sy,
+            baseW: canvas.width * sx,
+            baseH: canvas.height * sy,
+        });
+    };
+
     const handleConfirm = async () => {
         const wc = workCanvasRef.current;
 
@@ -1669,14 +1779,50 @@ export function ImageCropper({
 
             const regions = mergeRegions(regionBoxes);
             const blobs: Blob[] = [];
+            /**
+             * 【M1】每张裁出的图，各自对应的裁剪区（与 blobs 同序）—— 坐标要靠它换算。
+             * 这里必须与 `buildRegionCanvas` 用**同一个口径**算裁剪区（同 round、同夹取），
+             * 否则图与坐标会差一两个像素：图上看得见的小错，落到纸上就是净版边上
+             * 留一条没擦干净的手写。所以下面单独算一遍，取值规则抄它的。
+             */
+            const clips: { x: number; y: number; w: number; h: number }[] = [];
             for (const r of regions) {
+                const clipX = Math.max(0, Math.round(r.x));
+                const clipY = Math.max(0, Math.round(r.y));
+                const clipW = Math.max(1, Math.round(Math.min(r.w, wc.width - clipX)));
+                const clipH = Math.max(1, Math.round(Math.min(r.h, wc.height - clipY)));
                 const c = buildRegionCanvas(whole, r);
                 const blob = await new Promise<Blob | null>((resolve) => {
                     c.toBlob((b) => resolve(b), "image/jpeg", 0.92);
                 });
-                if (blob) blobs.push(blob);
+                if (blob) {
+                    blobs.push(blob);
+                    clips.push({ x: clipX, y: clipY, w: clipW, h: clipH });
+                }
             }
             if (blobs.length > 0) {
+                /**
+                 * 【M1】这条分支在下面统一点之前就 return 了，坐标得在这儿单独回传。
+                 *
+                 * ⚠️ 但**不能整页回传**：这一路每张图是"绿框裁出来的一小块"，
+                 * 而 `originalImageUrl` 存的就是这一小块（见 handleCropBatch → 流水线逐张送 AI 入库），
+                 * 坐标若还挂在整页上，读取端从那一小块上按整页尺寸换算，必然裁歪。
+                 *
+                 * 换一种存法：**每张图各存一份、坐标系跟着自己那张图走**。
+                 * 只有与这块**有交集**的框才归它（含橙框 —— 读取端要靠它裁题图）。
+                 * 没框的那张回 null（读取端走"没有净版"兜底，不是写空坐标）。
+                 */
+                const payloads: (CropRegionsPayload | null)[] = clips.map((clip) => {
+                    const rebased = collectCropRegions(wc, {
+                        offsetX: clip.x,
+                        offsetY: clip.y,
+                    });
+                    if (!rebased) return null;
+                    const kept = clipCropBoxes(rebased, { x: 0, y: 0, w: clip.w, h: clip.h });
+                    if (kept.length === 0) return null;
+                    return { boxes: kept, base: { w: clip.w, h: clip.h, rotation: 0 } };
+                });
+                onCropRegionsMulti?.(payloads);
                 onCropBatch(blobs);
                 return;
             }
@@ -1710,6 +1856,7 @@ export function ImageCropper({
 
         // 画布未就绪（极端情况）：退回原图，保持旧行为
         if (!wc) {
+            onCropRegions?.(null);
             try {
                 const res = await fetch(imageSrc);
                 onCropComplete(await res.blob());
@@ -1737,26 +1884,20 @@ export function ImageCropper({
         // 2) 红框与蓝框重叠/包含 → 分图（题干涂白 + 答案 + 序号），根治"答案混进题干"
         if (cropToRegions && labelBoxes.length > 0 && overlaps) {
             const out = buildSplitCanvas(baked, questions, answers);
+            /**
+             * 【M1】这一路把红蓝框重排成了"题干涂白 + 答案 + 序号"的一列拼图，
+             * 每个框都已搬到别的位置 —— 原坐标在这张新图上**不再成立**。
+             * 与其存一份会被读歪的坐标，不如不存：读取端见到"没有坐标"走兜底，
+             * 总好过按旧位置涂白、把不该擦的地方擦掉。这是"宁可没有、不能有错"的一处应用。
+             */
+            onCropRegions?.(null);
             out.toBlob((blob) => {
                 if (blob) onCropComplete(blob);
             }, "image/jpeg", 0.92);
             return;
         }
 
-        // 3) 非重叠：烘焙框线 + 决定导出区（原逻辑）
-        if (labelBoxes.length > 0) {
-            // 烘焙到原图分辨率：2px 细线，不写字，避免遮挡表格/填空题
-            const lw = Math.max(1.5, 2);
-            for (const b of labelBoxes) {
-                const color = LABEL_COLORS[b.kind];
-                bctx.save();
-                bctx.strokeStyle = color;
-                bctx.lineWidth = lw;
-                bctx.strokeRect(b.x, b.y, b.w, b.h);
-                bctx.restore();
-            }
-        }
-
+        // 3) 决定导出区（原逻辑）—— **必须先算出来**，因为框坐标要按它换算到"存图坐标系"
         let sx = 0, sy = 0, sw = baked.width, sh = baked.height;
         if (cropToRegions && labelBoxes.length > 0) {
             let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -1785,6 +1926,48 @@ export function ImageCropper({
             if (!isCroppedRef.current) {
                 const r = resolveCropRect();
                 if (r) { sx = r.x; sy = r.y; sw = r.w; sh = r.h; }
+            }
+        }
+
+        /**
+         * 【M1】框坐标在这里回传。位置是**故意挪到这里的**（2026-09-26 二修）。
+         *
+         * 为什么不能更早：导出区 `sx/sy/sw/sh` 到上面才定下来，而存进
+         * `originalImageUrl` 的就是"按这个区裁出来的图"。坐标若不减去这个原点，
+         * 读取端（`useFigureImages` → `toPixelRects`）就会拿整页坐标去裁一张局部图，
+         * 结果是**不报错、只裁歪**。所以换算必须等导出区确定之后再算。
+         *
+         * 为什么不能更晚：下面要把框线 `strokeRect` 烘进 `baked`（导出副本，
+         * 不影响 `wc` 与 `boxes`），再往下就只剩 `toBlob` 了。
+         * 放在烘焙前，是为了让"此刻 wc 与 boxes 同系"这件事一眼可验 ——
+         * 虽然烘焙落在 baked 上、动不到 boxes，但把取坐标放在任何画布操作之前，
+         * 这条不变量才不依赖"baked 是副本"这种需要现场推的细节。
+         *
+         * 换算比 scaleX/scaleY 取 1：`toBlob` 不改尺寸（out 就是 sw×sh），
+         * 真正的缩放发生在后面 `processImageFile` 压缩，而读取端是拿**实际存的图**
+         * 的自然尺寸去比 base 的，两边同比例，不必在这儿预算。
+         */
+        const regionsPayload = collectCropRegions(wc, {
+            offsetX: sx,
+            offsetY: sy,
+            scaleX: 1,
+            scaleY: 1,
+        });
+        onCropRegions?.(regionsPayload);
+
+        // 4) 非重叠：把框线烘进导出副本（原逻辑）
+        //    注意这是「不烧像素」原则的**遗留**：线画在导出副本上，只为了让用户复核，
+        //    框坐标另有 cropRegions 承担。真正去框靠读取端按坐标涂白（M1 第 ④ 步）。
+        if (labelBoxes.length > 0) {
+            // 烘焙到原图分辨率：2px 细线，不写字，避免遮挡表格/填空题
+            const lw = Math.max(1.5, 2);
+            for (const b of labelBoxes) {
+                const color = LABEL_COLORS[b.kind];
+                bctx.save();
+                bctx.strokeStyle = color;
+                bctx.lineWidth = lw;
+                bctx.strokeRect(b.x, b.y, b.w, b.h);
+                bctx.restore();
             }
         }
 

@@ -71,6 +71,15 @@ export interface BatchItem {
     treated?: boolean;
     /** 【custom-v27】入库后拿到的题目 id —— 供"点缩略图开详情页"用 */
     savedId?: string;
+    /**
+     * 【M1】这张图**自己的**框坐标（已序列化）。
+     *
+     * 为什么放在 item 上而不是整批一份：绿框"一图多题"路每张图各存各的
+     * `originalImageUrl`，坐标必须跟着**它自己那张图**走；
+     * 挂在整批上会让第二道题拿到第一道题的坐标，净版涂白就全错了。
+     * 无框的题此项为 undefined，入库时不带这个字段（保持"未涉及字段不改"）。
+     */
+    cropRegions?: string | null;
     /** 送 AI 时压缩后的图，入库时一并存 */
     base64?: string;
     result?: ParsedQuestion;
@@ -90,6 +99,15 @@ interface BatchPipelineProps {
      * 只在首次挂载时消费一次。
      */
     initialFiles?: File[];
+    /**
+     * 【M1】与 `initialFiles` **同序**的框坐标（已序列化；无框的项为 null）。
+     *
+     * 为什么必须与 initialFiles 成对传：那两个回调在同一次点击里一起回，
+     * 下标一一对应。分开传或顺序不一致，就会"第一题的坐标配到第二题的图"——
+     * 这种错不报警，只会在纸上把不该擦的地方擦掉。
+     * 只在首次挂载时消费一次，与 initialFiles 同一套规矩。
+     */
+    initialCropRegions?: (string | null)[];
 }
 
 /**
@@ -111,7 +129,7 @@ const MAX_BATCH = 30;
 const MAX_ATTEMPTS = 3;
 const RETRY_GAP_MS = 5000;
 
-export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, initialFiles }: BatchPipelineProps) {
+export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, initialFiles, initialCropRegions }: BatchPipelineProps) {
     const { t } = useLanguage();
 
     const [items, setItems] = useState<BatchItem[]>([]);
@@ -294,10 +312,12 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             previewUrl: URL.createObjectURL(f),
             processed: true,
             status: "processed" as BatchStatus,
+            // 【M1】与 initialFiles 同序取用：第 k 张图配第 k 份坐标（没有则 undefined）
+            cropRegions: initialCropRegions?.[k] ?? undefined,
         }));
         setItems(prev => [...prev, ...added]);
         setActiveId(added[added.length - 1].id);
-    }, [initialFiles]);
+    }, [initialFiles, initialCropRegions]);
 
     /**
      * 退出前拦一道：没入库的图退出即丢，不能一声不响。
@@ -806,6 +826,9 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                     mistakeStatus: data.mistakeStatus,
                     originalImageUrl: cur.base64 || undefined,
                     notebookId: resolveNotebookId(data.subject),
+                    // 【M1】重析时原图会被换成新压缩的 base64（尺寸可能不同），
+                    // 旧坐标是配旧图的，必须一并更新；没有新坐标就不带键，保留库里原值。
+                    ...(cur.cropRegions ? { cropRegions: cur.cropRegions } : {}),
                 });
                 frontendLogger.info('[BatchSave]', 'Re-analysis: updated existing item', {
                     batchId: cur.id, itemId: cur.savedId,
@@ -818,6 +841,9 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             const res = await apiClient.post<{ id: string; duplicate?: boolean }>("/api/error-items", {
                 ...data,
                 originalImageUrl: cur.base64 || "",
+                // 【M1】这张图自己的框坐标。没有就不带这个键 ——
+                // 后端按"未提供"处理，不会把字段写成空。
+                ...(cur.cropRegions ? { cropRegions: cur.cropRegions } : {}),
             });
             // 后端 2 秒去重窗口命中会回 duplicate:true，此时并没有新建记录。
             // 单题流会记一条日志，这里也补上，免得排查时看不出「怎么少了一道」。

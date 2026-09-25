@@ -248,9 +248,60 @@ function intersects(a: Rect, b: Rect): boolean {
     return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 }
 
+/* ============================ 坐标系换算 ============================ */
+
+/**
+ * 把一份坐标包从"原坐标系"换算到"裁剪后的那张图"的坐标系。
+ *
+ * ── 为什么需要它（2026-09-26 二修，这是 M1 最容易埋雷的一步）──────────
+ * 编辑器在照片上量框，量出来的是**工作画布**坐标；但存进 `originalImageUrl` 的是
+ * **按导出区裁过的**那张图。两者原点不同，若把工作画布坐标直接存下去，
+ * 读取端（`useFigureImages` → `toPixelRects`，它拿 `originalImageUrl` 的自然尺寸
+ * 去比 `base`）就会照着错的原点去裁 —— 表现为**不报错、只裁歪**，
+ * 纸上净版一块白、题图位置不对。
+ *
+ * 换算就是三步，顺序不能乱：
+ *   ① 平移：`(x - offsetX, y - offsetY)` —— 减去导出区左上角，把原点挪到新图左上角；
+ *   ② 缩放：`× scale` —— 新图比截取区小（压缩）时按比例缩；
+ *   ③ 新 base 换成新图尺寸。
+ *
+ * ⚠️ 当前调用方传的 `scale` 是 1（`toBlob` 不改尺寸，压缩发生在更后面的
+ * `processImageFile`，而读取端拿的是**实际存下来的图**的自然尺寸，两边同比例）。
+ * 参数留着是因为"缩放"这一步一旦将来需要，漏掉就是上面说的静默裁歪；
+ * 把公式集中在这里并配单测，好过散在组件里靠肉眼。
+ */
+export function rebaseCropRegions(
+    regions: CropRegions,
+    frame: { offsetX: number; offsetY: number; scaleX?: number; scaleY?: number; baseW: number; baseH: number },
+): CropRegions {
+    const sx = frame.scaleX ?? 1;
+    const sy = frame.scaleY ?? 1;
+    return {
+        boxes: regions.boxes.map((b) => ({
+            kind: b.kind,
+            x: (b.x - frame.offsetX) * sx,
+            y: (b.y - frame.offsetY) * sy,
+            w: b.w * sx,
+            h: b.h * sy,
+        })),
+        base: { w: frame.baseW, h: frame.baseH, rotation: regions.base.rotation },
+    };
+}
+
+/**
+ * 只留与给定矩形**有交集**的框（裁剪路专用）。
+ *
+ * 判据是"有交集"而不是"被完全包含"：一道题的绿框可能只画了一半盖在图边上，
+ * 完全包含的判据会把这道题的框整个丢掉 —— 宁可多留一个，也别让净版少擦一块。
+ */
+export function clipCropBoxes(regions: CropRegions, clip: Rect): CropBox[] {
+    return regions.boxes.filter(
+        (b) => b.x + b.w > clip.x && b.y + b.h > clip.y && b.x < clip.x + clip.w && b.y < clip.y + clip.h,
+    );
+}
+
 /** 多个矩形的并集包围盒；空数组返回 null */
-export function unionRect(rects: readonly Rect[]): Rect | null {
-    if (rects.length === 0) return null;
+export function unionRect(rects: readonly Rect[]): Rect | null {    if (rects.length === 0) return null;
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;

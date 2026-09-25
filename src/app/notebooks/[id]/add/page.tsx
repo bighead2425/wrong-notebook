@@ -5,7 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { UploadZone } from "@/components/upload-zone";
 import { CorrectionEditor } from "@/components/correction-editor";
-import { ImageCropper, type DoneRect } from "@/components/image-cropper";
+import { ImageCropper, type DoneRect, type CropRegionsPayload } from "@/components/image-cropper";
+import { serializeCropRegions } from "@/lib/crop-regions";
 import { BatchPipeline } from "@/components/batch-pipeline";
 import { ParsedQuestion } from "@/lib/ai";
 import { apiClient } from "@/lib/api-client";
@@ -52,6 +53,17 @@ export default function AddErrorPage() {
      * 注意：与编辑器内部那个同名的 `pendingRect`（橡皮擦的待擦矩形）无关，故加 Crop 区分。
      */
     const [pendingCropRect, setPendingCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+    /**
+     * 【M1】本次裁剪回传的**框坐标包**（已序列化成 JSON 字符串）。
+     *
+     * 与 pendingCropRect 的区别：pendingCropRect 只记"这一道在整页的哪块"（给循环模式画已抠标记用），
+     * 而这里是**全套框**（红/蓝/绿/橙 + 基准图宽高），打印端要靠它算净版涂白与题图裁切。
+     *
+     * 时序上有个坑：它必须在**点确定的那一刻**由编辑器收集（那时 boxes 与画布同系），
+     * 但真正写库是在用户改完题干、点保存时。中间用户可能取消重来，
+     * 所以每次确定都整体覆盖（含覆盖成 null），与 pendingCropRect 同一套规矩。
+     */
+    const [pendingCropRegions, setPendingCropRegions] = useState<string | null>(null);
     /**
      * 【custom-v22 循环模式】本页真正**入库了几道**，与 doneRects 分开记。
      * 为什么不直接用 doneRects.length：编辑器在"本题做过拉伸"时无法把区域映射回整页，
@@ -150,6 +162,16 @@ export default function AddErrorPage() {
     };
 
     /**
+     * 【M1】编辑器确认时回传**全套框坐标**（红/蓝/绿/橙 + 基准图宽高）。
+     * 这一步只是"收下来"：此刻编辑器里的 boxes 与工作画布同系，晚一步画布就可能被裁剪替换。
+     * 真正写库在 handleSave —— 用户还得改题干、可能整道不要了。
+     * 传 null = 一个框都没画（空手点确定）⇒ 保存时不写这一列，打印端自然走"无坐标"兜底。
+     */
+    const handleCropRegions = (payload: CropRegionsPayload | null) => {
+        setPendingCropRegions(payload ? serializeCropRegions(payload) : null);
+    };
+
+    /**
      * 编辑器确认 → 送 AI。
      * 【custom-v20 问题②】不再"先关对话框再分析"：送 AI 会失败（网络/超时/模型报错），
      * 原实现先 setIsCropperOpen(false) 再 handleAnalyze，失败后只弹一个 alert，
@@ -172,6 +194,16 @@ export default function AddErrorPage() {
         setIsCropperOpen(false);
         setBatchFiles(blobs.map((b, i) => new File([b], `region-${i + 1}.jpg`, { type: "image/jpeg" })));
         setBatchMode(true);
+    };
+
+    /**
+     * 【M1】绿框多图路的框坐标 —— 与 `batchFiles` **同序**（下标一一对应）。
+     * 编辑器保证 `onCropRegionsMulti` 与 `onCropBatch` 在同一次点击里成对回传，
+     * 所以这里只做暂存，等流水线逐张入库时按序取用。
+     */
+    const [batchCropRegions, setBatchCropRegions] = useState<(string | null)[]>([]);
+    const handleCropRegionsMulti = (payloads: (CropRegionsPayload | null)[]) => {
+        setBatchCropRegions(payloads.map((p) => (p ? serializeCropRegions(p) : null)));
     };
 
     const handleAnalyze = async (file: File): Promise<boolean> => {
@@ -314,6 +346,9 @@ export default function AddErrorPage() {
                 originalImageUrl: currentImage || "",
                 inputMethod: currentImage ? undefined : "manual",
                 notebookId: notebookId,
+                // 【M1】框坐标（已序列化）。null 就不带这个键 —— 后端按"未提供"处理，保持字段原样，
+                // 不会把已有的坐标冲成空（改题重存时尤其重要）。
+                ...(pendingCropRegions ? { cropRegions: pendingCropRegions } : {}),
             });
 
             // 检查是否是重复提交（后端去重返回）
@@ -360,6 +395,9 @@ export default function AddErrorPage() {
         // 必须清掉上一道残留的框选坐标 —— 否则保存时会把它记成已抠区域，
         // 于是在整页上凭空多出一个根本没录过的绿框。
         setPendingCropRect(null);
+        // 【M1】手动输入与"框坐标"无关，同样必须清掉上一道的残留值，
+        // 否则手输的题会带上上一张照片的框坐标，打印净版时按错误位置涂白。
+        setPendingCropRegions(null);
         setParsedData({
             questionText: "",
             answerText: "",
@@ -398,7 +436,8 @@ export default function AddErrorPage() {
                         aiTimeout={aiTimeout}
                         defaultNotebookId={notebookId}
                         initialFiles={batchFiles}
-                        onExit={() => { setBatchMode(false); setBatchFiles([]); }}
+                        initialCropRegions={batchCropRegions}
+                        onExit={() => { setBatchMode(false); setBatchFiles([]); setBatchCropRegions([]); }}
                     />
                 </div>
             </main>
@@ -516,6 +555,8 @@ export default function AddErrorPage() {
                 analyzing={analysisStep !== 'idle'}
                 doneRects={loopMode ? doneRects : undefined}
                 onCropRegion={handleCropRegion}
+                onCropRegions={handleCropRegions}
+                onCropRegionsMulti={handleCropRegionsMulti}
                 loopCount={loopMode ? pageSavedCount : undefined}
             />
         </main>

@@ -5,7 +5,8 @@ import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { UploadZone } from "@/components/upload-zone";
 import { CorrectionEditor } from "@/components/correction-editor";
-import { ImageCropper } from "@/components/image-cropper";
+import { ImageCropper, type CropRegionsPayload } from "@/components/image-cropper";
+import { serializeCropRegions } from "@/lib/crop-regions";
 import { BatchPipeline } from "@/components/batch-pipeline";
 import { ParsedQuestion } from "@/lib/ai";
 import { UserWelcome } from "@/components/user-welcome";
@@ -149,6 +150,12 @@ function HomeContent() {
         setIsCropperOpen(false);
         setBatchFiles(blobs.map((b, i) => new File([b], `region-${i + 1}.jpg`, { type: "image/jpeg" })));
         setBatchMode(true);
+    };
+
+    /** 【M1】绿框多图路的框坐标，与 batchFiles 同序（下标一一对应） */
+    const [batchCropRegions, setBatchCropRegions] = useState<(string | null)[]>([]);
+    const handleCropRegionsMulti = (payloads: (CropRegionsPayload | null)[]) => {
+        setBatchCropRegions(payloads.map((p) => (p ? serializeCropRegions(p) : null)));
     };
 
     const handleAnalyze = async (file: File): Promise<boolean> => {
@@ -442,7 +449,8 @@ function HomeContent() {
                         aiTimeout={aiTimeout}
                         defaultNotebookId={initialNotebookId || autoSelectedNotebookId || undefined}
                         initialFiles={batchFiles}
-                        onExit={() => { setBatchMode(false); setBatchFiles([]); }}
+                        onExit={() => { setBatchMode(false); setBatchFiles([]); setBatchCropRegions([]); }}
+                        initialCropRegions={batchCropRegions}
                     />
                 ) : (
                     <>
@@ -457,6 +465,7 @@ function HomeContent() {
                                 onClose={() => setIsCropperOpen(false)}
                                 onCropComplete={handleCropComplete}
                                 onCropBatch={handleCropBatch}
+                                onCropRegionsMulti={handleCropRegionsMulti}
                                 analyzing={analysisStep !== 'idle'}
                             />
                         )}

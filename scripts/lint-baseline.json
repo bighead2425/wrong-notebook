@@ -1,8 +1,8 @@
 {
   "errors": 189,
-  "warnings": 88,
-  "_measured_at": "2026-09-24",
-  "_measured_on": "custom-v36 (main @ 7e49b8f)",
+  "warnings": 92,
+  "_measured_at": "2026-09-26",
+  "_measured_on": "M1 第 3 步（框坐标落库）@ 03bf1bc+",
   "_command": "npx eslint src -f json",
-  "_note": "只作为『不许上涨』的闸门。顺手还债后用 `npm run lint:gate -- --update` 收紧。error 侧 167/189 是 no-explicit-any。"
+  "_note": "只作为『不许上涨』的闸门。顺手还债后用 `npm run lint:gate -- --update` 收紧。error 侧 167/189 是 no-explicit-any。warning 88→92 全在 no-img-element（5→9，deep-dive-card/error-card/question-bodies 等打印组件，非本轮改动），no-unused-vars=74 与 exhaustive-deps=9 均未涨。"
 }

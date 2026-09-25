@@ -82,6 +82,8 @@ export async function PUT(
             // 旧实现不收这个字段 —— 于是题目文本换成新的、原图还是旧的，图文对不上。
             // 注意：这里**不接受 source（题号）**，题号必须保持不变，见下方 updateData。
             originalImageUrl,
+            // 【M1】框坐标。与 POST 同一套规矩：**形状不对当没提供**，不拒存整条更新。
+            cropRegions,
             // ===== 状态字段（5.3 单一事实来源）=====
             attention,        // 关注档 1-5（难度档，G8 / T5）
             masteryLevel,     // 0 New / 1 Reviewing / 2 Mastered（=2 即四分法「已掌握」）
@@ -111,6 +113,24 @@ export async function PUT(
         // 题号 source 不在可更新字段里 —— 重新分析永远不改题号、不新增记录。
         if (originalImageUrl !== undefined && originalImageUrl !== '') {
             updateData.originalImageUrl = originalImageUrl;
+        }
+        /**
+         * 【M1】框坐标。只有**形状像一份坐标**才写；否则当成"没提到这个字段"。
+         * 与原图同理：不能让它把库里已有的坐标冲成空 ——
+         * 详情页改个备注不该顺手把净版弄没。
+         */
+        if (typeof cropRegions === 'string' && cropRegions.trim()) {
+            try {
+                const parsed = JSON.parse(cropRegions);
+                const okShape =
+                    parsed && typeof parsed === 'object' &&
+                    Array.isArray(parsed.boxes) &&
+                    parsed.base && typeof parsed.base === 'object' &&
+                    Number.isFinite(parsed.base.w) && Number.isFinite(parsed.base.h);
+                if (okShape) updateData.cropRegions = cropRegions;
+            } catch {
+                // 坏 JSON 当没传，不动库里的旧值
+            }
         }
         if (answerText !== undefined) updateData.answerText = answerText;
         if (analysis !== undefined) updateData.analysis = analysis;

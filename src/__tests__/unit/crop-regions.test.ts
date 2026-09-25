@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+    clipCropBoxes,
     isPartitionKind,
     mergeConnectedRects,
     needsWipe,
     mapRect,
     parseCropRegions,
     planNetVersion,
+    rebaseCropRegions,
     serializeCropRegions,
     toCropBoxKind,
     toLabelKind,
@@ -266,5 +268,80 @@ describe('crop-regions · 框类型命名互转', () => {
         expect(isPartitionKind('figure')).toBe(true);
         expect(isPartitionKind('question')).toBe(false);
         expect(isPartitionKind('handwriting')).toBe(false);
+    });
+});
+
+/**
+ * 坐标系换算（M1 / 2026-09-26 二修）。
+ *
+ * 这一组钉的是"录的时候量的是工作画布、存下来的是裁过的那张图"这个错位。
+ * 焊不住的话症状是**不报错、只裁歪**：纸上净版该白的地方没白、题图位置不对，
+ * 而代码、类型、控制台全都没有任何异常 —— 属于最难靠肉眼发现的一类。
+ */
+describe('crop-regions · 坐标系换算（裁剪后重定基准）', () => {
+    it('平移：减去裁剪原点，框应整体挪到新图坐标系', () => {
+        const out = rebaseCropRegions(
+            regions([{ kind: 'figure', x: 120, y: 220, w: 80, h: 60 }]),
+            { offsetX: 100, offsetY: 200, baseW: 400, baseH: 300 },
+        );
+        expect(out.boxes).toEqual([{ kind: 'figure', x: 20, y: 20, w: 80, h: 60 }]);
+        expect(out.base).toEqual({ w: 400, h: 300, rotation: 0 });
+    });
+
+    it('平移 + 缩放：压缩过的图要按比例缩，否则框会比图大', () => {
+        const out = rebaseCropRegions(
+            regions([{ kind: 'question', x: 200, y: 400, w: 200, h: 100 }]),
+            { offsetX: 100, offsetY: 200, scaleX: 0.5, scaleY: 0.5, baseW: 500, baseH: 400 },
+        );
+        expect(out.boxes).toEqual([{ kind: 'question', x: 50, y: 100, w: 100, h: 50 }]);
+    });
+
+    it('原点在左上（offset 0）时换算应是恒等 —— 防"手滑多减一次"', () => {
+        const src = regions([{ kind: 'scope', x: 10, y: 20, w: 30, h: 40 }]);
+        const out = rebaseCropRegions(src, { offsetX: 0, offsetY: 0, baseW: 1000, baseH: 800 });
+        expect(out.boxes).toEqual(src.boxes);
+        expect(out.base).toEqual(src.base);
+    });
+
+    it('旋转值必须原样带过去（旋转是烘进像素的，换算不该动它）', () => {
+        const out = rebaseCropRegions(
+            regions([{ kind: 'figure', x: 0, y: 0, w: 10, h: 10 }], { w: 900, h: 700, rotation: 90 }),
+            { offsetX: 5, offsetY: 5, baseW: 300, baseH: 200 },
+        );
+        expect(out.base.rotation).toBe(90);
+    });
+
+    it('换算后落回 base 之内 —— 这正是不换算出错时的典型表现（框飞出图外）', () => {
+        // 原图 1000×800，裁剪区从 (400,300) 起 600×500
+        const out = rebaseCropRegions(
+            regions([
+                { kind: 'question', x: 400, y: 300, w: 600, h: 500 },
+                { kind: 'figure', x: 800, y: 500, w: 150, h: 200 },
+            ]),
+            { offsetX: 400, offsetY: 300, baseW: 600, baseH: 500 },
+        );
+        // 不换算的话这两框是 (400,300)/(800,500)，会整块飞出 600×500 的画布
+        expect(validateCropRegions(out).filter((e) => e.includes('超出'))).toEqual([]);
+    });
+});
+
+/** 裁剪路的"哪些框算这道题的"判定 */
+describe('crop-regions · 只留与裁剪区有交集的框', () => {
+    it('有交集就留（含只搭一点边），完全在外面的丢掉', () => {
+        const src = regions([
+            { kind: 'question', x: 0, y: 0, w: 50, h: 50 },      // 完全在内
+            { kind: 'figure', x: 90, y: 40, w: 40, h: 40 },      // 只搭一点边 → 留
+            { kind: 'handwriting', x: 500, y: 500, w: 10, h: 10 }, // 完全在外 → 丢
+        ]);
+        const kept = clipCropBoxes(src, { x: 0, y: 0, w: 100, h: 100 });
+        expect(kept.map((b) => b.kind)).toEqual(['question', 'figure']);
+    });
+
+    it('一个都不沾时应返回空数组（调用方据此存 null，走兜底）', () => {
+        const kept = clipCropBoxes(
+            regions([{ kind: 'question', x: 900, y: 900, w: 10, h: 10 }]),
+            { x: 0, y: 0, w: 100, h: 100 },
+        );
+        expect(kept).toEqual([]);
     });
 });
