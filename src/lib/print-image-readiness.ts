@@ -78,6 +78,81 @@ export function whenImagesSettled(timeoutMs = 1500): Promise<void> {
     });
 }
 
+/** 等浏览器画出下一帧（让 React 提交 + 布局落地）。优先 rAF，环境没有就退回定时器。 */
+function nextFrame(): Promise<void> {
+    return new Promise<void>((resolve) => {
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => resolve());
+        } else {
+            setTimeout(resolve, 16);
+        }
+    });
+}
+
+/**
+ * 等到**打印范围内所有 `<img>` 都解码完成**，或超时。
+ *
+ * ── 为什么还要这一道（2026-09-26 四修）─────────────────────────────
+ * 打印页上的图有**三个**异步来源，一个都不能少等：
+ *   ① 正面原题照片 —— `originalImageUrl`（dataURL）
+ *   ② 反面的题图 —— 现裁出来的 dataURL（`whenImagesSettled` 只管到"生成完"）
+ *   ③ **二维码** —— `makeQrDataUrl()` 异步生成后才塞进 `qrMap`
+ *
+ * 而题图比另外两个还多绕一道：**生成完 → 进 DOM → 解码**。
+ * 用户实测的现象正好对上：**选 1 道能打，选 4 道时背面的题图没了**
+ * （4 张卡时 React 重新提交整张纸要花的时间，早超过原来硬等的那 120ms）。
+ *
+ * ── 为什么要**多轮复查** ────────────────────────────────────────
+ * 等第一轮的时候，别的卡片可能刚好把新图提交进来；
+ * 只查一次就会漏掉"等图期间新出现的图"。所以查完一帧再查一遍（最多 3 轮）。
+ *
+ * ⚠️ `decode()` 对破图 / 空 src 会 reject，必须吞掉：
+ *    一张图坏了不该让整次打印卡住（那是"整页打不出来"，比少一张图严重得多）。
+ *
+ * @returns 一共等过几张（便于排查；0 = 没有什么可等的）
+ */
+export async function whenImagesDecoded(
+    root: ParentNode | null | undefined,
+    timeoutMs = 3000,
+): Promise<number> {
+    if (!root) return 0;
+    const deadline = Date.now() + timeoutMs;
+    let waited = 0;
+
+    for (let round = 0; round < 3; round += 1) {
+        const pending = Array.from(root.querySelectorAll('img')).filter(
+            (img) => !(img.complete && img.naturalWidth > 0),
+        );
+        if (pending.length === 0) break;
+        waited = Math.max(waited, pending.length);
+
+        const left = deadline - Date.now();
+        if (left <= 0) break;
+
+        await Promise.race([
+            Promise.all(pending.map(decodeOne)),
+            new Promise<void>((resolve) => setTimeout(resolve, left)),
+        ]);
+
+        // 等一帧再复查：期间 React 可能刚把新图提交进 DOM
+        if (Date.now() < deadline) await nextFrame();
+    }
+    return waited;
+}
+
+/** 单张图等"可绘制"。优先 `decode()`；没有就退回 load/error 事件。 */
+function decodeOne(img: HTMLImageElement): Promise<void> {
+    if (typeof img.decode === 'function') {
+        return img.decode().catch(() => undefined);
+    }
+    if (img.complete) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+        const done = () => resolve();
+        img.addEventListener('load', done, { once: true });
+        img.addEventListener('error', done, { once: true });
+    });
+}
+
 /**
  * 测试专用：把计数与等待者清空（单测之间互不影响）。
  * 不改它也不会污染生产逻辑 —— 只在测试里用。

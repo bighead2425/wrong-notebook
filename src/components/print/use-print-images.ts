@@ -35,6 +35,21 @@ type Prep = {
 };
 
 /**
+ * 题图输出像素上限（长边）。
+ *
+ * 题图在纸上最多 60mm 宽（见 `deep-dive-card.tsx` 的 `maxWidth: 60mm`），
+ * 按 300dpi 只需要 709px。给到 1600px 已经有 ~677dpi，远超需要。
+ *
+ * ⚠️ 为什么要设上限（2026-09-26 四修）：原来按**原图自然像素**裁，
+ *    一旦某个坐标算歪（历史数据里就有，base 与图不符那种），
+ *    裁出来的 canvas 可能接近整张原图 —— 几十兆像素、上百 MB 内存，
+ *    `toDataURL` 会变成几 MB 的字符串。一页纸上两张这种图，
+ *    浏览器在打印快照时就是卡死/半张白纸。**加个上限，坏坐标最多是"图糊一点"，
+ *    不会把整次打印拖垮。**
+ */
+const FIGURE_MAX_PX = 1600;
+
+/**
  * 按橙框坐标，从原图裁出题图。
  *
  * 没有 `cropRegions`、或里面没有橙框 ⇒ 返回空数组（反面就只有文字题干，
@@ -65,31 +80,51 @@ export function useFigureImages(item: ErrorItem): string[] {
         const done = beginImageWork();
 
         img.onload = () => {
-            done();
-            if (cancelled) return;
-            const natW = img.naturalWidth;
-            const natH = img.naturalHeight;
-            if (!natW || !natH) return;
-
-            // 按**自然像素**裁，不缩放 —— 题图本来就不大，缩了反而糊
-            const rects = toPixelRects(prep.figures, prep.regions.base, natW, natH);
-            const urls: string[] = [];
-            for (const r of rects) {
-                const x = Math.max(0, Math.floor(r.x));
-                const y = Math.max(0, Math.floor(r.y));
-                const w = Math.min(natW - x, Math.ceil(r.w));
-                const h = Math.min(natH - y, Math.ceil(r.h));
-                if (w <= 0 || h <= 0) continue;
-
-                const canvas = document.createElement('canvas');
-                canvas.width = w;
-                canvas.height = h;
-                const ctx = canvas.getContext('2d');
-                if (!ctx) continue;
-                ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
-                urls.push(canvas.toDataURL('image/png'));
+            if (cancelled) {
+                done();
+                return;
             }
-            if (!cancelled) setDrawn({ prep, urls });
+            try {
+                const natW = img.naturalWidth;
+                const natH = img.naturalHeight;
+                if (!natW || !natH) return;
+
+                // 按**自然像素**裁，不缩放 —— 题图本来就不大，缩了反而糊
+                const rects = toPixelRects(prep.figures, prep.regions.base, natW, natH);
+                const urls: string[] = [];
+                for (const r of rects) {
+                    const x = Math.max(0, Math.floor(r.x));
+                    const y = Math.max(0, Math.floor(r.y));
+                    const w = Math.min(natW - x, Math.ceil(r.w));
+                    const h = Math.min(natH - y, Math.ceil(r.h));
+                    if (w <= 0 || h <= 0) continue;
+
+                    // 超过上限就等比缩下来（见 FIGURE_MAX_PX 的注释：
+                    // 坏坐标最多让图糊一点，不会把打印拖垮）
+                    const shrink = Math.min(1, FIGURE_MAX_PX / Math.max(w, h));
+                    const cw = Math.max(1, Math.round(w * shrink));
+                    const ch = Math.max(1, Math.round(h * shrink));
+
+                    const canvas = document.createElement('canvas');
+                    canvas.width = cw;
+                    canvas.height = ch;
+                    const ctx = canvas.getContext('2d');
+                    if (!ctx) continue;
+                    ctx.drawImage(img, x, y, w, h, 0, 0, cw, ch);
+                    urls.push(canvas.toDataURL('image/png'));
+                }
+                if (!cancelled) setDrawn({ prep, urls });
+            } finally {
+                /**
+                 * ⚠️ 报完工放在**最后**，而且用 `finally`：
+                 *    · 放最后 = 这个信号的含义是"图已经进状态了"，
+                 *      打印侧拿到它之后 DOM 里就真有这张图（否则要多等一拍）；
+                 *    · `finally` = 中途任何一步抛错（比如画布太大、toDataURL 失败）
+                 *      也一定报完工，否则这一个计数会永久挂着，
+                 *      之后**每次**打印都要白等满超时才走。
+                 */
+                done();
+            }
         };
         // 图坏了也得报完工，否则这一个计数永远挂着，之后每次打印都白等满超时
         img.onerror = () => done();

@@ -18,7 +18,7 @@ import {
     normalizeGrade,
 } from "@/lib/print-preview";
 import { formatIsoDate } from "@/lib/date-format";
-import { whenImagesSettled } from "@/lib/print-image-readiness";
+import { whenImagesDecoded, whenImagesSettled } from "@/lib/print-image-readiness";
 import { makeQrDataUrl } from "@/lib/qr";
 import { ErrorCard } from "@/components/print/error-card";
 import { DeepDiveCard } from "@/components/print/deep-dive-card";
@@ -181,12 +181,15 @@ function PrintPreviewContent() {
             console.error("Failed to record print count:", error);
         }
         // 让 printCount / 打印日的新值先渲染到纸上（若纸面要显示次数）
-        // 【M1 / 2026-09-26 三修】再等"题图裁完"。
-        // 题图是打印时才在浏览器里从原图裁出来的（异步 onload → canvas → dataURL），
-        // 原先只等 120ms 就打印，图稍大或题稍多就会**纸面上没有题图**
-        // —— 症状和"橙框白画了"一模一样，极难查。这个门有超时兜底，
-        // 万一某条路径漏报完工也不会把打印卡死。
+        // 【M1 / 2026-09-26 三修 + 四修】打印前必须等两件事，缺一件就是"概率性少图"：
+        //   ① 题图**生成完**（它是打印时才从原图现裁的，见 use-print-images）
+        //   ② 纸面上**所有 img 解码完** —— 图上其实有三个异步来源：
+        //      正面原题照片、反面题图、以及 `makeQrDataUrl()` 现生成的二维码。
+        //      dataURL 不走网络但**要解码**，解码没完成时 Chrome 的快照会印成空白。
+        //      一次选 4 道就是十几个 img，这个窗口比选 1 道明显得多。
+        // 两道门都有超时兜底：宁可少一张图，也不能把打印卡住。
         await whenImagesSettled();
+        await whenImagesDecoded(document.querySelector('.print-sheet'));
         setTimeout(() => {
             window.print();
             setPrinting(false);

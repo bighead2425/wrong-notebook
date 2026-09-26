@@ -1,3 +1,7 @@
+// @vitest-environment node
+// 纯逻辑测试（不碰 DOM）：跑 node 环境。项目默认是 jsdom，
+// 而本机内存紧张时 jsdom 起 worker 会直接超时（"Timeout waiting for worker"），
+// 与测试本身无关却会让本地验证不可用。
 import { describe, expect, it } from 'vitest';
 import {
     clipCropBoxes,
@@ -12,6 +16,8 @@ import {
     serializeCropRegions,
     toCropBoxKind,
     toLabelKind,
+    toPixelRects,
+    toRect,
     unionRect,
     validateCropRegions,
     type CropBase,
@@ -591,5 +597,79 @@ describe('crop-regions · 分图产物上的橙框换算', () => {
                 { w: 800, h: 500 },
             ),
         ).toHaveLength(0);
+    });
+});
+
+/**
+ * 契约：**基准尺寸必须等于"最终存下来的那张图"**（2026-09-26 四修）。
+ *
+ * 这条契约一直被写在 `collectCropRegions` 的注释里，但实现够不到这个信息 ——
+ * 它恒把 base 取成"整个工作画布"的尺寸。而导出区常常只是画布的一块
+ * （画了裁剪框、或按框导出），存下来的图比画布小 ⇒ base 偏大
+ * ⇒ 读取端按「存图宽 ÷ base 宽」把坐标缩小 ⇒ 题图裁到**偏左上的一块**
+ * ⇒ 纸面上那块是空白 / 不是题图，用户看到的就是"背面那张图没有了"。
+ *
+ * 这条测试把正确与错误两种基准**并排算一遍**，让差多少一目了然。
+ */
+describe('crop-regions · 契约：base 必须等于存图尺寸', () => {
+    it('base 用存图尺寸 ⇒ 读取端比例正好为 1，题图裁在原位', () => {
+        // 工作画布 1000×800，导出区取 (100,100)-(900,700) ⇒ 存图 800×600
+        const onCanvas = regions(
+            [{ kind: 'figure', x: 400, y: 300, w: 200, h: 150 }],
+            { w: 1000, h: 800, rotation: 0 },
+        );
+
+        const payload = rebaseCropRegions(onCanvas, {
+            offsetX: 100,
+            offsetY: 100,
+            baseW: 800,
+            baseH: 600,
+        });
+        expect(payload.base).toEqual({ w: 800, h: 600, rotation: 0 });
+
+        // 读取端：存图确实是 800×600 ⇒ 缩放比 1 ⇒ 位置分毫不差
+        const [rect] = toPixelRects(payload.boxes.map(toRect), payload.base, 800, 600);
+        expect(rect.x).toBeCloseTo(300, 6);
+        expect(rect.y).toBeCloseTo(200, 6);
+        expect(rect.w).toBeCloseTo(200, 6);
+        expect(rect.h).toBeCloseTo(150, 6);
+    });
+
+    it('base 误用整画布尺寸 ⇒ 题图被缩着挪到偏左上（就是线上那个 bug）', () => {
+        const onCanvas = regions(
+            [{ kind: 'figure', x: 400, y: 300, w: 200, h: 150 }],
+            { w: 1000, h: 800, rotation: 0 },
+        );
+        // 错误基准：1000×800（整画布），而存图只有 800×600
+        const payload = rebaseCropRegions(onCanvas, {
+            offsetX: 100,
+            offsetY: 100,
+            baseW: 1000,
+            baseH: 800,
+        });
+        const [rect] = toPixelRects(payload.boxes.map(toRect), payload.base, 800, 600);
+
+        // 横向缩 0.8、纵向缩 0.75 ⇒ 位置偏左上，且越靠右下偏得越多
+        expect(rect.x).toBeCloseTo(240, 6); // 应是 300，偏了 60
+        expect(rect.y).toBeCloseTo(150, 6); // 应是 200，偏了 50
+        expect(rect.w).toBeCloseTo(160, 6);
+        expect(rect.h).toBeCloseTo(112.5, 6);
+    });
+
+    it('偏得越多越明显：题图在右下角时会整块挪走', () => {
+        const onCanvas = regions(
+            [{ kind: 'figure', x: 700, y: 600, w: 150, h: 100 }],
+            { w: 1000, h: 800, rotation: 0 },
+        );
+        const bad = rebaseCropRegions(onCanvas, {
+            offsetX: 0,
+            offsetY: 0,
+            baseW: 1000,
+            baseH: 800,
+        });
+        const [rect] = toPixelRects(bad.boxes.map(toRect), bad.base, 500, 400);
+        // 存图 500×400，坐标却按 1000×800 缩 ⇒ 位置只剩一半
+        expect(rect.x).toBeCloseTo(350, 6); // 应是 700
+        expect(rect.y).toBeCloseTo(300, 6); // 应是 600
     });
 });

@@ -1588,10 +1588,23 @@ export function ImageCropper({
         source: HTMLCanvasElement,
         questions: Box[],
         answers: Box[],
+        /**
+         * **只参与"题干范围"计算**的附加框 —— 即橙框（题图）。
+         *
+         * ⚠️ 【2026-09-26 四修】为什么要加这个参数：分图产物是**存下来的那张图**
+         *    （`originalImageUrl`），而题干范围原来只算 红∪蓝。橙框若压在红蓝包围盒
+         *    之外（比如题图在题干下方、或手写没盖到它），那块像素**根本不在产物里**
+         *    —— 题图自然就裁不出来了，用户看到的是"背面那张图没有了"。
+         *
+         *    设计上"文字 + 图 = 真题"（P5），所以题图本来就该算进题干范围。
+         *    注意：这些框**只扩大范围**，不参与涂白、不参与画框线。
+         */
+        extraContent: Box[] = [],
     ): { canvas: HTMLCanvasElement; stem: { x: number; y: number; w: number; h: number } | null } {
-        // 题目范围 = 红框 ∪ 蓝框 并集（用户没画大红框时也能自动兜住所有手写部分）
+        // 题目范围 = 红框 ∪ 蓝框 ∪ 橙框 并集
+        // （红蓝是原逻辑；橙框见上面 extraContent 的说明）
         let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-        for (const b of [...questions, ...answers]) {
+        for (const b of [...questions, ...answers, ...extraContent]) {
             x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y);
             x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h);
         }
@@ -1695,6 +1708,14 @@ export function ImageCropper({
             .map((b) => ({ ...b, x: b.x - sx, y: b.y - sy }));
         const answers = inside.filter((b) => b.kind === "answer")
             .map((b) => ({ ...b, x: b.x - sx, y: b.y - sy }));
+        /**
+         * 橙框（题图）也在这一块里时，要把它算进**题干范围**：
+         * 否则分图产物里根本没有那块像素，题图就再也裁不出来了。
+         * （只扩范围，不涂白、不画线。）
+         */
+        const figuresHere = boxes
+            .filter((b) => b.kind === "figure" && rectsIntersect(b, { x: sx, y: sy, w: sw, h: sh }))
+            .map((b) => ({ ...b, x: b.x - sx, y: b.y - sy }));
         const overlaps = questions.length > 0 && answers.length > 0
             && answers.some((a) => questions.some((q) => rectsIntersect(a, q)));
 
@@ -1708,7 +1729,7 @@ export function ImageCropper({
              * 把题图裁到别处 —— 同款"不报错只裁歪"。
              * 所以必须把 stem 交出去，让调用方按拼图布局换算橙框坐标。
              */
-            const split = buildSplitCanvas(sub, questions, answers);
+            const split = buildSplitCanvas(sub, questions, answers, figuresHere);
             return { canvas: split.canvas, stem: split.stem };
         }
         if (inside.length > 0) {
@@ -1750,7 +1771,25 @@ export function ImageCropper({
      */
     const collectCropRegions = (
         canvas: HTMLCanvasElement,
-        frame?: { offsetX: number; offsetY: number; scaleX?: number; scaleY?: number },
+        frame?: {
+            offsetX: number;
+            offsetY: number;
+            scaleX?: number;
+            scaleY?: number;
+            /**
+             * **存下来的那张图**的实际宽高（不传则按画布尺寸推）。
+             *
+             * ⚠️ 【2026-09-26 四修】这个参数是补上一个真 bug 的：
+             *    原来 base 恒等于 `canvas.width/height`（调用方 scaleX 都传 1），
+             *    可导出区是**画布的一块子矩形**时（裁剪框 / 按框导出），
+             *    存下来的图比画布小 ⇒ base 偏大 ⇒ 读取端按"实际图尺寸 ÷ base"
+             *    去缩坐标，题图就被裁到**偏左上的一块**（又是"不报错只画歪"）。
+             *    本函数文档一直写着"base = 存下来的那张图的尺寸"，
+             *    实现却够不到这个信息 —— 现在由调用方显式传进来。
+             */
+            outW?: number;
+            outH?: number;
+        },
     ): CropRegionsPayload | null => {
         const out: CropRegionsPayload['boxes'] = [];
         for (const b of boxes) {
@@ -1783,8 +1822,9 @@ export function ImageCropper({
             offsetY: frame.offsetY,
             scaleX: sx,
             scaleY: sy,
-            baseW: canvas.width * sx,
-            baseH: canvas.height * sy,
+            // 优先用调用方给的"存图尺寸"；没给才按画布推（scaleX 为 1 时二者相同）
+            baseW: frame.outW ?? canvas.width * sx,
+            baseH: frame.outH ?? canvas.height * sy,
         });
     };
 
@@ -1966,7 +2006,13 @@ export function ImageCropper({
 
         // 2) 红框与蓝框重叠/包含 → 分图（题干涂白 + 答案 + 序号），根治"答案混进题干"
         if (cropToRegions && labelBoxes.length > 0 && overlaps) {
-            const split = buildSplitCanvas(baked, questions, answers);
+            /**
+             * 橙框（题图）要算进题干范围：分图产物是要存下来当 `originalImageUrl` 的，
+             * 题图若压在红蓝包围盒之外，那块像素**不在产物里** ⇒ 之后再也裁不出题图
+             * （用户看到的就是"背面那张图没有了"）。详见 buildSplitCanvas 的形参说明。
+             */
+            const figuresForStem = labelBoxes.filter((b) => b.kind === "figure");
+            const split = buildSplitCanvas(baked, questions, answers, figuresForStem);
             const out = split.canvas;
             /**
              * 【M1 · 2026-09-26 修】这一路把红蓝框重排成了"题干涂白 + 答案 + 序号"
@@ -2053,12 +2099,21 @@ export function ImageCropper({
          * 换算比 scaleX/scaleY 取 1：`toBlob` 不改尺寸（out 就是 sw×sh），
          * 真正的缩放发生在后面 `processImageFile` 压缩，而读取端是拿**实际存的图**
          * 的自然尺寸去比 base 的，两边同比例，不必在这儿预算。
+         *
+         * ⚠️ 【2026-09-26 四修】还必须把 **out 的实际宽高**传进去当 base。
+         *    之前没传，base 就落到"整个工作画布"上了 —— 而导出区常常只是画布的一块
+         *    （画了裁剪框、或按框导出）。这时 base 偏大，读取端按
+         *    "存图宽 ÷ base 宽" 缩坐标，题图就裁到偏左上的一块：
+         *    纸面上要么图不对、要么那块是空白 —— 用户看到的就是"题图没了"。
          */
         const regionsPayload = collectCropRegions(wc, {
             offsetX: sx,
             offsetY: sy,
             scaleX: 1,
             scaleY: 1,
+            // 与下面 `out` 的取整口径保持一致，避免差一格
+            outW: Math.max(1, Math.round(sw)),
+            outH: Math.max(1, Math.round(sh)),
         });
         onCropRegions?.(regionsPayload);
 
