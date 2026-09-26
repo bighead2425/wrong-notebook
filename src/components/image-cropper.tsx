@@ -193,16 +193,21 @@ const LABEL_COLORS: Record<LabelKind, string> = {
 /**
  * 【M1】哪些框是"分区层"—— 它们**不参与**「告诉 AI 这段是什么」的判定。
  *
- * 两类分区框：
+ * **作用域层**（不是"分区层"）：只划范围、不参与「这段像素是什么」的判定。
  *   region 绿 = 这道题的范围（裁剪边界）
- *   figure 橙 = 题图（不可 OCR 的图像区，净版要涂白、再单独裁出来用）
  *
- * ⚠️ 凡是写 `kind !== "region"` 来"滤掉分区层"的地方，都要改用这个函数 ——
- *    否则加了橙框之后，橙框会被当成"要讲给 AI 的内容"画进导出图里。
+ * ⚠️ 2026-09-26 修：橙框（figure）**不在**这一层。
+ *    设计是两层：作用域 = 绿框；语义 = 蓝 > 橙 > 红。
+ *    橙框和红蓝框一样要回答"这段是什么"（它是"题图"），所以属语义层。
+ *    原先把 figure 也算进来，导致：
+ *      ① 导出区包围盒不算橙框（题图可能被裁掉）；
+ *      ② 红蓝重叠分图时橙框坐标被一起丢弃（线上 bug SX20260926002：题图消失）。
+ *    ⚠️ 但**框线不上纸**这条不变：橙框仍不该 strokeRect 到导出图上。
+ *    两件事分开办 —— "要不要算进坐标"与"要不要画出来"不是同一个问题。
  */
-const PARTITION_KINDS: readonly LabelKind[] = ["region", "figure"];
-function isPartitionKind(kind: LabelKind): boolean {
-    return PARTITION_KINDS.includes(kind);
+const SCOPE_KINDS: readonly LabelKind[] = ["region"];
+function isScopeKind(kind: LabelKind): boolean {
+    return SCOPE_KINDS.includes(kind);
 }
 const BRUSH_SIZES = [10, 20, 40, 80];
 /**
@@ -1574,7 +1579,7 @@ export function ImageCropper({
         source: HTMLCanvasElement,
         questions: Box[],
         answers: Box[],
-    ): HTMLCanvasElement {
+    ): { canvas: HTMLCanvasElement; stem: { x: number; y: number; w: number; h: number } } {
         // 题目范围 = 红框 ∪ 蓝框 并集（用户没画大红框时也能自动兜住所有手写部分）
         let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
         for (const b of [...questions, ...answers]) {
@@ -1591,7 +1596,7 @@ export function ImageCropper({
         const stem = document.createElement("canvas");
         stem.width = tw; stem.height = th;
         const sctx = stem.getContext("2d");
-        if (!sctx) return source;
+        if (!sctx) return { canvas: source, stem: { x: tx, y: ty, w: tw, h: th } };
         sctx.fillStyle = "#ffffff";
         sctx.fillRect(0, 0, tw, th);
         sctx.drawImage(source, tx, ty, tw, th, 0, 0, tw, th);
@@ -1634,13 +1639,13 @@ export function ImageCropper({
         out.width = Math.max(1, totalW);
         out.height = Math.max(1, totalH);
         const octx = out.getContext("2d");
-        if (!octx) return source;
+        if (!octx) return { canvas: source, stem: { x: tx, y: ty, w: tw, h: th } };
         octx.fillStyle = "#ffffff";
         octx.fillRect(0, 0, out.width, out.height);
         octx.drawImage(stem, 0, 0);
         let yy = stem.height + gap;
         for (const c of ansCanvases) { octx.drawImage(c, 0, yy); yy += c.height; }
-        return out;
+        return { canvas: out, stem: { x: tx, y: ty, w: tw, h: th } };
     }
 
     /**
@@ -1668,9 +1673,14 @@ export function ImageCropper({
         if (!sctx) return sub;
         sctx.drawImage(baked, sx, sy, sw, sh, 0, 0, sw, sh);
 
-        // 与这块区域有交集的红/蓝框才算属于这一道，并平移到区域坐标系
+        // 与这块区域有交集的红/蓝框才算属于这一道（题干/答案分图只认这两种），
+        // 并平移到区域坐标系。
+        // ⚠️ 这里**刻意只要红蓝**：绿框是裁剪边界（本函数的 region 参数就是它），
+        //    橙框是"题图"、既不是题干也不是答案，混进来会被 drawSplit 当内容处理。
+        //    橙框的归属由调用方的 `clipCropBoxes` 单独算（那边按"有交集"取，含橙框）。
         const inside = boxes.filter(
-            (b) => !isPartitionKind(b.kind) && rectsIntersect(b, { x: sx, y: sy, w: sw, h: sh }),
+            (b) => (b.kind === "question" || b.kind === "answer")
+                && rectsIntersect(b, { x: sx, y: sy, w: sw, h: sh }),
         );
         const questions = inside.filter((b) => b.kind === "question")
             .map((b) => ({ ...b, x: b.x - sx, y: b.y - sy }));
@@ -1680,7 +1690,10 @@ export function ImageCropper({
             && answers.some((a) => questions.some((q) => rectsIntersect(a, q)));
 
         if (cropToRegions && overlaps) {
-            return buildSplitCanvas(sub, questions, answers);
+            // 绿框路径里这道题已由绿框界定，分图只关心"红蓝重排后长什么样"，
+            // 题干区相对 sub 的位置（stem）在这里用不到 —— 那条路的坐标
+            // 是整页口径、由 handleConfirm 的 collectCropRegions 统一换算。
+            return buildSplitCanvas(sub, questions, answers).canvas;
         }
         if (inside.length > 0) {
             const lw = Math.max(1.5, 2);
@@ -1830,11 +1843,19 @@ export function ImageCropper({
         }
 
         /**
-         * 分区框（绿/橙）之外的框才参与"题干/答案"的判定。
-         * 分区框是划范围的，混进 cropToRegions 的包围盒会把导出区撑成整幅图。
-         * ⚠️ M1 起橙框也属分区层，所以这里用 isPartitionKind 而不是只排除绿框。
+         * 参与"这道题的图"计算的框：红（题干）+ 蓝（手写）+ 橙（题图）。
+         * **只排除绿框** —— 绿框是"这道题在整页的哪一块"，是裁剪边界本身，
+         * 混进 `cropToRegions` 的包围盒会把导出区撑成整幅图（那是它的本职，不是 bug）。
+         *
+         * ⚠️ 2026-09-26 修（线上 bug SX20260926002：橙框失效）：
+         *    原实现是 `!isPartitionKind(kind)`，而 `isPartitionKind` 同时含绿+橙
+         *    ⇒ 橙框被一起排除 ⇒ 两个后果：
+         *      ① 导出区包围盒不含橙框，题图可能被裁到框外；
+         *      ② 红蓝重叠走分图时，`onCropRegions(null)` 把橙框坐标也扔了。
+         *    设计《…比对结论》§B 明写两层：作用域=绿；语义=蓝>橙>红。
+         *    **橙框跟红蓝同层**，没有理由跟绿框一起被排除。
          */
-        const labelBoxes = boxes.filter((b) => !isPartitionKind(b.kind));
+        const labelBoxes = boxes.filter((b) => !isScopeKind(b.kind));
         /** 兜底：调用方没接 onCropBatch（理论上不存在）时，至少按第一个绿框裁一张 */
         const regionClip = regionBoxes.length > 0 ? (mergeRegions(regionBoxes)[0] ?? null) : null;
 
@@ -1883,14 +1904,51 @@ export function ImageCropper({
 
         // 2) 红框与蓝框重叠/包含 → 分图（题干涂白 + 答案 + 序号），根治"答案混进题干"
         if (cropToRegions && labelBoxes.length > 0 && overlaps) {
-            const out = buildSplitCanvas(baked, questions, answers);
+            const split = buildSplitCanvas(baked, questions, answers);
+            const out = split.canvas;
             /**
-             * 【M1】这一路把红蓝框重排成了"题干涂白 + 答案 + 序号"的一列拼图，
-             * 每个框都已搬到别的位置 —— 原坐标在这张新图上**不再成立**。
-             * 与其存一份会被读歪的坐标，不如不存：读取端见到"没有坐标"走兜底，
-             * 总好过按旧位置涂白、把不该擦的地方擦掉。这是"宁可没有、不能有错"的一处应用。
+             * 【M1 · 2026-09-26 修】这一路把红蓝框重排成了"题干涂白 + 答案 + 序号"
+             * 的一列拼图，**红蓝框**的原坐标确实不再成立 —— 该丢。
+             *
+             * 但**橙框（题图）不在此列**：它属语义层、跟红蓝同级，
+             * `buildSplitCanvas` 只重排红蓝、**根本没碰橙框**。
+             * 原来的实现一刀切 `onCropRegions(null)`，把橙框坐标也扔了
+             * ⇒ 读取端 `figures` 为空 ⇒ 题图裁不出来（线上 bug SX20260926002）。
+             *
+             * ── 橙框坐标怎么算 ──────────────────────────────────────
+             * 分图产物的布局是：`stem`（= 原图 (tx,ty,tw,th) 那块）**原样贴在 (0,0)**，
+             * 之后才是 gap 与答案堆叠。所以落在 stem 区内的橙框，
+             * 新坐标 = 原坐标 − (tx,ty)，**位置关系完全成立**。
+             *
+             * 橙框落在 stem 之外（跑进答案堆叠区）⇒ 位置已经变了，
+             * **宁可丢它也不给错坐标**（"宁可没有、不能有错"）——
+             * 题图会被红蓝包围盒捎带上纸，虽然拿不到独立题图，但不会把别处误涂白。
              */
-            onCropRegions?.(null);
+            const figBoxes = boxes.filter((b) => b.kind === "figure");
+            const keptFigures = figBoxes
+                .filter((b) => rectsIntersect(b, split.stem))
+                .map((b) => ({
+                    kind: "figure" as const,
+                    x: b.x - split.stem.x,
+                    y: b.y - split.stem.y,
+                    w: b.w,
+                    h: b.h,
+                }));
+            if (keptFigures.length > 0) {
+                const baseW = out.width;
+                const baseH = out.height;
+                onCropRegions?.({
+                    boxes: keptFigures.map((b) => ({
+                        ...b,
+                        // 夹进分图产物之内：橙框若被 stem 边界切掉一截，坐标不能越界
+                        w: Math.max(0, Math.min(b.w, baseW - Math.max(0, b.x))),
+                        h: Math.max(0, Math.min(b.h, baseH - Math.max(0, b.y))),
+                    })).filter((b) => b.w > 0 && b.h > 0),
+                    base: { w: baseW, h: baseH, rotation: 0 },
+                });
+            } else {
+                onCropRegions?.(null);
+            }
             out.toBlob((blob) => {
                 if (blob) onCropComplete(blob);
             }, "image/jpeg", 0.92);
@@ -1958,10 +2016,17 @@ export function ImageCropper({
         // 4) 非重叠：把框线烘进导出副本（原逻辑）
         //    注意这是「不烧像素」原则的**遗留**：线画在导出副本上，只为了让用户复核，
         //    框坐标另有 cropRegions 承担。真正去框靠读取端按坐标涂白（M1 第 ④ 步）。
-        if (labelBoxes.length > 0) {
+        //
+        // ⚠️ 2026-09-26：这里**只烘红蓝**，不再遍历 labelBoxes。
+        //    `labelBoxes` 现在含橙框（修 SX20260926002 时改的），若照旧遍历，
+        //    橙框线会被画到题面上 —— 违反「框只活在软件里，不印到纸上」。
+        //    两件事必须分开办：**算坐标**时橙框算（题图要留下来）、
+        //    **画线**时橙框不画（它是软件里的标记，不是试卷上的内容）。
+        const drawBoxes = [...questions, ...answers];
+        if (drawBoxes.length > 0) {
             // 烘焙到原图分辨率：2px 细线，不写字，避免遮挡表格/填空题
             const lw = Math.max(1.5, 2);
-            for (const b of labelBoxes) {
+            for (const b of drawBoxes) {
                 const color = LABEL_COLORS[b.kind];
                 bctx.save();
                 bctx.strokeStyle = color;

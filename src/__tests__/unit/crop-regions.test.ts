@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     clipCropBoxes,
-    isPartitionKind,
+    isScopeKind,
     mergeConnectedRects,
     needsWipe,
     mapRect,
@@ -263,11 +263,23 @@ describe('crop-regions · 框类型命名互转', () => {
         expect(toCropBoxKind('QUESTION')).toBeNull(); // 大小写敏感，不做宽容匹配
     });
 
-    it('分区层 = 绿(scope) + 橙(figure)；红蓝不是', () => {
-        expect(isPartitionKind('scope')).toBe(true);
-        expect(isPartitionKind('figure')).toBe(true);
-        expect(isPartitionKind('question')).toBe(false);
-        expect(isPartitionKind('handwriting')).toBe(false);
+    /**
+     * ⚠️ 2026-09-26 修：**橙框不是作用域层**。
+     *
+     * 这组断言原来是 `isPartitionKind('figure') === true` —— 那条断言把 bug
+     * 焊成了"正确行为"，改实现时它不会报警，反而会拦着人修。
+     * 设计（《看流程图的思考与补充_比对结论》§B）写的是两层：
+     *   作用域 = 绿框；语义 = 蓝 > 橙 > 红。
+     * 橙框要回答"这段像素是什么"，属语义层。
+     *
+     * 线上症状（SX20260926002）：橙框被当作用域层 ⇒ 红蓝重叠分图时坐标被连坐丢弃
+     * ⇒ 打印端裁不出题图。
+     */
+    it('作用域层只有绿(scope)；橙(figure)属语义层，不在其中', () => {
+        expect(isScopeKind('scope')).toBe(true);
+        expect(isScopeKind('figure')).toBe(false); // ← 曾经的 bug 点
+        expect(isScopeKind('question')).toBe(false);
+        expect(isScopeKind('handwriting')).toBe(false);
     });
 });
 
@@ -408,5 +420,72 @@ describe('crop-regions · 净版该不该生成', () => {
             ]),
         );
         expect(plan.fills).toHaveLength(2);
+    });
+});
+
+/**
+ * 回归：橙框失效（线上 bug SX20260926002 / 2026-09-26）。
+ *
+ * 用户在一幅图上画了红（题干）+ 蓝（手写）+ 橙（题图）三种框，
+ * 打印出来**反面没有题图**。排查结论：
+ *   `image-cropper.tsx` 原先把 `figure` 和 `scope` 一起当作"作用域层"排除
+ *   ⇒ ① 导出区包围盒不含橙框；② 红蓝重叠分图那一支 `onCropRegions(null)`
+ *     把橙框坐标连坐丢弃 ⇒ 读取端 `figures` 为空。
+ *
+ * 下面用**用户截图里的真实坐标**钉住"橙框必须在语义层、必须能算出 figures"。
+ * 坐标来源：截图 2519×475，红 (31,35)-(2513,412) 蓝 (118,127)-(1388,270)
+ *           橙 (1043,242)-(1493,405)。
+ */
+describe('crop-regions · 回归：红蓝重叠时橙框不能被连坐（SX20260926002）', () => {
+    /** 用户那张图的三个框（相对图左上角） */
+    const userShot = () =>
+        regions([
+            { kind: 'question', x: 31, y: 35, w: 2482, h: 377 },
+            { kind: 'handwriting', x: 118, y: 127, w: 1270, h: 143 },
+            { kind: 'figure', x: 1043, y: 242, w: 450, h: 163 },
+        ]);
+
+    it('橙框不在作用域层 —— 这是 bug 的根，钉死它', () => {
+        expect(isScopeKind('figure')).toBe(false);
+    });
+
+    it('红蓝重叠 + 有橙框 ⇒ figures 必须非空（否则题图裁不出来）', () => {
+        const plan = planNetVersion(userShot());
+        expect(plan.figures).toHaveLength(1);
+        expect(plan.figures[0]).toEqual({ x: 1043, y: 242, w: 450, h: 163 });
+    });
+
+    it('橙框要参与填白（题图不该留在净版上）', () => {
+        const plan = planNetVersion(userShot());
+        expect(needsWipe(plan)).toBe(true);
+    });
+
+    it('分图后题干区平移：橙框减掉 (tx,ty) 仍在题干区之内', () => {
+        // buildSplitCanvas 的题干区 = 红∪蓝包围盒 + 1% padding，向下取整
+        const q = { x: 31, y: 35, w: 2482, h: 377 };
+        const a = { x: 118, y: 127, w: 1270, h: 143 };
+        const x0 = Math.min(q.x, a.x), y0 = Math.min(q.y, a.y);
+        const x1 = Math.max(q.x + q.w, a.x + a.w), y1 = Math.max(q.y + q.h, a.y + a.h);
+        const pad = Math.max(4, (y1 - y0) * 0.01);
+        const tx = Math.max(0, Math.floor(x0 - pad));
+        const ty = Math.max(0, Math.floor(y0 - pad));
+
+        const f = { x: 1043, y: 242, w: 450, h: 163 };
+        const nx = f.x - tx, ny = f.y - ty;
+        // 平移后仍为正、且右/下边界不超出题干区
+        expect(nx).toBeGreaterThanOrEqual(0);
+        expect(ny).toBeGreaterThanOrEqual(0);
+        expect(nx + f.w).toBeLessThanOrEqual(x1 - tx);
+        expect(ny + f.h).toBeLessThanOrEqual(y1 - ty);
+    });
+
+    it('橙框若被裁到题干区之外 ⇒ clipCropBoxes 保留"有交集"的那部分语义', () => {
+        // 判据是"有交集"不是"被包含"：压在边界上的框仍算属于这一道
+        const r = regions([{ kind: 'figure', x: 100, y: 100, w: 200, h: 100 }]);
+        const kept = clipCropBoxes(r, { x: 0, y: 0, w: 150, h: 150 });
+        expect(kept).toHaveLength(1);
+        // 完全在外的框不该被带进来
+        const outside = clipCropBoxes(r, { x: 0, y: 0, w: 50, h: 50 });
+        expect(outside).toHaveLength(0);
     });
 });

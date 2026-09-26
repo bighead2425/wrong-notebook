@@ -79,12 +79,22 @@ export function toLabelKind(kind: CropBoxKind): LabelKind {
 }
 
 /**
- * 分区层：只划范围、**不参与**「告诉 AI 这段是什么」的判定。
+ * **作用域层**：只划范围、**不参与**「告诉 AI 这段是什么」的判定。
  *   scope 绿 = 一道题的范围（同时是裁剪边界）
- *   figure 橙 = 题图（净版要涂白，再单独裁出来用）
+ *
+ * ⚠️ 2026-09-26 修：**橙框（figure）不属于这一层**。
+ *    设计《看流程图的思考与补充_比对结论》§B 写的是两层：
+ *      第一层 作用域 = 绿框（可叠、取合集）
+ *      第二层 语义   = 蓝 > 橙 > 红（在同一张图上分三类像素）
+ *    本函数原先把 `figure` 也算作分区，导致橙框被当成"跟绿框同类的范围标记"
+ *    而从 `labelBoxes` 里排除 ⇒ 红蓝重叠分图时橙框坐标被连坐丢弃
+ *    ⇒ 打印端裁不出题图（线上 bug：SX20260926002）。
+ *
+ *    判断依据不是"橙框像不像绿框"，而是**它跟谁是同层**：
+ *    橙框和红蓝框一样要回答"这段像素是什么"，所以它在语义层，不在作用域层。
  */
-export function isPartitionKind(kind: CropBoxKind): boolean {
-    return kind === 'scope' || kind === 'figure';
+export function isScopeKind(kind: CropBoxKind): boolean {
+    return kind === 'scope';
 }
 
 export const CROP_BOX_KINDS: readonly CropBoxKind[] = [
