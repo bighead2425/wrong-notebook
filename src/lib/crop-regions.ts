@@ -310,6 +310,65 @@ export function clipCropBoxes(regions: CropRegions, clip: Rect): CropBox[] {
     );
 }
 
+/**
+ * 把**橙框**的坐标换算到「分图产物」的坐标系上（题干在上 + gap + 答案堆叠）。
+ *
+ * ── 为什么需要它（2026-09-26 三修）──────────────────────────────────
+ * "省🔡"打开且红蓝框重叠时，这一页（或这一块绿框）会被重排成一张拼图：
+ *
+ *     ┌──────────────┐
+ *     │  题干区 stem  │ ← 原图 (tx,ty,tw,th) 那块**原样贴在 (0,0)**
+ *     ├──────────────┤ gap
+ *     │  答案 1       │ ← 蓝框原图，重新堆叠
+ *     │  答案 2       │
+ *     └──────────────┘
+ *
+ * 红/蓝/绿框都被搬了位置 ⇒ 旧坐标作废（本该丢弃）。
+ * **但橙框没被搬**：它如果落在题干区里，位置关系原封不动，
+ * 新坐标 = 旧坐标 − (tx,ty)。丢了它就等于"题图永远裁不出来"
+ * —— 线上 bug SX20260926002 就是这么来的（当时是一刀切丢全部）。
+ *
+ * 落在这块题干区**之外**的橙框：位置已经变了，**宁可丢也不给错坐标**
+ * （错坐标会把别处的像素当题图裁上纸，比没有题图更糟）。
+ *
+ * ⚠️ 只保留 `figure`。红/蓝/绿的坐标在这张拼图上没有意义，
+ *    留下去会让读取端照着旧位置涂白 —— 那才是真会擦坏东西的错误。
+ *
+ * @param boxes 已换算到**绿框/裁剪区坐标系**的框（见 `clipCropBoxes`）
+ * @param stem  题干区在**同一坐标系**里的位置
+ * @param base  分图产物的尺寸（`canvas.width/height`）—— 必须与真正存下来的那张图一致
+ */
+export function figuresForSplit(
+    boxes: readonly CropBox[],
+    stem: Rect,
+    base: { w: number; h: number },
+): CropBox[] {
+    if (!(base.w > 0) || !(base.h > 0)) return [];
+
+    const out: CropBox[] = [];
+    for (const b of boxes) {
+        if (b.kind !== 'figure') continue;
+        if (!intersects(b, stem)) continue;
+
+        // 平移到题干区原点
+        const nx = b.x - stem.x;
+        const ny = b.y - stem.y;
+
+        // 再夹进产物范围（正常情况下橙框在题干区内，这一步只是防御；
+        // 夹取用"求交集"而不是只改宽高，否则越界的框会把多出来的部分算进去）
+        const x0 = Math.max(0, nx);
+        const y0 = Math.max(0, ny);
+        const x1 = Math.min(base.w, nx + b.w);
+        const y1 = Math.min(base.h, ny + b.h);
+        const w = x1 - x0;
+        const h = y1 - y0;
+        if (!(w > 0) || !(h > 0)) continue;
+
+        out.push({ kind: 'figure', x: x0, y: y0, w, h });
+    }
+    return out;
+}
+
 /** 多个矩形的并集包围盒；空数组返回 null */
 export function unionRect(rects: readonly Rect[]): Rect | null {    if (rects.length === 0) return null;
     let minX = Infinity;

@@ -10,7 +10,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
 import { ccwCanvasMatrix, rotateCanvasSize, rotateRectCCW } from "@/lib/image-rotation";
 import { fitEditSize } from "@/lib/edit-canvas-size";
-import { toCropBoxKind, rebaseCropRegions, clipCropBoxes, type CropRegions } from "@/lib/crop-regions";
+import { toCropBoxKind, rebaseCropRegions, clipCropBoxes, figuresForSplit, type CropRegions } from "@/lib/crop-regions";
 
 /**
  * 取 2D 上下文。**两种后端，按画布用途选**（v36 审计后改的口径，别再混用）：
@@ -1574,12 +1574,21 @@ export function ImageCropper({
      * 重叠分图：题干图（红框∪蓝框范围，蓝框涂白 + 序号）在上，
      * 答案图（每个蓝框原样 + 同序号）在下，上下拼接为一张图。
      * 序号按蓝框阅读顺序（上→下、左→右）自动编排，与题干预留白块对应，避免错乱。
+     *
+     * 返回值：
+     *   · `canvas` —— 要存下来的那张图；
+     *   · `stem`   —— **题干区在这张图上的位置**（相对 `source` 的原点）。
+     *     调用方要靠它把"没被搬动"的橙框坐标换算过来（见 `figuresForSplit`）。
+     *
+     *   ⚠️ `stem === null` 表示**其实没分成图**（拿不到 canvas 上下文，只能原样返回
+     *      `source`）—— 此时布局就是 `source` 的布局，调用方**不能**按分图口径换算。
+     *      分不成图的概率极低，但谎报布局的后果是"坐标全错"，宁可让它退化成"没有坐标"。
      */
     function buildSplitCanvas(
         source: HTMLCanvasElement,
         questions: Box[],
         answers: Box[],
-    ): { canvas: HTMLCanvasElement; stem: { x: number; y: number; w: number; h: number } } {
+    ): { canvas: HTMLCanvasElement; stem: { x: number; y: number; w: number; h: number } | null } {
         // 题目范围 = 红框 ∪ 蓝框 并集（用户没画大红框时也能自动兜住所有手写部分）
         let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
         for (const b of [...questions, ...answers]) {
@@ -1596,7 +1605,7 @@ export function ImageCropper({
         const stem = document.createElement("canvas");
         stem.width = tw; stem.height = th;
         const sctx = stem.getContext("2d");
-        if (!sctx) return { canvas: source, stem: { x: tx, y: ty, w: tw, h: th } };
+        if (!sctx) return { canvas: source, stem: null };
         sctx.fillStyle = "#ffffff";
         sctx.fillRect(0, 0, tw, th);
         sctx.drawImage(source, tx, ty, tw, th, 0, 0, tw, th);
@@ -1639,7 +1648,7 @@ export function ImageCropper({
         out.width = Math.max(1, totalW);
         out.height = Math.max(1, totalH);
         const octx = out.getContext("2d");
-        if (!octx) return { canvas: source, stem: { x: tx, y: ty, w: tw, h: th } };
+        if (!octx) return { canvas: source, stem: null };
         octx.fillStyle = "#ffffff";
         octx.fillRect(0, 0, out.width, out.height);
         octx.drawImage(stem, 0, 0);
@@ -1660,7 +1669,7 @@ export function ImageCropper({
     function buildRegionCanvas(
         baked: HTMLCanvasElement,
         region: { x: number; y: number; w: number; h: number },
-    ): HTMLCanvasElement {
+    ): { canvas: HTMLCanvasElement; stem: { x: number; y: number; w: number; h: number } | null } {
         const sx = Math.max(0, Math.round(region.x));
         const sy = Math.max(0, Math.round(region.y));
         const sw = Math.max(1, Math.round(Math.min(region.w, baked.width - sx)));
@@ -1670,7 +1679,7 @@ export function ImageCropper({
         sub.width = sw;
         sub.height = sh;
         const sctx = sub.getContext("2d");
-        if (!sctx) return sub;
+        if (!sctx) return { canvas: sub, stem: null };
         sctx.drawImage(baked, sx, sy, sw, sh, 0, 0, sw, sh);
 
         // 与这块区域有交集的红/蓝框才算属于这一道（题干/答案分图只认这两种），
@@ -1690,10 +1699,17 @@ export function ImageCropper({
             && answers.some((a) => questions.some((q) => rectsIntersect(a, q)));
 
         if (cropToRegions && overlaps) {
-            // 绿框路径里这道题已由绿框界定，分图只关心"红蓝重排后长什么样"，
-            // 题干区相对 sub 的位置（stem）在这里用不到 —— 那条路的坐标
-            // 是整页口径、由 handleConfirm 的 collectCropRegions 统一换算。
-            return buildSplitCanvas(sub, questions, answers).canvas;
+            /**
+             * ⚠️ 【2026-09-26 三修】这里以前注释写着"stem 在绿框路径用不到"——**错的**。
+             *
+             * 分图产物是"题干区 + gap + 答案堆叠"的重排图，而这一路存进
+             * `originalImageUrl` 的就是它。调用方若还按**绿框尺寸**算坐标
+             * （base = clip），读取端拿拼图的实际尺寸去比，就会既缩又移，
+             * 把题图裁到别处 —— 同款"不报错只裁歪"。
+             * 所以必须把 stem 交出去，让调用方按拼图布局换算橙框坐标。
+             */
+            const split = buildSplitCanvas(sub, questions, answers);
+            return { canvas: split.canvas, stem: split.stem };
         }
         if (inside.length > 0) {
             const lw = Math.max(1.5, 2);
@@ -1705,7 +1721,7 @@ export function ImageCropper({
                 sctx.restore();
             }
         }
-        return sub;
+        return { canvas: sub, stem: null };
     }
 
     /**
@@ -1785,6 +1801,13 @@ export function ImageCropper({
         if (regionBoxes.length > 0 && onCropBatch && wc) {
             // 循环模式的"已抠标记"在"一图多题"下无意义，回传 null 防止把绿框标到错位置
             onCropRegion?.(null);
+            /**
+             * 【2026-09-26 三修】这一路走的是 `onCropRegionsMulti`（每块一张图各带一份坐标），
+             * **不会**经过单张的 `onCropRegions`。所以必须显式把单张通道清成 null ——
+             * 否则调用方里暂存的"上一道题的坐标"会被留到下一次单张保存上，
+             * 表现是"这道题按上一道的位置涂白/裁题图"，又是一次不报错只画错。
+             */
+            onCropRegions?.(null);
             const whole = document.createElement("canvas");
             whole.width = wc.width;
             whole.height = wc.height;
@@ -1798,19 +1821,37 @@ export function ImageCropper({
              * 否则图与坐标会差一两个像素：图上看得见的小错，落到纸上就是净版边上
              * 留一条没擦干净的手写。所以下面单独算一遍，取值规则抄它的。
              */
-            const clips: { x: number; y: number; w: number; h: number }[] = [];
+            /**
+             * 【2026-09-26 三修】每张图**实际**的三件事，与 blobs 同序：
+             *   · `clip`  绿框在整页上的位置（用来把整页坐标平移到这张图上）；
+             *   · `stem`  分图产物的题干区位置（null = 没分图）；
+             *   · `w/h`   **真正存下来的那张图**的尺寸 —— base 必须用它。
+             * 之前只记了 `clip`，等于默认"图 = 绿框那一小块"；
+             * 而省🔡 + 红蓝重叠时，图其实是重排过的拼图，尺寸和布局都变了。
+             */
+            const parts: {
+                clip: { x: number; y: number; w: number; h: number };
+                stem: { x: number; y: number; w: number; h: number } | null;
+                w: number;
+                h: number;
+            }[] = [];
             for (const r of regions) {
                 const clipX = Math.max(0, Math.round(r.x));
                 const clipY = Math.max(0, Math.round(r.y));
                 const clipW = Math.max(1, Math.round(Math.min(r.w, wc.width - clipX)));
                 const clipH = Math.max(1, Math.round(Math.min(r.h, wc.height - clipY)));
-                const c = buildRegionCanvas(whole, r);
+                const built = buildRegionCanvas(whole, r);
                 const blob = await new Promise<Blob | null>((resolve) => {
-                    c.toBlob((b) => resolve(b), "image/jpeg", 0.92);
+                    built.canvas.toBlob((b) => resolve(b), "image/jpeg", 0.92);
                 });
                 if (blob) {
                     blobs.push(blob);
-                    clips.push({ x: clipX, y: clipY, w: clipW, h: clipH });
+                    parts.push({
+                        clip: { x: clipX, y: clipY, w: clipW, h: clipH },
+                        stem: built.stem,
+                        w: built.canvas.width,
+                        h: built.canvas.height,
+                    });
                 }
             }
             if (blobs.length > 0) {
@@ -1822,18 +1863,39 @@ export function ImageCropper({
                  * 坐标若还挂在整页上，读取端从那一小块上按整页尺寸换算，必然裁歪。
                  *
                  * 换一种存法：**每张图各存一份、坐标系跟着自己那张图走**。
-                 * 只有与这块**有交集**的框才归它（含橙框 —— 读取端要靠它裁题图）。
                  * 没框的那张回 null（读取端走"没有净版"兜底，不是写空坐标）。
+                 *
+                 * ── 两种图，两套口径（2026-09-26 三修）──────────────────
+                 * ① **普通裁块**（`stem === null`）：图 = 绿框那一小块，尺寸就是绿框尺寸
+                 *    ⇒ 只留与它有交集的框（含橙框），base = 绿框尺寸。
+                 * ② **分图产物**（`stem !== null`）：图是"题干 + 答案"重排的拼图，
+                 *    红/蓝/绿的坐标全部作废；只有落在题干区内的**橙框**位置仍成立
+                 *    ⇒ 由 `figuresForSplit` 统一换算（与 handleConfirm 那条路共用一份实现）。
                  */
-                const payloads: (CropRegionsPayload | null)[] = clips.map((clip) => {
+                const payloads: (CropRegionsPayload | null)[] = parts.map((part) => {
                     const rebased = collectCropRegions(wc, {
-                        offsetX: clip.x,
-                        offsetY: clip.y,
+                        offsetX: part.clip.x,
+                        offsetY: part.clip.y,
                     });
                     if (!rebased) return null;
-                    const kept = clipCropBoxes(rebased, { x: 0, y: 0, w: clip.w, h: clip.h });
+
+                    if (part.stem) {
+                        const figs = figuresForSplit(rebased.boxes, part.stem, {
+                            w: part.w,
+                            h: part.h,
+                        });
+                        if (figs.length === 0) return null;
+                        return { boxes: figs, base: { w: part.w, h: part.h, rotation: 0 } };
+                    }
+
+                    const kept = clipCropBoxes(rebased, {
+                        x: 0,
+                        y: 0,
+                        w: part.clip.w,
+                        h: part.clip.h,
+                    });
                     if (kept.length === 0) return null;
-                    return { boxes: kept, base: { w: clip.w, h: clip.h, rotation: 0 } };
+                    return { boxes: kept, base: { w: part.clip.w, h: part.clip.h, rotation: 0 } };
                 });
                 onCropRegionsMulti?.(payloads);
                 onCropBatch(blobs);
@@ -1915,37 +1977,24 @@ export function ImageCropper({
              * 原来的实现一刀切 `onCropRegions(null)`，把橙框坐标也扔了
              * ⇒ 读取端 `figures` 为空 ⇒ 题图裁不出来（线上 bug SX20260926002）。
              *
-             * ── 橙框坐标怎么算 ──────────────────────────────────────
-             * 分图产物的布局是：`stem`（= 原图 (tx,ty,tw,th) 那块）**原样贴在 (0,0)**，
-             * 之后才是 gap 与答案堆叠。所以落在 stem 区内的橙框，
-             * 新坐标 = 原坐标 − (tx,ty)，**位置关系完全成立**。
-             *
-             * 橙框落在 stem 之外（跑进答案堆叠区）⇒ 位置已经变了，
-             * **宁可丢它也不给错坐标**（"宁可没有、不能有错"）——
-             * 题图会被红蓝包围盒捎带上纸，虽然拿不到独立题图，但不会把别处误涂白。
+             * 换算交给 `figuresForSplit`（`lib/crop-regions.ts`）——
+             * 与绿框路径那一处**共用同一份实现**。这条换算线上已经有两次
+             * "两处各写一遍、其中一处漏了"的教训（坐标系错位、橙框连坐），
+             * 所以规矩是：**换算只允许一处实现，其余地方调它**。
              */
-            const figBoxes = boxes.filter((b) => b.kind === "figure");
-            const keptFigures = figBoxes
-                .filter((b) => rectsIntersect(b, split.stem))
-                .map((b) => ({
-                    kind: "figure" as const,
-                    x: b.x - split.stem.x,
-                    y: b.y - split.stem.y,
-                    w: b.w,
-                    h: b.h,
-                }));
-            if (keptFigures.length > 0) {
-                const baseW = out.width;
-                const baseH = out.height;
-                onCropRegions?.({
-                    boxes: keptFigures.map((b) => ({
-                        ...b,
-                        // 夹进分图产物之内：橙框若被 stem 边界切掉一截，坐标不能越界
-                        w: Math.max(0, Math.min(b.w, baseW - Math.max(0, b.x))),
-                        h: Math.max(0, Math.min(b.h, baseH - Math.max(0, b.y))),
-                    })).filter((b) => b.w > 0 && b.h > 0),
-                    base: { w: baseW, h: baseH, rotation: 0 },
+            const canon = collectCropRegions(out);
+
+            if (!split.stem) {
+                // 其实没分成图（拿不到上下文，原样返回 baked）⇒ 存下来的就是整张 baked，
+                // 坐标照原样即可，base 也正好是 baked 尺寸。
+                onCropRegions?.(canon);
+            } else if (canon) {
+                const figures = figuresForSplit(canon.boxes, split.stem, {
+                    w: canon.base.w,
+                    h: canon.base.h,
                 });
+                // 橙框落在题干区外 ⇒ 坐标已失效，宁可这一道没有题图
+                onCropRegions?.(figures.length > 0 ? { boxes: figures, base: canon.base } : null);
             } else {
                 onCropRegions?.(null);
             }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     clipCropBoxes,
+    figuresForSplit,
     isScopeKind,
     mergeConnectedRects,
     needsWipe,
@@ -487,5 +488,108 @@ describe('crop-regions · 回归：红蓝重叠时橙框不能被连坐（SX2026
         // 完全在外的框不该被带进来
         const outside = clipCropBoxes(r, { x: 0, y: 0, w: 50, h: 50 });
         expect(outside).toHaveLength(0);
+    });
+});
+
+/**
+ * 回归：分图产物上的橙框坐标（2026-09-26 三修）。
+ *
+ * 背景：`figuresForSplit` 是"绿框路径"和"整页分图路径"**共用**的换算。
+ * 抽成纯函数的原因就是这条换算线上已经连踩两次（坐标系错位、橙框连坐），
+ * 规矩是"只允许一处实现"。
+ *
+ * 分图产物布局：题干区 stem（原样贴在 0,0）+ gap + 答案堆叠。
+ *   ⇒ stem 内的橙框：新坐标 = 旧坐标 − stem 原点；
+ *   ⇒ stem 外的橙框：位置已变，**必须丢**（给了就是裁别处的像素上纸）。
+ */
+describe('crop-regions · 分图产物上的橙框换算', () => {
+    /** 分图产物：题干区在 (0,0)，尺寸 800×300 */
+    const stem = { x: 0, y: 0, w: 800, h: 300 };
+
+    it('题干区内的橙框：按 stem 原点平移', () => {
+        const out = figuresForSplit(
+            [{ kind: 'figure', x: 100, y: 50, w: 200, h: 120 }],
+            stem,
+            { w: 800, h: 500 },
+        );
+        expect(out).toHaveLength(1);
+        expect(out[0]).toEqual({ kind: 'figure', x: 100, y: 50, w: 200, h: 120 });
+    });
+
+    it('题干区不在原点时（绿框内再分图）：减去 stem 原点', () => {
+        const out = figuresForSplit(
+            [{ kind: 'figure', x: 340, y: 210, w: 120, h: 80 }],
+            { x: 200, y: 150, w: 600, h: 300 },
+            { w: 600, h: 420 },
+        );
+        expect(out).toHaveLength(1);
+        expect(out[0].x).toBe(140);
+        expect(out[0].y).toBe(60);
+    });
+
+    it('落在答案堆叠区（stem 之外）的橙框 ⇒ 丢弃，不给错坐标', () => {
+        const out = figuresForSplit(
+            [{ kind: 'figure', x: 100, y: 400, w: 200, h: 80 }],
+            stem,
+            { w: 800, h: 500 },
+        );
+        expect(out).toHaveLength(0);
+    });
+
+    it('红/蓝/绿框一律不保留（它们的坐标在拼图上已无意义）', () => {
+        const out = figuresForSplit(
+            [
+                { kind: 'question', x: 10, y: 10, w: 100, h: 100 },
+                { kind: 'handwriting', x: 20, y: 20, w: 50, h: 50 },
+                { kind: 'scope', x: 0, y: 0, w: 800, h: 300 },
+            ],
+            stem,
+            { w: 800, h: 500 },
+        );
+        expect(out).toHaveLength(0);
+    });
+
+    it('橙框压在题干区边界上：保留，且夹进产物范围之内', () => {
+        const out = figuresForSplit(
+            [{ kind: 'figure', x: 700, y: 250, w: 200, h: 100 }],
+            stem,
+            { w: 800, h: 500 },
+        );
+        expect(out).toHaveLength(1);
+        // x+w 不能越过产物宽度，y+h 不能越过题干区高度
+        expect(out[0].x + out[0].w).toBeLessThanOrEqual(800);
+        expect(out[0].y + out[0].h).toBeLessThanOrEqual(500);
+        expect(out[0].w).toBeGreaterThan(0);
+        expect(out[0].h).toBeGreaterThan(0);
+    });
+
+    it('多个橙框（多张题图）各自换算，不串位', () => {
+        const out = figuresForSplit(
+            [
+                { kind: 'figure', x: 50, y: 40, w: 100, h: 60 },
+                { kind: 'figure', x: 300, y: 100, w: 150, h: 90 },
+            ],
+            { x: 20, y: 20, w: 700, h: 260 },
+            { w: 700, h: 400 },
+        );
+        expect(out).toHaveLength(2);
+        expect(out[0]).toEqual({ kind: 'figure', x: 30, y: 20, w: 100, h: 60 });
+        expect(out[1]).toEqual({ kind: 'figure', x: 280, y: 80, w: 150, h: 90 });
+    });
+
+    it('产物尺寸非法（0）⇒ 返回空，不产出无法换算的坐标', () => {
+        expect(
+            figuresForSplit([{ kind: 'figure', x: 10, y: 10, w: 50, h: 50 }], stem, { w: 0, h: 0 }),
+        ).toHaveLength(0);
+    });
+
+    it('没有橙框 ⇒ 空数组（大多数题本来就没有题图，不是异常）', () => {
+        expect(
+            figuresForSplit(
+                [{ kind: 'question', x: 0, y: 0, w: 100, h: 100 }],
+                stem,
+                { w: 800, h: 500 },
+            ),
+        ).toHaveLength(0);
     });
 });

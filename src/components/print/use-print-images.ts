@@ -25,6 +25,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ErrorItem } from '@/types/api';
 import { parseCropRegions, planNetVersion, needsWipe, toPixelRects } from '@/lib/crop-regions';
+import { beginImageWork } from '@/lib/print-image-readiness';
 
 type Prep = {
     regions: NonNullable<ReturnType<typeof parseCropRegions>>;
@@ -57,8 +58,14 @@ export function useFigureImages(item: ErrorItem): string[] {
         if (!prep) return;
         let cancelled = false;
         const img = new Image();
+        /**
+         * 报备"我在裁图"：让打印按钮等这张图出来再开打印对话框。
+         * `done` 幂等，所以下面 onload / onerror / 清理三处都调它也不会多扣。
+         */
+        const done = beginImageWork();
 
         img.onload = () => {
+            done();
             if (cancelled) return;
             const natW = img.naturalWidth;
             const natH = img.naturalHeight;
@@ -84,11 +91,14 @@ export function useFigureImages(item: ErrorItem): string[] {
             }
             if (!cancelled) setDrawn({ prep, urls });
         };
+        // 图坏了也得报完工，否则这一个计数永远挂着，之后每次打印都白等满超时
+        img.onerror = () => done();
         img.src = prep.src;
 
         return () => {
             cancelled = true;
             img.onload = null;
+            done();
         };
     }, [prep]);
 

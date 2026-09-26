@@ -24,7 +24,8 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { ImageCropper } from "@/components/image-cropper";
+import { ImageCropper, type CropRegionsPayload } from "@/components/image-cropper";
+import { serializeCropRegions } from "@/lib/crop-regions";
 import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
 import { CorrectionEditor, ParsedQuestionWithSubject } from "@/components/correction-editor";
 import { ParsedQuestion } from "@/lib/ai";
@@ -136,6 +137,16 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
     /** 最后操作/选中的那张（只用于视觉高亮；送 AI 的范围改由勾选决定） */
     const [activeId, setActiveId] = useState<string | null>(null);
     const [editingId, setEditingId] = useState<string | null>(null);
+    /**
+     * 【M1 / 2026-09-26 三修】流水线里**再裁剪**一次时收到的框坐标。
+     *
+     * ⚠️ 这里原来没接坐标通道，且换图时也不清 `cropRegions` ——
+     *    结果是"图换了、坐标还是上一张的"：打印时按旧位置涂白/裁题图，
+     *    属于最危险的一类**静默错误**（不报错、只是位置不对）。
+     *    单张换图与绿框拆分两条路都必须把新坐标带上。
+     */
+    const [editingCropRegions, setEditingCropRegions] = useState<string | null>(null);
+    const [editingCropRegionsMulti, setEditingCropRegionsMulti] = useState<(string | null)[]>([]);
     const [stage, setStage] = useState<"queue" | "review">("queue");
     const [reviewIdx, setReviewIdx] = useState(0);
 
@@ -570,6 +581,8 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                 previewUrl: url,
                 processed: true,
                 status: "processed",
+                // 【M1】这一张的框坐标跟着它自己走（没画框就是 undefined，不写列）
+                cropRegions: editingCropRegions ?? undefined,
             };
             setItems(prev => [
                 ...prev.map(it => it.id === id ? { ...it, treated: true } : it),
@@ -598,8 +611,12 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                 base64: undefined,
                 result: undefined,
                 error: undefined,
+                // 【M1】坐标也必须换成新的：图变了，旧坐标指的是**上一张图**上的位置，
+                // 留着它比没有更糟（会照着错位置裁题图/涂白）。没画框 = undefined，清空。
+                cropRegions: editingCropRegions ?? undefined,
             } : it));
         }
+        setEditingCropRegions(null);
         setEditingId(null);
     };
 
@@ -629,6 +646,12 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             previewUrl: URL.createObjectURL(b),
             processed: true,
             status: "processed" as BatchStatus,
+            /**
+             * 【M1 / 2026-09-26 三修】绿框拆出来的每一张，各带各的框坐标
+             * （编辑器与 `onCropBatch` 同一次点击成对回传，下标一一对应）。
+             * `accepted` 是 `blobs` 的前缀，所以下标 k 与回传数组同序，不会错位。
+             */
+            cropRegions: editingCropRegionsMulti[k] ?? undefined,
         }));
         if (editing && !keepOriginal) URL.revokeObjectURL(editing.previewUrl);
         setItems(prev => [
@@ -644,6 +667,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             for (const a of added) next.add(a.id);
             return next;
         });
+        setEditingCropRegionsMulti([]);
         setEditingId(null);
         setStage("queue");
     };
@@ -1282,6 +1306,13 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                     onClose={() => setEditingId(null)}
                     onCropComplete={handleCropComplete}
                     onCropBatch={handleCropBatch}
+                    /* 【M1】两条坐标通道都要接：单张换图走 onCropRegions，
+                       绿框拆分走 onCropRegionsMulti。少接一条，
+                       这一路的坐标就静默丢掉（或是留着上一张图的旧坐标）。 */
+                    onCropRegions={(p) => setEditingCropRegions(p ? serializeCropRegions(p) : null)}
+                    onCropRegionsMulti={(ps) =>
+                        setEditingCropRegionsMulti(ps.map((p) => (p ? serializeCropRegions(p) : null)))
+                    }
                     analyzing={analysisStep !== "idle"}
                 />
             )}

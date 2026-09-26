@@ -148,6 +148,9 @@ function HomeContent() {
     const handleCropBatch = (blobs: Blob[]) => {
         if (!blobs.length) return;
         setIsCropperOpen(false);
+        // 【M1】切到流水线：坐标改走 `batchCropRegions`（与图片同序），
+        // 单张通道的值留着只会污染后面某一道单张录入，就地清掉。
+        setPendingCropRegions(null);
         setBatchFiles(blobs.map((b, i) => new File([b], `region-${i + 1}.jpg`, { type: "image/jpeg" })));
         setBatchMode(true);
     };
@@ -156,6 +159,19 @@ function HomeContent() {
     const [batchCropRegions, setBatchCropRegions] = useState<(string | null)[]>([]);
     const handleCropRegionsMulti = (payloads: (CropRegionsPayload | null)[]) => {
         setBatchCropRegions(payloads.map((p) => (p ? serializeCropRegions(p) : null)));
+    };
+
+    /**
+     * 【M1 / 2026-09-26 三修】单张录入这一路的框坐标。
+     *
+     * ⚠️ 之前**首页压根没接 `onCropRegions`** —— 只有"某错题本 → 添加"那条路接了。
+     *    后果：从首页单张录入（不画绿框）的题，坐标一路被丢掉
+     *    ⇒ 打印时没有净版、反面无题图 ⇒ 用户看到的就是"橙框白画了"。
+     *    这是"两条录入路径只改了一条"的典型（本项目历史上踩过好几次）。
+     */
+    const [pendingCropRegions, setPendingCropRegions] = useState<string | null>(null);
+    const handleCropRegions = (payload: CropRegionsPayload | null) => {
+        setPendingCropRegions(payload ? serializeCropRegions(payload) : null);
     };
 
     const handleAnalyze = async (file: File): Promise<boolean> => {
@@ -314,6 +330,8 @@ function HomeContent() {
             const result = await apiClient.post<{ id: string; duplicate?: boolean }>("/api/error-items", {
                 ...finalData,
                 originalImageUrl: currentImage || "",
+                // 【M1】框坐标（已序列化）。没有就不带这个键 —— 后端按"未提供"处理，不写列。
+                ...(pendingCropRegions ? { cropRegions: pendingCropRegions } : {}),
             });
 
             // 检查是否是重复提交（后端去重返回）
@@ -325,6 +343,8 @@ function HomeContent() {
             setStep("upload");
             setParsedData(null);
             setCurrentImage(null);
+            // 【M1】坐标已随上面那次 POST 入库，清掉，免得被下一道捡去用
+            setPendingCropRegions(null);
             alert(t.common?.messages?.saveSuccess || 'Saved successfully!');
 
             // Redirect to notebook page if notebookId is present
@@ -465,6 +485,7 @@ function HomeContent() {
                                 onClose={() => setIsCropperOpen(false)}
                                 onCropComplete={handleCropComplete}
                                 onCropBatch={handleCropBatch}
+                                onCropRegions={handleCropRegions}
                                 onCropRegionsMulti={handleCropRegionsMulti}
                                 analyzing={analysisStep !== 'idle'}
                             />

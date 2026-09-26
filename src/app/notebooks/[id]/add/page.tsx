@@ -192,6 +192,9 @@ export default function AddErrorPage() {
     const handleCropBatch = (blobs: Blob[]) => {
         if (!blobs.length) return;
         setIsCropperOpen(false);
+        // 【M1 / 2026-09-26 三修】切到流水线：坐标改走 `batchCropRegions`（与图片同序），
+        // 单张通道的值留着只会污染后面某一道单张录入，就地清掉。
+        setPendingCropRegions(null);
         setBatchFiles(blobs.map((b, i) => new File([b], `region-${i + 1}.jpg`, { type: "image/jpeg" })));
         setBatchMode(true);
     };
@@ -373,6 +376,14 @@ export default function AddErrorPage() {
                     ]);
                 }
                 setPendingCropRect(null);
+                /**
+                 * 【M1 / 2026-09-26 三修】坐标也要跟着清 —— 它已经随上面那次 POST 入库了，
+                 * 留在 state 里只会污染下一道：循环模式是"同一张整页连着录好几道"，
+                 * 万一下一道的"确定"没走到回传坐标的分支（例如画了绿框、或极端情况下
+                 * 拿不到画布上下文提前 return），保存时就会把**上一道的坐标**记到新题上，
+                 * 打印时按错误位置涂白/裁题图。清一下是一行的事，出错却是查半天的静默错。
+                 */
+                setPendingCropRegions(null);
                 setParsedData(null);
                 setStep("upload");
                 setPageSavedCount((c) => c + 1);

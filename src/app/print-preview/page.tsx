@@ -18,6 +18,7 @@ import {
     normalizeGrade,
 } from "@/lib/print-preview";
 import { formatIsoDate } from "@/lib/date-format";
+import { whenImagesSettled } from "@/lib/print-image-readiness";
 import { makeQrDataUrl } from "@/lib/qr";
 import { ErrorCard } from "@/components/print/error-card";
 import { DeepDiveCard } from "@/components/print/deep-dive-card";
@@ -180,6 +181,12 @@ function PrintPreviewContent() {
             console.error("Failed to record print count:", error);
         }
         // 让 printCount / 打印日的新值先渲染到纸上（若纸面要显示次数）
+        // 【M1 / 2026-09-26 三修】再等"题图裁完"。
+        // 题图是打印时才在浏览器里从原图裁出来的（异步 onload → canvas → dataURL），
+        // 原先只等 120ms 就打印，图稍大或题稍多就会**纸面上没有题图**
+        // —— 症状和"橙框白画了"一模一样，极难查。这个门有超时兜底，
+        // 万一某条路径漏报完工也不会把打印卡死。
+        await whenImagesSettled();
         setTimeout(() => {
             window.print();
             setPrinting(false);
