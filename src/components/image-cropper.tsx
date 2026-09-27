@@ -2332,17 +2332,34 @@ export function ImageCropper({
                             >
                                 {t.common.cropper?.labelRegion || "区🟩"}
                             </button>
-                            {/* 【M1】图🟧 = 题图（不能 OCR 的图像部分，如示意图/几何图）。
+                            {/* 【M1】图框 = 题图（不能 OCR 的图像部分，如示意图/几何图）。
                                 框了它，印"净版"时这块会被涂白、再单独裁出来放在题干下方 ——
-                                不框也不影响出题，只是净版里会留着一张图。 */}
+                                不框也不影响出题，只是净版里会留着一张图。
+                                【2026-09-28 改样式】原来的 🟧 emoji 渲染成一大块**实心橙**，
+                                常驻工具栏，跟"擦/裁"挤在一起极易点错（他已点错多次）。
+                                按他指定的样式改成：**黑框、虚线、透明填充**的小方框 ——
+                                "要框一块透明区域"的意象，与另外三个实心色块明显区分。
+                                激活态也不再整颗染橙（否则又变回一大块橙色）。 */}
                             <button
                                 type="button"
                                 className={btn(labelKind === "figure")}
                                 onClick={() => setLabelKind("figure")}
-                                style={labelKind === "figure" ? { background: LABEL_COLORS.figure, borderColor: LABEL_COLORS.figure, color: "#fff" } : undefined}
                                 title="框住题目里那张图（示意图/几何图等）。印净版时这块会被涂白，再单独裁出来放到题干下方。不框也行，只是净版里会留着它"
                             >
-                                {t.common.cropper?.labelFigure || "图🟧"}
+                                {t.common.cropper?.labelFigure || "图"}
+                                <span
+                                    aria-hidden
+                                    style={{
+                                        display: 'inline-block',
+                                        width: '0.8em',
+                                        height: '0.8em',
+                                        marginLeft: '3px',
+                                        border: '1.5px dashed #333',
+                                        borderRadius: '2px',
+                                        background: 'transparent',
+                                        verticalAlign: '-0.05em',
+                                    }}
+                                />
                             </button>
                             {/* 【custom-v27 仅画】强制画框：选中后起手即画新框，不再"点中旧框就选中它"。
                                 电脑端按住 Shift 等效于此开关（松开即还原）。 */}

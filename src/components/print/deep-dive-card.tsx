@@ -371,95 +371,102 @@ export function DeepDiveCard({
                 />
 
                 {/*
-                    页脚（2026-09-26 改版）—— 原来是"整幅横线在上、二维码在左下"，
-                    他看完纸样的原话：**符合设计思路，但不舒服**。
+                    页脚（2026-09-28 二改：上下结构 → **左右结构**）——
+                    他的原话：左边二维码，右边"上面是横线，下面是三个框和三个时间以及虚线框"，
+                    这样"结构更加紧凑、干净、利索"。
 
-                    正面是「横线在左、二维码在右」，两者**共享页宽**，他觉得这个好；
-                    于是反面做成它的**镜像**：**二维码在左、横线在右**，同样共享页宽。
+                    演变史：
+                      · 09-26 前：整幅横线在上、二维码在左下；
+                      · 09-26：镜像正面 → 上行"二维码+横线"、下行"日期格+虚线框"（上下两行）；
+                      · 09-28（本次）：左右两块 —— 左=二维码，右=横线在上、日期格在下。
 
-                    连带两处：
-                      ① 三个日期格**往下挪一行**（落到横线下面），不再和二维码挤在同一行；
-                      ② 最后一个日期后面加**虚线框**（灰白、略带圆角的扁长方形，
-                         比颜色格宽得多、略高一点）——留给印章，或她手写"已会"。
-                         ⚠️ **板上不写这个框是干什么的**：写了就等于替她把用途定死。
-
-                    ⚠️ 那条横线虽然短了（从二维码右边起），但**位置仍然固定** ——
-                       它和上面的遮挡线一起夹出她的手写区，是 OCR 取的**下界**。
+                    ⚠️ 那条横线的**位置仍然固定** —— 它和上面的遮挡线一起夹出她的手写区，
+                       是 OCR 取的**下界**。页脚总高度（26mm）不变，上面的版面不受影响。
                 */}
                 <div
                     className="print-deep-footer"
                     style={{
                         height: `${T1_LAYOUT_MM.footer}mm`,
                         display: 'flex',
-                        flexDirection: 'column',
-                        justifyContent: 'flex-end',
-                        gap: '2mm',
+                        alignItems: 'center',
+                        gap: '2.5mm',
                         flexShrink: 0,
                     }}
                 >
-                    {/* 上行：二维码在左 + 横线在右，共享页宽 */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '2.5mm', flexShrink: 0 }}>
-                        {qr ? (
-                            <img
-                                className="print-qr"
-                                src={qr}
-                                alt=""
-                                style={{ width: '14mm', height: '14mm', flexShrink: 0 }}
-                            />
-                        ) : (
-                            <div style={{ width: '14mm', height: '14mm', flexShrink: 0 }} />
-                        )}
+                    {/* 左：二维码（整块居中） */}
+                    {qr ? (
+                        <img
+                            className="print-qr"
+                            src={qr}
+                            alt=""
+                            style={{ width: '14mm', height: '14mm', flexShrink: 0 }}
+                        />
+                    ) : (
+                        <div style={{ width: '14mm', height: '14mm', flexShrink: 0 }} />
+                    )}
+
+                    {/* 右：上面横线（OCR 下界），下面三个日期格 + 末尾虚线框 */}
+                    <div
+                        style={{
+                            flex: 1,
+                            minWidth: 0,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'flex-end',
+                            gap: '2mm',
+                        }}
+                    >
                         <span
                             className="print-deep-footer-rule"
-                            style={{ flex: 1, height: '0.2mm', background: '#666' }}
+                            style={{ width: '100%', height: '0.2mm', background: '#666' }}
                         />
-                    </div>
 
-                    {/* 下行：三个日期格（打印日 +1 / +7 / +21，yyyy-mm-dd）+ 末尾虚线框 */}
-                    <div
-                        className="print-deep-slots"
-                        style={{ display: 'flex', alignItems: 'center', gap: '5mm', flexShrink: 0 }}
-                    >
-                        {slots.map((s) => {
-                            const c = slotColor(s.index);
-                            return (
-                                <span
-                                    key={s.index}
-                                    style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '1.2mm',
-                                    }}
-                                >
-                                    {/* 一格里三种状态：空着 / 打勾 / 打叉 —— 打勾打叉是她的任务 */}
+                        {/* 三个日期格（打印日 +1 / +7 / +21，yyyy-mm-dd）+ 末尾虚线框 */}
+                        <div
+                            className="print-deep-slots"
+                            style={{ display: 'flex', alignItems: 'center', gap: '5mm', flexShrink: 0 }}
+                        >
+                            {slots.map((s) => {
+                                const c = slotColor(s.index);
+                                return (
                                     <span
-                                        className="print-deep-slot"
+                                        key={s.index}
                                         style={{
-                                            display: 'inline-block',
-                                            width: `${SLOT_SIZE_MM}mm`,
-                                            height: `${SLOT_SIZE_MM}mm`,
-                                            border: `0.35mm solid ${c.border}`,
-                                            background: c.fill,
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '1.2mm',
                                         }}
-                                    />
-                                    <span style={{ fontSize: '9pt', color: c.text, fontWeight: 600 }}>
-                                        {s.label}
+                                    >
+                                        {/* 一格里三种状态：空着 / 打勾 / 打叉 —— 打勾打叉是她的任务 */}
+                                        <span
+                                            className="print-deep-slot"
+                                            style={{
+                                                display: 'inline-block',
+                                                width: `${SLOT_SIZE_MM}mm`,
+                                                height: `${SLOT_SIZE_MM}mm`,
+                                                border: `0.35mm solid ${c.border}`,
+                                                background: c.fill,
+                                            }}
+                                        />
+                                        <span style={{ fontSize: '9pt', color: c.text, fontWeight: 600 }}>
+                                            {s.label}
+                                        </span>
                                     </span>
-                                </span>
-                            );
-                        })}
-                        {/* 虚线框：**不印用途**。盖章 / 手写"已会" / 画勾，随她。 */}
-                        <span
-                            className="print-deep-stamp"
-                            style={{
-                                display: 'inline-block',
-                                width: `${STAMP_BOX_MM.w}mm`,
-                                height: `${STAMP_BOX_MM.h}mm`,
-                                border: '0.3mm dashed #b6b6b0',
-                                borderRadius: `${STAMP_BOX_MM.radius}mm`,
-                                background: '#fafaf6',
-                            }}
-                        />
+                                );
+                            })}
+                            {/* 虚线框：**不印用途**。盖章 / 手写"已会" / 画勾，随她。 */}
+                            <span
+                                className="print-deep-stamp"
+                                style={{
+                                    display: 'inline-block',
+                                    width: `${STAMP_BOX_MM.w}mm`,
+                                    height: `${STAMP_BOX_MM.h}mm`,
+                                    border: '0.3mm dashed #b6b6b0',
+                                    borderRadius: `${STAMP_BOX_MM.radius}mm`,
+                                    background: '#fafaf6',
+                                }}
+                            />
+                        </div>
                     </div>
                 </div>
             </div>

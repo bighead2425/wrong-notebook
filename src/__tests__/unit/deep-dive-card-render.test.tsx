@@ -133,12 +133,15 @@ describe('T1 深挖纸 · 反面页脚（2026-09-26 改版）', () => {
         }
     });
 
-    it('二维码与横线**共享页宽**（横线是 flex:1，跟在二维码右边，不是压在它上面）', () => {
+    it('页脚是**左右结构**（2026-09-28 改）：左二维码，右上横线、下日期格', () => {
         const html = renderWith();
-        // 页脚改成上下两行：上行 = 二维码 + 横线，下行 = 日期格 + 虚线框
-        expect(html).toContain('flex-direction:column');
         expect(html).toContain('print-deep-footer-rule');
         expect(html).toContain('print-deep-slots');
+        // 左右结构：二维码在横线**前面**（老版是"二维码+横线"一行、日期格另一行）
+        expect(html.indexOf('print-qr')).toBeGreaterThan(-1);
+        expect(html.indexOf('print-qr')).toBeLessThan(html.indexOf('print-deep-footer-rule'));
+        // 右列纵向排：横线在上、日期格在下
+        expect(html).toContain('flex-direction:column');
     });
 });
 

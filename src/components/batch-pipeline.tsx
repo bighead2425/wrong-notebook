@@ -138,15 +138,23 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
     const [activeId, setActiveId] = useState<string | null>(null);
     const [editingId, setEditingId] = useState<string | null>(null);
     /**
-     * 【M1 / 2026-09-26 三修】流水线里**再裁剪**一次时收到的框坐标。
+     * 【M1 / 2026-09-26 三修 · 五修改用 ref】流水线里**再裁剪**一次时收到的框坐标。
+     *
+     * ⚠️⚠️ 为什么必须是 **ref** 而不是 useState（2026-09-27 五修，线上 bug）：
+     *    编辑器的确认是**同一次点击里**先 `onCropRegionsMulti(坐标)`、
+     *    **紧接着同步**调 `onCropBatch(图)`。setState 不会立刻生效 ——
+     *    `handleCropBatch` 在同一个事件里读 state，读到的**永远是旧值**（空数组）
+     *    ⇒ 批量路径的坐标**一次都没存上** ⇒ 打印时背面永远没有题图
+     *    （用户实测："批量上传状态下，橙框选的图加不进深挖纸"）。
+     *    ref 的写入是同步的，同一次点击里写完立刻能读到。
      *
      * ⚠️ 这里原来没接坐标通道，且换图时也不清 `cropRegions` ——
      *    结果是"图换了、坐标还是上一张的"：打印时按旧位置涂白/裁题图，
      *    属于最危险的一类**静默错误**（不报错、只是位置不对）。
      *    单张换图与绿框拆分两条路都必须把新坐标带上。
      */
-    const [editingCropRegions, setEditingCropRegions] = useState<string | null>(null);
-    const [editingCropRegionsMulti, setEditingCropRegionsMulti] = useState<(string | null)[]>([]);
+    const editingCropRegionsRef = useRef<string | null>(null);
+    const editingCropRegionsMultiRef = useRef<(string | null)[]>([]);
     const [stage, setStage] = useState<"queue" | "review">("queue");
     const [reviewIdx, setReviewIdx] = useState(0);
 
@@ -582,7 +590,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                 processed: true,
                 status: "processed",
                 // 【M1】这一张的框坐标跟着它自己走（没画框就是 undefined，不写列）
-                cropRegions: editingCropRegions ?? undefined,
+                cropRegions: editingCropRegionsRef.current ?? undefined,
             };
             setItems(prev => [
                 ...prev.map(it => it.id === id ? { ...it, treated: true } : it),
@@ -613,10 +621,11 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                 error: undefined,
                 // 【M1】坐标也必须换成新的：图变了，旧坐标指的是**上一张图**上的位置，
                 // 留着它比没有更糟（会照着错位置裁题图/涂白）。没画框 = undefined，清空。
-                cropRegions: editingCropRegions ?? undefined,
+                cropRegions: editingCropRegionsRef.current ?? undefined,
             } : it));
         }
-        setEditingCropRegions(null);
+        editingCropRegionsRef.current = null;
+        editingCropRegionsMultiRef.current = [];
         setEditingId(null);
     };
 
@@ -647,11 +656,13 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             processed: true,
             status: "processed" as BatchStatus,
             /**
-             * 【M1 / 2026-09-26 三修】绿框拆出来的每一张，各带各的框坐标
-             * （编辑器与 `onCropBatch` 同一次点击成对回传，下标一一对应）。
+             * 【M1 / 2026-09-27 五修】绿框拆出来的每一张，各带各的框坐标。
+             * ⚠️ 必须读 **ref**：编辑器在同一次点击里先回传坐标、再回传图，
+             *    state 在这个瞬间还没生效（读到的永远是旧值）——
+             *    批量路径的坐标就是这么丢的。
              * `accepted` 是 `blobs` 的前缀，所以下标 k 与回传数组同序，不会错位。
              */
-            cropRegions: editingCropRegionsMulti[k] ?? undefined,
+            cropRegions: editingCropRegionsMultiRef.current[k] ?? undefined,
         }));
         if (editing && !keepOriginal) URL.revokeObjectURL(editing.previewUrl);
         setItems(prev => [
@@ -667,7 +678,9 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             for (const a of added) next.add(a.id);
             return next;
         });
-        setEditingCropRegionsMulti([]);
+        // 用完即清：这两份坐标只属于"这一次裁剪"，留着会污染下一次
+        editingCropRegionsRef.current = null;
+        editingCropRegionsMultiRef.current = [];
         setEditingId(null);
         setStage("queue");
     };
@@ -1303,16 +1316,27 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                 <ImageCropper
                     imageSrc={editingItem.previewUrl}
                     open={!!editingId}
-                    onClose={() => setEditingId(null)}
+                    onClose={() => {
+                        // 关掉编辑器 = 这次裁剪作废，坐标一并作废
+                        editingCropRegionsRef.current = null;
+                        editingCropRegionsMultiRef.current = [];
+                        setEditingId(null);
+                    }}
                     onCropComplete={handleCropComplete}
                     onCropBatch={handleCropBatch}
                     /* 【M1】两条坐标通道都要接：单张换图走 onCropRegions，
                        绿框拆分走 onCropRegionsMulti。少接一条，
-                       这一路的坐标就静默丢掉（或是留着上一张图的旧坐标）。 */
-                    onCropRegions={(p) => setEditingCropRegions(p ? serializeCropRegions(p) : null)}
-                    onCropRegionsMulti={(ps) =>
-                        setEditingCropRegionsMulti(ps.map((p) => (p ? serializeCropRegions(p) : null)))
-                    }
+                       这一路的坐标就静默丢掉（或是留着上一张图的旧坐标）。
+                       ⚠️ 写 ref 不写 state：这两份数据在**同一次点击**里就要被
+                       handleCropComplete / handleCropBatch 读走，setState 那时还没生效。 */
+                    onCropRegions={(p) => {
+                        editingCropRegionsRef.current = p ? serializeCropRegions(p) : null;
+                    }}
+                    onCropRegionsMulti={(ps) => {
+                        editingCropRegionsMultiRef.current = ps.map((p) =>
+                            p ? serializeCropRegions(p) : null,
+                        );
+                    }}
                     analyzing={analysisStep !== "idle"}
                 />
             )}
