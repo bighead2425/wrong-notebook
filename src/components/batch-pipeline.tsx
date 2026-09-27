@@ -123,12 +123,33 @@ const MAX_BATCH = 30;
  * 【custom-v28】送 AI 的尝试次数与请求间隔。
  *
  * 次数：1 次原始 + 2 次重试 = 最多 3 次，3 次都不过才判定失败。
- * 间隔：每次请求前等 5 秒（含重试）。用户拍板「成功比速度更重要」——
- * 13 道题也就多等 1 分钟，但密集请求容易撞上 AI 接口的限流窗口，
- * 拉长间隔能明显减少「莫名其妙失败」。
+ * 间隔：只在**重试**前等。用户拍板「成功比速度更重要」，指的是**别过早放弃**
+ *      （所以要重试），而不是"每次请求前都空等"。
+ *
+ * ⚠️ 【2026-09-28 七修】原来第 1 次也等 5 秒，理由写的是"让用户看清是从哪张开始跑的"。
+ *    这是纯亏：他实测"同一道题，手动单题送 AI 明显比批量快" ——
+ *    单题流是「压缩完立刻发请求」，批量流是「压缩完先白等 5 秒再发」，
+ *    N 道题就白等 5×N 秒，而且失败重试还要再等一轮。
+ *    "从哪张开始跑"已经由缩略图上的细进度条 + 「i/n」文案表达了，不需要靠空等。
+ *
+ * 间隔还要**分情况**（见 `looksThrottled`）：
+ *   · 疑似限流 ⇒ 保持 5 秒（原口径，避开限流窗口）；
+ *   · 其它失败（最常见的是"AI 返回内容不合格"）⇒ 快点重试，空等没有意义。
  */
 const MAX_ATTEMPTS = 3;
+/** 疑似限流时的重试间隔（保持原口径） */
 const RETRY_GAP_MS = 5000;
+/** 其它失败的重试间隔：留一点喘息就够，不必空等 5 秒 */
+const RETRY_GAP_FAST_MS = 1200;
+
+/**
+ * 这次失败像不像"被限流/网络抖"？
+ * 像 ⇒ 重试前多等一会儿；不像（内容不合格、解析失败等）⇒ 快速重试。
+ */
+function looksThrottled(err: unknown): boolean {
+    const s = String(err ?? '').toLowerCase();
+    return /429|rate.?limit|too many|限流|限速/.test(s);
+}
 
 export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, initialFiles, initialCropRegions }: BatchPipelineProps) {
     const { t } = useLanguage();
@@ -169,6 +190,25 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
     const [runningId, setRunningId] = useState<string | null>(null);
     /** 【custom-v28】当前这张正在第几次尝试（1..3），用于在文案里体现重试 */
     const [attempt, setAttempt] = useState(0);
+    /**
+     * 【2026-09-28】正在跑的这一张已经花了多少秒。
+     *
+     * 为什么要显示：他反馈"批量比手动单题慢得多"，但只能"感觉"。
+     * 有了这个数字，慢在哪一眼能看出来 ——
+     *   正常一次请求通常十几秒；若停在 "已 180 秒" 不动，那就是撞上超时了
+     *   （单次超时上限 = 配置里的 analyze 超时，默认 180 秒）；若秒数一跳就失败，
+     *   那是"快速失败 + 重试"，问题不在速度而在请求本身。
+     * ⚠️ 只在跑的时候跳；不在 effect 体内同步 setState（会级联渲染，被 lint 当 error）。
+     */
+    const [runningSec, setRunningSec] = useState(0);
+    useEffect(() => {
+        if (!runningId) return;
+        const t0 = Date.now();
+        const timer = setInterval(() => {
+            setRunningSec(Math.round((Date.now() - t0) / 1000));
+        }, 1000);
+        return () => clearInterval(timer);
+    }, [runningId]);
 
     const [analysisStep, setAnalysisStep] = useState<ProgressStatus>("idle");
     const [progress, setProgress] = useState(0);
@@ -726,6 +766,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             // 【custom-v28】标出「就是这张在跑」：它的缩略图下方会出现细进度条
             setRunningId(it.id);
             setAttempt(1);
+            setRunningSec(0);
             try {
                 setAnalysisStep("compressing");
                 const b64 = await processImageFile(it.file);
@@ -758,9 +799,15 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                             attempt: n,
                             error: String(lastErr),
                         });
+                        /**
+                         * 【2026-09-28 七修】只有**重试**才等，而且按失败性质给间隔：
+                         * 疑似限流等 5 秒，其它（内容不合格这类最常见的）只等 1.2 秒。
+                         * 第 1 次**不等** —— 那一等纯粹是白等（见常量处的说明）。
+                         */
+                        const gap = looksThrottled(lastErr) ? RETRY_GAP_MS : RETRY_GAP_FAST_MS;
+                        if (!(await waitUnlessCanceled(gap))) break;
                     }
-                    // 请求间隔（第 1 次也等，让用户看清是从哪张开始跑的）
-                    if (!(await waitUnlessCanceled(RETRY_GAP_MS))) break;
+                    const t0 = Date.now();
                     try {
                         setAnalysisStep("analyzing");
                         data = await apiClient.post<AnalyzeResponse>("/api/analyze", {
@@ -768,8 +815,27 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                             language,
                             notebookId: defaultNotebookId || undefined,
                         }, { timeout: aiTimeout });
+                        /**
+                         * 【2026-09-28】把每次请求的**耗时与图大小**记下来。
+                         * 起因：他反馈"批量比单题慢得多"，但只能"感觉"——
+                         * 没有数字就无法判断是"图大了""超时了"还是"空等/重试"。
+                         * 这两行以后能直接回答"慢在哪"。
+                         */
+                        frontendLogger.info('[BatchAnalyze]', 'Analyze attempt ok', {
+                            id: it.id,
+                            attempt: n,
+                            ms: Date.now() - t0,
+                            imageKB: Math.round(b64.length / 1024),
+                        });
                     } catch (err) {
                         lastErr = err;
+                        frontendLogger.warn('[BatchAnalyze]', 'Analyze attempt failed', {
+                            id: it.id,
+                            attempt: n,
+                            ms: Date.now() - t0,
+                            imageKB: Math.round(b64.length / 1024),
+                            error: String(err),
+                        });
                     }
                 }
                 if (!data) {
@@ -921,7 +987,9 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
         const retry = attempt > 1
             ? `（${(t.common.batch?.retryHint || "第 {n} 次尝试").replace("{n}", String(attempt))}）`
             : "";
-        return prefix + base + retry;
+        // 【2026-09-28】超过 3 秒才显示秒数（否则一闪一闪的像在抖）
+        const sec = analysisStep === "analyzing" && runningSec >= 3 ? ` 已 ${runningSec} 秒` : "";
+        return prefix + base + sec + retry;
     };
 
     const current = readyItems[reviewIdx];
