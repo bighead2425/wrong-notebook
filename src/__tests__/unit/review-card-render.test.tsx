@@ -2,8 +2,8 @@
 // 渲染冒烟测试用 renderToStaticMarkup（react-dom/server），不需要 jsdom —— 跑 node 快得多。
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ReviewSheet } from '@/components/print/review-card';
-import { REVIEW_PAGE_HEIGHT_MM, VOLUME_HEADER_MM, layoutReviewSheets } from '@/lib/review-card';
+import { ReviewSheet, stripMarkdownImages } from '@/components/print/review-card';
+import { REVIEW_PAGE_HEIGHT_MM, VOLUME_HEADER_MM, type MeasuredPageLayout } from '@/lib/review-card';
 import type { VolumeKind } from '@/lib/volume-code';
 import type { ErrorItem } from '@/types/api';
 
@@ -12,9 +12,10 @@ import type { ErrorItem } from '@/types/api';
  *
  * 验收标准是"打出来好不好看"，但有几条**肉眼很难发现、后果严重**的，必须由测试兜住：
  *   ① **纸上混进 AI 内容**（解析/答案/错因）——与深挖纸同一条铁律；
- *   ② **该印的没印**（卷头、页码、页二维码、四角角标）；
- *   ③ **不该印的印了**（"做几遍"进度勾格；以及那个留白微调的小胶囊**绝不能上纸**）；
- *   ④ 升降级小框**每一道题都要有**（2026-09-28 修：上一版只有第一题有）。
+ *   ② **块又被人设了固定高度** ⇒ 真实内容一高就被 `overflow: hidden` 切掉
+ *      （"升降级只剩半个"就是这个）⇒ 这条要钉死；
+ *   ③ 该印的没印（卷头 / 页码 / 页二维码）；不该印的印了（进度格、四角角标、假图）；
+ *   ④ 每道题都要有升降级小框。
  */
 
 const item = (extra: Partial<ErrorItem> = {}): ErrorItem =>
@@ -39,31 +40,45 @@ const item = (extra: Partial<ErrorItem> = {}): ErrorItem =>
 interface RenderOptions {
     kind?: VolumeKind;
     volumeNo?: string;
-    pageQr?: string;
     gradeText?: string;
     withTweak?: boolean;
+    /** 每页放几道（默认全放一页） */
+    perPage?: number;
 }
 
 function renderSheets(items: ErrorItem[], opts: RenderOptions = {}): string {
     const kind = opts.kind ?? 'review';
-    const layout = layoutReviewSheets(
-        items.map((i) => ({ key: i.id, questionText: i.questionText, figureHeightMM: 0 })),
-        kind,
-    );
+    const perPage = opts.perPage ?? items.length;
     const itemByKey: Record<string, ErrorItem> = {};
     for (const i of items) itemByKey[i.id] = i;
-    return layout.pages
+
+    const pages: MeasuredPageLayout[] = [];
+    for (let i = 0; i < items.length; i += perPage) {
+        pages.push({
+            columns: [
+                {
+                    blocks: items.slice(i, i + perPage).map((it, k) => ({
+                        key: it.id,
+                        heightMM: 40,
+                        seq: i + k + 1,
+                    })),
+                },
+            ],
+        });
+    }
+
+    return pages
         .map((page, idx) =>
             renderToStaticMarkup(
                 <ReviewSheet
                     page={page}
                     pageNo={idx + 1}
-                    pageCount={layout.pages.length}
+                    pageCount={pages.length}
                     volumeNo={opts.volumeNo ?? 'RE20260926001'}
                     kind={kind}
                     gradeText={opts.gradeText ?? '五上'}
                     printDate={new Date(2026, 8, 26)}
-                    pageQr={opts.pageQr ?? 'data:image/png;base64,AAAA'}
+                    pageQr="data:image/png;base64,AAAA"
                     itemByKey={itemByKey}
                     blankValueOf={opts.withTweak ? () => 5 : undefined}
                     onBlankChange={opts.withTweak ? () => undefined : undefined}
@@ -84,36 +99,46 @@ describe('卷 · 纸上零 AI 内容', () => {
     });
 });
 
+describe('卷 · 块不许有固定高度（第三次改版的核心）', () => {
+    it('★ 题块只有流式样式，**没有任何 height**', () => {
+        const html = renderSheets([item(), item({ id: 'e2' }), item({ id: 'e3' })]);
+        expect(html.split('print-review-block').length - 1).toBe(3);
+        // 块上出现 height ⇒ 真实内容一高就被 overflow:hidden 切掉，正是要防的
+        expect(/print-review-block"[^>]*height/i.test(html)).toBe(false);
+    });
+
+    it('答题区给 min-height（留白行数），但不给固定 height', () => {
+        const html = renderSheets([item()], { withTweak: true });
+        expect(html).toContain('print-review-answer');
+        expect(/print-review-answer\\?\\?"[^>]*min-height/.test(html)).toBe(true);
+    });
+});
+
 describe('卷 · 卷头（页眉）', () => {
-    it('阳文框的字样：复练纸印「复练」、积累纸印「积累」', () => {
+    it('阳文框字样：复练纸印「复练」、积累纸印「积累」，且是白底彩框彩字', () => {
         expect(renderSheets([item()], { kind: 'review' })).toContain('复练');
         expect(renderSheets([item()], { kind: 'build' })).toContain('积累');
-        // 阳文 = 白底 + 彩框彩字（与深挖纸的"实底白字"恰好相反，一眼能分开"卷"和"纸"）
         expect(renderSheets([item()], { kind: 'review' })).toContain('background:#ffffff');
     });
 
-    it('卷号、页码「第X/Y页」、印刷日期都在', () => {
-        const html = renderSheets([item()], { volumeNo: 'RE20260926001' });
-        expect(html).toContain('RE20260926001');
+    it('卷号、页码「第X/Y页」、印刷日期、年级都在', () => {
+        const html = renderSheets([item()], { volumeNo: 'RE20260928003', gradeText: '六年级上' });
+        expect(html).toContain('RE20260928003');
         expect(html).toContain('1/1');
         expect(html).toContain('2026-09-26');
+        expect(html).toContain('六年级上');
     });
 
-    it('年级·学期在页眉上', () => {
-        expect(renderSheets([item()], { gradeText: '五上' })).toContain('五上');
-    });
-
-    it('横线与页二维码共享页宽（两者都在）', () => {
+    it('卷头收成一排、总高 15mm，二维码在卷头里', () => {
         const html = renderSheets([item()]);
+        expect(html).toContain('print-volume-header');
+        expect(html).toContain(`height:${VOLUME_HEADER_MM}mm`);
+        expect(html).toContain('print-volume-qr');
         expect(html).toContain('print-volume-header-rule');
-        expect(html).toContain('print-qr');
     });
 
     it('⚠️ 页眉**不写知识点**（复练/积累纸与深挖纸在这点上不同）', () => {
-        // 用一个绝不会出现在题干里的知识点名，免得把"题干里有这个词"误判成"知识点印上去了"
-        const html = renderSheets([
-            item({ tags: [{ name: '□仅知识点占位□' }] } as Partial<ErrorItem>),
-        ]);
+        const html = renderSheets([item({ tags: [{ name: '□仅知识点占位□' }] } as Partial<ErrorItem>)]);
         expect(html).not.toContain('□仅知识点占位□');
     });
 });
@@ -126,42 +151,33 @@ describe('卷 · 面的标记规范', () => {
         }
     });
 
-    it('卷头收成一排、总高 15mm，二维码在卷头里（不再单占一排）', () => {
-        const html = renderSheets([item()], { volumeNo: 'RE20260928002' });
-        expect(html).toContain('print-volume-header');
-        expect(html).toContain(`height:${VOLUME_HEADER_MM}mm`);
-        expect(html).toContain('print-volume-qr');
-        expect(html).toContain('print-volume-header-rule');
-    });
-
-    it('⚠️ 每题**不再**印题号与二维码（2026-09-28 他提的第 1 条：只留一条浅虚线）', () => {
+    it('⚠️ 每题**不再**印题号与二维码（他 2026-09-28 提的第 1 条：只留一条浅虚线）', () => {
         const html = renderSheets([item(), item({ id: 'e2', source: 'SX20260916002' })]);
-        // 题号不再逐题出现（它只活在软件里；扫码走页眉的卷号-页码）
         expect(html).not.toContain('SX20260916001');
         expect(html).not.toContain('SX20260916002');
-        // 每页只有一个二维码（页眉那个）
         expect(html.split('print-qr').length - 1).toBe(1);
     });
 
     it('题与题之间是一条**浅灰虚线**，且只有第一条不画', () => {
         const html = renderSheets([item(), item({ id: 'e2' }), item({ id: 'e3' })]);
-        // 3 道题在同一页/同一栏时，虚线数 = 2（第一题不画）
         expect(html.split('dashed').length - 1).toBe(2);
         expect(html).toContain('#cfcfcf');
     });
 
-    it('流水号从 1 开始，逐题累加', () => {
-        const html = renderSheets([item(), item({ id: 'e2' }), item({ id: 'e3' })]);
+    it('流水号从 1 开始，逐题累加；**换页不重置**（第 2 页第一题是 3.）', () => {
+        const html = renderSheets([item(), item({ id: 'e2' }), item({ id: 'e3' })], { perPage: 2 });
         for (const n of ['1.', '2.', '3.']) {
             expect(html).toContain(`>${n}<`);
         }
+        const page2 = html.split('print-review-sheet').slice(-1)[0];
+        expect(page2).toContain('3.');
     });
 });
 
 describe('卷 · 打孔位（奇左偶右）', () => {
     it('第 1 页留左、第 2 页留右（与深挖纸正反面同一条物理边）', () => {
-        const many = Array.from({ length: 40 }, (_, i) => item({ id: `e${i}` }));
-        const html = renderSheets(many);
+        const many = Array.from({ length: 6 }, (_, i) => item({ id: `e${i}` }));
+        const html = renderSheets(many, { perPage: 3 });
         expect(html).toContain('padding-left:12mm');
         expect(html).toContain('padding-right:12mm');
     });
@@ -187,8 +203,6 @@ describe('卷 · 该有的与不该有的', () => {
     });
 
     it('★ 未定等级的行**也印框**（按复练 ⇒ 升级）—— 保证每道题都有', () => {
-        // 2026-09-28 改：原先"未定不印"，但老题的 manageType 都是空的 ⇒
-        // 实际效果是"大部分题不印框"。他一看样张就看出来了。
         const html = renderSheets([item(), item({ id: 'e2' })]);
         expect(html.split('print-promote-box').length - 1).toBe(2);
         expect(html).toContain('升级');
@@ -201,9 +215,29 @@ describe('卷 · 该有的与不该有的', () => {
         expect(withTweak).toContain('5行');
     });
 
-    it('整张纸的高度是算出来的那个值（含 2mm 松量）', () => {
+    it('整张纸的高度 = 页高（含 2mm 松量）', () => {
         const html = renderSheets([item()]);
         expect(html).toContain('print-review-sheet');
         expect(html).toContain(`height:${REVIEW_PAGE_HEIGHT_MM}mm`);
+    });
+});
+
+describe('卷 · 题干里的"假图"要去掉', () => {
+    it('markdown 图片语法被剥掉（否则纸上是一个破图标 + 替代文字）', () => {
+        const src = '5. 如果下图中的阴影部分表示的小数是（ ）。\n\n![题目图片](https://x/img.png)\n\nA. 0.025';
+        const out = stripMarkdownImages(src);
+        expect(out).not.toContain('![');
+        expect(out).not.toContain('题目图片');
+        expect(out).toContain('A. 0.025');
+    });
+
+    it('正常文字一个字都不动', () => {
+        const src = '一个长方形的长是 8 厘米。';
+        expect(stripMarkdownImages(src)).toBe(src);
+    });
+
+    it('剥掉后不留一堆空行，也不留行尾空格', () => {
+        expect(stripMarkdownImages('甲\n\n![x](y)\n\n\n乙')).toBe('甲\n\n乙');
+        expect(stripMarkdownImages('甲   \n乙')).toBe('甲\n乙');
     });
 });

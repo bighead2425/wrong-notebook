@@ -3,39 +3,38 @@
 import { describe, expect, it } from 'vitest';
 import {
     BUILD_DEFAULT_BLANK_LINES,
+    REVIEW_BLOCK_SLACK_MM,
     REVIEW_DEFAULT_BLANK_LINES,
     REVIEW_FIGURE_BOX_RATIO,
     REVIEW_LAYOUT_MM,
     REVIEW_PAGE_HEIGHT_MM,
+    REVIEW_USABLE_WIDTH_MM,
     VOLUME_COLUMN_MM,
     VOLUME_HEADER_MM,
     VOLUME_VARIANTS,
     applyGlobalBlankLines,
+    countSheets,
     effectiveBlankLines,
-    estimateTextLines,
-    layoutReviewSheets,
-    measureBlock,
     normalizeBlankLines,
-    type ReviewQuestionSpec,
+    paginateMeasured,
+    type MeasuredBlock,
 } from '@/lib/review-card';
 
 /**
- * 卷的版面与分页（纯函数）。
+ * 卷的版面常量与分栏分页（纯函数）。
  *
- * 这些测试防的是**肉眼看不出来、却会被印到纸上**的错：
- *   · 一道题被拆到两页（她的写字区被撕成两半）；
- *   · 算着放得下、印出来溢出（估算与实际不一致）；
- *   · "整体调留白"把已经单独调过的题也一起改掉；
- *   · 积累纸该分两栏却没分（或者分了栏但宽度还算成整幅）。
+ * ⚠️ 【2026-09-28 第三次改版】这里**不再有"估算高度"的测试** ——
+ *    估算那一步已经从代码里删掉了。高度是**外面量好传进来**的，
+ *    本文件只验"拿到真实高度之后怎么分栏分页"。
+ *    所以下面每个用例里的 `heightMM` 都是"假装量出来是这么多"。
+ *
+ * 防的还是那几件会印到纸上的错：
+ *   · 一道题被拆到两栏/两页（她的写字区被撕成两半）；
+ *   · 一栏里的块加起来超过栏高（会被 `overflow: hidden` 切掉下半截）；
+ *   · 装不下的题被**静默丢掉**。
  */
 
-const spec = (over: Partial<ReviewQuestionSpec> & { key: string }): ReviewQuestionSpec => ({
-    questionText: '一个长方形的长是 8 厘米，宽是 5 厘米，求它的周长。',
-    figureHeightMM: 0,
-    ...over,
-});
-
-const textOfLines = (lines: number, charsPerLine: number) => '字'.repeat(lines * charsPerLine);
+const blk = (key: string, heightMM: number): MeasuredBlock => ({ key, heightMM });
 
 describe('卷 · 留白行数', () => {
     it('缺省值：复练 5 行、积累 1 行（他定的）', () => {
@@ -63,12 +62,9 @@ describe('卷 · 留白行数', () => {
 
 describe('卷 · 整体调留白（他定的规则）', () => {
     it('等于旧缺省值的题跟着变；自己定过别的值的题原样保留', () => {
-        const before = { a: null, b: 5, c: 8, d: undefined };
-        const next = applyGlobalBlankLines(before, 5, 7);
-        // a（没设过 = 跟着缺省）、b（正好等于旧缺省）⇒ 一起变 7
+        const next = applyGlobalBlankLines({ a: null, b: 5, c: 8, d: undefined }, 5, 7);
         expect(next.a).toBe(7);
         expect(next.b).toBe(7);
-        // c 自己定过 8 ≠ 5 ⇒ 不动；d 没设过也跟缺省
         expect(next.c).toBe(8);
         expect(next.d).toBe(7);
     });
@@ -83,154 +79,113 @@ describe('卷 · 整体调留白（他定的规则）', () => {
     it('连续两次整体调整：第二次跟着第一次走', () => {
         const s1 = applyGlobalBlankLines({ a: null, b: 8 }, 5, 7);
         const s2 = applyGlobalBlankLines(s1, 7, 9);
-        expect(s2.a).toBe(9); // a 第一次变 7（= 当时的缺省），第二次继续跟
-        expect(s2.b).toBe(8); // b 一直没动
+        expect(s2.a).toBe(9);
+        expect(s2.b).toBe(8);
     });
 });
 
-describe('卷 · 度量（答题区 = max(题图, 留白行数)）', () => {
-    it('没有题图时，答题区高度就是留白行数 × 行高', () => {
-        const b = measureBlock(spec({ key: 'a' }), 'review', 1);
-        expect(b.blankLines).toBe(5);
-        expect(b.rowHeightMM).toBeCloseTo(5 * REVIEW_LAYOUT_MM.blankLineMM, 3);
+describe('卷 · 版面常量', () => {
+    it('页高 = 版心 − 2mm；卷头 15mm；内容区 = 页高 − 卷头', () => {
+        expect(REVIEW_PAGE_HEIGHT_MM).toBe(225);
+        expect(VOLUME_HEADER_MM).toBe(15);
+        expect(VOLUME_COLUMN_MM).toBe(210);
     });
 
-    it('题图比留白高 ⇒ 听题图的', () => {
-        const b = measureBlock(spec({ key: 'a', figureHeightMM: 45 }), 'review', 1);
-        expect(b.rowHeightMM).toBeCloseTo(45, 3);
+    it('复练单栏用整幅（140mm）；积累两栏，每栏约为一半', () => {
+        expect(VOLUME_VARIANTS.review.columns).toBe(1);
+        expect(VOLUME_VARIANTS.review.columnWidthMM).toBe(REVIEW_USABLE_WIDTH_MM);
+        expect(VOLUME_VARIANTS.build.columns).toBe(2);
+        expect(VOLUME_VARIANTS.build.columnWidthMM).toBeLessThan(VOLUME_VARIANTS.review.columnWidthMM / 2 + 1);
     });
 
-    it('题图比留白矮 ⇒ 听留白的（图仍按自己高度印，不拉伸）', () => {
-        const b = measureBlock(spec({ key: 'a', figureHeightMM: 12 }), 'review', 1);
-        expect(b.figureHeightMM).toBeCloseTo(12, 3);
-        expect(b.rowHeightMM).toBeCloseTo(5 * REVIEW_LAYOUT_MM.blankLineMM, 3);
+    it('题图比例在 (0,1) 之间（它是"图占答题区宽度的比例"）', () => {
+        expect(REVIEW_FIGURE_BOX_RATIO).toBeGreaterThan(0);
+        expect(REVIEW_FIGURE_BOX_RATIO).toBeLessThan(1);
     });
 
-    it('题图过高时**先缩图**，缩得下就不算"印不了"', () => {
-        const b = measureBlock(
-            spec({
-                key: 'a',
-                questionText: textOfLines(20, VOLUME_VARIANTS.review.charsPerLine),
-                figureHeightMM: 200,
-            }),
-            'review',
-            1,
-        );
-        expect(b.figureHeightMM).toBeLessThan(200);
-        expect(b.overflow).toBe(false);
-        expect(b.contentHeightMM).toBeLessThanOrEqual(VOLUME_COLUMN_MM + 0.01);
-    });
-
-    it('题干本身就超过一整栏 ⇒ overflow（UI 据此提示改用深挖纸），不静默丢题', () => {
-        const b = measureBlock(
-            spec({
-                key: 'a',
-                questionText: textOfLines(80, VOLUME_VARIANTS.review.charsPerLine),
-            }),
-            'review',
-            1,
-        );
-        expect(b.overflow).toBe(true);
-        // 即便如此，块高也不会超过一栏（免得把后面全挤下去）
-        expect(b.contentHeightMM).toBeLessThanOrEqual(VOLUME_COLUMN_MM + 0.01);
+    it('答题区下限 ≥ 升降级小框那一行（7mm），否则小框会被裁掉', () => {
+        expect(REVIEW_LAYOUT_MM.answerRowMinMM).toBeGreaterThanOrEqual(7);
     });
 });
 
-describe('卷 · 分页（尽量多排、绝不跨页）', () => {
-    const short = (key: string): ReviewQuestionSpec => spec({ key, questionText: '口算：12 + 7 =' });
-
-    it('取消"每页最多两题"：短题一页能排不止两道', () => {
-        const { pages } = layoutReviewSheets([short('a'), short('b'), short('c'), short('d')], 'review');
-        expect(pages.length).toBeGreaterThanOrEqual(1);
+describe('卷 · 分栏分页（吃真实高度）', () => {
+    it('短题一页能排不止两道（没有"每页最多两题"这条）', () => {
+        const { pages } = paginateMeasured(
+            [blk('a', 30), blk('b', 30), blk('c', 30), blk('d', 30), blk('e', 30)],
+            'review',
+        );
         expect(pages[0].columns[0].blocks.length).toBeGreaterThan(2);
     });
 
     it('流水号按整卷顺序连续编号（1..n），不跨页重置', () => {
-        const { pages } = layoutReviewSheets([short('a'), short('b'), short('c')], 'review');
+        const { pages } = paginateMeasured([blk('a', 30), blk('b', 30), blk('c', 30)], 'review');
         const seqs = pages.flatMap((p) => p.columns.flatMap((c) => c.blocks.map((b) => b.seq)));
         expect(seqs).toEqual([1, 2, 3]);
     });
 
+    it('装不下 ⇒ **整块推到下一栏**：顺序不变、一个不丢', () => {
+        // 每块 80mm，栏高 210mm ⇒ 每栏只能放 2 块
+        const { pages } = paginateMeasured([blk('a', 80), blk('b', 80), blk('c', 80), blk('d', 80)], 'review');
+        const keys = pages.flatMap((p) => p.columns.flatMap((c) => c.blocks.map((b) => b.key)));
+        expect(keys).toEqual(['a', 'b', 'c', 'd']);
+        expect(pages.length).toBe(2);
+        expect(pages[0].columns[0].blocks.map((b) => b.key)).toEqual(['a', 'b']);
+    });
+
     it('三条不可退让的性质（对任意组合都成立）', () => {
-        const combos: ReviewQuestionSpec[][] = [
+        const combos: MeasuredBlock[][] = [
             [],
-            [short('a')],
-            [short('a'), spec({ key: 'b', figureHeightMM: 45 }), short('c')],
-            [
-                spec({ key: 'x', questionText: textOfLines(30, 26), figureHeightMM: 40 }),
-                short('y'),
-                spec({ key: 'z', questionText: textOfLines(60, 26) }),
-            ],
+            [blk('a', 30)],
+            [blk('a', 30), blk('b', 100), blk('c', 20)],
+            [blk('x', VOLUME_COLUMN_MM + 40), blk('y', 30)],
+            [blk('a', 105), blk('b', 105), blk('c', 105), blk('d', 105)],
         ];
         for (const kind of ['review', 'build'] as const) {
             const variant = VOLUME_VARIANTS[kind];
-            for (const specs of combos) {
-                const { pages } = layoutReviewSheets(specs, kind);
+            for (const blocks of combos) {
+                const { pages } = paginateMeasured(blocks, kind);
                 for (const page of pages) {
-                    // ② 栏数不超过版式规定（复练 1、积累 2）
+                    // ② 栏数不超过版式规定
                     expect(page.columns.length).toBeLessThanOrEqual(variant.columns);
                     for (const col of page.columns) {
-                        const sum = col.blocks.reduce((n, b) => n + b.contentHeightMM, 0);
-                        // ① 一栏之内装得下：加起来不许超过栏高
-                        expect(sum).toBeLessThanOrEqual(VOLUME_COLUMN_MM + 0.01);
-                        for (const b of col.blocks) {
-                            expect(b.contentHeightMM).toBeLessThanOrEqual(VOLUME_COLUMN_MM + 0.01);
-                        }
+                        // ① 一栏之内装得下（含余量）
+                        const sum = col.blocks.reduce((n, b) => n + b.heightMM + REVIEW_BLOCK_SLACK_MM, 0);
+                        // 单块就比栏还高的那种，自己独占一栏 ⇒ 允许它"超"，但它必须进 overflow
+                        if (sum > VOLUME_COLUMN_MM + 0.01) expect(col.blocks.length).toBe(1);
                     }
                 }
+                // ③ 每块都出现过（不静默丢题）
+                const keys = pages.flatMap((p) => p.columns.flatMap((c) => c.blocks.map((b) => b.key)));
+                expect(keys.length).toBe(blocks.length);
             }
         }
     });
 
-    it('装不下的题**整块顺延**，绝不拆开（顺序不变、一个不丢）', () => {
-        const specs = [short('a'), short('b'), spec({ key: 'big', questionText: textOfLines(40, 26) }), short('d')];
-        const { pages } = layoutReviewSheets(specs, 'review');
-        const keys = pages.flatMap((p) => p.columns.flatMap((c) => c.blocks.map((b) => b.key)));
-        expect(keys).toEqual(['a', 'b', 'big', 'd']);
-    });
-
     it('积累纸分**两栏**：先排左栏再排右栏', () => {
-        const specs = Array.from({ length: 8 }, (_, i) => short(`q${i}`));
-        const { pages } = layoutReviewSheets(specs, 'build');
+        const many = Array.from({ length: 8 }, (_, i) => blk(`q${i}`, 60));
+        const { pages } = paginateMeasured(many, 'build');
         const first = pages[0];
-        expect(first.columns.length).toBeLessThanOrEqual(2);
-        if (first.columns.length === 2) {
-            expect(first.columns[0].blocks.length).toBeGreaterThan(0);
-            expect(first.columns[1].blocks.length).toBeGreaterThan(0);
-        }
+        expect(first.columns.length).toBe(2);
+        expect(first.columns[0].blocks.length).toBeGreaterThan(0);
+        expect(first.columns[1].blocks.length).toBeGreaterThan(0);
     });
 
-    it('页高 = 版心 − 2mm（防"前面多一张白纸"的老教训）', () => {
-        expect(REVIEW_PAGE_HEIGHT_MM).toBe(225);
-        expect(VOLUME_COLUMN_MM).toBeLessThan(REVIEW_PAGE_HEIGHT_MM);
-    });
-});
-
-describe('卷 · 卷头与答题区下限（2026-09-28 第二次改版）', () => {
-    it('卷头收成 15mm：二维码并进文字那一排，横线整条贯通', () => {
-        // 改版前 21mm（文字一排 + 横线&码一排），他要求"码往上挪、页码日期往左"。
-        expect(VOLUME_HEADER_MM).toBe(15);
-        expect(VOLUME_COLUMN_MM).toBe(REVIEW_PAGE_HEIGHT_MM - 15);
+    it('⚠️ 一栏都装不下的题 ⇒ 记进 overflow（提示改用深挖纸），但**仍然留在纸上**', () => {
+        const { pages, overflow } = paginateMeasured([blk('big', VOLUME_COLUMN_MM + 60), blk('a', 30)], 'review');
+        expect(overflow.map((o) => o.key)).toEqual(['big']);
+        const keys = pages.flatMap((p) => p.columns.flatMap((c) => c.blocks.map((b) => b.key)));
+        expect(keys).toContain('big');
     });
 
-    it('⚠️ 留白调到 0 又没有题图 ⇒ 答题区仍留 7mm，否则升降级小框会被裁掉', () => {
-        const b = measureBlock(spec({ key: 'a' }), 'review', 1, 0);
-        expect(b.blankLines).toBe(0);
-        expect(b.figureHeightMM).toBe(0);
-        expect(b.rowHeightMM).toBeGreaterThanOrEqual(REVIEW_LAYOUT_MM.answerRowMinMM);
+    it('空输入 ⇒ 零页（UI 自己去显示"没有选中任何题目"）', () => {
+        const { pages, overflow } = paginateMeasured([], 'review');
+        expect(pages).toEqual([]);
+        expect(overflow).toEqual([]);
+        expect(countSheets({ pages, overflow })).toBe(0);
     });
 
-    it('题图比例常量在 (0,1) 之间 —— 它是"图占答题区宽度的比例"', () => {
-        expect(REVIEW_FIGURE_BOX_RATIO).toBeGreaterThan(0);
-        expect(REVIEW_FIGURE_BOX_RATIO).toBeLessThan(1);
-    });
-});
-
-describe('卷 · 行数估算', () => {
-    it('短题一行、空题零行、长题不封顶（封顶会导致"算着放得下、印出来溢出"）', () => {
-        expect(estimateTextLines('口算：12 + 7 =', 26)).toBe(1);
-        expect(estimateTextLines('   ', 26)).toBe(0);
-        expect(estimateTextLines(null, 26)).toBe(0);
-        expect(estimateTextLines(textOfLines(40, 26), 26)).toBe(40);
+    it('⚠️ 余量只加在**分页判断**上：块高度本身原样返回（渲染按它来）', () => {
+        const { pages } = paginateMeasured([blk('a', 33.3)], 'review');
+        expect(pages[0].columns[0].blocks[0].heightMM).toBe(33.3);
     });
 });

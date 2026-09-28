@@ -475,6 +475,95 @@
 }
 
 /* ============================================================================
+ * 打印预览页的**左右两栏**（2026-09-28）
+ *
+ * 左栏 = 控制区（选纸型 / 勾选项 / 留白 / 组卷 / 挑题）；右栏 = 排版预览。
+ * 他要的：左栏可隐藏、可拖拽调宽；隐藏后右栏占满。
+ * ⚠️ 宽度走 CSS 变量 `--left-w`（由 React 设），**不在行内写死 px** ——
+ *    窄屏要靠这里的媒体查询变成上下堆叠，写死就会把预览挤没。
+ * ==========================================================================*/
+.print-preview-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.print-preview-left {
+  width: 100%;
+}
+
+.print-preview-right {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+/* 分隔条在窄屏没有意义（上下堆叠），只在宽屏出现 */
+.print-preview-splitter {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .print-preview-body {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .print-preview-left {
+    width: var(--left-w, 380px);
+    flex: 0 0 auto;
+    max-height: calc(100vh - 92px);
+    overflow-y: auto;
+    padding: 0 4px 24px 0;
+  }
+
+  .print-preview-splitter {
+    display: block;
+    width: 6px;
+    flex: 0 0 auto;
+    align-self: stretch;
+    cursor: col-resize;
+    background: linear-gradient(to right, transparent 2px, #dcdcdc 2px, #dcdcdc 4px, transparent 4px);
+  }
+
+  .print-preview-splitter:hover {
+    background: linear-gradient(to right, transparent 2px, #9aa0a6 2px, #9aa0a6 4px, transparent 4px);
+  }
+}
+
+/* ============================================================================
+ * 卷的**量尺**（不显示、不打印）
+ *
+ * 把每道题按真实栏宽先排一遍，量出真实高度交给分页纯函数（见 lib/review-card.ts）。
+ * ⚠️ 必须 `visibility: hidden` 而**不是** `display: none`：
+ *    display:none 的元素不参与布局，量出来全是 0。
+ * ⚠️ `position: fixed` 是让它不参与正文布局、也不撑高页面。
+ * ==========================================================================*/
+.print-review-measure {
+  position: fixed;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: -1;
+}
+
+@media print {
+  .print-review-measure,
+  .print-preview-left,
+  .print-preview-splitter {
+    display: none !important;
+  }
+
+  .print-preview-body {
+    display: block !important;
+  }
+
+  .print-preview-right {
+    overflow: visible !important;
+  }
+}
+
+/* ============================================================================
  * T2/T3 卷：每道题的留白微调（「− X ＋」）—— **只在屏幕上**（2026-09-28）
  *
  * 用户的原话：这个调整小标签**只在打印阅览中能看见、能使用，打印时不能出现**，

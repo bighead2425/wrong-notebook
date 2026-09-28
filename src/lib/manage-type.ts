@@ -47,6 +47,26 @@ export const MANAGE_TYPE_DESC: Record<ManageType, string> = {
 export const MANAGE_TYPE_UNDECIDED = '未定';
 
 /**
+ * **屏幕上**显示等级用的颜色（列表卡片右下角那个小标签）。
+ * ⚠️ 与纸面的配色**分开**：纸面靠"升级/降级"的箭头与颜色（见 `PROMOTE_BOX`），
+ *    屏幕靠这三个字本身。混用会让"红"同时表示两件事。
+ * 深挖 = 暗红（要用力挖）、复练 = 深绿（练几遍就行）、未定 = 灰（还没分）。
+ */
+export const MANAGE_TYPE_SCREEN_COLOR: Record<ManageType, string> = {
+    deep: '#8e2b2b',
+    review: '#1f5c3a',
+};
+
+/** 未定（老数据）在屏幕上的颜色 */
+export const MANAGE_TYPE_UNDECIDED_COLOR = '#8c8c8c';
+
+/** 等级 → 屏幕颜色（未定也有颜色，列表里一眼能看出"这题还没分"） */
+export function manageTypeScreenColor(value: unknown): string {
+    const t = normalizeManageType(value);
+    return t ? MANAGE_TYPE_SCREEN_COLOR[t] : MANAGE_TYPE_UNDECIDED_COLOR;
+}
+
+/**
  * 录入时的默认等级。
  * ⚠️ 是 **review（复练）** 而不是 deep —— 见文件头 ①。
  */

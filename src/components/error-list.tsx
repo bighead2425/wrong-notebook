@@ -22,7 +22,12 @@ import {
 import { KnowledgeFilter } from "@/components/knowledge-filter";
 import { ErrorItem, PaginatedResponse } from "@/types/api";
 import { apiClient } from "@/lib/api-client";
-import { MANAGE_TYPE_LABEL, MANAGE_TYPE_UNDECIDED } from "@/lib/manage-type";
+import {
+    MANAGE_TYPE_LABEL,
+    MANAGE_TYPE_UNDECIDED,
+    getManageTypeLabel,
+    manageTypeScreenColor,
+} from "@/lib/manage-type";
 import { cleanMarkdown } from "@/lib/markdown-utils";
 import { Pagination } from "@/components/ui/pagination";
 import { DEFAULT_PAGE_SIZE } from "@/lib/constants/pagination";
@@ -84,6 +89,17 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
         if (manageTypeFilter !== "all") params.append("manageType", manageTypeFilter);
         // 关注档下限（导出打印要跟列表同口径）
         if (attentionFilter >= 1) params.append("attention", String(attentionFilter));
+
+        /**
+         * 【2026-09-28】多选模式下**只导出勾中的那几道**。
+         * 顺序 = `Set` 的插入顺序 = 她勾选的先后（`/api/error-items/list?ids=` 已支持，
+         * 扫码跳单题打印也走同一个参数）。
+         * ⚠️ **一道都没勾 ⇒ 一个参数都不加**，保持"按当前筛选整页导出"的老行为。
+         *    这是他要的："如果不选题的情况下，就不执行，按照原计划执行。"
+         */
+        if (isSelectMode && selectedIds.size > 0) {
+            params.set("ids", [...selectedIds].join(","));
+        }
 
         router.push(`/print-preview?${params.toString()}`);
     };
@@ -490,6 +506,16 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
                                     </CardContent>
                                 </Card>
                             </Link>
+                            {/* 右下角：这道题的**错题等级**（深挖 / 复练 / 未定）。
+                                ⚠️ 用绝对定位而不是塞进标签流：标签会换行，
+                                   `ml-auto` 在 flex-wrap 里靠不住（他会看到它乱跑）。 */}
+                            <span
+                                className="absolute bottom-2 right-3 text-[11px] font-semibold pointer-events-none"
+                                style={{ color: manageTypeScreenColor(item.manageType) }}
+                                title={`错题等级：${getManageTypeLabel(item.manageType)}`}
+                            >
+                                {getManageTypeLabel(item.manageType)}
+                            </span>
                         </div>
                     );
                 })}
