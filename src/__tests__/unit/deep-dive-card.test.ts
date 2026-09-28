@@ -163,11 +163,12 @@ describe('反面三个进度格的配色（她第 1 / 2 / 3 次复做）', () =>
 });
 
 describe('纸型家族（架构口子）', () => {
-    it('当前能打印的是 T1 深挖纸 + T2 复练纸，其余本轮不涉及', () => {
+    it('当前能打印的是 T1 深挖纸 + T2 复练纸 + T3 积累纸，其余本轮不涉及', () => {
         expect(CURRENT_PAPER_TYPE).toBe('T1');
         const implemented = PAPER_TYPES.filter((p) => p.implemented).map((p) => p.code);
-        // 【2026-09-28】T2 复练纸已实现（components/print/review-card.tsx + mode=review）。
+        // 【2026-09-28】T2/T3 都是"卷"：共用 components/print/review-card.tsx，
+        // 打印页对应 mode=review / mode=build。
         // 这条断言是"清单式"的：**新开一种纸就把它加进来**，避免"加了纸却没人知道能打"。
-        expect(implemented).toEqual(['T1', 'T2']);
+        expect(implemented).toEqual(['T1', 'T2', 'T3']);
     });
 });

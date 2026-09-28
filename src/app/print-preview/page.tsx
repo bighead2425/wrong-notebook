@@ -22,8 +22,17 @@ import { whenImagesDecoded, whenImagesSettled } from "@/lib/print-image-readines
 import { makeQrDataUrl } from "@/lib/qr";
 import { ErrorCard } from "@/components/print/error-card";
 import { DeepDiveCard } from "@/components/print/deep-dive-card";
-import { ReviewSheet } from "@/components/print/review-card";
-import { layoutReviewSheets, REVIEW_LAYOUT_MM } from "@/lib/review-card";
+import { ReviewSheet, pageQrPayload } from "@/components/print/review-card";
+import {
+    BUILD_DEFAULT_BLANK_LINES,
+    REVIEW_DEFAULT_BLANK_LINES,
+    VOLUME_VARIANTS,
+    applyGlobalBlankLines,
+    effectiveBlankLines,
+    layoutReviewSheets,
+    normalizeBlankLines,
+} from "@/lib/review-card";
+import type { VolumeKind } from "@/lib/volume-code";
 import {
     AnswerBody,
     QuestionBody,
@@ -45,7 +54,7 @@ import {
  *    **拿不到任何反馈** —— 那不是设计意图，是断档。等 M5/M6 通了，
  *    再把默认切到 deep、旧卡退役（一行改动）。
  */
-type PrintMode = "deep" | "review" | "card" | "practice" | "explain";
+type PrintMode = "deep" | "review" | "build" | "card" | "practice" | "explain";
 
 function PrintPreviewContent() {
     const searchParams = useSearchParams();
@@ -78,6 +87,22 @@ function PrintPreviewContent() {
     const [soloIds, setSoloIds] = useState<Set<string>>(new Set());
     const [qrMap, setQrMap] = useState<Record<string, string>>({});
 
+    /* ===== 【T2/T3 · 2026-09-28】卷的状态 =====
+       · blankDefault  整卷的缺省留白行数（复练 5 行、积累 1 行）
+       · blankOverrides 逐题微调过的值（没调过的题不在表里 ⇒ 跟着缺省走）
+       · volume        已**落库**的那份卷（没落库就没有卷号、也不印二维码）
+                       —— 卷页眉的码内容是"卷号-页码"，扫回这份卷要它真实存在，
+                          所以"组卷"是一次真实的写操作，不是预览的副作用。 */
+    const [blankDefault, setBlankDefault] = useState<number>(REVIEW_DEFAULT_BLANK_LINES);
+    const [blankOverrides, setBlankOverrides] = useState<Record<string, number | null | undefined>>({});
+    const [volume, setVolume] = useState<{ id: string; volumeNo: string; pageCount: number } | null>(null);
+    const [volumeSignature, setVolumeSignature] = useState<string>("");
+    const [volumeCreating, setVolumeCreating] = useState(false);
+    const [volumeError, setVolumeError] = useState<string>("");
+
+    /** 复练纸这一页每一页的二维码（key = 页码） */
+    const [volumePageQr, setVolumePageQr] = useState<Record<number, string>>({});
+
     // 手动双面：家里打印机不支持自动双面，靠爹手动翻
     const [manualDuplex, setManualDuplex] = useState(false);
 
@@ -98,7 +123,7 @@ function PrintPreviewContent() {
     // 直接读 window.location 而非 useSearchParams，避免静态渲染下取值为空的时序问题。
     useEffect(() => {
         const m = new URLSearchParams(window.location.search).get("mode");
-        if (m === "deep" || m === "review" || m === "card" || m === "practice" || m === "explain") {
+        if (m === "deep" || m === "review" || m === "build" || m === "card" || m === "practice" || m === "explain") {
             setMode(m);
         }
     }, []);
@@ -135,6 +160,10 @@ function PrintPreviewContent() {
     const emptyState = getPrintPreviewEmptyState(items.length, selectedItems.length);
     const isDeep = mode === "deep";
     const isReview = mode === "review";
+    const isBuild = mode === "build";
+    /** 【T2/T3】"卷"两种模式（复练 / 积累）——它们走同一套组件，只是版面参数不同 */
+    const isVolume = isReview || isBuild;
+    const volumeKind: VolumeKind = isBuild ? "build" : "review";
 
     /**
      * 【2026-09-28】复练纸的排布：一题半页、两题一页；包不下就顺延、绝不跨页。
@@ -144,15 +173,45 @@ function PrintPreviewContent() {
      *   ② 把算出来的 overflow 显示给用户 —— **不静默丢题**（改纸的权利在她/他手上）。
      */
     const reviewLayout = useMemo(() => {
-        if (!isReview) return null;
+        if (!isVolume) return null;
         return layoutReviewSheets(
             selectedItems.map((item) => ({
                 key: item.id,
                 questionText: item.questionText || item.ocrText,
-                figureHeightMM: REVIEW_LAYOUT_MM.figureMaxHeightMM,
+                figureHeightMM: VOLUME_VARIANTS[volumeKind].figureMaxHeightMM,
             })),
+            volumeKind,
+            blankOverrides,
         );
-    }, [isReview, selectedItems]);
+    }, [isVolume, volumeKind, selectedItems, blankOverrides]);
+
+    /**
+     * 整卷的"年级·学期"（页眉那一句）。
+     * ⚠️ 这里**现算**，不要引用 `sheetInfo` —— 它声明在本段之后，
+     *    在渲染顺序里会被"先用后声明"打中（TDZ）。跨本组卷时可能不止一个，取前两个。
+     */
+    const volumeGradeText = useMemo(() => {
+        const grades = [
+            ...new Set(selectedItems.map((i) => normalizeGrade(i.gradeSemester)).filter(Boolean) as string[]),
+        ];
+        return grades.slice(0, 2).join(" · ");
+    }, [selectedItems]);
+
+    /**
+     * 卷的指纹：选择、卷别、留白任一变了，已组的卷就**过期**了 ——
+     * 提示重新组卷，而不是悄悄印出一份"纸面与库里的卷对不上"的卷。
+     */
+    const volumeSig = useMemo(
+        () =>
+            [
+                volumeKind,
+                selectedItems.map((i) => i.id).join("|"),
+                String(blankDefault),
+                JSON.stringify(blankOverrides),
+            ].join("#"),
+        [volumeKind, selectedItems, blankDefault, blankOverrides],
+    );
+    const volumeStale = !!volume && volumeSignature !== volumeSig;
 
     /** 复练纸：key（题目 id）→ 题目本体，供卡片取用 */
     const reviewItemByKey = useMemo(() => {
@@ -198,6 +257,16 @@ function PrintPreviewContent() {
      */
     const handlePrint = useCallback(async () => {
         if (selectedItems.length === 0) return;
+        /**
+         * 【T2/T3】卷必须先组好再印。
+         * 理由：卷页眉的二维码内容就是"卷号-页码"，没组卷就没有卷号 ——
+         * 印出去就是一张**码扫不回来**的纸（面标记规范要求有角标就该有码）。
+         * 宁可拦住这一次，也不要印出一张事后查无此卷的纸。
+         */
+        if (isVolume && !volume) {
+            setVolumeError(L("请先点「生成复练卷」再打印", "Build the volume first"));
+            return;
+        }
         setPrinting(true);
         // 【M3】把"打印日"刷成此刻：页面跨天开着时，纸面日期/三个日期格必须是今天
         setPrintDate(new Date());
@@ -222,7 +291,140 @@ function PrintPreviewContent() {
             window.print();
             setPrinting(false);
         }, 120);
-    }, [selectedItems]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedItems, isVolume, volume?.volumeNo, zh]);
+
+    /**
+     * 【T2/T3 · 2026-09-28】**组建一份卷** —— 落库，拿到卷号（如 `RE20260926001`）。
+     *
+     * 为什么必须落库：卷页眉的二维码内容是 **卷号-页码**，
+     * 扫任何一页都要能打开这一整卷并定位到那一页 —— 所以这份卷得先**真实存在**，
+     * "组卷"是一次真实的写操作，不是预览的副作用。
+     *
+     * ⚠️ 存的是**快照**（题号 / 题干 / 等级 / 留白行数），不是只存外键：
+     *    卷是印出去的凭证，原题后来被改、被删、被合并，都不该改变它。
+     *    `errorItemId` 只是"还能点回去看看"的软链接（题删了它就为空）。
+     */
+    const createVolume = useCallback(async () => {
+        if (!reviewLayout || selectedItems.length === 0) return;
+        setVolumeCreating(true);
+        setVolumeError("");
+        try {
+            const items = reviewLayout.pages.flatMap((page, pi) =>
+                page.columns.flatMap((col, ci) =>
+                    col.blocks.map((b, bi) => {
+                        const item = reviewItemByKey[b.key];
+                        return {
+                            errorItemId: item?.id ?? null,
+                            seqInVolume: b.seq,
+                            pageIndex: pi + 1,
+                            columnIndex: ci,
+                            seqInColumn: bi + 1,
+                            itemNo: item?.source ?? null,
+                            questionText: (item?.questionText || item?.ocrText) ?? null,
+                            manageType: item?.manageType ?? null,
+                            blankLines: b.blankLines,
+                        };
+                    }),
+                ),
+            );
+            const res = await apiClient.post<{
+                volume: { id: string; volumeNo: string; pageCount: number };
+            }>("/api/review-volumes", {
+                kind: volumeKind,
+                gradeSemester: volumeGradeText || null,
+                defaultBlankLines: blankDefault,
+                pageCount: reviewLayout.pages.length,
+                items,
+            });
+            setVolume(res.volume);
+            setVolumeSignature(volumeSig);
+        } catch (error) {
+            console.error("Failed to create review volume:", error);
+            setVolumeError(L("组卷失败，请重试", "Failed to build the volume"));
+        } finally {
+            setVolumeCreating(false);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [reviewLayout, selectedItems, reviewItemByKey, volumeKind, volumeGradeText, blankDefault, volumeSig, zh]);
+
+    /**
+     * 整体调整留白行数（设置区那个「− N ＋」）。
+     * 规则（他定的）：**只有当前等于旧缺省值的题**跟着变；
+     * 已经被单独调过、值不等于旧缺省的那些题**原样保留**。
+     * 一处实现：`applyGlobalBlankLines`。
+     */
+    const changeGlobalBlank = useCallback(
+        (next: number) => {
+            const clamped = normalizeBlankLines(next, blankDefault);
+            if (clamped === blankDefault) return;
+            setBlankOverrides((prev) => applyGlobalBlankLines(prev, blankDefault, clamped));
+            setBlankDefault(clamped);
+        },
+        [blankDefault],
+    );
+
+    /** 某道题当前生效的留白行数（题干旁边那个小胶囊显示的就是它） */
+    const blankValueOf = useCallback(
+        (id: string) => effectiveBlankLines(blankOverrides, id, volumeKind),
+        [blankOverrides, volumeKind],
+    );
+
+    /** 逐题微调（只在打印阅览页能点；打印时那枚控件被 CSS 隐藏） */
+    const onBlankChange = useCallback(
+        (id: string, next: number) => {
+            setBlankOverrides((prev) => ({
+                ...prev,
+                [id]: normalizeBlankLines(next, VOLUME_VARIANTS[volumeKind].defaultBlankLines),
+            }));
+        },
+        [volumeKind],
+    );
+
+    /**
+     * 换卷别（复练 ⇄ 积累）时：留白缺省与逐题设置**都重来**，已组的卷作废。
+     * 理由：两种纸的缺省行数本就不同（5 vs 1），沿用上一张纸的微调值没有意义。
+     */
+    useEffect(() => {
+        if (!isVolume) return;
+        setBlankDefault(volumeKind === "build" ? BUILD_DEFAULT_BLANK_LINES : REVIEW_DEFAULT_BLANK_LINES);
+        setBlankOverrides({});
+        setVolume(null);
+        setVolumeSignature("");
+        // 只在"卷别"变化时重置
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [volumeKind]);
+
+    /** 卷页眉的二维码：一页一个，内容 = 卷号-页码 */
+    const volumeQrKey = volume ? `${volume.volumeNo}:${reviewLayout?.pages.length ?? 0}` : "";
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            if (!volume || !reviewLayout) {
+                setVolumePageQr({});
+                return;
+            }
+            const entries: Record<number, string> = {};
+            await Promise.all(
+                reviewLayout.pages.map(async (_page, i) => {
+                    try {
+                        entries[i + 1] = await makeQrDataUrl(pageQrPayload(volume.volumeNo, i + 1), {
+                            width: 120,
+                            margin: 1,
+                        });
+                    } catch {
+                        entries[i + 1] = "";
+                    }
+                }),
+            );
+            if (!cancelled) setVolumePageQr(entries);
+        })();
+        return () => {
+            cancelled = true;
+        };
+        // 只在"卷号 + 页数"变化时重刷二维码
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [volumeQrKey]);
 
     /** 错题所属本 → 用于页头年级学期与学科色标 */
     const sheetInfo = useMemo(() => {
@@ -272,7 +474,13 @@ function PrintPreviewContent() {
                         <h1 className="text-lg sm:text-xl font-bold flex-1">
                             {L("打印预览", "Print preview")} ({countLabel} {L("题", "items")})
                         </h1>
-                        <Button onClick={handlePrint} size="sm" className="whitespace-nowrap" disabled={selectedItems.length === 0 || printing}>
+                        <Button
+                            onClick={handlePrint}
+                            size="sm"
+                            className="whitespace-nowrap"
+                            disabled={selectedItems.length === 0 || printing || (isVolume && !volume)}
+                            title={isVolume && !volume ? L("请先「生成复练卷」再打印", "Build the volume first") : undefined}
+                        >
                             {printing ? L("准备中…", "Preparing…") : L("打印 / 存为 PDF", "Print / Save PDF")}
                         </Button>
                         {/* 【custom-v24】右上角补一个主页按钮，和其他页面右上角的小房子统一。
@@ -289,6 +497,7 @@ function PrintPreviewContent() {
                             {([
                                 ["deep", L("深挖纸 ★", "Deep dive ★")],
                                 ["review", L("复练纸 T2", "Review T2")],
+                                ["build", L("积累纸 T3", "Build T3")],
                                 ["card", L("错题卡", "Error card")],
                                 ["practice", L("练习卷", "Practice")],
                                 ["explain", L("讲解卷", "Study")],
@@ -305,7 +514,7 @@ function PrintPreviewContent() {
                             ))}
                         </div>
 
-                        {!isDeep &&
+                        {!isDeep && !isVolume &&
                             toggles.map(([label, val, setter]) => (
                                 <label key={label} className="flex items-center gap-1.5 text-xs sm:text-sm cursor-pointer whitespace-nowrap">
                                     <input
@@ -322,13 +531,13 @@ function PrintPreviewContent() {
                     <div className="flex flex-wrap items-center gap-2 sm:gap-4">
                         {/* 深挖纸的留白与图片宽度由版面自己定，不给滑块 ——
                             一律按 P9 的尺寸算，免得手一滑把"装得下"调坏了 */}
-                        {!isDeep && (
+                        {!isDeep && !isVolume && (
                             <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-md">
                                 <span className="whitespace-nowrap">{L("留白高度", "Space")}: {spaceMM}mm</span>
                                 <input type="range" min={15} max={80} step={5} value={spaceMM} onChange={(e) => setSpaceMM(Number(e.target.value))} className="w-16 sm:w-20" />
                             </div>
                         )}
-                        {!isDeep && (
+                        {!isDeep && !isVolume && (
                             <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-md">
                                 <span className="whitespace-nowrap">{L("图片宽度", "Image")}: {imageScale}%</span>
                                 <input type="range" min={30} max={100} value={imageScale} onChange={(e) => setImageScale(Number(e.target.value))} className="w-16 sm:w-20" />
@@ -345,16 +554,55 @@ function PrintPreviewContent() {
                         </label>
                     </div>
 
+                    {/* 【T2/T3】卷的设置：整体留白 + 组卷（只在复练/积累纸下出现） */}
+                    {isVolume && (
+                        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
+                            <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-md">
+                                <span className="whitespace-nowrap">
+                                    {L("整体留白", "Default space")}: {blankDefault} {L("行", "lines")}
+                                </span>
+                                <Button variant="outline" size="sm" className="h-6 px-2" onClick={() => changeGlobalBlank(blankDefault - 1)}>
+                                    −
+                                </Button>
+                                <Button variant="outline" size="sm" className="h-6 px-2" onClick={() => changeGlobalBlank(blankDefault + 1)}>
+                                    ＋
+                                </Button>
+                            </div>
+                            <Button size="sm" onClick={createVolume} disabled={volumeCreating || selectedItems.length === 0}>
+                                {volumeCreating
+                                    ? L("组卷中…", "Building…")
+                                    : volume
+                                      ? L("重新组卷", "Rebuild")
+                                      : volumeKind === "build"
+                                        ? L("生成积累卷", "Build volume")
+                                        : L("生成复练卷", "Build volume")}
+                            </Button>
+                            {volume && (
+                                <span className="text-xs sm:text-sm">
+                                    {L("卷号", "No.")} <b>{volume.volumeNo}</b>
+                                    {" · "}
+                                    {L("共", "total")} {reviewLayout?.pages.length ?? volume.pageCount} {L("页", "pages")}
+                                </span>
+                            )}
+                            {volumeStale && (
+                                <span className="text-xs text-amber-700">
+                                    {L("选择或留白改过了 —— 请点「重新组卷」，否则纸面与库里的卷对不上", "Selection changed — rebuild the volume")}
+                                </span>
+                            )}
+                            {volumeError && <span className="text-xs text-red-600">{volumeError}</span>}
+                        </div>
+                    )}
+
                     <p className="text-xs text-muted-foreground">
                         {isDeep
                             ? L(
                                   "深挖纸（T1，★ 新版）：一道题占一张纸的正反两面。正面=原题照片+反思留白（框只活在软件里，不印到纸上）；反面=干净题面+遮挡线夹出的重做区+页脚三个日期格（打印日 +1/+7/+21）。纸上不印解析、错因、答案——那是回收之后 AI 的活。",
                                   "Deep-dive sheet (T1, new): one question per double-sided sheet.",
                               )
-                            : isReview
+                            : isVolume
                                 ? L(
-                                      "复练纸（T2）：**一题半页、两题一页**，给「要重做但不必深挖」的题（选择、填空、计算）。只印干净题面（文字 + 题图），不印解析/错因/答案；每题右下角一个升降级小框。装不下的题会自动整块顺延到下一页（绝不跨页），太长装不下的会提示改用深挖纸。",
-                                      "Review sheet (T2): two questions per page, clean question only.",
+                                      "复练纸 T2 / 积累纸 T3 —— 这是一「卷」：页眉是卷头（阳文框 + 卷号 + 第X/Y页 + 页二维码），题从前往后逐题排，每题 = 流水号 + 题干（+ 题干左下角题图）+ 答题留白，题与题之间一条浅灰虚线。留白按「行」算（复练缺省 5 行、积累缺省 1 行），可整卷调、也可逐题微调（微调的小胶囊只在屏幕上，不会印到纸上）。题绝不跨页/跨栏：放不下就整块顺延。纸上零 AI 内容：不印答案 / 解析 / 错因。",
+                                      "Review/Build volume: a real volume with a header (badge + volume no. + page x/y + QR); questions laid out in order, space measured in lines.",
                                   )
                                 : mode === "card"
                                     ? L(
@@ -422,16 +670,33 @@ function PrintPreviewContent() {
                                 />
                             ))}
                         </>
-                    ) : isReview ? (
+                    ) : isVolume ? (
                         <>
+                            {/* 还没组卷：卷号与页二维码都还没有 —— 说清楚"为什么纸上暂时没有码" */}
+                            {!volume && (
+                                <div className="mb-4 rounded-md border border-sky-500/40 bg-sky-50 p-3 text-sm text-sky-900 print:hidden">
+                                    {L(
+                                        "还没组卷：卷页眉上的二维码内容是「卷号-页码」，所以要扫得回来，得先把这份卷存下来。点上面「生成复练卷 / 生成积累卷」之后，卷号与页二维码就会出现。",
+                                        "Not built yet — press “Build volume” to assign a volume number and page QR codes.",
+                                    )}
+                                </div>
+                            )}
+                            {volumeStale && (
+                                <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
+                                    {L(
+                                        `题目、留白或卷别改过了，纸上现在是**新的**排版，而库里的还是 ${volume?.volumeNo ?? ""}。上纸之前请点一次「重新组卷」。`,
+                                        `Layout changed since ${volume?.volumeNo ?? ""} was built — rebuild before printing.`,
+                                    )}
+                                </div>
+                            )}
                             {/* 装不下的题（题干太长）：明确提示改用深挖纸 —— 不静默丢题 */}
                             {reviewLayout && reviewLayout.overflow.length > 0 && (
                                 <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
                                     {L(
-                                        `有 ${reviewLayout.overflow.length} 道题太长，印复练纸会挤（一页都装不下）：${reviewLayout.overflow
+                                        `有 ${reviewLayout.overflow.length} 道题太长，一栏都装不下：${reviewLayout.overflow
                                             .map((o) => reviewItemByKey[o.key]?.source || o.key)
                                             .join('、')}。建议这几道改用「深挖纸」。`,
-                                        `${reviewLayout.overflow.length} question(s) too long for the review sheet — use the deep-dive sheet instead.`,
+                                        `${reviewLayout.overflow.length} question(s) too long for this volume — use the deep-dive sheet instead.`,
                                     )}
                                 </div>
                             )}
@@ -439,8 +704,16 @@ function PrintPreviewContent() {
                                 <ReviewSheet
                                     key={i}
                                     page={page}
+                                    pageNo={i + 1}
+                                    pageCount={reviewLayout.pages.length}
+                                    volumeNo={volume ? volume.volumeNo : L("（尚未组卷）", "(not built yet)")}
+                                    kind={volumeKind}
+                                    gradeText={volumeGradeText || undefined}
+                                    printDate={printDate}
+                                    pageQr={volumePageQr[i + 1]}
                                     itemByKey={reviewItemByKey}
-                                    qrMap={qrMap}
+                                    blankValueOf={blankValueOf}
+                                    onBlankChange={onBlankChange}
                                     L={L}
                                 />
                             ))}

@@ -385,6 +385,20 @@
     page-break-inside: avoid;
   }
 
+  /* 留白微调（「− X ＋」）**只在打印阅览页能看见**，印到纸上就不许有 ——
+     它是给用户调版面的工具，不是纸面内容。
+     同样道理：它旁边的升降级小框**要印**，所以只藏这一个。 */
+  .print-review-tweak {
+    display: none !important;
+  }
+
+  /* 卷页眉的阳文框与横线：保持实色（白底彩框彩字，被浏览器反灰就看不出是哪种卷了） */
+  .print-volume-badge,
+  .print-volume-header-rule {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
   /* 手动双面：翻面提示是独立一张，不能被"反面另起一页"的规则吞掉 */
   .print-deep-back .print-flip-hint {
     break-before: auto;
@@ -458,6 +472,48 @@
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
   }
+}
+
+/* ============================================================================
+ * T2/T3 卷：每道题的留白微调（「− X ＋」）—— **只在屏幕上**（2026-09-28）
+ *
+ * 用户的原话：这个调整小标签**只在打印阅览中能看见、能使用，打印时不能出现**，
+ * 作用仅为调整每道题的留白大小。所以它是一枚"工具"，不是纸面内容：
+ * 屏幕上做成一眼能点的小胶囊，`@media print` 里直接 display:none。
+ * ==========================================================================*/
+.print-review-tweak {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  border: 1px solid #c9c9c9;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.print-review-tweak button {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 5px;
+  color: #444;
+}
+
+.print-review-tweak button:hover {
+  background: #f0f0f0;
+  border-radius: 999px;
+}
+
+.print-review-tweak-value {
+  font-size: 10px;
+  color: #333;
+  min-width: 20px;
+  text-align: center;
+  white-space: nowrap;
 }
 
 /* ============================================================================

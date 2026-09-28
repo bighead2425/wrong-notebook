@@ -185,6 +185,8 @@ model ErrorItem {
   reviewSchedules ReviewSchedule[]
   printJobs       PrintJob[]        // 该题的每一次打印（同一题会重印多次，见 PrintJob）
   stateChangeLogs StateChangeLog[]  // 状态变更日志（R15）
+  /// 【T2/T3 2026-09-28】这道题被编进过哪些卷（可空关系：题删了卷里那一行仍在，只是断了链）
+  volumeItems     ReviewVolumeItem[]
 
   @@index([notebookId])
   @@index([deletedAt])
@@ -365,4 +367,93 @@ model StateChangeLog {
 
   @@index([errorItemId, createdAt])
   @@index([actor, createdAt])
+}
+
+// ===========================================================================
+// 【T2/T3 · 2026-09-28】卷（复练卷 RE… / 积累卷 BU…）
+//
+// 为什么**单独建表**，而不是把"复练纸"当成一个特殊错题本：
+//   错题本的核心假设是「本里装的是**题**」——列表、统计、打印、扫码、导出
+//   全都建立在这一条上。而卷里装的是「**一次编排**」（哪几题、什么顺序、
+//   每道留多少行、共几页）。硬塞进错题本，上面每一处都得加一层特判，
+//   而这个特判会跟着项目一直长下去。
+//   卷需要一个自己的落脚点 —— 就是下面这两张表。
+// ===========================================================================
+
+/// 一张卷。
+model ReviewVolume {
+  id            String   @id @default(cuid())
+
+  /// 卷号：`RE20260926001` / `BU20260926001`。
+  /// 拼法与解析**只允许**在 `src/lib/volume-code.ts` 一处实现。
+  volumeNo      String   @unique
+
+  /// review（复练）| build（积累）
+  kind          String
+
+  /// 学期标签（如 `2026-秋`）—— 他要"按学期翻卷"。
+  /// ⚠️ 是**标签**，不是分表依据：一个字段就够，不需要真按学期建多张表。
+  semester      String
+
+  /// 页眉上那句"年级·学期"（整卷一个值；组卷时的快照）
+  gradeSemester String?
+
+  /// 总页数（组卷时按分页算法算出来的快照）——印在页眉"第X/Y页"的那个 Y
+  pageCount     Int      @default(0)
+
+  /// 组这份卷时的默认留白行数（复练 5 / 积累 1）
+  defaultBlankLines Int  @default(5)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  items         ReviewVolumeItem[]
+
+  @@index([kind, createdAt])
+  @@index([semester])
+}
+
+/// 卷里的一道题。
+///
+/// ⚠️ **几乎全是快照**，这是刻意的 —— 回答"题被删了、卷会怎样"：
+///    卷是**印出去的凭证**，必须能像当初印的那样重新打开。
+///    如果只存一个外键，那么题一改，历史卷跟着变（历史被篡改），
+///    题一删，卷上就出现空洞甚至整卷打不开。
+///    所以：`errorItemId` 只是"还能点回去看看"的软链接，
+///    真正用来渲染的是 `itemNo / questionText / figureUrls / blankLines` 这几个快照。
+model ReviewVolumeItem {
+  id           String       @id @default(cuid())
+
+  volumeId     String
+  volume       ReviewVolume @relation(fields: [volumeId], references: [id], onDelete: Cascade)
+
+  /// 这份卷里的流水号（1 起）—— 只是这份卷对题的排序号，不是题号
+  seqInVolume  Int
+  /// 排在第几页（1 起）
+  pageIndex    Int
+  /// 第几栏（0 起；复练纸恒为 0）
+  columnIndex  Int          @default(0)
+  /// 栏内第几块（1 起）
+  seqInColumn  Int          @default(1)
+
+  /// 原题（可空：题被删 ⇒ 置空，但**卷照常能打开**）
+  errorItemId  String?
+  errorItem    ErrorItem?   @relation(fields: [errorItemId], references: [id], onDelete: SetNull)
+
+  /// 题号快照（= ErrorItem.source，如 SX20260916001）
+  itemNo       String?
+  /// 题干快照（OCR 文字）
+  questionText String?
+  /// 题图快照（JSON 数组，元素是 dataURL 或路径）
+  figureUrls   String?
+  /// 印这一刻这道题的错题等级（决定那是"↑升级"还是"↓降级"小框）
+  manageType   String?
+
+  /// 这道题的留白行数（可逐题调；整体调整的规则见 `applyGlobalBlankLines`）
+  blankLines   Int          @default(5)
+
+  createdAt    DateTime     @default(now())
+
+  @@index([volumeId])
+  @@index([errorItemId])
 }

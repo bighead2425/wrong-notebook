@@ -267,8 +267,11 @@ export function reviewDateSlots(printDate: Date): ReviewSlot[] {
  *
  * ⚠️ 2026-09-26 T2 / T3 的**名字已按新方案改口**（他当天定的"三类题 × 三种纸"）：
  *    T2 = 复练纸（RE…）· T3 = 积累纸（BU…）。
- * ✅ 2026-09-28 **T2 复练纸已实现**（`components/print/review-card.tsx` + `lib/review-card.ts`，
- *    打印页的第四种模式 `mode=review`）；T3 仍为 false（积累点要先独立建表）。
+ * ✅ 2026-09-28 **T2 复练纸、T3 积累纸都已实现**（`components/print/review-card.tsx` +
+ *    `lib/review-card.ts`，打印页的 `mode=review` / `mode=build`）。
+ *    两者共用一套组件，差别只在版面（复练单栏、积累两栏；缺省留白 5 行 / 1 行）。
+ *    ⚠️ "积累点独立建表"那是**内容侧**的事，与"积累纸能不能打"不是一回事 ——
+ *       纸先能打，积累点表以后再建。
  */
 export interface PaperTypeDef {
     code: 'T0' | 'T1' | 'T2' | 'T3' | 'T4' | 'T5';
@@ -280,7 +283,7 @@ export const PAPER_TYPES: readonly PaperTypeDef[] = [
     { code: 'T0', name: '极简重做卡', implemented: false },
     { code: 'T1', name: '深挖纸', implemented: true },
     { code: 'T2', name: '复练纸', implemented: true },
-    { code: 'T3', name: '积累纸', implemented: false },
+    { code: 'T3', name: '积累纸', implemented: true },
     { code: 'T4', name: '家长档案', implemented: false },
     { code: 'T5', name: '给她的信', implemented: false },
 ];
