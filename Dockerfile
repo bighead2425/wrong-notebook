@@ -47,6 +47,13 @@ ENV NODE_ENV=production
 # Uncomment the following line in case you want to disable telemetry during runtime.
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# 部署版本号（= 发版时填的镜像 tag，如 custom-v40）。
+# 发版 workflow（.github/workflows/build-docker.yml）用 --build-arg 传进来，
+# 经 /api/version 暴露给「设置 → 关于」——
+# 这样在 NAS 上跑的是哪一版，打开关于就能看到，不用猜、不会乱。
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
+
 # Install dependencies and create user
 RUN apk add --no-cache su-exec openssl \
     && addgroup --system --gid 1001 nodejs \

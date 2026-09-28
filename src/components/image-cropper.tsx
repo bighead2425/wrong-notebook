@@ -351,7 +351,11 @@ export function ImageCropper({
     // ===== 新增状态 =====
     const [mode, setMode] = useState<Mode>("crop");
     const [eraseTool, setEraseTool] = useState<EraseTool>("brush");
-    const [brushIdx, setBrushIdx] = useState(1);
+    /**
+     * 【2026-09-28】缺省笔刷 = **特大**（索引 3）。
+     * 他的理由：擦掉整块手写时，默认太小要反复涂；快捷键 1~4 也按"1 小 … 4 特大"排。
+     */
+    const [brushIdx, setBrushIdx] = useState(3);
     const [labelKind, setLabelKind] = useState<LabelKind>("question");
     const [boxes, setBoxes] = useState<Box[]>([]);
     const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null);
@@ -819,6 +823,17 @@ export function ImageCropper({
         drawingRef.current = null;
     };
 
+    /**
+     * 快捷键里要调 `switchMode`，但它每次渲染都是新函数。
+     * 直接用闭包里的那份会拿到**旧的 mode / 裁剪框** —— 而"从裁剪切到擦/框"会执行
+     * `bakeCropIntoBase()`（裁剪即提取），用旧值会烘错基准图。
+     * 所以用 ref 每次渲染更新到最新的一份，keydown 里永远取到当次的值。
+     */
+    const switchModeRef = useRef(switchMode);
+    useEffect(() => {
+        switchModeRef.current = switchMode;
+    });
+
     // ============================================================
     //  橡皮擦 / 标注 操作
     // ============================================================
@@ -879,12 +894,74 @@ export function ImageCropper({
             if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && mode === "erase") {
                 e.preventDefault();
                 undo();
+                return;
+            }
+
+            /**
+             * 【2026-09-28】新增单键快捷键（用户指定）。
+             *
+             * ⚠️ 必须先排除修饰键：不排除的话 Ctrl+C 会顺带切到裁剪模式、
+             *    Ctrl+A 会切框类型 —— 把浏览器自己的快捷键也劫持了。
+             *
+             * 主模式：裁 `c` / 擦 `e` / 框 `x`
+             *   🔄转、📐抻**故意不设**（用户要求：它们会改整张图，误触代价大）。
+             * 橡皮擦子工具：笔刷、矩形选区**不设**（同上，怕误触）；
+             *   粗细 `1`~`4`（1 小 / 2 中 / 3 大 / 4 特大）。
+             * 框选子工具：`a` 区 / `s` 题 / `d` 答 / `f` 图
+             *   —— 顺序与工具栏从左到右一致（已按他的要求把"区"挪到第一个）；
+             *   `j` 仅画、`t` 省🔡。
+             * Delete（擦除选区 / 删除选中框）与 Ctrl+Z（撤销）是既有行为，保持不动。
+             */
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+            const key = e.key.toLowerCase();
+
+            if (key === "c" || key === "e" || key === "x") {
+                const target: Mode = key === "c" ? "crop" : key === "e" ? "erase" : "label";
+                /**
+                 * ⚠️ 已经在那个模式里就**什么也别做**。
+                 * `switchMode` 有副作用：目标若是 crop 会清掉刚拉的裁剪框，
+                 * 其它情况会清掉待确认的橡皮擦选区 ——
+                 * 手快连按两下 `c` 就把辛苦拉的框弄没了，这种"快捷键反咬一口"最难查。
+                 */
+                if (target !== mode) {
+                    e.preventDefault();
+                    switchModeRef.current(target);
+                }
+                return;
+            }
+            if (mode === "erase" && key >= "1" && key <= "4") {
+                e.preventDefault();
+                setBrushIdx(Number(key) - 1);
+                return;
+            }
+            if (mode === "label") {
+                const kinds: Record<string, LabelKind> = {
+                    a: "region",
+                    s: "question",
+                    d: "answer",
+                    f: "figure",
+                };
+                if (kinds[key]) {
+                    e.preventDefault();
+                    setLabelKind(kinds[key]);
+                    return;
+                }
+                if (key === "j") {
+                    e.preventDefault();
+                    setDrawOnly((v) => !v);
+                    return;
+                }
+                // 省🔡：一个框都没有时按钮是禁用的，快捷键也照此（免得出现"看起来开了其实没用"）
+                if (key === "t" && boxes.length > 0) {
+                    e.preventDefault();
+                    setCropToRegions((v) => !v);
+                }
             }
         };
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [open, mode, pendingRect, selectedBoxId, erasePendingRect, removeSelectedBox, redrawOverlay]);
+    }, [open, mode, pendingRect, selectedBoxId, erasePendingRect, removeSelectedBox, redrawOverlay, boxes.length]);
 
     // 说明弹窗：打开后，下一次任意位置按下鼠标即关闭（含点击卡片本身）
     useEffect(() => {
@@ -2217,13 +2294,30 @@ export function ImageCropper({
                 {/* ===== 工具栏 ===== */}
                 {/* 【custom-v24】左上角“模式”二字已按用户要求撤掉 —— 图标型方框按钮本身就是模式开关，不需要再挂一个栏目标题。 */}
                 <div className="px-4 py-2 border-b shrink-0 flex flex-wrap items-center gap-2 bg-muted/30">
-                    <button type="button" className={btn(mode === "crop")} onClick={() => switchMode("crop")}>
+                    {/* 【2026-09-28】三个主模式各给一个单键快捷键，提示写在 title 里让人看得见。
+                        ⚠️ 🔄转 / 📐抻 **故意没有快捷键**（他的要求）：它们会改整张图，误触代价大。 */}
+                    <button
+                        type="button"
+                        className={btn(mode === "crop")}
+                        onClick={() => switchMode("crop")}
+                        title="裁剪（快捷键 c）"
+                    >
                         {t.common.cropper?.modeCrop || "裁剪"}
                     </button>
-                    <button type="button" className={btn(mode === "erase")} onClick={() => switchMode("erase")}>
+                    <button
+                        type="button"
+                        className={btn(mode === "erase")}
+                        onClick={() => switchMode("erase")}
+                        title="橡皮擦（快捷键 e）：笔刷涂白 / 矩形选区。粗细可用 1~4 切换"
+                    >
                         {t.common.cropper?.modeErase || "橡皮擦"}
                     </button>
-                    <button type="button" className={btn(mode === "label")} onClick={() => switchMode("label")}>
+                    <button
+                        type="button"
+                        className={btn(mode === "label")}
+                        onClick={() => switchMode("label")}
+                        title="框选标注（快捷键 x）：区 a / 题 s / 答 d / 图 f / 仅画 j / 省🔡 t"
+                    >
                         {t.common.cropper?.modeLabel || "区域标注"}
                     </button>
 
@@ -2266,8 +2360,26 @@ export function ImageCropper({
                             <button type="button" className={btn(eraseTool === "brush")} onClick={() => setEraseTool("brush")}>
                                 {t.common.cropper?.brush || "笔刷"}
                             </button>
+                            {/* 【2026-09-28 改样式】矩形选区原来用 🟧（一大块实心橙），
+                                与框选页那个"图"按钮长得像，他已点错多次。
+                                按他指定的样式改成：**黑框、虚线、透明填充**的小方框
+                                —— "要框一块区域"的意象，和"实心色块"明显区分开。
+                                这两个按钮（笔刷 / 矩形选区）**故意不设快捷键**（怕误触）。 */}
                             <button type="button" className={btn(eraseTool === "rect")} onClick={() => setEraseTool("rect")}>
-                                {t.common.cropper?.rectSelect || "矩形选区"}
+                                {t.common.cropper?.rectSelect || "矩形"}
+                                <span
+                                    aria-hidden
+                                    style={{
+                                        display: 'inline-block',
+                                        width: '0.8em',
+                                        height: '0.8em',
+                                        marginLeft: '3px',
+                                        border: '1.5px dashed #333',
+                                        borderRadius: '2px',
+                                        background: 'transparent',
+                                        verticalAlign: '-0.05em',
+                                    }}
+                                />
                             </button>
                             {eraseTool === "brush" && (
                                 <span className="flex items-center gap-1">
@@ -2305,11 +2417,26 @@ export function ImageCropper({
 
                     {mode === "label" && (
                         <>
+                            {/* 【2026-09-28 调整顺序】按他的要求把"区"挪到**第一个**，
+                                整体顺序 = 区 / 题 / 答 / 图，与快捷键 a / s / d / f 从左到右一致
+                                （手指在键盘左边一排，与眼睛看到的顺序对得上）。
+                                【custom-v25 绿框】区🟩 = 一道题的范围（同时就是裁剪边界）。
+                                确认后按"合并后的绿框"逐块裁出来分别送 AI。 */}
+                            <button
+                                type="button"
+                                className={btn(labelKind === "region")}
+                                onClick={() => setLabelKind("region")}
+                                style={labelKind === "region" ? { background: LABEL_COLORS.region, borderColor: LABEL_COLORS.region, color: "#fff" } : undefined}
+                                title="一个绿框 = 一道题；重叠的绿框会合并成一道。确认时会把绿框逐块裁出来分别送 AI，绿框以外不要（快捷键 a）"
+                            >
+                                {t.common.cropper?.labelRegion || "区🟩"}
+                            </button>
                             <button
                                 type="button"
                                 className={btn(labelKind === "question")}
                                 onClick={() => setLabelKind("question")}
                                 style={labelKind === "question" ? { background: LABEL_COLORS.question, borderColor: LABEL_COLORS.question, color: "#fff" } : undefined}
+                                title="框住题干文字（快捷键 s）"
                             >
                                 {t.common.cropper?.labelQuestion || "题干（红框）"}
                             </button>
@@ -2318,48 +2445,23 @@ export function ImageCropper({
                                 className={btn(labelKind === "answer")}
                                 onClick={() => setLabelKind("answer")}
                                 style={labelKind === "answer" ? { background: LABEL_COLORS.answer, borderColor: LABEL_COLORS.answer, color: "#fff" } : undefined}
+                                title="框住她的手写作答（快捷键 d）"
                             >
                                 {t.common.cropper?.labelAnswer || "手写答案（蓝框）"}
                             </button>
-                            {/* 【custom-v25 绿框】区🟩 = 一道题的范围（同时就是裁剪边界）。
-                                确认后按"合并后的绿框"逐块裁出来分别送 AI。 */}
-                            <button
-                                type="button"
-                                className={btn(labelKind === "region")}
-                                onClick={() => setLabelKind("region")}
-                                style={labelKind === "region" ? { background: LABEL_COLORS.region, borderColor: LABEL_COLORS.region, color: "#fff" } : undefined}
-                                title="一个绿框 = 一道题；重叠的绿框会合并成一道。确认时会把绿框逐块裁出来分别送 AI，绿框以外不要"
-                            >
-                                {t.common.cropper?.labelRegion || "区🟩"}
-                            </button>
-                            {/* 【M1】图框 = 题图（不能 OCR 的图像部分，如示意图/几何图）。
+                            {/* 【M1】图🟧 = 题图（不能 OCR 的图像部分，如示意图/几何图）。
                                 框了它，印"净版"时这块会被涂白、再单独裁出来放在题干下方 ——
                                 不框也不影响出题，只是净版里会留着一张图。
-                                【2026-09-28 改样式】原来的 🟧 emoji 渲染成一大块**实心橙**，
-                                常驻工具栏，跟"擦/裁"挤在一起极易点错（他已点错多次）。
-                                按他指定的样式改成：**黑框、虚线、透明填充**的小方框 ——
-                                "要框一块透明区域"的意象，与另外三个实心色块明显区分。
-                                激活态也不再整颗染橙（否则又变回一大块橙色）。 */}
+                                【2026-09-28】样式**改回实心橙**：虚线无底色那版挪去
+                                橡皮擦的"矩形选区"按钮（两处曾长得像，换过来各归各位）。 */}
                             <button
                                 type="button"
                                 className={btn(labelKind === "figure")}
                                 onClick={() => setLabelKind("figure")}
-                                title="框住题目里那张图（示意图/几何图等）。印净版时这块会被涂白，再单独裁出来放到题干下方。不框也行，只是净版里会留着它"
+                                style={labelKind === "figure" ? { background: LABEL_COLORS.figure, borderColor: LABEL_COLORS.figure, color: "#fff" } : undefined}
+                                title="框住题目里那张图（示意图/几何图等）。印净版时这块会被涂白，再单独裁出来放到题干下方。不框也行，只是净版里会留着它（快捷键 f）"
                             >
-                                {t.common.cropper?.labelFigure || "图"}
-                                <span
-                                    aria-hidden
-                                    style={{
-                                        display: 'inline-block',
-                                        width: '0.8em',
-                                        height: '0.8em',
-                                        marginLeft: '3px',
-                                        border: '1.5px dashed #333',
-                                        borderRadius: '2px',
-                                        background: 'transparent',
-                                        verticalAlign: '-0.05em',
-                                    }}
-                                />
+                                {t.common.cropper?.labelFigure || "图🟧"}
                             </button>
                             {/* 【custom-v27 仅画】强制画框：选中后起手即画新框，不再"点中旧框就选中它"。
                                 电脑端按住 Shift 等效于此开关（松开即还原）。 */}

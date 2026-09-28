@@ -94,5 +94,9 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:custom-latest
+          # 把本次的 tag 烧进镜像（Dockerfile 的 ARG APP_VERSION）：
+          # 「设置 → 关于」据此显示当前部署版本，一眼能确认 NAS 上跑的是哪一版。
+          build-args: |
+            APP_VERSION=${{ inputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

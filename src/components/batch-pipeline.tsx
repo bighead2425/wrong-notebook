@@ -24,7 +24,7 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { ImageCropper, type CropRegionsPayload } from "@/components/image-cropper";
+import { ImageCropper } from "@/components/image-cropper";
 import { serializeCropRegions } from "@/lib/crop-regions";
 import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
 import { CorrectionEditor, ParsedQuestionWithSubject } from "@/components/correction-editor";
@@ -376,6 +376,21 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
         }));
         setItems(prev => [...prev, ...added]);
         setActiveId(added[added.length - 1].id);
+        /**
+         * 【2026-09-28】落地即**默认勾选**。
+         *
+         * 这批图是"在页面里已经裁好、专门送来批量加工"的，落地就是"预处理、等着送 AI"
+         * —— 不勾上等于用户每次都得再点一次「全选」，而他实测就是被这一步绊住的：
+         * "待处理图片处理出来题进入预处理，但这时候的预处理不是勾选选中状态，
+         *   还需要手动选中"。
+         * 与 handleCropComplete / handleCropBatch 的口径保持一致（那两处也自动勾上）。
+         * 不想要这张的，自己取消勾选即可。
+         */
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            for (const a of added) next.add(a.id);
+            return next;
+        });
     }, [initialFiles, initialCropRegions]);
 
     /**

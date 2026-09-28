@@ -114,6 +114,20 @@ export function SettingsDialog() {
             .catch(() => {});
     }, [open]);
 
+    /**
+     * 【2026-09-28】版本号的显示口径。
+     *
+     * 两个来源的写法不一样：发版 tag 形如 `custom-v40`（自带 v），
+     * `package.json` 的形如 `1.0.0`（不带 v）。统一一次，免得出现 "vcustom-v40"。
+     * 这个值的意义是"**NAS 上现在跑的是哪一版**，打开关于就能看到"——
+     * 他明确要的就是这一点（换版后不用再猜、不会再乱）。
+     */
+    const versionLabel = !version
+        ? "unknown"
+        : /^(v|custom-)/.test(version)
+            ? version
+            : `v${version}`;
+
     const fetchSettings = async () => {
         setLoading(true);
         try {
@@ -1509,7 +1523,10 @@ export function SettingsDialog() {
                     <TabsContent value="about" className="space-y-4 py-4">
                         <div className="flex flex-col items-center justify-center space-y-6 py-8 text-center bg-muted/30 rounded-lg border">
                             <div className="space-y-2">
-                                <h3 className="text-2xl font-bold">{t.app?.title || "Smart Error Notebook"}</h3>
+                                {/* 应用名（2026-09-28）：孩子给这一代错题本起名 **LittleSheep**。
+                                    他要求"先体现在设置的关于中"——所以这里用 about 专属的键，
+                                    暂不动全局的 t.app.title（那会连登录页、页头一起改掉）。 */}
+                                <h3 className="text-2xl font-bold">{t.settings?.about?.appName || "LittleSheep"}</h3>
                                 <p className="text-muted-foreground">
                                     {t.settings?.about?.desc || "AI-powered learning assistant"}
                                 </p>
@@ -1517,7 +1534,7 @@ export function SettingsDialog() {
 
                             <div className="flex items-center space-x-2 text-sm text-muted-foreground border px-4 py-2 rounded-full bg-background">
                                 <Info className="h-4 w-4" />
-                                <span>{t.settings?.about?.version || "Version"}: v{version || "unknown"}</span>
+                                <span>{t.settings?.about?.version || "Version"}: {versionLabel}</span>
                             </div>
 
                             <div className="flex flex-col sm:flex-row flex-wrap justify-center gap-4 w-full sm:w-auto px-4 sm:px-0">
