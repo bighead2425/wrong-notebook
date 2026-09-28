@@ -10,6 +10,7 @@ import {
     FIGURE_SCALE_MIN,
     normalizeFigureScale,
     REVIEW_LAYOUT_MM,
+    REVIEW_BLANK_LINE_PX,
     REVIEW_PAGE_HEIGHT_MM,
     REVIEW_USABLE_WIDTH_MM,
     VOLUME_COLUMN_MM,
@@ -128,6 +129,28 @@ describe('卷 · 题图缩放（他在预览区拖右下角调的）', () => {
         expect(REVIEW_FIGURE_BOX_RATIO * FIGURE_SCALE_MAX).toBeLessThanOrEqual(100);
         // 再往上放就真的把写字的地方吃掉了（所以必须拦住）
         expect(REVIEW_FIGURE_BOX_RATIO * 200).toBeGreaterThan(100);
+    });
+});
+
+describe('卷 · 拖虚线调留白（一行的像素）', () => {
+    it('一行留白 = 7mm = 约 26.5 屏幕像素（96dpi）', () => {
+        expect(REVIEW_BLANK_LINE_PX).toBeCloseTo((7 * 96) / 25.4, 4);
+    });
+
+    it('拖够一行的距离才换行；拖不到位不算数（就近取整）', () => {
+        const moved = (lines: number) => Math.round((REVIEW_BLANK_LINE_PX * lines) / REVIEW_BLANK_LINE_PX);
+        expect(moved(3)).toBe(3);
+        expect(moved(0.4)).toBe(0);
+        expect(moved(0.6)).toBe(1);
+    });
+
+    it('向上拖 = 减行、向下拖 = 加行（他定的方向）', () => {
+        // 打印页里是 `startLines - deltaLines`，delta 为 y 位移换算出的行数
+        const apply = (startLines: number, dyPx: number) =>
+            normalizeBlankLines(startLines - Math.round(dyPx / REVIEW_BLANK_LINE_PX), startLines);
+        expect(apply(5, -2 * REVIEW_BLANK_LINE_PX)).toBe(7); // 向下拖两行 ⇒ 5+2
+        expect(apply(5, 2 * REVIEW_BLANK_LINE_PX)).toBe(3); // 向上拖两行 ⇒ 5−2
+        expect(apply(1, 5 * REVIEW_BLANK_LINE_PX)).toBe(0); // 减到 0 就停住
     });
 });
 

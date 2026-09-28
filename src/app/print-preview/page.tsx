@@ -27,6 +27,7 @@ import { DeepDiveCard } from "@/components/print/deep-dive-card";
 import { ReviewSheet, ReviewQuestionBlock, pageQrPayload } from "@/components/print/review-card";
 import {
     BUILD_DEFAULT_BLANK_LINES,
+    REVIEW_BLANK_LINE_PX,
     REVIEW_DEFAULT_BLANK_LINES,
     VOLUME_VARIANTS,
     applyGlobalBlankLines,
@@ -132,9 +133,6 @@ function PrintPreviewContent() {
         (id: string) => normalizeFigureScale(figureScales?.[id]),
         [figureScales],
     );
-    const onFigureScaleChange = useCallback((id: string, next: number) => {
-        setFigureScales((prev) => ({ ...prev, [id]: normalizeFigureScale(next) }));
-    }, []);
     /** 拖拽题图：记住"起点鼠标 x / 起点宽度px"，移动时按比例换算成新的百分比 */
     const figureDragRef = useRef<{ id: string; startX: number; startPx: number } | null>(null);
 
@@ -499,9 +497,13 @@ function PrintPreviewContent() {
         };
     }, []);
 
-    /** 拖题图右下角：横向位移 → 等比的新百分比（左上角固定，见 ReviewQuestionBlock） */
+    /**
+     * 拖题图：横向位移 → 等比的新百分比（左上角固定）。
+     * ⚠️ 用 **Pointer** 事件（不是 mouse）：同一套代码，手机上手指也能拖 ——
+     *    他实测过，鼠标的小把手在手机上根本点不中，只能"按住图左右拖"。
+     */
     useEffect(() => {
-        const onMove = (e: MouseEvent) => {
+        const onMove = (e: PointerEvent) => {
             const drag = figureDragRef.current;
             if (!drag) return;
             const next = normalizeFigureScale((drag.startPx + (e.clientX - drag.startX)) / drag.startPx * 100);
@@ -513,17 +515,55 @@ function PrintPreviewContent() {
             document.body.style.cursor = "";
             document.body.style.userSelect = "";
         };
-        window.addEventListener("mousemove", onMove);
-        window.addEventListener("mouseup", onUp);
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+        window.addEventListener("pointercancel", onUp);
         return () => {
-            window.removeEventListener("mousemove", onMove);
-            window.removeEventListener("mouseup", onUp);
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+            window.removeEventListener("pointercancel", onUp);
         };
     }, []);
 
-    /** 按下题图右下角的小把手：记住起点，之后鼠标一动就按比例缩放 */
+    /**
+     * 【2026-09-28】拖两道题之间的**虚线** ⇒ 调**上面那道题**的留白行数。
+     * 他定的规则：向上拖 = 留白按**整行**减少、向下拖 = 整行增加，
+     * 调节器上的数字跟着变到虚线所在的位置。
+     *
+     * 实现是"增量式"的：每凑满一行的像素就**记一次账**（起点跟着挪），
+     * 手停在哪就是几行，跟手、不跳。
+     */
+    useEffect(() => {
+        const onMove = (e: PointerEvent) => {
+            const drag = dividerDragRef.current;
+            if (!drag) return;
+            const deltaLines = Math.round((e.clientY - drag.startY) / REVIEW_BLANK_LINE_PX);
+            if (deltaLines === 0) return;
+            const next = normalizeBlankLines(drag.startLines - deltaLines, drag.startLines);
+            if (next === drag.startLines) return;
+            drag.startLines = next;
+            drag.startY = e.clientY;
+            setBlankOverrides((prev) => ({ ...prev, [drag.id]: next }));
+        };
+        const onUp = () => {
+            if (!dividerDragRef.current) return;
+            dividerDragRef.current = null;
+            document.body.style.cursor = "";
+            document.body.style.userSelect = "";
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+        window.addEventListener("pointercancel", onUp);
+        return () => {
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+            window.removeEventListener("pointercancel", onUp);
+        };
+    }, []);
+
+    /** 按下题图（手机按在图上 / 电脑按右下角把手）：记住起点，之后一动就按比例缩放 */
     const handleFigureDown = useCallback(
-        (id: string) => (e: React.MouseEvent) => {
+        (id: string) => (e: React.PointerEvent) => {
             const box = (e.currentTarget as HTMLElement).parentElement;
             figureDragRef.current = {
                 id,
@@ -533,10 +573,21 @@ function PrintPreviewContent() {
             document.body.style.cursor = "nwse-resize";
             document.body.style.userSelect = "none";
             e.preventDefault();
-            e.stopPropagation();
         },
         [],
     );
+
+    /** 按住两道题之间的虚线：开始调上面那道题的留白行数 */
+    const handleDividerDown = useCallback(
+        (aboveItemId: string, startLines: number) => (e: React.PointerEvent) => {
+            dividerDragRef.current = { id: aboveItemId, startY: e.clientY, startLines };
+            document.body.style.cursor = "ns-resize";
+            document.body.style.userSelect = "none";
+            e.preventDefault();
+        },
+        [],
+    );
+    const dividerDragRef = useRef<{ id: string; startY: number; startLines: number } | null>(null);
 
     /**
      * 整体调整留白行数（设置区那个「− N ＋」）。
@@ -707,6 +758,9 @@ function PrintPreviewContent() {
                 顶栏（标题 / 打印 / 回主页 / 左栏显隐）**不进任何一栏**，始终在最上面。
                 左栏隐藏 ⇒ 这一整块不渲染，右栏自然占满。 */}
             <div className="print-preview-body flex-1 min-h-0" style={{ "--left-w": `${leftWidth}px` } as CSSProperties}>
+              {/* 【2026-09-28】左右两栏是一个**整体**：像主页那样居中、随浏览器宽窄一起伸缩。
+                  之前只有右栏居中，左栏死死抵住浏览器左边 —— 他一眼就看出不对称。 */}
+              <div className="print-preview-frame mx-auto w-full max-w-[1600px] px-4 md:px-8">
                 {/* ===== 量尺：不显示、不打印 =====
                     把每道题按**真实栏宽**先排一遍，量出真实高度交给分页纯函数。
                     用的是同一个 `ReviewQuestionBlock`，所以"量到的"就是"印出来的"。
@@ -984,6 +1038,7 @@ function PrintPreviewContent() {
                                     onBlankChange={onBlankChange}
                                     figureScaleOf={figureScaleOf}
                                     onFigureScaleStart={handleFigureDown}
+                                    onDividerDragStart={handleDividerDown}
                                     L={L}
                                 />
                             ))}
@@ -1088,6 +1143,7 @@ function PrintPreviewContent() {
                         </div>
                     </div>
                 </main>
+              </div>
             </div>
         </div>
     );

@@ -1,4 +1,4 @@
-import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { Fragment } from 'react';
 import { ErrorItem } from '@/types/api';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
@@ -65,8 +65,10 @@ export interface ReviewSheetProps {
     onBlankChange?: (itemId: string, next: number) => void;
     /** 这道题题图的缩放百分比（屏幕上拖右下角调的） */
     figureScaleOf?: (itemId: string) => number;
-    /** 按下题图右下角的小把手 */
-    onFigureScaleStart?: (itemId: string) => (e: ReactMouseEvent) => void;
+    /** 按下题图（开始缩放） */
+    onFigureScaleStart?: (itemId: string) => (e: ReactPointerEvent) => void;
+    /** 按住两题之间的虚线（调上面那道题的留白行数） */
+    onDividerDragStart?: (aboveItemId: string, startLines: number) => (e: ReactPointerEvent) => void;
     L: (zh: string, en: string) => string;
 }
 
@@ -198,6 +200,7 @@ export function ReviewQuestionBlock({
     onBlankChange,
     figureScale = 100,
     onFigureScaleStart,
+    onDividerDragStart,
     L,
 }: {
     item: ErrorItem;
@@ -215,8 +218,16 @@ export function ReviewQuestionBlock({
      * 他要的调法：**左上角固定、拖右下角、等比缩放** —— 因为有的图上纸后偏大/偏小。
      */
     figureScale?: number;
-    /** 按下题图右下角的小把手（拖拽逻辑在打印页，这里只负责把"起点"交出去） */
-    onFigureScaleStart?: (itemId: string) => (e: ReactMouseEvent) => void;
+    /**
+     * 按下题图（手机：手指按在图上；电脑：右下角小把手）开始缩放。
+     * 拖拽逻辑在打印页，这里只负责把"起点"交出去。
+     */
+    onFigureScaleStart?: (itemId: string) => (e: ReactPointerEvent) => void;
+    /**
+     * 按住本块顶上那条**虚线**上下拖 ⇒ 调**上面那道题**的留白行数（整行增减）。
+     * 打印页已经把"上面是哪道题、现在几行"包好了，这里只管把事件交出去。
+     */
+    onDividerDragStart?: (e: ReactPointerEvent) => void;
     L: (zh: string, en: string) => string;
 }) {
     const figures = useFigureImages(item);
@@ -233,9 +244,20 @@ export function ReviewQuestionBlock({
                 display: 'flex',
                 flexDirection: 'column',
                 flex: '0 0 auto',
+                position: 'relative',
                 borderTop: showDivider ? '0.3mm dashed #cfcfcf' : undefined,
             }}
         >
+            {/* 拖虚线调留白：一条**绝对定位**的透明条，盖在本块顶上的虚线上。
+                ⚠️ 必须 absolute —— 它不参与布局，量出来的高度才不会因为它变来变去。
+                调的是**上面那道题**（虚线在它脚底下）。 */}
+            {showDivider && onDividerDragStart && (
+                <span
+                    className="print-review-divider-handle no-print"
+                    title={L('上下拖动：调整上面那道题的留白行数', 'Drag to change the blank lines above')}
+                    onPointerDown={onDividerDragStart}
+                />
+            )}
             {/* 题干：左边一个流水号（1. 2. 3. …），它是这份卷的排序号，不是题号 */}
             <div className="print-review-stem" style={{ position: 'relative', paddingLeft: '6mm', flex: '0 0 auto' }}>
                 <span
@@ -259,8 +281,9 @@ export function ReviewQuestionBlock({
                 )}
             </div>
 
-            {/* 答题区：左边题图、右边留白（右下角是升降级小框）。
-                高度 = max(题图实际高度, 留白行数×行高, 小框那一行) —— 全由内容自然决定。 */}
+            {/* 答题区：左边题图、右边留白。
+                高度 = max(题图实际高度, 留白行数×行高, 小框那一行) —— 全由内容自然决定。
+                右上角 = 留白调节器（固定不动，点完加减号不用挪鼠标）、右下角 = 升降级小框。 */}
             <div
                 className="print-review-answer"
                 style={{
@@ -270,6 +293,7 @@ export function ReviewQuestionBlock({
                     marginTop: '1mm',
                     minHeight: `${Math.max(blankMM, REVIEW_LAYOUT_MM.answerRowMinMM)}mm`,
                     flex: '0 0 auto',
+                    position: 'relative',
                 }}
             >
                 {figures.length > 0 && (
@@ -285,6 +309,13 @@ export function ReviewQuestionBlock({
                             flexDirection: 'column',
                             gap: '2mm',
                             position: 'relative',
+                            // 手机上"按住图左右拖 = 缩放"：不让浏览器把手势抢去当滚动
+                            touchAction: 'none',
+                        }}
+                        // 手指/笔直接按在图上就能拖（电脑用右下角小把手，免得误拖）
+                        onPointerDown={(e) => {
+                            if (e.pointerType === 'mouse') return;
+                            onFigureScaleStart?.(item.id)(e);
                         }}
                     >
                         {figures.map((url, i) => (
@@ -306,9 +337,13 @@ export function ReviewQuestionBlock({
                         {/* 拖拽把手：**只在屏幕上**（打印时被 CSS 隐藏），右下角、等比缩放 */}
                         {onFigureScaleStart && (
                             <span
-                                className="print-review-fig-handle"
-                                title={L('拖动调整图片大小', 'Drag to resize')}
-                                onMouseDown={onFigureScaleStart(item.id)}
+                                className="print-review-fig-handle no-print"
+                                title={L('拖动调整图片大小（左上角固定）', 'Drag to resize')}
+                                onPointerDown={(e) => {
+                                    // 鼠标只认这个把手；手指已经在图上直接拖了（见外层）
+                                    if (e.pointerType !== 'mouse') return;
+                                    onFigureScaleStart(item.id)(e);
+                                }}
                             />
                         )}
                     </div>
@@ -325,9 +360,11 @@ export function ReviewQuestionBlock({
                         gap: '1mm',
                     }}
                 >
-                    {/* 留白微调：**只在屏幕上出现**，打印时被 CSS 隐藏（他只让它在阅览页能用） */}
+                    {/* 留白微调：**钉在空白区右上角**（绝对定位），加减号不会跟着空白跑 ——
+                        他反馈"点完减号想点下一次还得挪鼠标"就是因为原来贴在空白底下。
+                        只在屏幕上出现，打印时被 CSS 隐藏。 */}
                     {canTweak && (
-                        <span className="print-review-tweak">
+                        <span className="print-review-tweak" style={{ position: 'absolute', top: 0, right: 0 }}>
                             <button type="button" onClick={() => onBlankChange!(item.id, blankValue! - 1)}>
                                 −
                             </button>
@@ -362,6 +399,7 @@ export function ReviewSheet({
     onBlankChange,
     figureScaleOf,
     onFigureScaleStart,
+    onDividerDragStart,
     L,
 }: ReviewSheetProps) {
     /**
@@ -373,6 +411,9 @@ export function ReviewSheet({
     const padding: CSSProperties = punchOnLeft
         ? { paddingLeft: `${REVIEW_PUNCH_GUTTER_MM}mm` }
         : { paddingRight: `${REVIEW_PUNCH_GUTTER_MM}mm` };
+
+    /** 拖虚线调留白只在"能改"时才有（量尺/正式打印那两处没有 onBlankChange） */
+    const canDragDivider = !!onBlankChange && !!blankValueOf && !!onDividerDragStart;
 
     return (
         <div
@@ -419,6 +460,8 @@ export function ReviewSheet({
                                 const item = itemByKey[b.key];
                                 if (!item) return null;
                                 const blank = blankValueOf ? blankValueOf(item.id) : 0;
+                                // 虚线画在本块顶上，所以"虚线上面那道题"是**前一块**
+                                const above = bi > 0 ? itemByKey[col.blocks[bi - 1].key] : null;
                                 return (
                                     <ReviewQuestionBlock
                                         key={b.key}
@@ -430,6 +473,11 @@ export function ReviewSheet({
                                         onBlankChange={onBlankChange}
                                         figureScale={figureScaleOf ? figureScaleOf(item.id) : 100}
                                         onFigureScaleStart={onFigureScaleStart}
+                                        onDividerDragStart={
+                                            canDragDivider && above
+                                                ? (e) => onDividerDragStart!(above.id, blankValueOf!(above.id))(e)
+                                                : undefined
+                                        }
                                         L={L}
                                     />
                                 );

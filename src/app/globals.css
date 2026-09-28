@@ -495,6 +495,17 @@
   min-height: 0;
 }
 
+/* 左右两栏作为一个**整体**居中、随浏览器宽窄一起伸缩（他 2026-09-28 指出的：
+   之前只有右栏居中，左栏死死抵住浏览器左边，看着不对称）。
+   ⚠️ flex 布局挪到这里，body 只管"占多高、要不要滚"。 */
+.print-preview-frame {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
 .print-preview-left {
   width: 100%;
 }
@@ -519,6 +530,11 @@
   }
 
   .print-preview-body {
+    flex-direction: row;
+    align-items: stretch;
+  }
+
+  .print-preview-frame {
     flex-direction: row;
     align-items: stretch;
   }
@@ -567,6 +583,23 @@
   z-index: -1;
 }
 
+/* 两道题之间那条虚线的**拖动热区**：
+   绝对定位（不参与布局 ⇒ 不影响量出来的高度）、盖在虚线上下各 2mm。
+   悬停时变成上下拖动的指针，按住上下拖 = 调上面那道题的留白行数。 */
+.print-review-divider-handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -2mm;
+  height: 4mm;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.print-review-divider-handle:hover {
+  background: rgb(0 0 0 / 0.04);
+}
+
 /* 题图右下角的**缩放把手**：只在屏幕上有，打印绝不出现 */
 .print-review-fig-handle {
   position: absolute;
@@ -585,14 +618,34 @@
   border-color: #4b5563;
 }
 
-/* 屏幕上给每张"虚拟纸"描一圈灰框 + 一点投影 ——
-   不然看不出 B5 的版面边界在哪。打印时由 @media print 关掉。 */
+/* 屏幕上把右栏做成"打印预览"的样子：灰底 + 每页一张白纸 + 页与页之间有空隙。
+   之前把灰框描在 .print-card 上，页与页贴在一起，看起来"很多页只有一个框"。 */
 @media screen {
+  .print-preview-right {
+    background: #e8e8e8;
+  }
+
+  .print-sheet {
+    background: transparent;
+  }
+
   .print-card {
-    box-shadow:
-      0 0 0 1px #d4d4d4,
-      0 2px 8px rgb(0 0 0 / 0.07);
     background: #ffffff;
+    box-shadow:
+      0 1px 3px rgb(0 0 0 / 0.18),
+      0 0 0 1px #c9c9c9;
+  }
+
+  /* ★ 卷（复练/积累）：把**纸边**也画出来 ——
+     内容 152mm + 左右各 15mm 纸边 = 182mm（真 B5 宽）；
+     高 225mm + 上下各 15mm = 255mm ≈ 真 B5 高（257mm，我们本来就留了 2mm 松量）。
+     ⚠️ 必须 content-box：卡片上那个 height:225mm 是**内容**高度，
+         用 border-box 的话 padding 会把版面挤扁。
+     ⚠️ 负外边距是为了在 152mm 的内容列里**保持居中**地向左右撑出纸边。 */
+  .print-review-sheet {
+    box-sizing: content-box;
+    margin: 0 -15mm 10mm;
+    padding: 15mm;
   }
 }
 
@@ -618,8 +671,21 @@
   .print-preview-left,
   .print-preview-splitter,
   .print-review-fig-handle,
+  .print-review-divider-handle,
   .print-review-tweak {
     display: none !important;
+  }
+
+  /* 纸边/灰底都是屏幕上的演示效果，打印按真实纸张来 */
+  .print-preview-right {
+    background: transparent !important;
+  }
+
+  .print-review-sheet {
+    box-sizing: border-box !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
   }
 
   .print-preview-body {

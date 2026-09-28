@@ -270,3 +270,12 @@ export function paginateMeasured(
 export function countSheets(layout: MeasuredSheetLayout): number {
     return layout.pages.length;
 }
+
+/* ===================== 拖虚线调留白（2026-09-28） ===================== */
+
+/**
+ * 一行留白 = 多少**屏幕像素**（拖虚线时用）。
+ * CSS 规定 1in = 96px、1in = 25.4mm ⇒ 1mm = 96/25.4 px。
+ * ⚠️ 别在两个地方各写一遍换算 —— 量高度（px→mm）和这里（mm→px）是同一件事的两面。
+ */
+export const REVIEW_BLANK_LINE_PX = (REVIEW_LAYOUT_MM.blankLineMM * 96) / 25.4;
