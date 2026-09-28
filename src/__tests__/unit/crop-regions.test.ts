@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import {
     clipCropBoxes,
     figuresForSplit,
+    isFigureShapeSuspicious,
+    suspiciousFigureRects,
     isScopeKind,
     mergeConnectedRects,
     needsWipe,
@@ -671,5 +673,53 @@ describe('crop-regions · 契约：base 必须等于存图尺寸', () => {
         // 存图 500×400，坐标却按 1000×800 缩 ⇒ 位置只剩一半
         expect(rect.x).toBeCloseTo(350, 6); // 应是 700
         expect(rect.y).toBeCloseTo(300, 6); // 应是 600
+    });
+});
+
+
+/**
+ * 题图"形状可疑"（组卷体检）。
+ *
+ * 起因：他 2026-09-28 看样张时发现"有的图不能正常显示"——
+ * 其中一道题的题图印出来只有 30mm×6mm 的一条碎片。
+ * 排版本轮已经把"按原图像素印"改成"装进固定比例的盒子、contain 缩放"，
+ * 但**框本身框歪了**这件事排版救不了，所以加了这个判据把可疑的题号暴露出来。
+ */
+describe('题图 · 形状可疑（组卷体检）', () => {
+    const B5 = { w: 152, h: 227 };
+
+    it('正常题图 ⇒ 不可疑', () => {
+        expect(isFigureShapeSuspicious({ w: 60, h: 45 }, B5)).toBe(false);   // 常见横图
+        expect(isFigureShapeSuspicious({ w: 40, h: 40 }, B5)).toBe(false);   // 方图
+        expect(isFigureShapeSuspicious({ w: 45, h: 70 }, B5)).toBe(false);   // 竖图
+    });
+
+    it('★ 那条碎片（30mm × 6mm）⇒ 判为可疑', () => {
+        expect(isFigureShapeSuspicious({ w: 30, h: 6 }, B5)).toBe(true);
+    });
+
+    it('极端长条（横的、竖的都算）⇒ 可疑', () => {
+        expect(isFigureShapeSuspicious({ w: 140, h: 8 }, B5)).toBe(true);
+        expect(isFigureShapeSuspicious({ w: 6, h: 120 }, B5)).toBe(true);
+    });
+
+    it('小到不可能是题图（占版面不到 0.5%）⇒ 可疑', () => {
+        expect(isFigureShapeSuspicious({ w: 10, h: 10 }, B5)).toBe(true);
+    });
+
+    it('尺寸非法 ⇒ 可疑（宁可让人去核，也不要静默印一块空白）', () => {
+        expect(isFigureShapeSuspicious({ w: 0, h: 30 }, B5)).toBe(true);
+        expect(isFigureShapeSuspicious({ w: 30, h: -1 }, B5)).toBe(true);
+    });
+
+    it('⚠️ 宽高比是**按版面归一**再比的：同一个框在竖长版面上更容易被判可疑', () => {
+        // 5.5:1 的绝对比例，在 152×227 的版面上归一后 ≈ 8.2 ⇒ 可疑
+        expect(isFigureShapeSuspicious({ w: 55, h: 10 }, B5)).toBe(true);
+        // 换成正方形版面（152×152）归一后 ≈ 5.5 ⇒ 仍可疑但更接近边界
+        expect(isFigureShapeSuspicious({ w: 55, h: 10 }, { w: 152, h: 152 })).toBe(true);
+    });
+
+    it('没有坐标 ⇒ 空数组（不是"可疑"，是"没有图"）', () => {
+        expect(suspiciousFigureRects(null)).toEqual([]);
     });
 });

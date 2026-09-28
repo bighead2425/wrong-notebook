@@ -536,3 +536,42 @@ export function toPixelRects(
     const target: CropBase = { w: imageWidth, h: imageHeight, rotation: base.rotation };
     return rects.map((r) => mapRect(r, base, target));
 }
+
+/* ===================== 题图"形状可疑"（组卷体检用） ===================== */
+
+/**
+ * 这块题图的形状**可疑**吗 —— 疑似框歪了、框漏了，或者只框到原图的一条边。
+ *
+ * ── 为什么值得单独判一次 ──────────────────────────────────────────
+ * 他 2026-09-28 看样张时发现"有的图不能正常显示"：其中一道题的题图印出来
+ * 只有 **30mm × 6mm** 的一条碎片 —— 排版再怎么改也救不了，
+ * 因为**裁出来的那块本来就只有那么点**。
+ * 与其让他逐题点开去看，不如组卷时算一遍、把可疑的题号列出来。
+ *
+ * ── 判据（都在**基准图坐标系**里算，所以与像素无关）──────────────
+ *   ① 相对长宽比过于极端：`(w/base.w) ÷ (h/base.h)` > 5 或 < 0.2。
+ *      举例：30mm×6mm 在 152×227 的版面上 = 7.5 ⇒ 可疑。
+ *   ② 面积小到不可能是题图：占版面不到 **0.5%**。
+ *
+ * ⚠️ **只提示、不拦截**：宁可多提醒一句让人去核，
+ *    也不要静默印出一张碎片 —— 但也不能因为它把一道真题挡在纸外。
+ * ⚠️ 宽高比是**归一到版面**算的：直接比像素/毫米会漏判 ——
+ *    同样 5:1 的框，在竖长的版面上比在方版面上更可疑。
+ */
+export function isFigureShapeSuspicious(
+    rect: { w: number; h: number },
+    base: { w: number; h: number },
+): boolean {
+    if (!(rect.w > 0) || !(rect.h > 0)) return true;
+    if (!(base.w > 0) || !(base.h > 0)) return false;
+    const relAspect = (rect.w / base.w) / (rect.h / base.h);
+    const areaRatio = (rect.w * rect.h) / (base.w * base.h);
+    return relAspect > 5 || relAspect < 0.2 || areaRatio < 0.005;
+}
+
+/** 这道题的题图里，有几块形状可疑（组卷时列出题号用） */
+export function suspiciousFigureRects(regions: CropRegions | null): { w: number; h: number }[] {
+    if (!regions) return [];
+    const plan = planNetVersion(regions);
+    return plan.figures.filter((f) => isFigureShapeSuspicious(f, regions.base));
+}

@@ -114,10 +114,15 @@ describe('manage-type · 纸面上的升降级小框', () => {
         expect(promoteDirectionFor('deep')).toBe('demote');
     });
 
-    it('没定等级 ⇒ 不印（没有方向可指）', () => {
-        expect(promoteDirectionFor(null)).toBeNull();
-        expect(promoteDirectionFor('')).toBeNull();
-        expect(promoteDirectionFor('build')).toBeNull();
+    it('★ 没定等级 ⇒ **按复练处理**（印"升级"），保证纸上每道题都有框', () => {
+        // 2026-09-28 改。原先写的是"未定不印（没有方向可指）"，概念上没错，
+        // 但 manageType 是 2026-09-28 才加的字段 ⇒ 所有老题都是空的 ⇒
+        // 实际效果变成"**大部分题都不印框**"。他一眼看样张就发现了。
+        // 依据 L0 规则：录入默认 = 复练，所以"空"应当读作"还没被特殊对待"，即复练。
+        expect(promoteDirectionFor(null)).toBe('upgrade');
+        expect(promoteDirectionFor(undefined)).toBe('upgrade');
+        expect(promoteDirectionFor('')).toBe('upgrade');
+        expect(promoteDirectionFor('build')).toBe('upgrade'); // 不是受控值 ⇒ 也走同一兜底
     });
 
     it('⚠️ 必须带文字，且颜色是 红升 / 灰蓝降（黑白复印时颜色会丢）', () => {

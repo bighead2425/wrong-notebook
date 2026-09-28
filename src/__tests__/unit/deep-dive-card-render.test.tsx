@@ -221,11 +221,14 @@ describe('深挖纸 · 升降级小框', () => {
         expect(html).toContain('#7f8c9b');
     });
 
-    it('未定（老数据）⇒ 不印这个框', () => {
+    it('★ 未定（老数据）⇒ **也印框**（按复练 ⇒ 升级）—— 与复练纸同一条规则', () => {
+        // 2026-09-28 改。原先写的是"未定不印"，但 manageType 是当天才加的字段 ⇒
+        // 老题全是空的 ⇒ 实际效果变成"大部分题都不印框"，他看样张时发现了。
+        // 依据 L0 规则：录入默认 = 复练 ⇒ 空值读作"还没被特殊对待"，即复练。
         for (const v of [undefined, null, '', 'build']) {
             const html = renderWith({ manageType: v } as Partial<ErrorItem>);
-            expect(html).not.toContain('print-promote-box');
-            expect(html).not.toContain('升级');
+            expect(html).toContain('print-promote-box');
+            expect(html).toContain('升级');
             expect(html).not.toContain('降级');
         }
     });

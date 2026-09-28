@@ -42,18 +42,26 @@ import type { VolumeKind } from './volume-code';
 export const REVIEW_PAGE_HEIGHT_MM = CONTENT_MM.h - 2;
 
 /**
- * 卷头（页眉）占的高度。
+ * 卷头（页眉）占的高度 = **15mm**。
  *
- * 它内部是**两排**（他定的）：
- *   ① 阳文框「复练/积累」+ 卷号 + 年级·学期 + 第X/Y页 + 印于 YYYY-MM-DD   → 9mm
- *   ② 一条横线（撑满左侧）+ 本页二维码（贴右）                            → 11mm
- * 再加 1mm 呼吸 ⇒ 21mm。
+ * 2026-09-28 第二次改版：他看完样张后要求"页码和打印时间往左移、二维码往上挪，
+ * 页眉才整洁"。于是从"两排"（文字一排 + 横线&码一排，21mm）收成：
+ *   ① 一排装完：阳文框 + 卷号 + 年级·学期 …… 第X/Y页 + 印于日期 + **二维码** → 12mm
+ *   ② 横线**整条贯通**                                                        → 2mm
+ * 加 1mm 呼吸 ⇒ 15mm。每页因此比上一版多出 6mm 给题目。
  *
- * ⚠️ 横线与二维码**共享页宽**（线占左边剩下的、码贴右边）——
- *    与深挖纸是同一种排法，只是深挖纸那条在页脚、这条在页头。
  * 内容区 = 页高 − 它。
  */
-export const VOLUME_HEADER_MM = 21;
+export const VOLUME_HEADER_MM = 15;
+
+/**
+ * 有题图时，**图占答题区宽度的比例**（剩下的留给她写字）。
+ *
+ * ⚠️ 用比例而不是"最多多少毫米"，是为了让**很小的图也能被放大到看得见**：
+ *    图交给浏览器按 `object-fit: contain` 装进这个盒子，小的放大、大的缩小、永不裁切。
+ *    详见 `components/print/review-card.tsx` 的 `AnswerRow`。
+ */
+export const REVIEW_FIGURE_BOX_RATIO = 0.55;
 
 /** 内容区高度（分栏时**每栏**都是这个高度） */
 export const VOLUME_COLUMN_MM = REVIEW_PAGE_HEIGHT_MM - VOLUME_HEADER_MM;
@@ -88,6 +96,13 @@ export const REVIEW_LAYOUT_MM = {
     /** 留白行数的合法区间（微调时夹在这里面） */
     blankLinesMin: 0,
     blankLinesMax: 40,
+    /**
+     * 答题区的**最小高度**：右下角那个升降级小框（6mm）+ 一点余量。
+     * 留白行数被调到 0、又没有题图时，答题区会缩到 0 ——
+     * 那小框就会被 `overflow: hidden` 吃掉，纸上看起来"这题没有框"。
+     * 7mm 保证框永远印得出来。
+     */
+    answerRowMinMM: 7,
 } as const;
 
 /** 复练纸缺省留白行数（他定的） */
@@ -291,7 +306,11 @@ export function measureBlock(
     const overflow = textMM + desiredRow + gaps > VOLUME_COLUMN_MM + EPS;
 
     const figureHeightMM = Math.min(wantCapped, available);
-    const rowHeightMM = Math.min(Math.max(figureHeightMM, blankMM), available);
+    /** 答题区高度 = max(题图, 留白) —— 但**不低于升降级小框那一行**，否则框会被裁掉 */
+    const rowHeightMM = Math.min(
+        Math.max(figureHeightMM, blankMM, REVIEW_LAYOUT_MM.answerRowMinMM),
+        available,
+    );
     /**
      * ⚠️ **块高必须封顶在一栏以内**。
      * 有些极端的题（题干单独就超过一栏）连"把答题区压到 0"都放不下 ——

@@ -214,11 +214,22 @@ export type PromoteDirection = 'upgrade' | 'demote';
  *
  * 出处：`二次设计/流程图连接笔记/18_升降级小框.md`
  */
-export function promoteDirectionFor(type: unknown): PromoteDirection | null {
+export function promoteDirectionFor(type: unknown): PromoteDirection {
     const t = normalizeManageType(type);
-    if (t === 'review') return 'upgrade';
     if (t === 'deep') return 'demote';
-    return null;
+    /**
+     * 【2026-09-28 改】未定等级 ⇒ **按"复练"处理**（印 ↑升级）。
+     *
+     * 原来未定**什么都不印**，理由是"没有方向可指"。这条在概念上没错，
+     * 但他看了一眼印出来的卷就发现：**大部分题没有框** ——
+     * 因为 `manageType` 是 09-28 才加的字段，**所有老题都是空的**。
+     * 于是"未定不印"实际变成了"老题不印"，那不是设计意图，是我们自己的缺口。
+     *
+     * 现在按复练处理，依据是设计里那条 L0 规则：**录入默认就是复练**
+     * （不是深挖 —— 全默认深挖 = 平均用力）。所以"空"应当读作"还没被特殊对待"，
+     * 也就是复练。将来若把老数据回填成 review，这次改动不会有任何差别。
+     */
+    return 'upgrade';
 }
 
 /**

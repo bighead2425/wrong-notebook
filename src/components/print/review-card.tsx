@@ -4,10 +4,10 @@ import { ErrorItem } from '@/types/api';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
 import {
     COLUMN_GAP_MM,
+    REVIEW_FIGURE_BOX_RATIO,
     REVIEW_PAGE_HEIGHT_MM,
     REVIEW_PUNCH_GUTTER_MM,
     VOLUME_HEADER_MM,
-    VOLUME_VARIANTS,
     type ReviewBlockLayout,
     type ReviewPageLayout,
 } from '@/lib/review-card';
@@ -25,20 +25,20 @@ import { PromoteBox } from './promote-box';
 /**
  * T2 复练纸 / T3 积累纸 —— **卷**（不是"一题一张纸"）。
  *
- * ── 2026-09-28 这一版改了什么（他逐条提的）─────────────────────────
- *  ① 每题上面**不再有题号/二维码/横线**，只有一条**浅浅的灰虚线**分隔；
- *     二维码搬到**页眉**（内容 = 卷号-页码），一页一个。
- *     题前只有一个**流水号**（1. 2. 3. …），它只是这份卷的排序号，不是题号。
- *  ② 页眉是一条**卷头**：阳文圆角框「复练」（暗红）/「积累」（深绿）+ 卷号
- *     + 年级·学期 + 第X/Y页 + 印于 YYYY-MM-DD，下面一条横线与本页二维码共享页宽。
- *     ⚠️ 阳文 = 白底、彩框彩字；深挖纸是**实底白字** —— 一眼分得清"卷"和"纸"。
- *  ③ 一页能排几题就排几题（不再"每页最多两题"），见 `lib/review-card.ts`。
- *  ④ **每道题**都印升降级小框（上一版只有第一题有框）。
- *  ⑤ 打孔位：**奇数页留左、偶数页留右**（与深挖纸正反面同一条物理边）。
+ * ── 2026-09-28 第二次改版（他看完 5 页样张后提的）─────────────────
+ *  ① **卷头收成一排**：阳文框 + 卷号 + 年级·学期 …… 第X/Y页 + 印于日期 + **二维码**。
+ *     二维码从第二排**上移**到这一排的最右，页码与日期往左让位；
+ *     下面那条横线改为**整条贯通**。页眉因此从 21mm 压到 15mm，每页多出 6mm 给题目。
+ *  ② **题图不再按原始像素大小印**（那是"有的图小到看不清、有的被裁掉半截"的根因）：
+ *     改成装进一个**固定比例的盒子**里按 `object-fit: contain` 缩放 ——
+ *     小图放大、大图缩小、**永不裁切**。详见 `AnswerRow` 里那段注释。
+ *  ③ **每道题都有升降级小框**（未定等级按"复练"处理，见 `lib/manage-type.ts`）。
+ *  ④ **去掉四角角标**：它原本是给"手机拍纸摆正"用的（设计文档 P21），
+ *     但现在没有任何代码认它（`doc-scan.ts` 是靠照片里的**纸边**找四角），
+ *     而二维码自带三个定位角、识别根本不需要它 ⇒ 纯墨水 + 纯视觉噪音，去掉。
  *
  * ── 铁律（与深挖纸同）────────────────────────────────────────────
  * **纸上零 AI 内容**：不印答案 / 解析 / 错因 / 进度，有渲染测试钉死。
- * 面标记规范：有角标就该有码，所以本组件一定同时画四角角标与页眉二维码。
  */
 
 export interface ReviewSheetProps {
@@ -67,30 +67,17 @@ export interface ReviewSheetProps {
     L: (zh: string, en: string) => string;
 }
 
-/** 四角角标：定位用的小直角。纸歪了靠它摆正（回收程序认这个）。 */
-function CornerMark({ at }: { at: 'tl' | 'tr' | 'bl' | 'br' }) {
-    const common: CSSProperties = {
-        position: 'absolute',
-        width: '4mm',
-        height: '4mm',
-        borderColor: '#111',
-        borderStyle: 'solid',
-        borderWidth: 0,
-        pointerEvents: 'none',
-    };
-    const byCorner: Record<string, CSSProperties> = {
-        tl: { top: 0, left: 0, borderTopWidth: '0.5mm', borderLeftWidth: '0.5mm' },
-        tr: { top: 0, right: 0, borderTopWidth: '0.5mm', borderRightWidth: '0.5mm' },
-        bl: { bottom: 0, left: 0, borderBottomWidth: '0.5mm', borderLeftWidth: '0.5mm' },
-        br: { bottom: 0, right: 0, borderBottomWidth: '0.5mm', borderRightWidth: '0.5mm' },
-    };
-    return <span className={`print-review-corner print-review-corner-${at}`} style={{ ...common, ...byCorner[at] }} />;
-}
-
 /**
- * 卷头（页眉）。
- * 第一排：阳文框 + 卷号 + 年级·学期 + 第X/Y页 + 印于日期
- * 第二排：横线（撑左）+ 本页二维码（贴右）—— 两者共享页宽
+ * 卷头（页眉）——**一排装完**。
+ *
+ * ```
+ * [复练]  RE20260928002  六年级上·五年级上  ……………  第1/5页  印于 2026-09-28  [二维码]
+ * ────────────────────────────────────────────────────────────────────────────────
+ * ```
+ *
+ * ⚠️ 二维码**必须和文字同一排**：他上一版看到二维码孤零零占第二排、上面留一大块空，
+ *    原话是"页码和打印时间往左移动，使二维码可以向上挪一些，这样整个页眉才比较整洁"。
+ *    所以现在的规则是：**文字占左边、二维码贴右边**，下面那条横线**整条贯通**。
  */
 function VolumeHeader({
     kind,
@@ -123,8 +110,8 @@ function VolumeHeader({
                 overflow: 'hidden',
             }}
         >
-            <div style={{ height: '9mm', display: 'flex', alignItems: 'center', gap: '2.5mm', flex: '0 0 auto' }}>
-                {/* 阳文框：框与字同色、底为白 —— 与深挖纸（实底白字）恰好相反，便于一眼区分 */}
+            <div style={{ height: '12mm', display: 'flex', alignItems: 'center', gap: '2.5mm', flex: '0 0 auto' }}>
+                {/* 阳文框：框与字同色、底为白 —— 与深挖纸（实底白字）恰好相反，一眼能分开"卷"和"纸" */}
                 <span
                     className={`print-volume-badge print-volume-badge-${kind}`}
                     style={{
@@ -157,13 +144,6 @@ function VolumeHeader({
                 <span style={{ fontSize: '8pt', color: '#555', whiteSpace: 'nowrap' }}>
                     {L('印于', 'printed')} {stampReadable(printDate)}
                 </span>
-            </div>
-            {/* 横线与二维码共享页宽：线占左侧剩下的，码贴右 */}
-            <div style={{ height: '11mm', display: 'flex', alignItems: 'center', gap: '2.5mm', flex: '0 0 auto' }}>
-                <span
-                    className="print-volume-header-rule"
-                    style={{ flex: 1, height: '0.25mm', background: '#666' }}
-                />
                 {pageQr ? (
                     /* eslint-disable-next-line @next/next/no-img-element -- 打印页必须用原生 img：src 是 dataURL，要交给浏览器打印快照；next/image 会插一层优化/懒加载，反而可能打不出来 */
                     <img
@@ -174,19 +154,131 @@ function VolumeHeader({
                     />
                 ) : null}
             </div>
+            {/* 横线：整条贯通（二维码已经上移到上面那一排，不再与它分宽度） */}
+            <div style={{ height: '2mm', display: 'flex', alignItems: 'center', flex: '0 0 auto' }}>
+                <span
+                    className="print-volume-header-rule"
+                    style={{ flex: 1, height: '0.25mm', background: '#666' }}
+                />
+            </div>
         </div>
     );
 }
 
 /**
- * 一道题的块：流水号 + 题干 → 答题区（左下角题图 / 右下角升降级框）。
+ * 答题区：左边题图、右边留白（右下角是升降级小框）。
  *
- * ⚠️ 高度全部来自算法给的 `block.contentHeightMM`，组件不再自己夹一次。
+ * ── 题图为什么改成"盒子 + contain"（2026-09-28）────────────────────
+ * 上一版是 `<img maxWidth maxHeight>`：它**按图片自己的像素尺寸**排版，只在超限时才缩。
+ * 后果是他看到的两种坏样子：
+ *   · 原图里那块区域本来就小 ⇒ 印出来是一条 30mm×6mm 的**碎片**；
+ *   · 多张图挤一行、容器又限高 ⇒ 后面的图被**裁掉半截**。
+ *
+ * 现在：给图一个**固定比例的盒子**（答题区宽度的 55% × 行高），
+ * 图按 `object-fit: contain` 装进去 —— 等比缩放，**小的放大、大的缩小、永不裁切**。
+ * 于是"图多大"不再取决于原图有多少像素，只取决于版面对它的安排。
+ *
+ * ⚠️ 这只解决**排版**。若某道题的框本身就框歪了（裁出来只是原图的一条边），
+ *    放大出来仍是那条边 —— 那是数据问题，由组卷时的"疑似框歪"提示去暴露。
  */
+function AnswerRow({
+    item,
+    block,
+    blankValue,
+    onBlankChange,
+    L,
+}: {
+    item: ErrorItem;
+    block: ReviewBlockLayout;
+    blankValue?: number;
+    onBlankChange?: (itemId: string, next: number) => void;
+    L: (zh: string, en: string) => string;
+}) {
+    const figures = useFigureImages(item);
+    const showFigures = figures.length > 0 && block.figureHeightMM > 0;
+    const canTweak = typeof blankValue === 'number' && !!onBlankChange;
+
+    return (
+        <div
+            className="print-review-answer"
+            style={{
+                height: `${block.rowHeightMM}mm`,
+                marginTop: '1mm',
+                display: 'flex',
+                alignItems: 'stretch',
+                gap: '2.5mm',
+                flex: '0 0 auto',
+                overflow: 'hidden',
+            }}
+        >
+            {showFigures && (
+                <div
+                    className="print-review-figures"
+                    style={{
+                        flex: `0 1 ${REVIEW_FIGURE_BOX_RATIO * 100}%`,
+                        minWidth: 0,
+                        display: 'flex',
+                        gap: '2mm',
+                        alignItems: 'stretch',
+                    }}
+                >
+                    {figures.map((url, i) => (
+                        /* eslint-disable-next-line @next/next/no-img-element -- 打印页必须用原生 img：src 是 dataURL，要交给浏览器打印快照；next/image 会插一层优化/懒加载，反而可能打不出来 */
+                        <img
+                            key={i}
+                            src={url}
+                            alt=""
+                            style={{
+                                flex: '1 1 0',
+                                minWidth: 0,
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'contain',
+                                objectPosition: 'left center',
+                                display: 'block',
+                            }}
+                        />
+                    ))}
+                </div>
+            )}
+
+            <div
+                style={{
+                    flex: 1,
+                    minWidth: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'flex-end',
+                    alignItems: 'flex-end',
+                    gap: '1mm',
+                }}
+            >
+                {/* 留白微调：**只在屏幕上出现**，打印时被 CSS 隐藏（他只让它在阅览页能用） */}
+                {canTweak && (
+                    <span className="print-review-tweak">
+                        <button type="button" onClick={() => onBlankChange!(item.id, blankValue! - 1)}>
+                            −
+                        </button>
+                        <span className="print-review-tweak-value">
+                            {blankValue}
+                            {L('行', '')}
+                        </span>
+                        <button type="button" onClick={() => onBlankChange!(item.id, blankValue! + 1)}>
+                            ＋
+                        </button>
+                    </span>
+                )}
+                {/* 升降级小框：**每道题都有**（未定按复练处理） */}
+                <PromoteBox manageType={item.manageType} L={L} />
+            </div>
+        </div>
+    );
+}
+
+/** 一道题的块：流水号 + 题干 → 答题区（左题图 / 右下角小框） */
 function ReviewQuestionBlock({
     item,
     block,
-    kind,
     showDivider,
     blankValue,
     onBlankChange,
@@ -194,17 +286,13 @@ function ReviewQuestionBlock({
 }: {
     item: ErrorItem;
     block: ReviewBlockLayout;
-    /** 哪种卷 —— 题图宽度上限跟着它走（积累纸栏窄，图不能按复练纸的宽度印） */
-    kind: VolumeKind;
     /** 本栏内不是第一题时才画那条浅虚线（跨页/跨栏处不画） */
     showDivider: boolean;
     blankValue?: number;
     onBlankChange?: (itemId: string, next: number) => void;
     L: (zh: string, en: string) => string;
 }) {
-    const figures = useFigureImages(item);
     const stem = item.questionText || item.ocrText;
-    const canTweak = typeof blankValue === 'number' && !!onBlankChange;
 
     return (
         <div
@@ -241,80 +329,13 @@ function ReviewQuestionBlock({
                 )}
             </div>
 
-            {/* 答题区：高度 = max(题图, 留白行数×行高)（算法算好的） */}
-            <div
-                className="print-review-answer"
-                style={{
-                    height: `${block.rowHeightMM}mm`,
-                    marginTop: '1mm',
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: '2.5mm',
-                    flex: '0 0 auto',
-                    overflow: 'hidden',
-                }}
-            >
-                {/* 题图放在题干左下角（他定的位置） */}
-                {figures.length > 0 && block.figureHeightMM > 0 && (
-                    <div
-                        className="print-review-figures"
-                        style={{
-                            display: 'flex',
-                            flexWrap: 'wrap',
-                            alignItems: 'flex-start',
-                            gap: '2mm',
-                            maxHeight: `${block.figureHeightMM}mm`,
-                            overflow: 'hidden',
-                            flex: '0 0 auto',
-                        }}
-                    >
-                        {figures.map((url, i) => (
-                            /* eslint-disable-next-line @next/next/no-img-element -- 打印页必须用原生 img：src 是 dataURL，要交给浏览器打印快照；next/image 会插一层优化/懒加载，反而可能打不出来 */
-                            <img
-                                key={i}
-                                src={url}
-                                alt=""
-                                style={{
-                                    maxWidth: `${VOLUME_VARIANTS[kind].figureMaxWidthMM}mm`,
-                                    maxHeight: `${block.figureHeightMM}mm`,
-                                    display: 'block',
-                                }}
-                            />
-                        ))}
-                    </div>
-                )}
-
-                {/* 右侧：留白 + 右下角的升降级小框（**每题都有**） */}
-                <div
-                    style={{
-                        flex: 1,
-                        minWidth: 0,
-                        alignSelf: 'stretch',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        justifyContent: 'flex-end',
-                        alignItems: 'flex-end',
-                        gap: '1mm',
-                    }}
-                >
-                    {/* 留白微调：**只在屏幕上出现**，打印时被 CSS 隐藏（他只让它在阅览页能用） */}
-                    {canTweak && (
-                        <span className="print-review-tweak">
-                            <button type="button" onClick={() => onBlankChange!(item.id, blankValue! - 1)}>
-                                −
-                            </button>
-                            <span className="print-review-tweak-value">
-                                {blankValue}
-                                {L('行', '')}
-                            </span>
-                            <button type="button" onClick={() => onBlankChange!(item.id, blankValue! + 1)}>
-                                ＋
-                            </button>
-                        </span>
-                    )}
-                    <PromoteBox manageType={item.manageType} L={L} />
-                </div>
-            </div>
+            <AnswerRow
+                item={item}
+                block={block}
+                blankValue={blankValue}
+                onBlankChange={onBlankChange}
+                L={L}
+            />
         </div>
     );
 }
@@ -339,9 +360,9 @@ export function ReviewSheet({
      * 单面卷页页翻过去，孔位就在左右之间交替。
      */
     const punchOnLeft = pageNo % 2 === 1;
-    const padding = punchOnLeft
-        ? { paddingLeft: `${REVIEW_PUNCH_GUTTER_MM}mm`, paddingRight: 0 }
-        : { paddingLeft: 0, paddingRight: `${REVIEW_PUNCH_GUTTER_MM}mm` };
+    const padding: CSSProperties = punchOnLeft
+        ? { paddingLeft: `${REVIEW_PUNCH_GUTTER_MM}mm` }
+        : { paddingRight: `${REVIEW_PUNCH_GUTTER_MM}mm` };
 
     return (
         <div
@@ -355,11 +376,6 @@ export function ReviewSheet({
                 ...padding,
             }}
         >
-            <CornerMark at="tl" />
-            <CornerMark at="tr" />
-            <CornerMark at="bl" />
-            <CornerMark at="br" />
-
             <VolumeHeader
                 kind={kind}
                 volumeNo={volumeNo}
@@ -397,7 +413,6 @@ export function ReviewSheet({
                                         key={b.key}
                                         item={item}
                                         block={b}
-                                        kind={kind}
                                         showDivider={bi > 0}
                                         blankValue={blankValueOf ? blankValueOf(item.id) : undefined}
                                         onBlankChange={onBlankChange}

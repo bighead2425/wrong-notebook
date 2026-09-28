@@ -33,6 +33,7 @@ import {
     normalizeBlankLines,
 } from "@/lib/review-card";
 import type { VolumeKind } from "@/lib/volume-code";
+import { parseCropRegions, suspiciousFigureRects } from "@/lib/crop-regions";
 import {
     AnswerBody,
     QuestionBody,
@@ -184,6 +185,20 @@ function PrintPreviewContent() {
             blankOverrides,
         );
     }, [isVolume, volumeKind, selectedItems, blankOverrides]);
+
+    /**
+     * 【组卷体检】哪几道题的**题图疑似框歪了**（裁出来只是一条边、或小得不像题图）。
+     * 只看框坐标就够了（不用等图加载），所以是一段纯计算。
+     * 有货就在预览页顶上报出来 —— 排版本轮已经"永不裁图"了，
+     * 但**框本身歪**这件事只能靠人重录，必须让他看见。
+     */
+    const suspiciousFigureItems = useMemo(() => {
+        if (!isVolume) return [];
+        return selectedItems.filter((item) => {
+            const regions = parseCropRegions(item.cropRegions);
+            return suspiciousFigureRects(regions).length > 0;
+        });
+    }, [isVolume, selectedItems]);
 
     /**
      * 整卷的"年级·学期"（页眉那一句）。
@@ -686,6 +701,18 @@ function PrintPreviewContent() {
                                     {L(
                                         `题目、留白或卷别改过了，纸上现在是**新的**排版，而库里的还是 ${volume?.volumeNo ?? ""}。上纸之前请点一次「重新组卷」。`,
                                         `Layout changed since ${volume?.volumeNo ?? ""} was built — rebuild before printing.`,
+                                    )}
+                                </div>
+                            )}
+                            {/* 组卷体检：题图疑似框歪 —— 排版本轮已经"永不裁图"，
+                                但框本身歪只能靠重录，必须让他看见 */}
+                            {suspiciousFigureItems.length > 0 && (
+                                <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
+                                    {L(
+                                        `有 ${suspiciousFigureItems.length} 道题的题图可能没框好（框太大/太小/只框到边）：${suspiciousFigureItems
+                                            .map((i) => i.source || i.id)
+                                            .join('、')}。这几道需要**重新框一次橙框**，图上才能看清。`,
+                                        `${suspiciousFigureItems.length} question(s) may have a badly drawn figure box — re-crop them.`,
                                     )}
                                 </div>
                             )}

@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ReviewSheet } from '@/components/print/review-card';
-import { REVIEW_PAGE_HEIGHT_MM, layoutReviewSheets } from '@/lib/review-card';
+import { REVIEW_PAGE_HEIGHT_MM, VOLUME_HEADER_MM, layoutReviewSheets } from '@/lib/review-card';
 import type { VolumeKind } from '@/lib/volume-code';
 import type { ErrorItem } from '@/types/api';
 
@@ -119,11 +119,19 @@ describe('卷 · 卷头（页眉）', () => {
 });
 
 describe('卷 · 面的标记规范', () => {
-    it('四个角标都要在（与页二维码成对，缺了回收程序认不出）', () => {
+    it('★ **不印四角角标**（2026-09-28 去掉：没有代码认它，二维码自带定位角）', () => {
         const html = renderSheets([item()]);
         for (const at of ['tl', 'tr', 'bl', 'br']) {
-            expect(html).toContain(`print-review-corner-${at}`);
+            expect(html).not.toContain(`print-review-corner-${at}`);
         }
+    });
+
+    it('卷头收成一排、总高 15mm，二维码在卷头里（不再单占一排）', () => {
+        const html = renderSheets([item()], { volumeNo: 'RE20260928002' });
+        expect(html).toContain('print-volume-header');
+        expect(html).toContain(`height:${VOLUME_HEADER_MM}mm`);
+        expect(html).toContain('print-volume-qr');
+        expect(html).toContain('print-volume-header-rule');
     });
 
     it('⚠️ 每题**不再**印题号与二维码（2026-09-28 他提的第 1 条：只留一条浅虚线）', () => {
@@ -178,9 +186,12 @@ describe('卷 · 该有的与不该有的', () => {
         expect(html).toContain('降级');
     });
 
-    it('未定等级 ⇒ 一道题的框都不印', () => {
+    it('★ 未定等级的行**也印框**（按复练 ⇒ 升级）—— 保证每道题都有', () => {
+        // 2026-09-28 改：原先"未定不印"，但老题的 manageType 都是空的 ⇒
+        // 实际效果是"大部分题不印框"。他一看样张就看出来了。
         const html = renderSheets([item(), item({ id: 'e2' })]);
-        expect(html).not.toContain('print-promote-box');
+        expect(html.split('print-promote-box').length - 1).toBe(2);
+        expect(html).toContain('升级');
     });
 
     it('留白微调只在**被要求时**渲染，且带 print-review-tweak 类名（打印时由 CSS 隐藏）', () => {

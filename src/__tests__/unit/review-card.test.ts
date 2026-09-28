@@ -4,9 +4,11 @@ import { describe, expect, it } from 'vitest';
 import {
     BUILD_DEFAULT_BLANK_LINES,
     REVIEW_DEFAULT_BLANK_LINES,
+    REVIEW_FIGURE_BOX_RATIO,
     REVIEW_LAYOUT_MM,
     REVIEW_PAGE_HEIGHT_MM,
     VOLUME_COLUMN_MM,
+    VOLUME_HEADER_MM,
     VOLUME_VARIANTS,
     applyGlobalBlankLines,
     effectiveBlankLines,
@@ -201,6 +203,26 @@ describe('卷 · 分页（尽量多排、绝不跨页）', () => {
     it('页高 = 版心 − 2mm（防"前面多一张白纸"的老教训）', () => {
         expect(REVIEW_PAGE_HEIGHT_MM).toBe(225);
         expect(VOLUME_COLUMN_MM).toBeLessThan(REVIEW_PAGE_HEIGHT_MM);
+    });
+});
+
+describe('卷 · 卷头与答题区下限（2026-09-28 第二次改版）', () => {
+    it('卷头收成 15mm：二维码并进文字那一排，横线整条贯通', () => {
+        // 改版前 21mm（文字一排 + 横线&码一排），他要求"码往上挪、页码日期往左"。
+        expect(VOLUME_HEADER_MM).toBe(15);
+        expect(VOLUME_COLUMN_MM).toBe(REVIEW_PAGE_HEIGHT_MM - 15);
+    });
+
+    it('⚠️ 留白调到 0 又没有题图 ⇒ 答题区仍留 7mm，否则升降级小框会被裁掉', () => {
+        const b = measureBlock(spec({ key: 'a' }), 'review', 1, 0);
+        expect(b.blankLines).toBe(0);
+        expect(b.figureHeightMM).toBe(0);
+        expect(b.rowHeightMM).toBeGreaterThanOrEqual(REVIEW_LAYOUT_MM.answerRowMinMM);
+    });
+
+    it('题图比例常量在 (0,1) 之间 —— 它是"图占答题区宽度的比例"', () => {
+        expect(REVIEW_FIGURE_BOX_RATIO).toBeGreaterThan(0);
+        expect(REVIEW_FIGURE_BOX_RATIO).toBeLessThan(1);
     });
 });
 

@@ -16,7 +16,7 @@ import { PROMOTE_BOX, promoteDirectionFor } from '@/lib/manage-type';
  *     那条规则写在**回收逻辑**里并配测试，不印到纸上：
  *     印上去等于指导她"怎么勾才算数"，反而把她的表达限制了。
  *
- * 没定等级（未定）⇒ **什么都不印**（没有方向可指）。
+ * 未定等级 ⇒ **按复练处理**（印"升级"），所以纸上每道题都有这个框（2026-09-28 改）。
  *
  * 两处用到：深挖纸背面（遮挡线左下 / 她动笔区顶部）、复练纸每题留白区内虚线之上。
  */
@@ -29,9 +29,12 @@ export interface PromoteBoxProps {
 }
 
 export function PromoteBox({ manageType, L }: PromoteBoxProps) {
-    const dir = promoteDirectionFor(manageType);
-    if (!dir) return null;
-    const box = PROMOTE_BOX[dir];
+    /**
+     * ⚠️ 这里**不再有"未定就不印"**的分支（2026-09-28 去掉）：
+     * 方向函数现在对空值也返回一个方向（复练 ⇒ 升级），
+     * 所以纸上**每道题都有框**。理由见 `lib/manage-type.ts` 的 `promoteDirectionFor`。
+     */
+    const box = PROMOTE_BOX[promoteDirectionFor(manageType)];
 
     return (
         <div
