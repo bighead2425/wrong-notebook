@@ -151,6 +151,10 @@
 .print-deep-side {
   position: relative;
   overflow: hidden;
+  /* 打孔位：内联只给 `--punch-l/--punch-r` 变量（正/反哪边 12mm），
+     这里统一落成 padding —— 打印与屏幕都生效，纸边在屏幕上再叠加（见 @media screen）。 */
+  padding-left: var(--punch-l, 0mm);
+  padding-right: var(--punch-r, 0mm);
 }
 
 /* 十字象限：**只是参考位置**，不赋四格语义（P6）。
@@ -600,8 +604,15 @@
   background: rgb(0 0 0 / 0.04);
 }
 
+/* 复练纸的打孔位：内联只给变量（奇数页左/偶数页右，12mm），
+   这里统一落成 padding —— 与深挖纸 .print-deep-side 同一套（他要求两种纸一致）。 */
+.print-review-sheet {
+  padding-left: var(--punch-l, 0mm);
+  padding-right: var(--punch-r, 0mm);
+}
+
 /* 题图右下角的**缩放把手**：只在屏幕上有，打印绝不出现 */
-.print-review-fig-handle {
+.print-fig-handle {
   position: absolute;
   right: 0;
   bottom: 0;
@@ -614,7 +625,7 @@
   background: linear-gradient(135deg, transparent 45%, #9aa0a6 45%, #9aa0a6 55%, transparent 55%);
 }
 
-.print-review-fig-handle:hover {
+.print-fig-handle:hover {
   border-color: #4b5563;
 }
 
@@ -636,16 +647,33 @@
       0 0 0 1px #c9c9c9;
   }
 
-  /* ★ 卷（复练/积累）：把**纸边**也画出来 ——
+  /* ★ 卷（复练/积累）与深挖纸：把**纸边**也画出来 ——
      内容 152mm + 左右各 15mm 纸边 = 182mm（真 B5 宽）；
      高 225mm + 上下各 15mm = 255mm ≈ 真 B5 高（257mm，我们本来就留了 2mm 松量）。
      ⚠️ 必须 content-box：卡片上那个 height:225mm 是**内容**高度，
          用 border-box 的话 padding 会把版面挤扁。
-     ⚠️ 负外边距是为了在 152mm 的内容列里**保持居中**地向左右撑出纸边。 */
-  .print-review-sheet {
+     ⚠️ 负外边距是为了在 152mm 的内容列里**保持居中**地向左右撑出纸边。
+     ⚠️ 打孔位（--punch-l/--punch-r，12mm）叠在纸边**里面**：
+         纸总宽不变（182mm），内容相应缩到 140mm —— 和真纸上打孔一个道理。 */
+  .print-review-sheet,
+  .print-deep-side {
     box-sizing: content-box;
     margin: 0 -15mm 10mm;
-    padding: 15mm;
+    padding-top: 15mm;
+    padding-bottom: 15mm;
+    padding-left: calc(15mm + var(--punch-l, 0mm));
+    padding-right: calc(15mm + var(--punch-r, 0mm));
+    background: #ffffff;
+    box-shadow:
+      0 1px 3px rgb(0 0 0 / 0.18),
+      0 0 0 1px #c9c9c9;
+  }
+
+  /* 深挖纸：一张卡 = 正反两面 = 两页 ⇒ 白纸与投影要画在**每一面**上，
+     卡本身要退成透明，不然两面糊成一个长条。 */
+  .print-card.print-deep {
+    background: transparent;
+    box-shadow: none;
   }
 }
 
@@ -670,7 +698,7 @@
   .print-review-measure,
   .print-preview-left,
   .print-preview-splitter,
-  .print-review-fig-handle,
+  .print-fig-handle,
   .print-review-divider-handle,
   .print-review-tweak {
     display: none !important;
@@ -681,12 +709,17 @@
     background: transparent !important;
   }
 
-  .print-review-sheet {
+  .print-review-sheet,
+  .print-deep-side {
     box-sizing: border-box !important;
     margin: 0 !important;
-    padding: 0 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
     box-shadow: none !important;
+    background: transparent !important;
   }
+  /* ⚠️ 打孔位（--punch-l/--punch-r 的 padding）**不清零** ——
+     它是真纸上要打孔的物理位置，不是屏幕效果（2026-09-29 之前被这句一起清掉过）。 */
 
   .print-preview-body {
     display: block !important;

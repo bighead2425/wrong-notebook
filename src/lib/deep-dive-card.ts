@@ -49,6 +49,16 @@ export const SIDE_HEIGHT_MM = CONTENT_MM.h - 2;
  */
 export const PUNCH_GUTTER_MM = 12;
 
+/**
+ * 深挖纸**题图**的基准尺寸（缩放的 100% 就按它）。
+ * 与复练纸同一套缩放手感（30%–180%，见 `lib/review-card.ts` 的 normalizeFigureScale）：
+ * 电脑上拖右下角小把手、手机上按住图左右拖。
+ *
+ * ⚠️ **同时给宽和高**：只写 `max-width/max-height` 的话，小图**不会**被放大
+ * （浏览器按图片自己的像素排版，只在超限时才缩）—— 那正是"图印出来是条碎片"的根因。
+ */
+export const DEEP_FIGURE_BASE_MM = { w: 60, h: 40 } as const;
+
 /** 扣掉打孔位之后**真正能排版**的宽度 = 152 − 12 = 140mm */
 export const USABLE_WIDTH_MM = CONTENT_MM.w - PUNCH_GUTTER_MM;
 

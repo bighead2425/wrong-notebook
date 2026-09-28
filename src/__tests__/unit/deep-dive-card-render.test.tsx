@@ -153,9 +153,10 @@ describe('T1 深挖纸 · 正反面的分野', () => {
 
     it('正面左侧留打孔位、反面右侧留（同一条物理边，长边翻转）', () => {
         const html = renderWith();
-        // 正面：左 12mm / 右 0；反面：左 0 / 右 12mm
-        expect(html).toContain('padding-left:12mm');
-        expect(html).toContain('padding-right:12mm');
+        // 【2026-09-29 起打孔位走 CSS 变量 --punch-l/--punch-r】
+        // （内联 padding 会被屏幕"纸边"与打印重置规则吃掉，变量才能两边都活着）
+        expect(html).toContain('--punch-l:12mm');
+        expect(html).toContain('--punch-r:12mm');
     });
 
     it('外边框与四角标识归「她自己分析的那块」，不归原题照片', () => {

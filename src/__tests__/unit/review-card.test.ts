@@ -17,6 +17,7 @@ import {
     VOLUME_HEADER_MM,
     VOLUME_VARIANTS,
     applyGlobalBlankLines,
+    blankLinesFromDrag,
     countSheets,
     effectiveBlankLines,
     normalizeBlankLines,
@@ -144,13 +145,14 @@ describe('卷 · 拖虚线调留白（一行的像素）', () => {
         expect(moved(0.6)).toBe(1);
     });
 
-    it('向上拖 = 减行、向下拖 = 加行（他定的方向）', () => {
-        // 打印页里是 `startLines - deltaLines`，delta 为 y 位移换算出的行数
-        const apply = (startLines: number, dyPx: number) =>
-            normalizeBlankLines(startLines - Math.round(dyPx / REVIEW_BLANK_LINE_PX), startLines);
-        expect(apply(5, -2 * REVIEW_BLANK_LINE_PX)).toBe(7); // 向下拖两行 ⇒ 5+2
-        expect(apply(5, 2 * REVIEW_BLANK_LINE_PX)).toBe(3); // 向上拖两行 ⇒ 5−2
-        expect(apply(1, 5 * REVIEW_BLANK_LINE_PX)).toBe(0); // 减到 0 就停住
+    it('向下拖 = 加行、向上拖 = 减行（他 2026-09-29 纠正后的方向）', () => {
+        // 拖的是"上面那块的底边"：往下拉 = 拉长 = 留白变多。
+        // ⚠️ 这条测的是**真函数** blankLinesFromDrag —— 旧版把页面里的算法抄进来重算一遍，
+        // 结果方向做反了测试照样绿。教训：测试必须 import 被测函数，禁止照抄实现。
+        expect(blankLinesFromDrag(5, 2 * REVIEW_BLANK_LINE_PX, 5)).toBe(7); // 向下拖两行 ⇒ 5+2
+        expect(blankLinesFromDrag(5, -2 * REVIEW_BLANK_LINE_PX, 5)).toBe(3); // 向上拖两行 ⇒ 5−2
+        expect(blankLinesFromDrag(1, -5 * REVIEW_BLANK_LINE_PX, 1)).toBe(0); // 减到 0 就停住
+        expect(blankLinesFromDrag(5, 0.4 * REVIEW_BLANK_LINE_PX, 5)).toBe(5); // 拖不到位不算
     });
 });
 

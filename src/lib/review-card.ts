@@ -279,3 +279,19 @@ export function countSheets(layout: MeasuredSheetLayout): number {
  * ⚠️ 别在两个地方各写一遍换算 —— 量高度（px→mm）和这里（mm→px）是同一件事的两面。
  */
 export const REVIEW_BLANK_LINE_PX = (REVIEW_LAYOUT_MM.blankLineMM * 96) / 25.4;
+
+/**
+ * 拖两题之间那条**虚线** ⇒ 算出"上面那道题"的新留白行数。
+ *
+ * ⚠️ 方向（他 2026-09-29 定的，之前做反了）：
+ *    **往下拖 = 上面的题留白变大；往上拖 = 变小。**
+ *    道理：拖的是"上面那块的底边"—— 把底边往下拉，那块就被拉长（留白变多）。
+ *
+ * @param startLines 起手时那道题的留白行数
+ * @param deltaPx    鼠标/手指从起点起的**垂直位移**（向下为正）
+ * @param fallback   归一化用的兜底值（= 起手时的行数最自然）
+ */
+export function blankLinesFromDrag(startLines: number, deltaPx: number, fallback: number): number {
+    const deltaLines = Math.trunc(deltaPx / REVIEW_BLANK_LINE_PX);
+    return normalizeBlankLines(startLines + deltaLines, fallback);
+}

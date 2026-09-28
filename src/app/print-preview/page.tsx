@@ -27,7 +27,7 @@ import { DeepDiveCard } from "@/components/print/deep-dive-card";
 import { ReviewSheet, ReviewQuestionBlock, pageQrPayload } from "@/components/print/review-card";
 import {
     BUILD_DEFAULT_BLANK_LINES,
-    REVIEW_BLANK_LINE_PX,
+    blankLinesFromDrag,
     REVIEW_DEFAULT_BLANK_LINES,
     VOLUME_VARIANTS,
     applyGlobalBlankLines,
@@ -537,9 +537,8 @@ function PrintPreviewContent() {
         const onMove = (e: PointerEvent) => {
             const drag = dividerDragRef.current;
             if (!drag) return;
-            const deltaLines = Math.round((e.clientY - drag.startY) / REVIEW_BLANK_LINE_PX);
-            if (deltaLines === 0) return;
-            const next = normalizeBlankLines(drag.startLines - deltaLines, drag.startLines);
+            // ⚠️ 方向：往下拖 = 留白变大（见 blankLinesFromDrag 的说明，2026-09-29 他纠正过）
+            const next = blankLinesFromDrag(drag.startLines, e.clientY - drag.startY, drag.startLines);
             if (next === drag.startLines) return;
             drag.startLines = next;
             drag.startY = e.clientY;
@@ -976,6 +975,9 @@ function PrintPreviewContent() {
                                     qrMap={qrMap}
                                     printDate={printDate}
                                     manualDuplex={manualDuplex}
+                                    // 题图缩放与复练纸同一套（电脑拖把手 / 手机按住图左右拖）
+                                    figureScaleOf={figureScaleOf}
+                                    onFigureScaleStart={handleFigureDown}
                                     L={L}
                                 />
                             ))}

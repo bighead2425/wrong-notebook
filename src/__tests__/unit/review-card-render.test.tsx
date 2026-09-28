@@ -178,8 +178,10 @@ describe('卷 · 打孔位（奇左偶右）', () => {
     it('第 1 页留左、第 2 页留右（与深挖纸正反面同一条物理边）', () => {
         const many = Array.from({ length: 6 }, (_, i) => item({ id: `e${i}` }));
         const html = renderSheets(many, { perPage: 3 });
-        expect(html).toContain('padding-left:12mm');
-        expect(html).toContain('padding-right:12mm');
+        // 【2026-09-29 起打孔位走 CSS 变量】屏幕上的"纸边"要叠在它外面、
+        // 打印时纸边清零但孔位保留 —— 内联 padding 会被那套覆盖规则吃掉。
+        expect(html).toContain('--punch-l:12mm');
+        expect(html).toContain('--punch-r:12mm');
     });
 });
 

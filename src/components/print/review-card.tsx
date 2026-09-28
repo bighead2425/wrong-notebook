@@ -334,10 +334,11 @@ export function ReviewQuestionBlock({
                                 }}
                             />
                         ))}
-                        {/* 拖拽把手：**只在屏幕上**（打印时被 CSS 隐藏），右下角、等比缩放 */}
+                        {/* 拖拽把手：**只在屏幕上**（打印时被 CSS 隐藏），右下角、等比缩放。
+                            类名 .print-fig-handle 与深挖纸共用（2026-09-29 深挖纸也加了这功能） */}
                         {onFigureScaleStart && (
                             <span
-                                className="print-review-fig-handle no-print"
+                                className="print-fig-handle no-print"
                                 title={L('拖动调整图片大小（左上角固定）', 'Drag to resize')}
                                 onPointerDown={(e) => {
                                     // 鼠标只认这个把手；手指已经在图上直接拖了（见外层）
@@ -408,9 +409,17 @@ export function ReviewSheet({
      * 单面卷页页翻过去，孔位就在左右之间交替。
      */
     const punchOnLeft = pageNo % 2 === 1;
-    const padding: CSSProperties = punchOnLeft
-        ? { paddingLeft: `${REVIEW_PUNCH_GUTTER_MM}mm` }
-        : { paddingRight: `${REVIEW_PUNCH_GUTTER_MM}mm` };
+    /**
+     * ⚠️ 打孔位走 **CSS 变量**，不直接写 padding ——
+     * 因为屏幕上还要在外面再套一圈"纸边"（`@media screen` 里 `calc(15mm + var(--punch-l))`）。
+     * 直接写 padding，内联样式会盖掉纸边那 15mm，纸就一边宽一边窄、也不像 B5 了；
+     * 而 `@media print` 里一句 `padding:0 !important` 又会把打孔位一起清掉（真打出来就没孔位了）。
+     * 打孔位 = 12mm，与深挖纸 `PUNCH_GUTTER_MM` 同一个数（他要求两种纸一致）。
+     */
+    const punchVars = {
+        '--punch-l': punchOnLeft ? `${REVIEW_PUNCH_GUTTER_MM}mm` : '0mm',
+        '--punch-r': punchOnLeft ? '0mm' : `${REVIEW_PUNCH_GUTTER_MM}mm`,
+    } as CSSProperties;
 
     /** 拖虚线调留白只在"能改"时才有（量尺/正式打印那两处没有 onBlankChange） */
     const canDragDivider = !!onBlankChange && !!blankValueOf && !!onDividerDragStart;
@@ -424,7 +433,7 @@ export function ReviewSheet({
                 flexDirection: 'column',
                 position: 'relative',
                 overflow: 'hidden',
-                ...padding,
+                ...punchVars,
             }}
         >
             <VolumeHeader

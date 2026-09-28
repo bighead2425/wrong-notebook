@@ -40,12 +40,14 @@
  */
 
 import { useMemo } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { SubjectChip } from '@/components/subject-chip';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
 import { ErrorItem } from '@/types/api';
 import { formatIsoDate } from '@/lib/date-format';
 import { getNotebookPrintInfo, getTags } from '@/lib/print-preview';
 import {
+    DEEP_FIGURE_BASE_MM,
     SIDE_HEIGHT_MM,
     SLOT_COLORS,
     SLOT_SIZE_MM,
@@ -56,6 +58,8 @@ import {
     sidePaddingMM,
     type SlotColor,
 } from '@/lib/deep-dive-card';
+// 题图缩放的归一化（30–180%）与复练纸共用同一处实现，别抄一份
+import { normalizeFigureScale } from '@/lib/review-card';
 import { useFigureImages } from './use-print-images';
 import { PromoteBox } from './promote-box';
 
@@ -107,6 +111,23 @@ function slotColor(index: number): SlotColor {
     return SLOT_COLORS[index - 1] ?? SLOT_COLORS[0];
 }
 
+/**
+ * 打孔位写成 **CSS 变量**（`--punch-l` / `--punch-r`），而不是直接写 padding。
+ *
+ * 为什么：屏幕上每一面还要再套一圈"纸边"（`@media screen` 里
+ * `calc(15mm + var(--punch-l))`）。直接写内联 padding 有两个后果 ——
+ *   ① 内联盖掉纸边 ⇒ 纸一边宽一边窄，不像 B5；
+ *   ② `@media print` 里那句 `padding:0 !important`（去掉纸边用）会把打孔位一起清掉，
+ *      真打出来就没孔位了。
+ * 用变量之后：打印时纸边为 0、打孔位照旧；屏幕上两者叠加。
+ */
+function punchVarsOf(pad: { left: number; right: number }): CSSProperties {
+    return {
+        '--punch-l': `${pad.left}mm`,
+        '--punch-r': `${pad.right}mm`,
+    } as CSSProperties;
+}
+
 export interface DeepDiveCardProps {
     item: ErrorItem;
     index: number;
@@ -115,6 +136,12 @@ export interface DeepDiveCardProps {
     printDate: Date;
     /** 手动双面：家里打印机不支持自动双面，插一张翻面提示 */
     manualDuplex: boolean;
+    /**
+     * 【2026-09-29】题图的缩放百分比（100 = 版面默认），与复练纸同一套。
+     * 他要的：电脑上拖右下角小把手、手机上按住图左右拖。
+     */
+    figureScaleOf?: (itemId: string) => number;
+    onFigureScaleStart?: (itemId: string) => (e: ReactPointerEvent) => void;
     L: (zh: string, en: string) => string;
 }
 
@@ -124,6 +151,8 @@ export function DeepDiveCard({
     qrMap,
     printDate,
     manualDuplex,
+    figureScaleOf,
+    onFigureScaleStart,
     L,
 }: DeepDiveCardProps) {
     const figures = useFigureImages(item);
@@ -136,6 +165,9 @@ export function DeepDiveCard({
 
     const frontPad = sidePaddingMM('front');
     const backPad = sidePaddingMM('back');
+
+    /** 这道题的题图缩放（没调过 = 100%） */
+    const figureScale = normalizeFigureScale(figureScaleOf ? figureScaleOf(item.id) : 100);
 
     /** 身份条：题号 + 两个空格 + 年级学期（右端是打印日） */
     const identityBar = (
@@ -171,8 +203,8 @@ export function DeepDiveCard({
                     height: `${SIDE_HEIGHT_MM}mm`,
                     display: 'flex',
                     flexDirection: 'column',
-                    paddingLeft: `${frontPad.left}mm`,
-                    paddingRight: `${frontPad.right}mm`,
+                    // ⚠️ 打孔位走 CSS 变量（理由同复练纸：屏幕上的"纸边"要叠在它外面）
+                    ...punchVarsOf(frontPad),
                 }}
             >
                 {/* 二维码在正面右上（P25：正面右上 / 反面左下，各按自己那一面的视角） */}
@@ -281,8 +313,7 @@ export function DeepDiveCard({
                     height: `${SIDE_HEIGHT_MM}mm`,
                     display: 'flex',
                     flexDirection: 'column',
-                    paddingLeft: `${backPad.left}mm`,
-                    paddingRight: `${backPad.right}mm`,
+                    ...punchVarsOf(backPad),
                 }}
             >
                 {manualDuplex && (
@@ -337,12 +368,50 @@ export function DeepDiveCard({
                         }}
                     >
                         {figures.map((url, i) => (
-                            <img
+                            <div
                                 key={i}
-                                src={url}
-                                alt=""
-                                style={{ maxWidth: '60mm', maxHeight: '40mm', display: 'block' }}
-                            />
+                                style={{
+                                    // 缩放作用在这个盒子的**宽度**上（左上角固定 ⇒ 图只往右下长）
+                                    flex: '0 0 auto',
+                                    width: `${DEEP_FIGURE_BASE_MM.w * (figureScale / 100)}mm`,
+                                    maxWidth: '100%',
+                                    position: 'relative',
+                                    // 手机上"按住图左右拖 = 缩放"：不让浏览器把手势抢去当滚动
+                                    touchAction: 'none',
+                                }}
+                                // 手指/笔直接按在图上就能拖（电脑用右下角小把手，免得误拖）
+                                onPointerDown={(e) => {
+                                    if (e.pointerType === 'mouse') return;
+                                    onFigureScaleStart?.(item.id)(e);
+                                }}
+                            >
+                                <img
+                                    src={url}
+                                    alt=""
+                                    style={{
+                                        // ⚠️ 陷阱 35：只写 max-* 的话**小图不会放大**（按像素排）。
+                                        // width:100% + height:auto 负责等比放大/缩小；
+                                        // max-height 限竖长图，contain 保证被限高时只留白、不变形。
+                                        width: '100%',
+                                        height: 'auto',
+                                        maxHeight: `${DEEP_FIGURE_BASE_MM.h * (figureScale / 100)}mm`,
+                                        objectFit: 'contain',
+                                        objectPosition: 'left top',
+                                        display: 'block',
+                                    }}
+                                />
+                                {/* 拖拽把手：**只在屏幕上**（打印时被 CSS 隐藏），右下角、等比缩放 */}
+                                {onFigureScaleStart && (
+                                    <span
+                                        className="print-fig-handle no-print"
+                                        title={L('拖动调整图片大小（左上角固定）', 'Drag to resize')}
+                                        onPointerDown={(e) => {
+                                            if (e.pointerType !== 'mouse') return;
+                                            onFigureScaleStart(item.id)(e);
+                                        }}
+                                    />
+                                )}
+                            </div>
                         ))}
                     </div>
                 )}
