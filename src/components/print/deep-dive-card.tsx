@@ -57,6 +57,7 @@ import {
     type SlotColor,
 } from '@/lib/deep-dive-card';
 import { useFigureImages } from './use-print-images';
+import { PromoteBox } from './promote-box';
 
 /** 四角定位标识。用**形状**而不是四种颜色 —— 黑白复印/灰度扫描下颜色全变灰。 */
 const CORNER_SIZE = '5mm';
@@ -364,11 +365,24 @@ export function DeepDiveCard({
                     <span style={{ flex: 1, height: '0.7mm', background: '#111' }} />
                 </div>
 
-                {/* 她手写内容区：不加十字线（模拟真实考场）。上界=遮挡线，下界=页脚细线。 */}
+                {/* 她手写内容区：不加十字线（模拟真实考场）。上界=遮挡线，下界=页脚细线。
+                    【2026-09-28】升降级小框放在**这块区域的最上面、靠左** ——
+                    定稿的原话是"遮挡线左下（她动笔区的上方），她刚分析完、印象最深的位置"。
+                    ⚠️ 放进这一块内部（而不是塞在遮挡线之上）：反面高度是死的，
+                       小框若占独立一行就会从"写字的地方"里扣掉 7mm，
+                       长题 + 有大题图时可能把页脚挤出纸外。放进来只吃这一块自己的空间。 */}
                 <div
                     className="print-deep-writing"
-                    style={{ flex: 1, minHeight: `${T1_LAYOUT_MM.writingMin}mm` }}
-                />
+                    style={{
+                        flex: 1,
+                        minHeight: `${T1_LAYOUT_MM.writingMin}mm`,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'flex-start',
+                    }}
+                >
+                    <PromoteBox manageType={item.manageType} L={L} />
+                </div>
 
                 {/*
                     页脚（2026-09-28 二改：上下结构 → **左右结构**）——

@@ -14,6 +14,17 @@ import { TagInput } from "@/components/tag-input";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiClient } from "@/lib/api-client";
+import { MISTAKE_CATEGORIES, getMistakeCategoryLabel } from "@/lib/mistake-category";
+import {
+    MANAGE_TYPES,
+    MANAGE_TYPE_DESC,
+    MANAGE_TYPE_LABEL,
+    MANAGE_TYPE_SOURCE_LABEL,
+    MANAGE_TYPE_UNDECIDED,
+    getManageTypeLabel,
+    normalizeManageTypeSource,
+    suggestManageType,
+} from "@/lib/manage-type";
 import { UserProfile, Notebook } from "@/types/api";
 import { getMistakeStatusLabel, normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { NotebookSelector } from "@/components/notebook-selector";
@@ -46,6 +57,12 @@ interface ErrorItemDetail {
     } | null;
     gradeSemester?: string | null;
     paperLevel?: string | null;
+    /** 【2026-09-28】错题等级：deep / review / null（未定） */
+    manageType?: string | null;
+    /** 等级来源：default / derived / ai / manual / upgrade */
+    manageTypeSource?: string | null;
+    /** 错因（受控枚举，见 lib/mistake-category.ts）——错题等级由它派生 */
+    mistakeCategory?: string | null;
     source?: string | null;
     /** #10 / T4：打印次数，只显不改 */
     printCount?: number | null;
@@ -70,7 +87,10 @@ export default function ErrorDetailPage() {
     const [reanalyzeData, setReanalyzeData] = useState<ParsedQuestion | null>(null);
     const [isReanalyzing, setIsReanalyzing] = useState(false);
     const [gradeSemesterInput, setGradeSemesterInput] = useState("");
-    const [paperLevelInput, setPaperLevelInput] = useState("a");
+    /** 【2026-09-28】**错题等级**：'' = 未定 / 'deep' 深挖 / 'review' 复练 */
+    const [manageTypeInput, setManageTypeInput] = useState("");
+    /** 【2026-09-28】错因（受控枚举 6 值，'' = 没打）——错题等级由它派生 */
+    const [mistakeCategoryInput, setMistakeCategoryInput] = useState("");
     const [notebookInput, setNotebookInput] = useState<string | null>(null);
 
     const [educationStage, setEducationStage] = useState<string | undefined>(undefined);
@@ -268,7 +288,8 @@ export default function ErrorDetailPage() {
         if (item) {
             setNotebookInput(item.notebookId || null);
             setGradeSemesterInput(item.gradeSemester || "");
-            setPaperLevelInput(item.paperLevel || "a");
+            setManageTypeInput(item.manageType || "");
+            setMistakeCategoryInput(item.mistakeCategory || "");
             setIsEditingMetadata(true);
         }
     };
@@ -278,7 +299,10 @@ export default function ErrorDetailPage() {
             await apiClient.put(`/api/error-items/${item?.id}`, {
                 notebookId: notebookInput || null,
                 gradeSemester: gradeSemesterInput,
-                paperLevel: paperLevelInput,
+                // 【2026-09-28】错题等级：空串 = 未定（显式清空），非空 = 手动落定
+                manageType: manageTypeInput || null,
+                // 错因：改了它，若等级还没落定，服务端会按映射表派生一次（并留痕）
+                mistakeCategory: mistakeCategoryInput || null,
             });
 
             setIsEditingMetadata(false);
@@ -294,7 +318,9 @@ export default function ErrorDetailPage() {
         setIsEditingMetadata(false);
         setNotebookInput(null);
         setGradeSemesterInput("");
-        setPaperLevelInput("a");
+        // 【2026-09-28】错题等级/错因也已换成受控编辑，取消时一并复位
+        setManageTypeInput("");
+        setMistakeCategoryInput("");
     };
 
     const [isEditingQuestion, setIsEditingQuestion] = useState(false);
@@ -721,21 +747,51 @@ export default function ErrorDetailPage() {
                                                     placeholder={t.notebook?.gradeSemesterPlaceholder || 'e.g. Grade 7, Semester 1'}
                                                 />
                                             </div>
+                                            {/* 【2026-09-28】原来的"所属卷等级"（A级/B级/其他）改成**错题等级**：
+                                                深挖 / 复练 / 未定。老字段 paperLevel 保留在库里但界面不再用。 */}
                                             <div className="space-y-2">
                                                 <label className="text-sm text-muted-foreground">
-                                                    {t.filter.paperLevel}
+                                                    错题等级
                                                 </label>
                                                 <Select
-                                                    value={paperLevelInput}
-                                                    onValueChange={setPaperLevelInput}
+                                                    value={manageTypeInput || "__undecided__"}
+                                                    onValueChange={(v) => setManageTypeInput(v === "__undecided__" ? "" : v)}
                                                 >
                                                     <SelectTrigger>
                                                         <SelectValue />
                                                     </SelectTrigger>
                                                     <SelectContent>
-                                                        <SelectItem value="a">{t.editor.paperLevels?.a || 'Paper A'}</SelectItem>
-                                                        <SelectItem value="b">{t.editor.paperLevels?.b || 'Paper B'}</SelectItem>
-                                                        <SelectItem value="other">{t.editor.paperLevels?.other || 'Other'}</SelectItem>
+                                                        <SelectItem value="__undecided__">{MANAGE_TYPE_UNDECIDED}</SelectItem>
+                                                        {MANAGE_TYPES.map((tp) => (
+                                                            <SelectItem key={tp} value={tp}>
+                                                                {MANAGE_TYPE_LABEL[tp]} —— {MANAGE_TYPE_DESC[tp]}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                                <p className="text-xs text-muted-foreground">
+                                                    {suggestManageType(mistakeCategoryInput).reason}
+                                                </p>
+                                            </div>
+                                            {/* 错因：受控枚举。改了它，若等级还没落定，保存时自动派生一次 */}
+                                            <div className="space-y-2">
+                                                <label className="text-sm text-muted-foreground">
+                                                    错因
+                                                </label>
+                                                <Select
+                                                    value={mistakeCategoryInput || "__none__"}
+                                                    onValueChange={(v) => setMistakeCategoryInput(v === "__none__" ? "" : v)}
+                                                >
+                                                    <SelectTrigger>
+                                                        <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="__none__">没打</SelectItem>
+                                                        {MISTAKE_CATEGORIES.map((c) => (
+                                                            <SelectItem key={c} value={c}>
+                                                                {getMistakeCategoryLabel(c)}
+                                                            </SelectItem>
+                                                        ))}
                                                     </SelectContent>
                                                 </Select>
                                             </div>
@@ -765,9 +821,20 @@ export default function ErrorDetailPage() {
                                                 </span>
                                             </div>
                                             <div className="flex justify-between">
-                                                <span className="text-muted-foreground">{t.filter.paperLevel}:</span>
+                                                <span className="text-muted-foreground">错题等级:</span>
                                                 <span className="font-medium">
-                                                    {item.paperLevel ? (t.editor.paperLevels?.[item.paperLevel as 'a' | 'b' | 'other'] || item.paperLevel) : (t.common?.notSet || 'Not set')}
+                                                    {getManageTypeLabel(item.manageType)}
+                                                    {normalizeManageTypeSource(item.manageTypeSource) ? (
+                                                        <span className="ml-1 text-xs text-muted-foreground">
+                                                            （{MANAGE_TYPE_SOURCE_LABEL[normalizeManageTypeSource(item.manageTypeSource)!]}）
+                                                        </span>
+                                                    ) : null}
+                                                </span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span className="text-muted-foreground">错因:</span>
+                                                <span className="font-medium">
+                                                    {getMistakeCategoryLabel(item.mistakeCategory) || '没打'}
                                                 </span>
                                             </div>
                                             <div className="flex justify-between">

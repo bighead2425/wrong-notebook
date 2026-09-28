@@ -7,6 +7,13 @@ import { unauthorized, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
+import { normalizeMistakeCategory } from "@/lib/mistake-category";
+import {
+    MANAGE_TYPE_DEFAULT,
+    normalizeManageType,
+    normalizeManageTypeSource,
+    suggestManageType,
+} from "@/lib/manage-type";
 import { subjectKeyToCode, formatDateStamp, formatQuestionNo, startOfToday } from "@/lib/question-no";
 
 const logger = createLogger('api:error-items');
@@ -33,6 +40,10 @@ export async function POST(req: Request) {
             source,
             inputMethod,
             cropRegions,
+            // 【2026-09-28】错题等级 + 错因受控枚举
+            mistakeCategory,
+            manageType,
+            manageTypeSource,
         } = body;
 
         /**
@@ -207,6 +218,25 @@ export async function POST(req: Request) {
             logger.debug({ finalSource, code, dateStamp, todayCount }, 'Auto-generated question number (source)');
         }
 
+        /**
+         * 【2026-09-28】错题等级的**定级**（「默认复练 + 按错因派生」）。
+         *
+         * 优先级：人显式传的 > 按错因派生 > 录入默认（复练）。
+         * ⚠️ 默认是 **review（复练）**，不是 deep —— "全默认深挖 = 平均用力"。
+         * source 决定这颗等级以后还能不能被自动派生改写：
+         *   manual / ai（人定过的）> derived（已派过一次，已落定）> default（还只是默认）
+         * 见 `lib/manage-type.ts` 与二次设计《阅读入口》§6.2 / §6.3。
+         */
+        const category = normalizeMistakeCategory(mistakeCategory);
+        const explicitType = normalizeManageType(manageType);
+        const suggestion = category ? suggestManageType(category) : null;
+        const finalManageType = explicitType ?? suggestion?.type ?? MANAGE_TYPE_DEFAULT;
+        const finalManageSource = explicitType
+            ? (normalizeManageTypeSource(manageTypeSource) === 'ai' ? 'ai' : 'manual')
+            : suggestion?.type
+                ? 'derived'
+                : 'default';
+
         // 创建错题记录
         try {
             const errorItem = await prisma.errorItem.create({
@@ -223,6 +253,10 @@ export async function POST(req: Request) {
                     knowledgePoints: JSON.stringify(tagNames),
                     gradeSemester: finalGradeSemester,
                     paperLevel: paperLevel,
+                    // 【2026-09-28】错因（受控枚举）+ 错题等级 + 来源
+                    mistakeCategory: category,
+                    manageType: finalManageType,
+                    manageTypeSource: finalManageSource,
                     source: finalSource,
                     inputMethod: inputMethod || null,
                     // 【M1】框坐标：undefined（没传/形状不对）时**不写这一列**，

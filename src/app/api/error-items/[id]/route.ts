@@ -7,6 +7,13 @@ import { unauthorized, forbidden, notFound, badRequest, internalError } from "@/
 import { createLogger } from "@/lib/logger";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
+import { normalizeMistakeCategory } from "@/lib/mistake-category";
+import {
+    canAutoRewrite,
+    normalizeManageType,
+    normalizeManageTypeSource,
+    suggestManageType,
+} from "@/lib/manage-type";
 
 const logger = createLogger('api:error-items:id');
 
@@ -88,6 +95,12 @@ export async function PUT(
             attention,        // 关注档 1-5（难度档，G8 / T5）
             masteryLevel,     // 0 New / 1 Reviewing / 2 Mastered（=2 即四分法「已掌握」）
             userNotes,        // 备注（扫码「跳转原题备注」用）
+            // 【2026-09-28】错题等级（deep/review）与错因受控枚举。
+            // manageType 由人直接改 ⇒ 记 source = 'manual'（落定，之后自动派生不再碰它）；
+            // 传 manageTypeSource='ai' 表示"采纳了 AI 建议"，同样算落定。
+            manageType,
+            manageTypeSource,
+            mistakeCategory,
         } = body;
 
         const errorItem = await prisma.errorItem.findUnique({
@@ -153,6 +166,75 @@ export async function PUT(
                 updateData.masteryLevel = Math.round(m);
             }
         }
+
+        /**
+         * 【2026-09-28】错题等级 + 错因 —— 「派生 + 落定快照」的落点。
+         *
+         * 规矩（详见 `lib/manage-type.ts` 与二次设计《阅读入口》§6.3）：
+         *   ① 人**显式**传了 manageType ⇒ 落定为 manual（传 manageTypeSource='ai' 则记 ai）；
+         *      **落定之后自动派生不再碰它**。
+         *   ② 只传了错因（mistakeCategory）⇒ 若这道题的等级**还没落定**
+         *      （source 为空 / 只是录入默认），按映射表派生一次并标 derived；
+         *      已落定的保持不动 —— 错因以后变了，**已定类型不变**（要改走手动）。
+         *   ③ 每次真改动都写 StateChangeLog（谁改的、从什么改成什么）。
+         */
+        const stateLogs: Prisma.StateChangeLogCreateManyInput[] = [];
+
+        if (mistakeCategory !== undefined) {
+            const nextCategory = normalizeMistakeCategory(mistakeCategory);
+            if ((errorItem.mistakeCategory ?? null) !== nextCategory) {
+                updateData.mistakeCategory = nextCategory;
+                stateLogs.push({
+                    errorItemId: id,
+                    field: 'mistakeCategory',
+                    fromValue: errorItem.mistakeCategory ?? null,
+                    toValue: nextCategory,
+                    actor: 'user',
+                    actorUserId: user.id,
+                    note: '详情页修改错因',
+                });
+            }
+
+            // ② 还没落定 ⇒ 派生一次
+            const locked = !canAutoRewrite(errorItem.manageTypeSource);
+            if (!locked && nextCategory !== null) {
+                const suggestion = suggestManageType(nextCategory);
+                if (suggestion.type && suggestion.type !== errorItem.manageType) {
+                    updateData.manageType = suggestion.type;
+                    updateData.manageTypeSource = 'derived';
+                    stateLogs.push({
+                        errorItemId: id,
+                        field: 'manageType',
+                        fromValue: errorItem.manageType ?? null,
+                        toValue: suggestion.type,
+                        actor: 'system',
+                        actorUserId: user.id,
+                        note: `按错因自动定：${suggestion.reason}`,
+                    });
+                }
+            }
+        }
+
+        // ① 人显式定级 ⇒ 落定（手动 / 采纳 AI 建议）
+        if (manageType !== undefined) {
+            const nextType = normalizeManageType(manageType);
+            const fromAi = normalizeManageTypeSource(manageTypeSource) === 'ai';
+            if ((errorItem.manageType ?? null) !== nextType) {
+                updateData.manageType = nextType;
+                // 清成"未定"时来源也一并清空（避免"未定但来源写着手动"这种自相矛盾）
+                updateData.manageTypeSource = nextType ? (fromAi ? 'ai' : 'manual') : null;
+                stateLogs.push({
+                    errorItemId: id,
+                    field: 'manageType',
+                    fromValue: errorItem.manageType ?? null,
+                    toValue: nextType,
+                    actor: fromAi ? 'ai' : 'user',
+                    actorUserId: user.id,
+                    note: fromAi ? '采纳 AI 建议' : '手动定级',
+                });
+            }
+        }
+
         if (notebookId !== undefined) {
             if (notebookId === "") {
                 updateData.notebook = { disconnect: true };
@@ -241,6 +323,16 @@ export async function PUT(
             data: updateData,
             include: { tags: true, notebook: true },
         });
+
+        // 【2026-09-28】等级/错因的变更留痕（「派生 + 落定快照」要求可追溯）
+        if (stateLogs.length > 0) {
+            try {
+                await prisma.stateChangeLog.createMany({ data: stateLogs });
+            } catch (error) {
+                // 留痕失败不该让整次保存失败 —— 但它必须被看见
+                logger.error({ error, itemId: id }, 'Failed to write state change logs');
+            }
+        }
 
         // 注：按用户要求，保存错题时**不再自动导出**到 Obsidian。
         //     需要导出时走错题详情页的「导出到 ob」按钮（本文件的 export-obsidian 路由）。

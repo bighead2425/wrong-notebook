@@ -266,7 +266,9 @@ export function reviewDateSlots(printDate: Date): ReviewSlot[] {
  * ⚠️ 本轮**只做 T1**；其余纸型没有设计，`implemented: false` 的不要排在打印列表里。
  *
  * ⚠️ 2026-09-26 T2 / T3 的**名字已按新方案改口**（他当天定的"三类题 × 三种纸"）：
- *    T2 = 复练纸（RE…）· T3 = 积累纸（BU…）。名字先对齐，**实现仍为 false**。
+ *    T2 = 复练纸（RE…）· T3 = 积累纸（BU…）。
+ * ✅ 2026-09-28 **T2 复练纸已实现**（`components/print/review-card.tsx` + `lib/review-card.ts`，
+ *    打印页的第四种模式 `mode=review`）；T3 仍为 false（积累点要先独立建表）。
  */
 export interface PaperTypeDef {
     code: 'T0' | 'T1' | 'T2' | 'T3' | 'T4' | 'T5';
@@ -277,7 +279,7 @@ export interface PaperTypeDef {
 export const PAPER_TYPES: readonly PaperTypeDef[] = [
     { code: 'T0', name: '极简重做卡', implemented: false },
     { code: 'T1', name: '深挖纸', implemented: true },
-    { code: 'T2', name: '复练纸', implemented: false },
+    { code: 'T2', name: '复练纸', implemented: true },
     { code: 'T3', name: '积累纸', implemented: false },
     { code: 'T4', name: '家长档案', implemented: false },
     { code: 'T5', name: '给她的信', implemented: false },

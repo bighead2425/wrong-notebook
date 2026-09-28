@@ -196,3 +196,44 @@ describe('T1 深挖纸 · 兜底与容错', () => {
         expect(html).toContain('请在此处翻面');
     });
 });
+
+/**
+ * 升降级小框（2026-09-28）——出处：`二次设计/流程图连接笔记/18_升降级小框.md`
+ *
+ * 四条必须守住：
+ *   ① **按题的类型印，不按纸印**（深挖纸背面也一样：复练题印"升级"、深挖题印"降级"）
+ *   ② 没定等级 ⇒ 什么都不印
+ *   ③ **必须带文字**（黑白复印会把颜色吃掉，只靠颜色就等于没有）
+ *   ④ ⚠️ **版面上不写"只有打勾算数"** —— 那条规则只写在回收逻辑里
+ */
+describe('深挖纸 · 升降级小框', () => {
+    it('复练题 ⇒ 印「↑ 升级」（红）', () => {
+        const html = renderWith({ manageType: 'review' } as Partial<ErrorItem>);
+        expect(html).toContain('print-promote-box');
+        expect(html).toContain('升级');
+        expect(html).toContain('#c0392b');
+    });
+
+    it('深挖题 ⇒ 印「↓ 降级」（灰蓝，不用绿）', () => {
+        const html = renderWith({ manageType: 'deep' } as Partial<ErrorItem>);
+        expect(html).toContain('print-promote-box');
+        expect(html).toContain('降级');
+        expect(html).toContain('#7f8c9b');
+    });
+
+    it('未定（老数据）⇒ 不印这个框', () => {
+        for (const v of [undefined, null, '', 'build']) {
+            const html = renderWith({ manageType: v } as Partial<ErrorItem>);
+            expect(html).not.toContain('print-promote-box');
+            expect(html).not.toContain('升级');
+            expect(html).not.toContain('降级');
+        }
+    });
+
+    it('⚠️ 版面上**不许写**"只有打勾算数"这类指导语（那是回收逻辑里的规则）', () => {
+        const html = renderWith({ manageType: 'review' } as Partial<ErrorItem>);
+        for (const word of ['打勾', '算数', '勾选', '请勾']) {
+            expect(html).not.toContain(word);
+        }
+    });
+});

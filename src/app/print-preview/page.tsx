@@ -22,6 +22,8 @@ import { whenImagesDecoded, whenImagesSettled } from "@/lib/print-image-readines
 import { makeQrDataUrl } from "@/lib/qr";
 import { ErrorCard } from "@/components/print/error-card";
 import { DeepDiveCard } from "@/components/print/deep-dive-card";
+import { ReviewSheet } from "@/components/print/review-card";
+import { layoutReviewSheets, REVIEW_LAYOUT_MM } from "@/lib/review-card";
 import {
     AnswerBody,
     QuestionBody,
@@ -43,7 +45,7 @@ import {
  *    **拿不到任何反馈** —— 那不是设计意图，是断档。等 M5/M6 通了，
  *    再把默认切到 deep、旧卡退役（一行改动）。
  */
-type PrintMode = "deep" | "card" | "practice" | "explain";
+type PrintMode = "deep" | "review" | "card" | "practice" | "explain";
 
 function PrintPreviewContent() {
     const searchParams = useSearchParams();
@@ -96,7 +98,7 @@ function PrintPreviewContent() {
     // 直接读 window.location 而非 useSearchParams，避免静态渲染下取值为空的时序问题。
     useEffect(() => {
         const m = new URLSearchParams(window.location.search).get("mode");
-        if (m === "deep" || m === "card" || m === "practice" || m === "explain") {
+        if (m === "deep" || m === "review" || m === "card" || m === "practice" || m === "explain") {
             setMode(m);
         }
     }, []);
@@ -132,6 +134,32 @@ function PrintPreviewContent() {
     const countLabel = getPrintPreviewCountLabel(items.length, selectedItems.length);
     const emptyState = getPrintPreviewEmptyState(items.length, selectedItems.length);
     const isDeep = mode === "deep";
+    const isReview = mode === "review";
+
+    /**
+     * 【2026-09-28】复练纸的排布：一题半页、两题一页；包不下就顺延、绝不跨页。
+     *
+     * 全部交给 `lib/review-card.ts` 的纯函数算（可单测），这里只做两件事：
+     *   ① 把选中的题喂给它（题图先按"想要的最大高度"给，它会按整页装得下再夹一次）；
+     *   ② 把算出来的 overflow 显示给用户 —— **不静默丢题**（改纸的权利在她/他手上）。
+     */
+    const reviewLayout = useMemo(() => {
+        if (!isReview) return null;
+        return layoutReviewSheets(
+            selectedItems.map((item) => ({
+                key: item.id,
+                questionText: item.questionText || item.ocrText,
+                figureHeightMM: REVIEW_LAYOUT_MM.figureMaxHeightMM,
+            })),
+        );
+    }, [isReview, selectedItems]);
+
+    /** 复练纸：key（题目 id）→ 题目本体，供卡片取用 */
+    const reviewItemByKey = useMemo(() => {
+        const map: Record<string, ErrorItem> = {};
+        for (const item of selectedItems) map[item.id] = item;
+        return map;
+    }, [selectedItems]);
     const isCard = mode === "card";
     const isPractice = mode === "practice";
 
@@ -260,6 +288,7 @@ function PrintPreviewContent() {
                         <div className="flex items-center gap-1 bg-muted/50 rounded-md p-1">
                             {([
                                 ["deep", L("深挖纸 ★", "Deep dive ★")],
+                                ["review", L("复练纸 T2", "Review T2")],
                                 ["card", L("错题卡", "Error card")],
                                 ["practice", L("练习卷", "Practice")],
                                 ["explain", L("讲解卷", "Study")],
@@ -322,14 +351,19 @@ function PrintPreviewContent() {
                                   "深挖纸（T1，★ 新版）：一道题占一张纸的正反两面。正面=原题照片+反思留白（框只活在软件里，不印到纸上）；反面=干净题面+遮挡线夹出的重做区+页脚三个日期格（打印日 +1/+7/+21）。纸上不印解析、错因、答案——那是回收之后 AI 的活。",
                                   "Deep-dive sheet (T1, new): one question per double-sided sheet.",
                               )
-                            : mode === "card"
+                            : isReview
                                 ? L(
-                                      "错题卡：一道题占一张纸的正反两面——正面重做、背面给错因和答案（灰淡字）。打印那一刻会计一次数。",
-                                      "Error card: one question per sheet — front for redoing, back for cause & answer.",
+                                      "复练纸（T2）：**一题半页、两题一页**，给「要重做但不必深挖」的题（选择、填空、计算）。只印干净题面（文字 + 题图），不印解析/错因/答案；每题右下角一个升降级小框。装不下的题会自动整块顺延到下一页（绝不跨页），太长装不下的会提示改用深挖纸。",
+                                      "Review sheet (T2): two questions per page, clean question only.",
                                   )
-                                : isPractice
-                                    ? L("练习卷：答案与解析统一排在最后，从新的一页开始", "Answers start on a new page")
-                                    : L("讲解卷：答案与解析紧跟每题", "Answers follow each question")}
+                                : mode === "card"
+                                    ? L(
+                                          "错题卡：一道题占一张纸的正反两面——正面重做、背面给错因和答案（灰淡字）。打印那一刻会计一次数。",
+                                          "Error card: one question per sheet — front for redoing, back for cause & answer.",
+                                      )
+                                    : isPractice
+                                        ? L("练习卷：答案与解析统一排在最后，从新的一页开始", "Answers start on a new page")
+                                        : L("讲解卷：答案与解析紧跟每题", "Answers follow each question")}
                         {manualDuplex && " · " + L(
                             "打印机不支持自动双面：打印对话框里先填奇数页 1,3,5…，打完后把纸按「短边翻转」放回纸盒，再填偶数页 2,4,6…",
                             "No auto duplex: print odd pages 1,3,5… first, flip short-edge, then print even pages 2,4,6…",
@@ -384,6 +418,29 @@ function PrintPreviewContent() {
                                     qrMap={qrMap}
                                     printDate={printDate}
                                     manualDuplex={manualDuplex}
+                                    L={L}
+                                />
+                            ))}
+                        </>
+                    ) : isReview ? (
+                        <>
+                            {/* 装不下的题（题干太长）：明确提示改用深挖纸 —— 不静默丢题 */}
+                            {reviewLayout && reviewLayout.overflow.length > 0 && (
+                                <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
+                                    {L(
+                                        `有 ${reviewLayout.overflow.length} 道题太长，印复练纸会挤（一页都装不下）：${reviewLayout.overflow
+                                            .map((o) => reviewItemByKey[o.key]?.source || o.key)
+                                            .join('、')}。建议这几道改用「深挖纸」。`,
+                                        `${reviewLayout.overflow.length} question(s) too long for the review sheet — use the deep-dive sheet instead.`,
+                                    )}
+                                </div>
+                            )}
+                            {reviewLayout?.pages.map((page, i) => (
+                                <ReviewSheet
+                                    key={i}
+                                    page={page}
+                                    itemByKey={reviewItemByKey}
+                                    qrMap={qrMap}
                                     L={L}
                                 />
                             ))}

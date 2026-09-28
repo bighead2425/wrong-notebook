@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { isManageType } from "@/lib/manage-type";
 import type { Prisma } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
@@ -192,10 +193,23 @@ export async function GET(req: Request) {
             }
         }
 
-        // Paper Level filter
+        // Paper Level filter（[2026-09-28 起界面不再用：被错题等级取代] 保留以兼容老链接）
         const paperLevel = searchParams.get("paperLevel");
         if (paperLevel && paperLevel !== "all") {
             whereClause.paperLevel = paperLevel;
+        }
+
+        /**
+         * 【2026-09-28】**错题等级**过滤：deep / review / undecided（未定 = 这一列为空）。
+         * 认不出的值**忽略**（保持"全部"），不猜 —— 免得筛出个空列表让人以为数据没了。
+         */
+        const manageType = searchParams.get("manageType");
+        if (manageType && manageType !== "all") {
+            if (manageType === "undecided") {
+                whereClause.manageType = null;
+            } else if (isManageType(manageType)) {
+                whereClause.manageType = manageType;
+            }
         }
 
         // 将所有 AND 条件合并到 whereClause

@@ -375,6 +375,16 @@
     page-break-before: always;
   }
 
+  /* ===== T2 复练纸 =====
+     一张纸 = 一页（版心高 225mm，含 2mm 松量，见 lib/review-card.ts）。
+     整张**不许被拆到两页**：拆了就会出「半张在上页、半张在下页」，
+     而她的写字区被撕成两半 —— 那正是"绝不跨页"要防的事。
+     起始另起一页由 .print-card 负责（break-before: page）。 */
+  .print-review-sheet {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
   /* 手动双面：翻面提示是独立一张，不能被"反面另起一页"的规则吞掉 */
   .print-deep-back .print-flip-hint {
     break-before: auto;

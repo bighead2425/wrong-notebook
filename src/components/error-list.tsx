@@ -22,6 +22,7 @@ import {
 import { KnowledgeFilter } from "@/components/knowledge-filter";
 import { ErrorItem, PaginatedResponse } from "@/types/api";
 import { apiClient } from "@/lib/api-client";
+import { MANAGE_TYPE_LABEL, MANAGE_TYPE_UNDECIDED } from "@/lib/manage-type";
 import { cleanMarkdown } from "@/lib/markdown-utils";
 import { Pagination } from "@/components/ui/pagination";
 import { DEFAULT_PAGE_SIZE } from "@/lib/constants/pagination";
@@ -46,7 +47,8 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
     const [timeFilter, setTimeFilter] = useState<"all" | "week" | "month">("all");
     const [gradeFilter, setGradeFilter] = useState("");
     const [chapterFilter, setChapterFilter] = useState("");
-    const [paperLevelFilter, setPaperLevelFilter] = useState<"all" | "a" | "b" | "other">("all");
+    /** 【2026-09-28】原「所属卷等级」(A/B/其他) 改为**错题等级**：全部 / 深挖 / 复练 / 未定 */
+    const [manageTypeFilter, setManageTypeFilter] = useState<"all" | "deep" | "review" | "undecided">("all");
     const [selectedTag, setSelectedTag] = useState<string | null>(null);
     const [expandedTags, setExpandedTags] = useState<Set<string>>(new Set());
     // 关注档下限筛选（G8 / T5）：0=全部，1..5=至少该档
@@ -79,7 +81,7 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
         }
         if (gradeFilter) params.append("gradeSemester", gradeFilter);
         if (chapterFilter) params.append("chapter", chapterFilter); // 章节筛选
-        if (paperLevelFilter !== "all") params.append("paperLevel", paperLevelFilter);
+        if (manageTypeFilter !== "all") params.append("manageType", manageTypeFilter);
         // 关注档下限（导出打印要跟列表同口径）
         if (attentionFilter >= 1) params.append("attention", String(attentionFilter));
 
@@ -208,7 +210,7 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
     };
 
     // 追踪筛选条件是否变化（用于判断是否需要重置页码）
-    const prevFiltersRef = useRef({ search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, paperLevelFilter, attentionFilter });
+    const prevFiltersRef = useRef({ search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionFilter });
 
     useEffect(() => {
         const prevFilters = prevFiltersRef.current;
@@ -220,11 +222,11 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
             prevFilters.notebookId !== notebookId ||
             prevFilters.gradeFilter !== gradeFilter ||
             prevFilters.chapterFilter !== chapterFilter ||
-            prevFilters.paperLevelFilter !== paperLevelFilter ||
+            prevFilters.manageTypeFilter !== manageTypeFilter ||
             prevFilters.attentionFilter !== attentionFilter;
 
         // 更新 ref
-        prevFiltersRef.current = { search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, paperLevelFilter, attentionFilter };
+        prevFiltersRef.current = { search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionFilter };
 
         if (filtersChanged && page !== 1) {
             // 筛选条件变化且不在第一页，重置到第一页（会再次触发此 effect）
@@ -234,7 +236,7 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
 
         // 正常请求数据
         fetchItems();
-    }, [page, search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, paperLevelFilter, attentionFilter]);
+    }, [page, search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionFilter]);
 
     const fetchItems = async () => {
         setLoading(true);
@@ -253,7 +255,7 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
             }
             if (gradeFilter) params.append("gradeSemester", gradeFilter);
             if (chapterFilter) params.append("chapter", chapterFilter); // 章节筛选
-            if (paperLevelFilter !== "all") params.append("paperLevel", paperLevelFilter);
+            if (manageTypeFilter !== "all") params.append("manageType", manageTypeFilter);
             // 关注档下限（G8 难度档）
             if (attentionFilter >= 1) params.append("attention", String(attentionFilter));
             // 分页参数
@@ -344,32 +346,33 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
                 </div>
                 <div className="flex flex-wrap gap-2">
                     <Button
-                        variant={paperLevelFilter === "all" ? "secondary" : "outline"}
+                        variant={manageTypeFilter === "all" ? "secondary" : "outline"}
                         size="sm"
-                        onClick={() => setPaperLevelFilter("all")}
+                        onClick={() => setManageTypeFilter("all")}
                     >
                         {t.filter.all || "All"}
                     </Button>
+                    {/* 【2026-09-28】错题等级：深挖 / 复练 / 未定（原 A卷/B卷/其他 已废） */}
                     <Button
-                        variant={paperLevelFilter === "a" ? "secondary" : "outline"}
+                        variant={manageTypeFilter === "deep" ? "secondary" : "outline"}
                         size="sm"
-                        onClick={() => setPaperLevelFilter("a")}
+                        onClick={() => setManageTypeFilter("deep")}
                     >
-                        {t.editor.paperLevels?.a || "Paper A"}
+                        {MANAGE_TYPE_LABEL.deep}
                     </Button>
                     <Button
-                        variant={paperLevelFilter === "b" ? "secondary" : "outline"}
+                        variant={manageTypeFilter === "review" ? "secondary" : "outline"}
                         size="sm"
-                        onClick={() => setPaperLevelFilter("b")}
+                        onClick={() => setManageTypeFilter("review")}
                     >
-                        {t.editor.paperLevels?.b || "Paper B"}
+                        {MANAGE_TYPE_LABEL.review}
                     </Button>
                     <Button
-                        variant={paperLevelFilter === "other" ? "secondary" : "outline"}
+                        variant={manageTypeFilter === "undecided" ? "secondary" : "outline"}
                         size="sm"
-                        onClick={() => setPaperLevelFilter("other")}
+                        onClick={() => setManageTypeFilter("undecided")}
                     >
-                        {t.editor.paperLevels?.other || "Other"}
+                        {MANAGE_TYPE_UNDECIDED}
                     </Button>
                 </div>
             </div>

@@ -74,6 +74,24 @@ export interface ErrorItem {
     gradeSemester?: string | null;
     paperLevel?: string | null;
 
+    /**
+     * 【2026-09-28 新增】**错题等级**：deep（深挖）/ review（复练）。
+     * null/空 = **未定**（老数据与还没定过的题）。
+     * ⚠️ 只有两个值 ——「积累」不在这一层（积累点背后可以没有错题）。
+     * 取值与判据一律走 `lib/manage-type.ts`，别在调用处手写字符串比较。
+     */
+    manageType?: string | null;
+    /** 这个等级怎么来的：default / derived / ai / manual / upgrade（决定能不能被自动派生改写） */
+    manageTypeSource?: string | null;
+    /**
+     * 【M0 字段 · 2026-09-28 才接上界面】错因（受控枚举 6 值）：
+     * missed_condition 看漏条件 / no_method 方法没想到 / computation 算错写错 /
+     * concept 概念不清 / blank 完全不会 / other 其他。
+     * ⚠️ 与 `errorType`（外部导入透传的英文自由文本）**不是一回事**，别混用。
+     * 错题等级就是从它**派生**的（见 `lib/manage-type.ts` 的映射表）。
+     */
+    mistakeCategory?: string | null;
+
     // 状态字段（5.3 单一事实来源）
     printCount?: number;
     attention?: number;
