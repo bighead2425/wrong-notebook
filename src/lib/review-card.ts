@@ -165,6 +165,26 @@ export function applyGlobalBlankLines(
     return next;
 }
 
+/* ============================ 题图缩放 ============================ */
+
+/** 题图缩放的合法区间（百分比，100 = 版面默认的 55% 宽） */
+export const FIGURE_SCALE_MIN = 30;
+export const FIGURE_SCALE_MAX = 180;
+export const FIGURE_SCALE_DEFAULT = 100;
+
+/**
+ * 夹到合法区间；非法值退回默认。
+ * ⚠️ 上限 180 不是随便定的：图列默认占答题区宽的 55%，
+ *    55% × 1.8 = 99% —— 再大就会把"她写字的地方"整个吃掉。
+ */
+export function normalizeFigureScale(value: number | null | undefined): number {
+    const base =
+        value === null || value === undefined || !Number.isFinite(Number(value))
+            ? FIGURE_SCALE_DEFAULT
+            : Number(value);
+    return Math.min(FIGURE_SCALE_MAX, Math.max(FIGURE_SCALE_MIN, Math.round(base)));
+}
+
 /* ============================ 分栏分页 ============================ */
 
 /** 量好高度的一道题（`heightMM` 来自隐藏量尺容器的真实测量） */

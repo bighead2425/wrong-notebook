@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react';
 import { Fragment } from 'react';
 import { ErrorItem } from '@/types/api';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
@@ -63,6 +63,10 @@ export interface ReviewSheetProps {
     blankValueOf?: (itemId: string) => number;
     /** 改某道题的留白行数 */
     onBlankChange?: (itemId: string, next: number) => void;
+    /** 这道题题图的缩放百分比（屏幕上拖右下角调的） */
+    figureScaleOf?: (itemId: string) => number;
+    /** 按下题图右下角的小把手 */
+    onFigureScaleStart?: (itemId: string) => (e: ReactMouseEvent) => void;
     L: (zh: string, en: string) => string;
 }
 
@@ -192,6 +196,8 @@ export function ReviewQuestionBlock({
     showDivider,
     blankValue,
     onBlankChange,
+    figureScale = 100,
+    onFigureScaleStart,
     L,
 }: {
     item: ErrorItem;
@@ -204,6 +210,13 @@ export function ReviewQuestionBlock({
     /** 屏幕上的微调控件要显示的行数（不给就不渲染控件） */
     blankValue?: number;
     onBlankChange?: (itemId: string, next: number) => void;
+    /**
+     * 这道题**题图**的缩放百分比（100 = 版面默认）。
+     * 他要的调法：**左上角固定、拖右下角、等比缩放** —— 因为有的图上纸后偏大/偏小。
+     */
+    figureScale?: number;
+    /** 按下题图右下角的小把手（拖拽逻辑在打印页，这里只负责把"起点"交出去） */
+    onFigureScaleStart?: (itemId: string) => (e: ReactMouseEvent) => void;
     L: (zh: string, en: string) => string;
 }) {
     const figures = useFigureImages(item);
@@ -263,11 +276,15 @@ export function ReviewQuestionBlock({
                     <div
                         className="print-review-figures"
                         style={{
-                            flex: `0 1 ${REVIEW_FIGURE_BOX_RATIO * 100}%`,
+                            // 缩放就作用在这条宽度上：55% × 百分比（上限 180 ⇒ 最多占满整行）
+                            flex: '0 0 auto',
+                            width: `${REVIEW_FIGURE_BOX_RATIO * figureScale}%`,
                             minWidth: 0,
+                            maxWidth: '100%',
                             display: 'flex',
                             flexDirection: 'column',
                             gap: '2mm',
+                            position: 'relative',
                         }}
                     >
                         {figures.map((url, i) => (
@@ -279,13 +296,21 @@ export function ReviewQuestionBlock({
                                 style={{
                                     width: '100%',
                                     height: 'auto',
-                                    maxHeight: `${REVIEW_LAYOUT_MM.figureMaxHeightMM}mm`,
+                                    maxHeight: `${REVIEW_LAYOUT_MM.figureMaxHeightMM * (figureScale / 100)}mm`,
                                     objectFit: 'contain',
                                     objectPosition: 'left top',
                                     display: 'block',
                                 }}
                             />
                         ))}
+                        {/* 拖拽把手：**只在屏幕上**（打印时被 CSS 隐藏），右下角、等比缩放 */}
+                        {onFigureScaleStart && (
+                            <span
+                                className="print-review-fig-handle"
+                                title={L('拖动调整图片大小', 'Drag to resize')}
+                                onMouseDown={onFigureScaleStart(item.id)}
+                            />
+                        )}
                     </div>
                 )}
 
@@ -335,6 +360,8 @@ export function ReviewSheet({
     itemByKey,
     blankValueOf,
     onBlankChange,
+    figureScaleOf,
+    onFigureScaleStart,
     L,
 }: ReviewSheetProps) {
     /**
@@ -401,6 +428,8 @@ export function ReviewSheet({
                                         showDivider={bi > 0}
                                         blankValue={blankValueOf ? blank : undefined}
                                         onBlankChange={onBlankChange}
+                                        figureScale={figureScaleOf ? figureScaleOf(item.id) : 100}
+                                        onFigureScaleStart={onFigureScaleStart}
                                         L={L}
                                     />
                                 );

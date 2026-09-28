@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "rea
 import type { CSSProperties } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { House } from "lucide-react";
+import { House, PanelLeftClose, PanelLeftOpen, Printer } from "lucide-react";
+import { cleanMarkdown } from "@/lib/markdown-utils";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
 import { apiClient } from "@/lib/api-client";
@@ -31,6 +32,7 @@ import {
     applyGlobalBlankLines,
     effectiveBlankLines,
     normalizeBlankLines,
+    normalizeFigureScale,
     paginateMeasured,
     type MeasuredBlock,
 } from "@/lib/review-card";
@@ -116,6 +118,25 @@ function PrintPreviewContent() {
     const [leftHidden, setLeftHidden] = useState(false);
     /** 拖拽中记住"起点鼠标 x"与"起点左栏宽"，移动时只做差值 */
     const splitterDragRef = useRef<{ startX: number; startW: number } | null>(null);
+
+    /**
+     * 【2026-09-28】每道题**题图**的大小（百分比，100 = 版面默认）。
+     *
+     * 为什么要有：有的图上纸后偏大、有的偏小，版面给的那个 55% 不是对每张图都合适。
+     * 调法是他定的：**左上角固定、拖右下角、等比缩放**。
+     * 存法和留白一样是"逐题覆盖"：没拖过的题不在表里 ⇒ 用版面默认值。
+     * ⚠️ 拖完必须**重新量高度**（图变了块就高了），所以 `measureKey` 里要带上它。
+     */
+    const [figureScales, setFigureScales] = useState<Record<string, number | null | undefined>>({});
+    const figureScaleOf = useCallback(
+        (id: string) => normalizeFigureScale(figureScales?.[id]),
+        [figureScales],
+    );
+    const onFigureScaleChange = useCallback((id: string, next: number) => {
+        setFigureScales((prev) => ({ ...prev, [id]: normalizeFigureScale(next) }));
+    }, []);
+    /** 拖拽题图：记住"起点鼠标 x / 起点宽度px"，移动时按比例换算成新的百分比 */
+    const figureDragRef = useRef<{ id: string; startX: number; startPx: number } | null>(null);
 
     // 手动双面：家里打印机不支持自动双面，靠爹手动翻
     const [manualDuplex, setManualDuplex] = useState(false);
@@ -207,11 +228,16 @@ function PrintPreviewContent() {
     const [measuredBlocks, setMeasuredBlocks] = useState<MeasuredBlock[] | null>(null);
     const measureRef = useRef<HTMLDivElement | null>(null);
 
-    /** 量尺指纹：题 / 卷别 / 留白任一变了，就得重量一遍 */
+    /** 量尺指纹：题 / 卷别 / 留白 / 题图大小任一变了，就得重量一遍 */
     const measureKey = useMemo(
         () =>
-            [volumeKind, selectedItems.map((i) => i.id).join("|"), JSON.stringify(blankOverrides)].join("#"),
-        [volumeKind, selectedItems, blankOverrides],
+            [
+                volumeKind,
+                selectedItems.map((i) => i.id).join("|"),
+                JSON.stringify(blankOverrides),
+                JSON.stringify(figureScales),
+            ].join("#"),
+        [volumeKind, selectedItems, blankOverrides, figureScales],
     );
 
     useEffect(() => {
@@ -473,6 +499,45 @@ function PrintPreviewContent() {
         };
     }, []);
 
+    /** 拖题图右下角：横向位移 → 等比的新百分比（左上角固定，见 ReviewQuestionBlock） */
+    useEffect(() => {
+        const onMove = (e: MouseEvent) => {
+            const drag = figureDragRef.current;
+            if (!drag) return;
+            const next = normalizeFigureScale((drag.startPx + (e.clientX - drag.startX)) / drag.startPx * 100);
+            setFigureScales((prev) => ({ ...prev, [drag.id]: next }));
+        };
+        const onUp = () => {
+            if (!figureDragRef.current) return;
+            figureDragRef.current = null;
+            document.body.style.cursor = "";
+            document.body.style.userSelect = "";
+        };
+        window.addEventListener("mousemove", onMove);
+        window.addEventListener("mouseup", onUp);
+        return () => {
+            window.removeEventListener("mousemove", onMove);
+            window.removeEventListener("mouseup", onUp);
+        };
+    }, []);
+
+    /** 按下题图右下角的小把手：记住起点，之后鼠标一动就按比例缩放 */
+    const handleFigureDown = useCallback(
+        (id: string) => (e: React.MouseEvent) => {
+            const box = (e.currentTarget as HTMLElement).parentElement;
+            figureDragRef.current = {
+                id,
+                startX: e.clientX,
+                startPx: box ? box.getBoundingClientRect().width : 1,
+            };
+            document.body.style.cursor = "nwse-resize";
+            document.body.style.userSelect = "none";
+            e.preventDefault();
+            e.stopPropagation();
+        },
+        [],
+    );
+
     /**
      * 整体调整留白行数（设置区那个「− N ＋」）。
      * 规则（他定的）：**只有当前等于旧缺省值的题**跟着变；
@@ -590,40 +655,50 @@ function PrintPreviewContent() {
     ];
 
     return (
-        <>
-            {/* ===== 控制栏（不打印） ===== */}
-            <div className="no-print sticky top-0 z-10 bg-background border-b p-3 sm:p-4 shadow-sm">
+        <div className="print-preview-shell">
+            {/* ===== 顶栏（不打印）=====                他要求：这一排**不进左栏也不进右栏**，始终在最上面；
+                窄屏时标题放不下就出省略号（不折行），按钮整组折到下一行。 */}
+            <div className="no-print shrink-0 z-10 bg-background border-b p-3 sm:p-4 shadow-sm">
                 <div className="space-y-3">
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                         <BackButton fallbackUrl="/notebooks" />
-                        <h1 className="text-lg sm:text-xl font-bold flex-1">
+                        {/* min-w-0 + truncate：窄屏放不下就省略号，**不折行** */}
+                        <h1 className="text-lg sm:text-xl font-bold flex-1 min-w-0 truncate">
                             {L("打印预览", "Print preview")} ({countLabel} {L("题", "items")})
                         </h1>
-                        {/* 左栏显隐 —— 他要求这个键也在**上面**：不进左栏、也不进右栏 */}
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="whitespace-nowrap"
-                            onClick={() => setLeftHidden((v) => !v)}
-                        >
-                            {leftHidden ? L("显示左栏", "Show panel") : L("隐藏左栏", "Hide panel")}
-                        </Button>
-                        <Button
-                            onClick={handlePrint}
-                            size="sm"
-                            className="whitespace-nowrap"
-                            disabled={selectedItems.length === 0 || printing || (isVolume && !volume)}
-                            title={isVolume && !volume ? L("请先「生成复练卷」再打印", "Build the volume first") : undefined}
-                        >
-                            {printing ? L("准备中…", "Preparing…") : L("打印 / 存为 PDF", "Print / Save PDF")}
-                        </Button>
-                        {/* 【custom-v24】右上角补一个主页按钮，和其他页面右上角的小房子统一。
-                            控制栏整体是 no-print，所以它只会出现在屏幕上，不会被印到纸上。 */}
-                        <Link href="/">
-                            <Button variant="ghost" size="icon" title={L("回到主页", "Home")}>
-                                <House className="h-5 w-5" />
+                        <div className="flex items-center gap-2">
+                            {/* 左栏显隐 —— 图标是他指定的那种"侧栏"样子 */}
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                className="whitespace-nowrap"
+                                title={leftHidden ? L("显示左栏", "Show panel") : L("隐藏左栏", "Hide panel")}
+                                onClick={() => setLeftHidden((v) => !v)}
+                            >
+                                {leftHidden ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+                                <span className="hidden sm:inline sm:ml-2">
+                                    {leftHidden ? L("显示左栏", "Show panel") : L("隐藏左栏", "Hide panel")}
+                                </span>
                             </Button>
-                        </Link>
+                            <Button
+                                onClick={handlePrint}
+                                size="sm"
+                                className="whitespace-nowrap"
+                                disabled={selectedItems.length === 0 || printing || (isVolume && !volume)}
+                                title={isVolume && !volume ? L("请先「生成复练卷」再打印", "Build the volume first") : undefined}
+                            >
+                                {/* 打印机图标本身就看得懂，窄屏只留图标 */}
+                                <Printer className="h-4 w-4" />
+                                <span className="hidden sm:inline sm:ml-2">
+                                    {printing ? L("准备中…", "Preparing…") : L("打印 / 存为 PDF", "Print / Save PDF")}
+                                </span>
+                            </Button>
+                            <Link href="/">
+                                <Button variant="ghost" size="icon" title={L("回到主页", "Home")}>
+                                    <House className="h-5 w-5" />
+                                </Button>
+                            </Link>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -631,7 +706,7 @@ function PrintPreviewContent() {
             {/* ===== 左栏（控制）+ 右栏（排版预览）=====
                 顶栏（标题 / 打印 / 回主页 / 左栏显隐）**不进任何一栏**，始终在最上面。
                 左栏隐藏 ⇒ 这一整块不渲染，右栏自然占满。 */}
-            <div className="print-preview-body" style={{ "--left-w": `${leftWidth}px` } as CSSProperties}>
+            <div className="print-preview-body flex-1 min-h-0" style={{ "--left-w": `${leftWidth}px` } as CSSProperties}>
                 {/* ===== 量尺：不显示、不打印 =====
                     把每道题按**真实栏宽**先排一遍，量出真实高度交给分页纯函数。
                     用的是同一个 `ReviewQuestionBlock`，所以"量到的"就是"印出来的"。
@@ -651,6 +726,7 @@ function PrintPreviewContent() {
                                 seq={i + 1}
                                 blankLines={blankValueOf(item.id)}
                                 showDivider={false}
+                                figureScale={figureScaleOf(item.id)}
                                 L={L}
                             />
                         ))}
@@ -801,13 +877,14 @@ function PrintPreviewContent() {
                                         </Button>
                                     </div>
                                 </div>
-                                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 max-h-44 overflow-y-auto pr-1">
+                                <div className="grid gap-2 max-h-80 overflow-y-auto pr-1">
                                     {items.map((item, index) => (
                                         <div key={item.id} className="flex items-start gap-2 rounded border bg-background p-2 text-xs">
                                             <input type="checkbox" checked={selectedIds.has(item.id)} onChange={() => toggleSelected(item.id)} className="mt-0.5 rounded border-gray-300" />
-                                            <span className="line-clamp-2 flex-1">
+                                            {/* 一道题一行；题干最多两行（清掉 markdown/LaTeX 记号，不然全是 $ 和 \quad） */}
+                                            <span className="line-clamp-2 flex-1 min-w-0 break-words">
                                                 <span className="font-semibold">{index + 1}.</span>
-                                                {item.questionText ? ` ${item.questionText}` : ""}
+                                                {item.questionText ? ` ${cleanMarkdown(item.questionText)}` : ""}
                                             </span>
                                             {isCard && (
                                                 <label className="flex items-center gap-1 whitespace-nowrap text-muted-foreground cursor-pointer">
@@ -832,7 +909,8 @@ function PrintPreviewContent() {
                 )}
 
                 <main className="print-preview-right">
-                    <div className="py-6 px-4 print:p-0 print:py-0">
+                    {/* 跟主页一个口径：居中 + 最大宽 + 左右留白，别顶进浏览器边上 */}
+                    <div className="mx-auto max-w-6xl px-4 py-6 print:max-w-none print:px-0 print:py-0">
                         <div className="print-sheet">
                     {isDeep ? (
                         <>
@@ -904,6 +982,8 @@ function PrintPreviewContent() {
                                     itemByKey={reviewItemByKey}
                                     blankValueOf={blankValueOf}
                                     onBlankChange={onBlankChange}
+                                    figureScaleOf={figureScaleOf}
+                                    onFigureScaleStart={handleFigureDown}
                                     L={L}
                                 />
                             ))}
@@ -1009,7 +1089,7 @@ function PrintPreviewContent() {
                     </div>
                 </main>
             </div>
-        </>
+        </div>
     );
 }
 

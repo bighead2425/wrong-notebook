@@ -6,6 +6,9 @@ import {
     REVIEW_BLOCK_SLACK_MM,
     REVIEW_DEFAULT_BLANK_LINES,
     REVIEW_FIGURE_BOX_RATIO,
+    FIGURE_SCALE_MAX,
+    FIGURE_SCALE_MIN,
+    normalizeFigureScale,
     REVIEW_LAYOUT_MM,
     REVIEW_PAGE_HEIGHT_MM,
     REVIEW_USABLE_WIDTH_MM,
@@ -105,6 +108,26 @@ describe('卷 · 版面常量', () => {
 
     it('答题区下限 ≥ 升降级小框那一行（7mm），否则小框会被裁掉', () => {
         expect(REVIEW_LAYOUT_MM.answerRowMinMM).toBeGreaterThanOrEqual(7);
+    });
+});
+
+describe('卷 · 题图缩放（他在预览区拖右下角调的）', () => {
+    it('缺省 100%，非法值退回 100%', () => {
+        expect(normalizeFigureScale(null)).toBe(100);
+        expect(normalizeFigureScale(undefined)).toBe(100);
+        expect(normalizeFigureScale(Number.NaN)).toBe(100);
+    });
+
+    it('夹在 30–180：再小也留得下一条边，再大不吃掉写字的地方', () => {
+        expect(normalizeFigureScale(1)).toBe(FIGURE_SCALE_MIN);
+        expect(normalizeFigureScale(9999)).toBe(FIGURE_SCALE_MAX);
+        expect(normalizeFigureScale(120)).toBe(120);
+    });
+
+    it('⚠️ 上限 180 的来由：55% × 1.8 = 99%，图列不会吃掉留白那半边', () => {
+        expect(REVIEW_FIGURE_BOX_RATIO * FIGURE_SCALE_MAX).toBeLessThanOrEqual(100);
+        // 再往上放就真的把写字的地方吃掉了（所以必须拦住）
+        expect(REVIEW_FIGURE_BOX_RATIO * 200).toBeGreaterThan(100);
     });
 });
 

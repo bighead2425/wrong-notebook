@@ -482,9 +482,17 @@
  * ⚠️ 宽度走 CSS 变量 `--left-w`（由 React 设），**不在行内写死 px** ——
  *    窄屏要靠这里的媒体查询变成上下堆叠，写死就会把预览挤没。
  * ==========================================================================*/
+.print-preview-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
 .print-preview-body {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .print-preview-left {
@@ -503,17 +511,29 @@
 }
 
 @media (min-width: 1024px) {
+  /* 宽屏：整个页面**不滚**，左右两栏**各滚各的** ——
+     他要的就是"鼠标在哪栏，滚轮就翻哪栏"。 */
+  .print-preview-shell {
+    height: 100vh;
+    overflow: hidden;
+  }
+
   .print-preview-body {
     flex-direction: row;
-    align-items: flex-start;
+    align-items: stretch;
   }
 
   .print-preview-left {
     width: var(--left-w, 380px);
     flex: 0 0 auto;
-    max-height: calc(100vh - 92px);
+    height: 100%;
     overflow-y: auto;
     padding: 0 4px 24px 0;
+  }
+
+  .print-preview-right {
+    height: 100%;
+    overflow-y: auto;
   }
 
   .print-preview-splitter {
@@ -547,10 +567,58 @@
   z-index: -1;
 }
 
+/* 题图右下角的**缩放把手**：只在屏幕上有，打印绝不出现 */
+.print-review-fig-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+  border-right: 2px solid #9aa0a6;
+  border-bottom: 2px solid #9aa0a6;
+  border-bottom-right-radius: 3px;
+  background: linear-gradient(135deg, transparent 45%, #9aa0a6 45%, #9aa0a6 55%, transparent 55%);
+}
+
+.print-review-fig-handle:hover {
+  border-color: #4b5563;
+}
+
+/* 屏幕上给每张"虚拟纸"描一圈灰框 + 一点投影 ——
+   不然看不出 B5 的版面边界在哪。打印时由 @media print 关掉。 */
+@media screen {
+  .print-card {
+    box-shadow:
+      0 0 0 1px #d4d4d4,
+      0 2px 8px rgb(0 0 0 / 0.07);
+    background: #ffffff;
+  }
+}
+
 @media print {
+  /* ⚠️ 打印时必须把"左右两栏各自滚动"的那套全部拆掉：
+     不然外层 height:100vh + overflow:hidden 会把第 2 页以后全裁掉。 */
+  .print-preview-shell {
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .print-preview-body {
+    display: block !important;
+  }
+
+  .print-preview-right {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
   .print-review-measure,
   .print-preview-left,
-  .print-preview-splitter {
+  .print-preview-splitter,
+  .print-review-fig-handle,
+  .print-review-tweak {
     display: none !important;
   }
 

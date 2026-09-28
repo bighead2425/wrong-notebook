@@ -148,14 +148,13 @@ export default function NotebooksPage() {
     return (
         <main className="min-h-screen p-4 md:p-8 bg-background">
             <div className="max-w-6xl mx-auto space-y-8">
-                <div className="flex items-start gap-4">
+                <div className="flex items-center gap-4">
                     <BackButton fallbackUrl="/" />
-                    <div className="flex-1 space-y-1">
-                        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">{t.notebooks?.title || "My Notebooks"}</h1>
-                        <p className="text-muted-foreground text-sm sm:text-base">
-                            {t.notebooks?.subtitle || "Manage your mistakes by subject"}
-                        </p>
-                    </div>
+                    {/* 那句"按科目分类管理你的错题"已按他的要求去掉（2026-09-28）——
+                        标题本身已经说清了这是哪儿，少一行手机上少一次折行 */}
+                    <h1 className="flex-1 text-2xl sm:text-3xl font-bold tracking-tight min-w-0">
+                        {t.notebooks?.title || "My Notebooks"}
+                    </h1>
                     <div className="flex items-center gap-2 shrink-0">
                         {/*
                           回收箱入口（【custom-v24】按用户要求改造）
@@ -165,10 +164,18 @@ export default function NotebooksPage() {
                              用户说「尽量给岔开」。垃圾桶图标是「丢弃/暂存」的通用语义，不会误读成还原。
                           ③ 页面里归档横幅的「拉回在用」仍是 ArchiveRestore，两者从此泾渭分明。
                         */}
+                        {/* 回收箱：宽屏「图标+字」，窄屏只留垃圾桶图标 ——
+                            跟旁边「新建错题本」在窄屏缩成「+」是同一套规矩，
+                            这样标题「我的错题本」在手机上就不用折行了 */}
                         <Link href="/trash">
-                            <Button variant="outline" size="sm" title={t.notebooks?.trash || "回收箱"}>
+                            <Button variant="outline" size="sm" title={t.notebooks?.trash || "回收箱"} className="hidden sm:flex">
                                 <Trash2 className="mr-2 h-4 w-4" />
                                 {t.notebooks?.trash || "回收箱"}
+                            </Button>
+                        </Link>
+                        <Link href="/trash" className="sm:hidden">
+                            <Button variant="outline" size="icon" title={t.notebooks?.trash || "回收箱"}>
+                                <Trash2 className="h-4 w-4" />
                             </Button>
                         </Link>
                         <Button onClick={() => setDialogOpen(true)} size="sm" className="hidden sm:flex">
@@ -186,7 +193,8 @@ export default function NotebooksPage() {
                     </div>
                 </div>
 
-                {/* #10 三级打印 · 第 1 级：所有本里还没打印过的题 */}
+                {/* #10 三级打印 · 第 1 级：所有本里还没打印过的题
+                    （那句"把各本里从没打过的题一次打成错题卡"已按他的要求去掉） */}
                 <div className="flex flex-wrap items-center gap-2">
                     <Button
                         variant="secondary"
@@ -196,9 +204,6 @@ export default function NotebooksPage() {
                         <Printer className="mr-2 h-4 w-4" />
                         {t.notebooks?.printAllUnprinted || "打印所有未打印"}
                     </Button>
-                    <p className="text-xs text-muted-foreground">
-                        {t.notebooks?.printAllHint || "把各本里从没打过的题一次打成错题卡"}
-                    </p>
                 </div>
 
                 {notebooks.length === 0 ? (
