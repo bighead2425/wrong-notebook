@@ -92,6 +92,19 @@ describe('MdEditor · 列表与高亮', () => {
     });
 });
 
+describe('MdEditor · 公式样式（他报的"显示成两份"）', () => {
+    it('★ 编辑器自己必须引 KaTeX 的 CSS', async () => {
+        // 为什么查源码：KaTeX 每个公式会渲染 HTML + MathML **两份**，
+        // 后者靠 KaTeX 自己的 CSS 藏起来。少了这份 CSS，浏览器会把 MathML 也画出来
+        // ⇒ 屏幕上出现两个公式（他 2026-09-29 实测）。
+        // 这份 CSS 原先只挂在 markdown-renderer 上，而详情页换成所见即所得后
+        // 不再引用它 ⇒ 该路由就没样式了。这个探测式断言就是防止它被再次删掉。
+        const { readFile } = await import('node:fs/promises');
+        const src = await readFile('src/components/md-editor.tsx', 'utf-8');
+        expect(src).toContain("import 'katex/dist/katex.min.css'");
+    });
+});
+
 describe('normalizeMilkdownArtifacts（纯函数）', () => {
     it('整行的 `<br />` 换回空行；行内的不动', () => {
         expect(normalizeMilkdownArtifacts('甲\n\n<br />\n\n乙')).toBe('甲\n\n\n\n乙');

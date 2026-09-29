@@ -29,6 +29,16 @@ import type { Editor } from '@milkdown/kit/core';
 // 样式：ProseMirror 的基础排版（contenteditable 行为），静态导入没问题；
 // 正文排版复用全局的 .markdown-content（挂在编辑器根节点上，见下）。
 import '@milkdown/kit/prose/view/style/prosemirror.css';
+/**
+ * ⚠️ **KaTeX 的样式必须在这里也引一次**（2026-09-29 他报的"公式显示成两份"就是缺它）。
+ *
+ * KaTeX 每个公式都会渲染**两份**：一份 HTML（可见）+ 一份 MathML（无障碍用）。
+ * 后者是靠 **KaTeX 自己的 CSS**（`.katex-mathml { clip: ... }`）藏起来的 ——
+ * 少了这份 CSS，浏览器就用自己的 MathML 引擎把第二份也画出来 ⇒ 屏幕上出现两个公式。
+ * 以前这行只写在 `markdown-renderer.tsx` 里，而详情页在换成所见即所得后**不再引用**
+ * 那个组件 ⇒ 该路由加载不到这份 CSS。放这里最稳妥：编辑器自己要渲染公式。
+ */
+import 'katex/dist/katex.min.css';
 // `==高亮==` 的编辑器侧 remark 插件（严格版：独立节点，不借用 emphasis —— 见其文件头）
 import { remarkHighlightStrict } from '@/lib/markdown-plugins';
 import type { RemarkPluginRaw } from '@milkdown/kit/transformer';
