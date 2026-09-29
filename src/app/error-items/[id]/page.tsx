@@ -8,7 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X, Sparkles, Loader2, Printer } from "lucide-react";
 import Link from "next/link";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { MdEditor } from "@/components/md-editor";
 import { TagInput } from "@/components/tag-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -16,7 +15,7 @@ import { apiClient } from "@/lib/api-client";
 import { MISTAKE_CATEGORIES, getMistakeCategoryLabel } from "@/lib/mistake-category";
 import { MANAGE_TYPES, MANAGE_TYPE_LABEL, MANAGE_TYPE_UNDECIDED } from "@/lib/manage-type";
 import { UserProfile } from "@/types/api";
-import { getMistakeStatusLabel, normalizeMistakeStatusForSave } from "@/lib/mistake-status";
+import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { NotebookSelector } from "@/components/notebook-selector";
 import { CorrectionEditor, ParsedQuestionWithSubject } from "@/components/correction-editor";
 import { ParsedQuestion } from "@/lib/ai";
@@ -81,7 +80,6 @@ export default function ErrorDetailPage() {
     const { t, language } = useLanguage();
     const [item, setItem] = useState<ErrorItemDetail | null>(null);
     const [loading, setLoading] = useState(true);
-    const [isEditingNotes, setIsEditingNotes] = useState(false);
     const [notesInput, setNotesInput] = useState("");
     const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
     const [isEditingTags, setIsEditingTags] = useState(false);
@@ -107,6 +105,24 @@ export default function ErrorDetailPage() {
             fetchItem(params.id as string);
         }
     }, [params.id]);
+
+    /**
+     * 【2026-09-29】这些 md 字段改成**一直可编辑**（不再点"编辑"）⇒ 输入状态必须在
+     * 题目载入时初始化一次。
+     * ⚠️ 依赖只写 `item?.id`：改试题信息（错题本/年级/等级/错因）会重新拉整条 item，
+     *    但**不能**顺手把正在编辑的正文覆盖掉（那会把没保存的改动洗没）。
+     */
+    useEffect(() => {
+        if (!item) return;
+        setQuestionInput(item.questionText ?? "");
+        setAnswerInput(item.answerText ?? "");
+        setAnalysisInput(item.analysis ?? "");
+        setWrongAnswerInput(item.wrongAnswerText ?? "");
+        setMistakeAnalysisInput(item.mistakeAnalysis ?? "");
+        setMistakeStatusInput(item.mistakeStatus || "unknown");
+        setNotesInput(item.userNotes ?? "");
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在换题时初始化，见上
+    }, [item?.id]);
 
     const fetchItem = async (id: string) => {
         try {
@@ -231,16 +247,6 @@ export default function ErrorDetailPage() {
         alert(t.common?.messages?.saveSuccess || "保存成功！");
     };
 
-    const startEditingNotes = () => {
-        setNotesInput(item?.userNotes || "");
-        setIsEditingNotes(true);
-    };
-
-    const cancelEditingNotes = () => {
-        setIsEditingNotes(false);
-        setNotesInput("");
-    };
-
     const startEditingTags = () => {
         if (item) {
             // 优先使用新的 tags 关联
@@ -301,32 +307,20 @@ export default function ErrorDetailPage() {
         }
     };
 
-    const [isEditingQuestion, setIsEditingQuestion] = useState(false);
     const [questionInput, setQuestionInput] = useState("");
 
-    const [isEditingAnswer, setIsEditingAnswer] = useState(false);
     const [answerInput, setAnswerInput] = useState("");
 
-    const [isEditingAnalysis, setIsEditingAnalysis] = useState(false);
     const [analysisInput, setAnalysisInput] = useState("");
 
-    const [isEditingMistake, setIsEditingMistake] = useState(false);
     const [wrongAnswerInput, setWrongAnswerInput] = useState("");
     const [mistakeAnalysisInput, setMistakeAnalysisInput] = useState("");
     const [mistakeStatusInput, setMistakeStatusInput] = useState("unknown");
 
     // --- Question Handlers ---
-    const startEditingQuestion = () => {
-        if (item) {
-            setQuestionInput(item.questionText);
-            setIsEditingQuestion(true);
-        }
-    };
-
     const saveQuestionHandler = async () => {
         try {
             await apiClient.put(`/api/error-items/${item?.id}`, { questionText: questionInput });
-            setIsEditingQuestion(false);
             if (item) setItem({ ...item, questionText: questionInput });
             alert(t.common?.messages?.saveSuccess || 'Saved successfully');
         } catch (error) {
@@ -335,23 +329,9 @@ export default function ErrorDetailPage() {
         }
     };
 
-    const cancelEditingQuestion = () => {
-        setIsEditingQuestion(false);
-        setQuestionInput("");
-    };
-
-    // --- Answer Handlers ---
-    const startEditingAnswer = () => {
-        if (item) {
-            setAnswerInput(item.answerText);
-            setIsEditingAnswer(true);
-        }
-    };
-
     const saveAnswerHandler = async () => {
         try {
             await apiClient.put(`/api/error-items/${item?.id}`, { answerText: answerInput });
-            setIsEditingAnswer(false);
             if (item) setItem({ ...item, answerText: answerInput });
             alert(t.common?.messages?.saveSuccess || 'Saved successfully');
         } catch (error) {
@@ -360,43 +340,14 @@ export default function ErrorDetailPage() {
         }
     };
 
-    const cancelEditingAnswer = () => {
-        setIsEditingAnswer(false);
-        setAnswerInput("");
-    };
-
-    // --- Analysis Handlers ---
-    const startEditingAnalysis = () => {
-        if (item) {
-            setAnalysisInput(item.analysis);
-            setIsEditingAnalysis(true);
-        }
-    };
-
     const saveAnalysisHandler = async () => {
         try {
             await apiClient.put(`/api/error-items/${item?.id}`, { analysis: analysisInput });
-            setIsEditingAnalysis(false);
             if (item) setItem({ ...item, analysis: analysisInput });
             alert(t.common?.messages?.saveSuccess || 'Saved successfully');
         } catch (error) {
             console.error(error);
             alert(t.common?.messages?.saveFailed || 'Save failed');
-        }
-    };
-
-    const cancelEditingAnalysis = () => {
-        setIsEditingAnalysis(false);
-        setAnalysisInput("");
-    };
-
-    // --- Mistake Analysis Handlers ---
-    const startEditingMistake = () => {
-        if (item) {
-            setWrongAnswerInput(item.wrongAnswerText || "");
-            setMistakeAnalysisInput(item.mistakeAnalysis || "");
-            setMistakeStatusInput(item.mistakeStatus || "unknown");
-            setIsEditingMistake(true);
         }
     };
 
@@ -411,7 +362,6 @@ export default function ErrorDetailPage() {
                 mistakeAnalysis: mistakeAnalysisInput,
                 mistakeStatus: normalizedStatus,
             });
-            setIsEditingMistake(false);
             if (item) {
                 setItem({
                     ...item,
@@ -427,20 +377,12 @@ export default function ErrorDetailPage() {
         }
     };
 
-    const cancelEditingMistake = () => {
-        setIsEditingMistake(false);
-        setWrongAnswerInput("");
-        setMistakeAnalysisInput("");
-        setMistakeStatusInput("unknown");
-    };
-
     const saveNotes = async () => {
         if (!item) return;
 
         try {
             await apiClient.patch(`/api/error-items/${item.id}/notes`, { userNotes: notesInput });
             setItem({ ...item, userNotes: notesInput });
-            setIsEditingNotes(false);
             alert(t.common?.messages?.noteSaveSuccess || 'Notes saved successfully');
         } catch (error) {
             console.error(error);
@@ -579,16 +521,6 @@ export default function ErrorDetailPage() {
                             <CardHeader>
                                 <div className="flex justify-between items-center">
                                     <CardTitle>{t.detail.question}</CardTitle>
-                                    {!isEditingQuestion && (
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={startEditingQuestion}
-                                        >
-                                            <Edit className="h-4 w-4 mr-1" />
-                                            {t.common?.edit || 'Edit'}
-                                        </Button>
-                                    )}
                                 </div>
                             </CardHeader>
                             <CardContent className="space-y-4">
@@ -612,31 +544,29 @@ export default function ErrorDetailPage() {
                                     </div>
                                 )}
 
-                                {isEditingQuestion ? (
-                                    <div className="space-y-3">
-                                        {/* 【2026-09-29】所见即所得：编辑即渲染，保存的仍是 md 源 */}
-                                        <MdEditor
-                                            value={questionInput}
-                                            onChange={setQuestionInput}
-                                            placeholder="Enter question text..."
-                                            minHeightPx={180}
-                                        />
-                                        {/* 他定的：**检测到改动才出现保存/取消** —— 没改就不该有按钮 */}
-                                        {questionInput !== (item?.questionText ?? "") && (
-                                            <div className="flex gap-2">
-                                                <Button size="sm" onClick={saveQuestionHandler}>
-                                                    <Save className="h-4 w-4 mr-1" />
-                                                    {t.common?.save || 'Save'}
-                                                </Button>
-                                                <Button size="sm" variant="outline" onClick={cancelEditingQuestion}>
-                                                    <X className="h-4 w-4 mr-1" />
-                                                    {t.common?.cancel || 'Cancel'}
-                                                </Button>
-                                            </div>
-                                        )}
+                                {/* 【2026-09-29 二次修正】**一直可编辑**（他明确要求不再点"编辑"）：
+                                    打开就是渲染好的样子，直接改；**改动后才出现保存/取消**。 */}
+                                <MdEditor
+                                    value={questionInput}
+                                    onChange={setQuestionInput}
+                                    placeholder="Enter question text..."
+                                    minHeightPx={180}
+                                />
+                                {questionInput !== (item?.questionText ?? "") && (
+                                    <div className="flex gap-2">
+                                        <Button size="sm" onClick={saveQuestionHandler}>
+                                            <Save className="h-4 w-4 mr-1" />
+                                            {t.common?.save || 'Save'}
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={() => setQuestionInput(item?.questionText ?? "")}
+                                        >
+                                            <X className="h-4 w-4 mr-1" />
+                                            {t.common?.cancel || 'Cancel'}
+                                        </Button>
                                     </div>
-                                ) : (
-                                    <MarkdownRenderer content={item.questionText} />
                                 )}
 
                                 {/* 知识点标签 */}
@@ -815,49 +745,31 @@ export default function ErrorDetailPage() {
                             <CardHeader>
                                 <div className="flex justify-between items-center">
                                     <CardTitle>{t.detail.yourNotes}</CardTitle>
-                                    {!isEditingNotes && (
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={startEditingNotes}
-                                        >
-                                            <Edit className="h-4 w-4 mr-1" />
-                                            {t.detail.editNotes || "Edit"}
-                                        </Button>
-                                    )}
                                 </div>
                             </CardHeader>
-                            <CardContent>
-                                {isEditingNotes ? (
-                                    <div className="space-y-3">
-                                        <MdEditor
-                                            value={notesInput}
-                                            onChange={setNotesInput}
-                                            placeholder={t.detail.notesPlaceholder || "Enter your notes..."}
-                                            minHeightPx={110}
-                                        />
-                                        {notesInput !== (item.userNotes ?? "") && (
-                                            <div className="flex gap-2">
-                                                <Button size="sm" onClick={saveNotes}>
-                                                    <Save className="h-4 w-4 mr-1" />
+                            <CardContent className="space-y-3">
+                                {/* 一直可编辑（去掉了"编辑"这一步）；改动了才出现保存/取消 */}
+                                <MdEditor
+                                    value={notesInput}
+                                    onChange={setNotesInput}
+                                    placeholder={t.detail.notesPlaceholder || "Enter your notes..."}
+                                    minHeightPx={110}
+                                />
+                                {notesInput !== (item.userNotes ?? "") && (
+                                    <div className="flex gap-2">
+                                        <Button size="sm" onClick={saveNotes}>
+                                            <Save className="h-4 w-4 mr-1" />
                                                     {t.common.save || "Save"}
                                                 </Button>
-                                                <Button size="sm" variant="outline" onClick={cancelEditingNotes}>
-                                                    <X className="h-4 w-4 mr-1" />
-                                                    {t.common.cancel || "Cancel"}
-                                                </Button>
-                                            </div>
-                                        )}
+                                                <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={() => setNotesInput(item?.userNotes ?? "")}
+                                        >
+                                            <X className="h-4 w-4 mr-1" />
+                                            {t.common.cancel || "Cancel"}
+                                        </Button>
                                     </div>
-                                ) : (
-                                    // 【2026-09-29】笔记也走 md 了 ⇒ 只读态用渲染器（原来是纯文本 pre-wrap）
-                                    item.userNotes ? (
-                                        <MarkdownRenderer content={item.userNotes} />
-                                    ) : (
-                                        <p className="text-muted-foreground italic">
-                                            {t.detail.noNotes}
-                                        </p>
-                                    )
                                 )}
                             </CardContent>
                         </Card>
@@ -869,42 +781,30 @@ export default function ErrorDetailPage() {
                             <CardHeader>
                                 <div className="flex justify-between items-center">
                                     <CardTitle className="text-primary">{t.detail.correctAnswer}</CardTitle>
-                                    {!isEditingAnswer && (
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={startEditingAnswer}
-                                        >
-                                            <Edit className="h-4 w-4 mr-1" />
-                                            {t.common?.edit || 'Edit'}
-                                        </Button>
-                                    )}
                                 </div>
                             </CardHeader>
-                            <CardContent>
-                                {isEditingAnswer ? (
-                                    <div className="space-y-3">
-                                        <MdEditor
-                                            value={answerInput}
-                                            onChange={setAnswerInput}
-                                            placeholder="Enter answer..."
-                                            minHeightPx={120}
-                                        />
-                                        {answerInput !== (item?.answerText ?? "") && (
-                                            <div className="flex gap-2">
-                                                <Button size="sm" onClick={saveAnswerHandler}>
-                                                    <Save className="h-4 w-4 mr-1" />
-                                                    {t.common?.save || 'Save'}
-                                                </Button>
-                                                <Button size="sm" variant="outline" onClick={cancelEditingAnswer}>
-                                                    <X className="h-4 w-4 mr-1" />
-                                                    {t.common?.cancel || 'Cancel'}
-                                                </Button>
-                                            </div>
-                                        )}
+                            <CardContent className="space-y-3">
+                                <MdEditor
+                                    value={answerInput}
+                                    onChange={setAnswerInput}
+                                    placeholder="Enter answer..."
+                                    minHeightPx={120}
+                                />
+                                {answerInput !== (item?.answerText ?? "") && (
+                                    <div className="flex gap-2">
+                                        <Button size="sm" onClick={saveAnswerHandler}>
+                                            <Save className="h-4 w-4 mr-1" />
+                                            {t.common?.save || 'Save'}
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={() => setAnswerInput(item?.answerText ?? "")}
+                                        >
+                                            <X className="h-4 w-4 mr-1" />
+                                            {t.common?.cancel || 'Cancel'}
+                                        </Button>
                                     </div>
-                                ) : (
-                                    <MarkdownRenderer content={item.answerText} className="font-semibold" />
                                 )}
                             </CardContent>
                         </Card>
@@ -913,42 +813,30 @@ export default function ErrorDetailPage() {
                             <CardHeader>
                                 <div className="flex justify-between items-center">
                                     <CardTitle>{t.detail.analysis}</CardTitle>
-                                    {!isEditingAnalysis && (
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={startEditingAnalysis}
-                                        >
-                                            <Edit className="h-4 w-4 mr-1" />
-                                            {t.common?.edit || 'Edit'}
-                                        </Button>
-                                    )}
                                 </div>
                             </CardHeader>
-                            <CardContent className="space-y-4">
-                                {isEditingAnalysis ? (
-                                    <div className="space-y-3">
-                                        <MdEditor
-                                            value={analysisInput}
-                                            onChange={setAnalysisInput}
-                                            placeholder="Enter analysis..."
-                                            minHeightPx={260}
-                                        />
-                                        {analysisInput !== (item?.analysis ?? "") && (
-                                            <div className="flex gap-2">
-                                                <Button size="sm" onClick={saveAnalysisHandler}>
-                                                    <Save className="h-4 w-4 mr-1" />
-                                                    {t.common?.save || 'Save'}
-                                                </Button>
-                                                <Button size="sm" variant="outline" onClick={cancelEditingAnalysis}>
-                                                    <X className="h-4 w-4 mr-1" />
-                                                    {t.common?.cancel || 'Cancel'}
-                                                </Button>
-                                            </div>
-                                        )}
+                            <CardContent className="space-y-3">
+                                <MdEditor
+                                    value={analysisInput}
+                                    onChange={setAnalysisInput}
+                                    placeholder="Enter analysis..."
+                                    minHeightPx={260}
+                                />
+                                {analysisInput !== (item?.analysis ?? "") && (
+                                    <div className="flex gap-2">
+                                        <Button size="sm" onClick={saveAnalysisHandler}>
+                                            <Save className="h-4 w-4 mr-1" />
+                                            {t.common?.save || 'Save'}
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={() => setAnalysisInput(item?.analysis ?? "")}
+                                        >
+                                            <X className="h-4 w-4 mr-1" />
+                                            {t.common?.cancel || 'Cancel'}
+                                        </Button>
                                     </div>
-                                ) : (
-                                    <MarkdownRenderer content={item.analysis} />
                                 )}
                             </CardContent>
                         </Card>
@@ -957,21 +845,12 @@ export default function ErrorDetailPage() {
                             <CardHeader>
                                 <div className="flex justify-between items-center">
                                     <CardTitle>{t.detail?.mistakeAnalysis || '错因分析'}</CardTitle>
-                                    {!isEditingMistake && (
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={startEditingMistake}
-                                        >
-                                            <Edit className="h-4 w-4 mr-1" />
-                                            {t.common?.edit || 'Edit'}
-                                        </Button>
-                                    )}
                                 </div>
                             </CardHeader>
+                            {/* 【2026-09-29】整块一直可编辑；**作答状态下拉保留**（它本来就不是 md，
+                                他专门点过名：不能跟着一起去掉） */}
                             <CardContent className="space-y-4">
-                                {isEditingMistake ? (
-                                    <div className="space-y-4">
+                                <div className="space-y-4">
                                         <div className="space-y-2">
                                             <label className="text-sm text-muted-foreground">{t.editor?.mistakeStatus || '作答状态'}</label>
                                             <Select
@@ -1014,34 +893,21 @@ export default function ErrorDetailPage() {
                                                     <Save className="h-4 w-4 mr-1" />
                                                     {t.common?.save || 'Save'}
                                                 </Button>
-                                                <Button size="sm" variant="outline" onClick={cancelEditingMistake}>
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={() => {
+                                                        setWrongAnswerInput(item?.wrongAnswerText ?? "");
+                                                        setMistakeAnalysisInput(item?.mistakeAnalysis ?? "");
+                                                        setMistakeStatusInput(item?.mistakeStatus || "unknown");
+                                                    }}
+                                                >
                                                     <X className="h-4 w-4 mr-1" />
                                                     {t.common?.cancel || 'Cancel'}
                                                 </Button>
                                             </div>
                                         )}
-                                    </div>
-                                ) : (
-                                    <div className="space-y-4">
-                                        <Badge variant={item.mistakeStatus === 'wrong_attempt' ? 'default' : 'secondary'}>
-                                            {getMistakeStatusLabel(item.mistakeStatus, language)}
-                                        </Badge>
-                                        {item.wrongAnswerText ? (
-                                            <div>
-                                                <h4 className="text-sm font-semibold mb-2">{t.editor?.wrongAnswerText || '错误解答原文'}</h4>
-                                                <MarkdownRenderer content={item.wrongAnswerText} />
-                                            </div>
-                                        ) : null}
-                                        {item.mistakeAnalysis ? (
-                                            <div>
-                                                <h4 className="text-sm font-semibold mb-2">{t.editor?.mistakeAnalysis || '错因分析'}</h4>
-                                                <MarkdownRenderer content={item.mistakeAnalysis} />
-                                            </div>
-                                        ) : (
-                                            <p className="text-sm text-muted-foreground italic">{t.detail?.noMistakeAnalysis || '暂无错因分析'}</p>
-                                        )}
-                                    </div>
-                                )}
+                                </div>
                             </CardContent>
                         </Card>
                         {/* 操作按钮 */}

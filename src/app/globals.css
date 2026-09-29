@@ -807,6 +807,32 @@
   cursor: text;
 }
 
+/* ⚠️ **列表序号必须显式加回来**：Tailwind 的 preflight 会把 ol/ul 的
+   list-style 与缩进一起清掉。渲染端不受影响（MarkdownRenderer 给每个元素
+   带了 list-disc / list-decimal 工具类），但编辑器里的 `<ol>` 没有任何类 ⇒
+   序号整体消失 —— 他实测"输入 1. 就看不见 1."就是这个。 */
+.md-editor ol,
+.md-editor ul {
+  margin: 0.4em 0;
+  padding-left: 1.6em;
+}
+
+.md-editor ol {
+  list-style: decimal;
+}
+
+.md-editor ul {
+  list-style: disc;
+}
+
+.md-editor li > p {
+  margin: 0;
+}
+
+.md-editor li {
+  margin: 0.15em 0;
+}
+
 /* 空内容时的占位提示（Milkdown 无内置 placeholder，用 CSS 实现：
    ProseMirror 空文档只有首个空段落 + 占位符 class 由 data-placeholder 提示） */
 .md-editor .ProseMirror p.is-editor-empty:first-child::before {
@@ -826,4 +852,39 @@
   color: inherit;
   border-radius: 2px;
   padding: 0 2px;
+}
+
+/* ============================================================================
+ * MdEditor 的**源码模式开关**（2026-09-29）
+ *
+ * 他问过"能不能像 Obsidian 那样，光标所在处显示 `**加粗**` 源码" ——
+ * 那是 CodeMirror 系编辑器在**源码上做装饰**才有的效果；Milkdown/ProseMirror
+ * 是富文本模型、没有源码层，做不到。折中给一个源码开关：默认隐藏，
+ * 鼠标悬停在编辑区时右上角浮出，点一下切到原始 md 文本域。
+ * ==========================================================================*/
+.md-editor-src-toggle {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: 2;
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #6b7280;
+  background: rgb(255 255 255 / 0.9);
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  cursor: pointer;
+}
+
+.md-editor-wrap:hover .md-editor-src-toggle,
+.md-editor-src-toggle:focus-visible {
+  opacity: 1;
+}
+
+.md-editor-src-toggle:hover {
+  color: #374151;
+  border-color: #d1d5db;
 }
