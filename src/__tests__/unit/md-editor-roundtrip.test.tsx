@@ -182,6 +182,44 @@ describe('MdEditor · 整行公式与"框里空白"（2026-09-29 他实测报的
     });
 });
 
+describe('MdEditor · 编辑器必须自己补回被 preflight 冲掉的样式', () => {
+    /**
+     * 为什么查源码、不查 DOM：jsdom 不加载 Next 的 Tailwind 产物，`getComputedStyle`
+     * 在这里什么都拿不到 ⇒ 样式类的问题只能这样钉（与上面 KaTeX CSS 那条同一个套路）。
+     *
+     * 对应他 2026-09-29 实测报的三处"看起来没生效"，根因是同一个：
+     * **Tailwind 的 preflight 把 h1–h6 重制成 inherit、表格不给边框，而 Milkdown 生成的是
+     * 没有任何 class 的"裸标签"** —— 渲染端有 class 所以没事，编辑器里就全平了。
+     */
+    const readCss = () => import('node:fs/promises').then((m) => m.readFile('src/app/globals.css', 'utf-8'));
+
+    it('★ 三级标题：编辑器里必须给字号与粗细（否则 `#` 打了也白打）', async () => {
+        const css = await readCss();
+        expect(css).toMatch(/\.md-editor h1\b/);
+        expect(css).toMatch(/\.md-editor h2\b/);
+        expect(css).toMatch(/\.md-editor h3\b/);
+        expect(css).toMatch(/font-weight:\s*700/); // 方案 A：三级都加粗
+    });
+
+    it('★ 表格：必须有边框与单元格内边距（否则一行行糊成一片文字）', async () => {
+        const css = await readCss();
+        expect(css).toMatch(/\.md-editor table\b/);
+        expect(css).toMatch(/\.md-editor th,\s*\.md-editor td\b/);
+        expect(css).toMatch(/\.md-editor th \{/);
+    });
+
+    it('有序列表的序号（更早那次的同类问题）也还留着', async () => {
+        const css = await readCss();
+        expect(css).toMatch(/\.md-editor ol \{[\s\S]*?list-style:\s*decimal/);
+    });
+
+    it('源码框：去掉原生拖拽把手、不出现滚动条（高度交给 JS 按内容算）', async () => {
+        const css = await readCss();
+        expect(css).toMatch(/\.md-editor-source \{[\s\S]*?resize:\s*none/);
+        expect(css).toMatch(/\.md-editor-source \{[\s\S]*?overflow:\s*hidden/);
+    });
+});
+
 describe('normalizeMilkdownArtifacts（纯函数）', () => {
     it('整行的 `<br />` 换回空行；行内的不动', () => {
         expect(normalizeMilkdownArtifacts('甲\n\n<br />\n\n乙')).toBe('甲\n\n\n\n乙');

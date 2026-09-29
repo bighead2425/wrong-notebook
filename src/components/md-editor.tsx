@@ -481,6 +481,8 @@ export interface MdEditorProps {
  */
 export function MdEditor({ value, onChange, placeholder, minHeightPx = 140, className = '' }: MdEditorProps) {
     const containerRef = useRef<HTMLDivElement | null>(null);
+    /** 源码模式的 textarea（要按内容"量身高"，见下面的 effect） */
+    const sourceRef = useRef<HTMLTextAreaElement | null>(null);
     const instanceRef = useRef<MdEditorInstance | null>(null);
     /** 自己最近一次吐给父组件的 md（回环护栏的锚点） */
     const emittedRef = useRef<string | null>(null);
@@ -545,6 +547,31 @@ export function MdEditor({ value, onChange, placeholder, minHeightPx = 140, clas
         instanceRef.current?.setMarkdown(value);
     }, [value, sourceMode]);
 
+    /**
+     * 【2026-09-29】源码框**按内容自动长高**（他实测提的：切到 md 后框变矮、出现滚动条，
+     * 想要"一眼看全，不用滚、也不用拖右下角把手"）。
+     *
+     * 为什么要单独办：`<textarea>` 的高度是**固定值**（这里只有 min-height），内容一长就出滚动条；
+     * 而所见即所得那侧 ProseMirror 的高度天然等于内容高度 ⇒ 两边一切换就一高一矮。
+     * 做法：先把高度清成 `auto` 再读 `scrollHeight`（不清就只会变高、不会变矮）。
+     * 高度写在元素 style 上，CSS 的 min-height 仍然兜底 ⇒ 内容很短时框还是原来那么高。
+     *
+     * ⚠️ 这属于**浏览器布局行为**：jsdom 里 `scrollHeight` 恒为 0，单测测不到，只能真机看。
+     */
+    useEffect(() => {
+        if (!sourceMode) return;
+        const grow = () => {
+            const el = sourceRef.current;
+            if (!el) return;
+            el.style.height = 'auto';
+            el.style.height = `${el.scrollHeight}px`;
+        };
+        grow();
+        // 宽度变了 ⇒ 换行位置变了 ⇒ 高度得重算（拖窗口、手机转屏都会碰到）
+        window.addEventListener('resize', grow);
+        return () => window.removeEventListener('resize', grow);
+    }, [sourceMode, value]);
+
     return (
         <div className={`md-editor-wrap relative ${className}`}>
             {/* 源码模式开关：悬停才显形，不干扰日常书写 */}
@@ -559,6 +586,7 @@ export function MdEditor({ value, onChange, placeholder, minHeightPx = 140, clas
 
             {sourceMode ? (
                 <textarea
+                    ref={sourceRef}
                     className="md-editor-source w-full rounded-md border bg-background px-3 py-2 font-mono text-xs"
                     style={{ minHeight: `${minHeightPx}px` }}
                     value={value}

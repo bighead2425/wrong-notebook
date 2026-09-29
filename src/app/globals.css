@@ -801,6 +801,11 @@
  * 排版复用 .markdown-content（类名挂在编辑器根节点上，见 components/md-editor.tsx），
  * 这里只补三样：编辑态自身的行为、mark 高亮的屏幕观感、空占位提示。
  * ==========================================================================*/
+/* 宽内容（宽表格、超长公式）在框内**横向滚**，不撑破外面的卡片 */
+.md-editor {
+  overflow-x: auto;
+}
+
 .md-editor .ProseMirror {
   outline: none;
   min-height: inherit;
@@ -831,6 +836,85 @@
 
 .md-editor li {
   margin: 0.15em 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * ⚠️ **标题**：Tailwind 的 preflight 把 h1–h6 一律重制成 `font-size/weight: inherit`
+ * （表格同理，不给任何边框）。渲染端（MarkdownRenderer）不受影响 —— 它给每个元素
+ * 挂了 Tailwind 工具类；编辑器里是 Milkdown 生成的"裸标签"，没有类 ⇒
+ * 他实测的"`#` 没分级、表格像一坨文字"就是这个。**解析完全正常**（已实测：
+ * DOM 里 `<h1>`、`<table><th><td>` 都在），纯粹是缺样式。
+ *
+ * 规格（2026-09-29 他拍板：**方案 A**）——比打印端**缩一档**，编辑框里不喧宾夺主：
+ *   H1 20px / H2 18px / H3 16px，全部 700；只有 H1 带一条浅色下边线。
+ * 打印端对应 24 / 20 / 18（见 markdown-renderer.tsx 的 components 映射）：
+ * **比例一致、编辑区绝对字号收一档**，改这里时两边一起看。
+ * ------------------------------------------------------------------------- */
+.md-editor h1,
+.md-editor h2,
+.md-editor h3,
+.md-editor h4,
+.md-editor h5,
+.md-editor h6 {
+  font-weight: 700;
+  line-height: 1.35;
+  margin: 0.6em 0 0.25em;
+}
+
+.md-editor h1 {
+  font-size: 20px;
+  padding-bottom: 0.12em;
+  border-bottom: 1px solid var(--border);
+}
+
+.md-editor h2 {
+  font-size: 18px;
+}
+
+.md-editor h3 {
+  font-size: 16px;
+}
+
+.md-editor h4 {
+  font-size: 15px;
+}
+
+.md-editor h5,
+.md-editor h6 {
+  font-size: 14px;
+  color: var(--muted-foreground);
+}
+
+/* 第一个元素不留上边白，否则框顶永远空一大块 */
+.md-editor .ProseMirror > :first-child {
+  margin-top: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * **表格**（同一个病根）。规格 = 对齐打印端：细边框 + 表头浅灰底 + 单元格内边距；
+ * 表内字号降一档（表格是信息密集的东西，12px 比 14px 好读）。
+ * 宽表格：`.md-editor` 开 `overflow-x`，让**表格自己横向滚** ——
+ * 而不是缩字号硬挤（挤了看不清）或整页跟着横滑（更糟）。
+ * ------------------------------------------------------------------------- */
+.md-editor table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 12px;
+  max-width: 100%;
+}
+
+.md-editor th,
+.md-editor td {
+  border: 1px solid var(--border);
+  padding: 4px 6px;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.md-editor th {
+  background: var(--muted);
+  font-weight: 600;
 }
 
 /* 空内容时的占位提示（Milkdown 无内置 placeholder，用 CSS 实现：
@@ -911,6 +995,18 @@
  * 是富文本模型、没有源码层，做不到。折中给一个源码开关：默认隐藏，
  * 鼠标悬停在编辑区时右上角浮出，点一下切到原始 md 文本域。
  * ==========================================================================*/
+/* 源码模式的 textarea：
+   ① **高度按内容自动长高** —— 高度由 JS 写在内联 style 上（见 md-editor.tsx 的 effect），
+      所以他实测的"切到 md 就出滚动条、框还变矮"没了；
+   ② `resize: none` 去掉浏览器原生的右下角拖拽把手（他明确说不想拖）；
+   ③ `overflow: hidden` —— 高度已经等于内容高度，滚动条是多余的；
+   ④ `display: block` —— textarea 默认 inline-block，底部会多出几像素行内空隙。 */
+.md-editor-source {
+  display: block;
+  resize: none;
+  overflow: hidden;
+}
+
 .md-editor-src-toggle {
   position: absolute;
   top: 4px;
