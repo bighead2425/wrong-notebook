@@ -15,7 +15,7 @@ import { AnalyzeResponse, Notebook, AppConfig } from "@/types/api";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { processImageFile } from "@/lib/image-utils";
-import { Upload, BookOpen, Tags, LogOut, BarChart3, QrCode } from "lucide-react";
+import { Upload, BookOpen, Tags, LogOut, BarChart3, QrCode, Layers } from "lucide-react";
 import { SettingsDialog } from "@/components/settings-dialog";
 /**
  * 【custom-v24】公告通知按钮按用户要求从首页撤下（功能保留，组件文件不动）。
@@ -456,6 +456,19 @@ function HomeContent() {
                                 >
                                     <BarChart3 className="mr-2 h-4 w-4 shrink-0" />
                                     <span className="truncate">{t.app?.stats || 'Stats'}</span>
+                                </Button>
+                            </Link>
+
+                            {/* 【2026-09-29】他要的「复练卷页」入口：已生成的卷都在那里
+                                （看纸面 / 改留白与图大小 / 更新组卷 / 删除 / 打印）。
+                                新卷不在这里生成 —— 还是去打印预览页组。 */}
+                            <Link href="/review-volumes">
+                                <Button
+                                    variant="outline"
+                                    className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
+                                >
+                                    <Layers className="mr-2 h-4 w-4 shrink-0" />
+                                    <span className="truncate">{t.app?.reviewVolumes || '复练卷页'}</span>
                                 </Button>
                             </Link>
                         </>

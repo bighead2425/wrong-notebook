@@ -452,6 +452,11 @@ model ReviewVolumeItem {
   /// 这道题的留白行数（可逐题调；整体调整的规则见 `applyGlobalBlankLines`）
   blankLines   Int          @default(5)
 
+  /// 这道题的**题图缩放百分比**（100 = 版面默认）。2026-09-29 加。
+  /// ⚠️ 必须进快照：他在预览里拖过把手就把大小改了，「更新组卷」要能把它一起存回来，
+  ///    否则下次打开又变回默认（"我调过的图又跑回去了"）。
+  figureScale  Int          @default(100)
+
   createdAt    DateTime     @default(now())
 
   @@index([volumeId])

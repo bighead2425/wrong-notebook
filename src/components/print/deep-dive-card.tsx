@@ -54,6 +54,7 @@ import {
     STAMP_BOX_MM,
     T1_LAYOUT_MM,
     maxFrontPhotoHeightMM,
+    maxFrontPhotoHeightHardMM,
     reviewDateSlots,
     sidePaddingMM,
     type SlotColor,
@@ -142,6 +143,12 @@ export interface DeepDiveCardProps {
      */
     figureScaleOf?: (itemId: string) => number;
     onFigureScaleStart?: (itemId: string) => (e: ReactPointerEvent) => void;
+    /**
+     * 【2026-09-29】正面**原题照片**的缩放百分比（100 = 版面默认）。
+     * 与反面题图各算各的：正面那张是整页照片，反面那些是橙框裁出来的题图。
+     */
+    photoScaleOf?: (itemId: string) => number;
+    onPhotoScaleStart?: (itemId: string) => (e: ReactPointerEvent) => void;
     L: (zh: string, en: string) => string;
 }
 
@@ -153,6 +160,8 @@ export function DeepDiveCard({
     manualDuplex,
     figureScaleOf,
     onFigureScaleStart,
+    photoScaleOf,
+    onPhotoScaleStart,
     L,
 }: DeepDiveCardProps) {
     const figures = useFigureImages(item);
@@ -168,6 +177,19 @@ export function DeepDiveCard({
 
     /** 这道题的题图缩放（没调过 = 100%） */
     const figureScale = normalizeFigureScale(figureScaleOf ? figureScaleOf(item.id) : 100);
+
+    /**
+     * 正面**原题照片**的缩放（2026-09-29）。100% = 版面默认（= `photoMaxMM`，P9 定的 95mm）。
+     * 往上放的**天花板**是 `maxFrontPhotoHeightHardMM()`：纸面还能匀出来的那点空间，
+     * 再大就把下面的分析区压穿（见那个函数的注释）。
+     */
+    const photoScale = normalizeFigureScale(photoScaleOf ? photoScaleOf(item.id) : 100);
+    const photoHeightMM = Math.max(
+        T1_LAYOUT_MM.photoMin / 2,
+        Math.min(photoMaxMM * (photoScale / 100), maxFrontPhotoHeightHardMM()),
+    );
+    /** 宽度上限跟着缩放走（缩小时图真的变小；放大到 100% 以上就不再超出栏宽） */
+    const photoWidthLimitPct = Math.min(100, photoScale);
 
     /** 身份条：题号 + 两个空格 + 年级学期（右端是打印日） */
     const identityBar = (
@@ -268,14 +290,49 @@ export function DeepDiveCard({
                     </div>
                 )}
 
-                {/* 原题照片：带笔迹、**不带语义框，也不带外边框**（原页面的样子） */}
+                {/* 原题照片：带笔迹、**不带语义框，也不带外边框**（原页面的样子）。
+                    【2026-09-29】他要求这张也能拖右下角把手调大小（跟反面题图一样）：
+                    外层盒子 `position: relative` 托住把手，宽度/高度上限都跟着缩放百分比走。 */}
                 <div style={{ display: 'flex', justifyContent: 'center', flex: '0 0 auto', marginTop: '1.5mm' }}>
-                    <img
-                        src={item.originalImageUrl}
-                        alt=""
-                        className="print-deep-photo"
-                        style={{ maxWidth: '100%', maxHeight: `${photoMaxMM}mm`, height: 'auto', display: 'block' }}
-                    />
+                    <div
+                        className="print-deep-photo-box"
+                        style={{
+                            position: 'relative',
+                            width: `${photoWidthLimitPct}%`,
+                            maxWidth: '100%',
+                            // 手机上"按住照片左右拖 = 缩放"：别让浏览器把手势抢去当滚动
+                            touchAction: 'none',
+                        }}
+                        onPointerDown={(e) => {
+                            if (e.pointerType === 'mouse') return;
+                            onPhotoScaleStart?.(item.id)(e);
+                        }}
+                    >
+                        <img
+                            src={item.originalImageUrl}
+                            alt=""
+                            className="print-deep-photo"
+                            style={{
+                                width: '100%',
+                                height: 'auto',
+                                maxHeight: `${photoHeightMM}mm`,
+                                // 被 maxHeight 限住时只留白、不拉变形
+                                objectFit: 'contain',
+                                display: 'block',
+                            }}
+                        />
+                        {/* 拖拽把手：**只在屏幕上**（打印时被 CSS 隐藏），右下角、等比缩放 */}
+                        {onPhotoScaleStart && (
+                            <span
+                                className="print-fig-handle no-print"
+                                title={L('拖动调整原题照片大小', 'Drag to resize the photo')}
+                                onPointerDown={(e) => {
+                                    if (e.pointerType !== 'mouse') return;
+                                    onPhotoScaleStart(item.id)(e);
+                                }}
+                            />
+                        )}
+                    </div>
                 </div>
 
                 {/* 她自己分析的那块 —— **外边框与四角标识都归这一块**，不归照片 */}
@@ -435,8 +492,9 @@ export function DeepDiveCard({
                 </div>
 
                 {/* 她手写内容区：不加十字线（模拟真实考场）。上界=遮挡线，下界=页脚细线。
-                    【2026-09-28】升降级小框放在**这块区域的最上面、靠左** ——
-                    定稿的原话是"遮挡线左下（她动笔区的上方），她刚分析完、印象最深的位置"。
+                    【2026-09-28】升降级小框放在这块区域的**最上面**。
+                    【2026-09-29】他要求**从左边挪到右边**，原话："左边耽误一开始写题时的心情"。
+                    （更早的定稿曾写"遮挡线左下"，以这次为准；框的内容与语义没变，只是靠右。）
                     ⚠️ 放进这一块内部（而不是塞在遮挡线之上）：反面高度是死的，
                        小框若占独立一行就会从"写字的地方"里扣掉 7mm，
                        长题 + 有大题图时可能把页脚挤出纸外。放进来只吃这一块自己的空间。 */}
@@ -447,7 +505,7 @@ export function DeepDiveCard({
                         minHeight: `${T1_LAYOUT_MM.writingMin}mm`,
                         display: 'flex',
                         flexDirection: 'column',
-                        alignItems: 'flex-start',
+                        alignItems: 'flex-end',
                     }}
                 >
                     <PromoteBox manageType={item.manageType} L={L} />

@@ -136,6 +136,18 @@ function PrintPreviewContent() {
     /** 拖拽题图：记住"起点鼠标 x / 起点宽度px"，移动时按比例换算成新的百分比 */
     const figureDragRef = useRef<{ id: string; startX: number; startPx: number } | null>(null);
 
+    /**
+     * 【2026-09-29】深挖纸**正面原题照片**的缩放 —— 与反面题图**各算各的**
+     * （正面那张是整页照片、反面那些是橙框裁出来的题图，不共用同一个百分比）。
+     * 机制完全照抄上面那套（他原话："类似与深挖纸背面原题中的图片能拖把手调大小"）。
+     */
+    const [photoScales, setPhotoScales] = useState<Record<string, number | null | undefined>>({});
+    const photoScaleOf = useCallback(
+        (id: string) => normalizeFigureScale(photoScales?.[id]),
+        [photoScales],
+    );
+    const photoDragRef = useRef<{ id: string; startX: number; startPx: number } | null>(null);
+
     // 手动双面：家里打印机不支持自动双面，靠爹手动翻
     const [manualDuplex, setManualDuplex] = useState(false);
 
@@ -234,8 +246,10 @@ function PrintPreviewContent() {
                 selectedItems.map((i) => i.id).join("|"),
                 JSON.stringify(blankOverrides),
                 JSON.stringify(figureScales),
+                // 深挖纸正面照片的缩放也要重量（图变了块就高了）
+                JSON.stringify(photoScales),
             ].join("#"),
-        [volumeKind, selectedItems, blankOverrides, figureScales],
+        [volumeKind, selectedItems, blankOverrides, figureScales, photoScales],
     );
 
     useEffect(() => {
@@ -319,10 +333,28 @@ function PrintPreviewContent() {
                 selectedItems.map((i) => i.id).join("|"),
                 String(blankDefault),
                 JSON.stringify(blankOverrides),
+                // 【2026-09-29】题图大小也进指纹：改了图就该能用「更新组卷」把新图存回去
+                JSON.stringify(figureScales),
             ].join("#"),
-        [volumeKind, selectedItems, blankDefault, blankOverrides],
+        [volumeKind, selectedItems, blankDefault, blankOverrides, figureScales],
     );
     const volumeStale = !!volume && volumeSignature !== volumeSig;
+
+    /**
+     * 【2026-09-29】"**选题有没有变**"的指纹（卷别 + 题目 id 顺序）——
+     * "要不要换卷号"这一件事，只由它决定。他定的规则：
+     *   · 选题**没变**（只调了留白 / 题图大小）⇒ 按钮「更新组卷」，点击**原地覆盖**，卷号不动；
+     *   · 选题**变了**（增 / 减 / 换题）⇒ 按钮变回「新生成复练卷」，点击生成新卷号、存成新数据。
+     * 为什么卷号不能随便换：卷号是**已经印在纸上的那个身份**（页眉＋页二维码都是它），
+     * 换了号，先前印出去的纸就再也对不回库里的卷了。
+     */
+    const selectionSig = useMemo(
+        () => [volumeKind, selectedItems.map((i) => i.id).join("|")].join("#"),
+        [volumeKind, selectedItems],
+    );
+    const [volumeSelectionSig, setVolumeSelectionSig] = useState<string>("");
+    /** 库里的卷与当前选题对不上 ⇒ 该走"新生成"（新卷号） */
+    const volumeSelectionChanged = !!volume && volumeSelectionSig !== selectionSig;
 
     /** 复练纸：key（题目 id）→ 题目本体，供卡片取用 */
     const reviewItemByKey = useMemo(() => {
@@ -416,30 +448,44 @@ function PrintPreviewContent() {
      *    卷是印出去的凭证，原题后来被改、被删、被合并，都不该改变它。
      *    `errorItemId` 只是"还能点回去看看"的软链接（题删了它就为空）。
      */
+    /**
+     * 把当前排版结果拍成"卷内条目" —— **建卷（POST）与更新组卷（PATCH）共用这一处**。
+     * 两边各写一遍迟早分叉（"新建的卷有题图、更新过的没有"这种最难查）。
+     *
+     * 用**函数声明**（不是 useCallback）是有意的：它被上面 `createVolume` 的闭包引用，
+     * 声明式能提升，不会踩"先用后声明"的 TDZ。
+     */
+    function buildVolumeItems() {
+        if (!reviewLayout) return [];
+        return reviewLayout.pages.flatMap((page, pi) =>
+            page.columns.flatMap((col, ci) =>
+                col.blocks.map((b, bi) => {
+                    const item = reviewItemByKey[b.key];
+                    return {
+                        errorItemId: item?.id ?? null,
+                        seqInVolume: b.seq,
+                        pageIndex: pi + 1,
+                        columnIndex: ci,
+                        seqInColumn: bi + 1,
+                        itemNo: item?.source ?? null,
+                        questionText: (item?.questionText || item?.ocrText) ?? null,
+                        manageType: item?.manageType ?? null,
+                        // 留白行数不再存在排版结果里（那是"量出来的高度"），现取
+                        blankLines: blankValueOf(b.key),
+                        // 题图大小（2026-09-29 起进快照）：不存的话「更新组卷」存完图又回默认
+                        figureScale: figureScaleOf(b.key),
+                    };
+                }),
+            ),
+        );
+    }
+
     const createVolume = useCallback(async () => {
         if (!reviewLayout || selectedItems.length === 0) return;
         setVolumeCreating(true);
         setVolumeError("");
         try {
-            const items = reviewLayout.pages.flatMap((page, pi) =>
-                page.columns.flatMap((col, ci) =>
-                    col.blocks.map((b, bi) => {
-                        const item = reviewItemByKey[b.key];
-                        return {
-                            errorItemId: item?.id ?? null,
-                            seqInVolume: b.seq,
-                            pageIndex: pi + 1,
-                            columnIndex: ci,
-                            seqInColumn: bi + 1,
-                            itemNo: item?.source ?? null,
-                            questionText: (item?.questionText || item?.ocrText) ?? null,
-                            manageType: item?.manageType ?? null,
-                            // 留白行数不再存在排版结果里（那是"量出来的高度"），现取
-                            blankLines: blankValueOf(b.key),
-                        };
-                    }),
-                ),
-            );
+            const items = buildVolumeItems();
             const res = await apiClient.post<{
                 volume: { id: string; volumeNo: string; pageCount: number };
             }>("/api/review-volumes", {
@@ -451,6 +497,8 @@ function PrintPreviewContent() {
             });
             setVolume(res.volume);
             setVolumeSignature(volumeSig);
+            // 记下"这份卷是按哪套选题组的" ⇒ 之后选题没变就只给「更新组卷」，不再换号
+            setVolumeSelectionSig(selectionSig);
         } catch (error) {
             console.error("Failed to create review volume:", error);
             setVolumeError(L("组卷失败，请重试", "Failed to build the volume"));
@@ -458,7 +506,39 @@ function PrintPreviewContent() {
             setVolumeCreating(false);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [reviewLayout, selectedItems, reviewItemByKey, volumeKind, volumeGradeText, blankDefault, volumeSig, zh]);
+    }, [reviewLayout, selectedItems, reviewItemByKey, volumeKind, volumeGradeText, blankDefault, volumeSig, selectionSig, zh]);
+
+    /**
+     * 【2026-09-29】「**更新组卷**」= 原地覆盖，**不换卷号**（他定的规则）。
+     * 只在"选题前后没变、只调了留白 / 题图大小"时出现；选题一变，按钮就变回「新生成复练卷」。
+     * 走 PATCH：条目整批替换 + 页数刷新，卷号与学期保持不动。
+     */
+    const updateVolume = useCallback(async () => {
+        if (!volume || !reviewLayout || selectedItems.length === 0) return;
+        setVolumeCreating(true);
+        setVolumeError("");
+        try {
+            const items = buildVolumeItems();
+            const res = await apiClient.patch<{
+                volume: { id: string; volumeNo: string; pageCount: number };
+            }>(`/api/review-volumes/${volume.id}`, {
+                kind: volumeKind,
+                gradeSemester: volumeGradeText || null,
+                defaultBlankLines: blankDefault,
+                pageCount: reviewLayout.pages.length,
+                items,
+            });
+            setVolume(res.volume);
+            setVolumeSignature(volumeSig);
+            setVolumeSelectionSig(selectionSig);
+        } catch (error) {
+            console.error("Failed to update review volume:", error);
+            setVolumeError(L("更新组卷失败，请重试", "Failed to update the volume"));
+        } finally {
+            setVolumeCreating(false);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [volume, reviewLayout, selectedItems, reviewItemByKey, volumeKind, volumeGradeText, blankDefault, volumeSig, selectionSig, zh]);
 
     /**
      * 按下分隔条：开始拖。
@@ -526,6 +606,32 @@ function PrintPreviewContent() {
     }, []);
 
     /**
+     * 拖**深挖纸正面原题照片**：与拖题图同一套算法（横向位移 → 等比的新百分比）。
+     */
+    useEffect(() => {
+        const onMove = (e: PointerEvent) => {
+            const drag = photoDragRef.current;
+            if (!drag) return;
+            const next = normalizeFigureScale((drag.startPx + (e.clientX - drag.startX)) / drag.startPx * 100);
+            setPhotoScales((prev) => ({ ...prev, [drag.id]: next }));
+        };
+        const onUp = () => {
+            if (!photoDragRef.current) return;
+            photoDragRef.current = null;
+            document.body.style.cursor = "";
+            document.body.style.userSelect = "";
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+        window.addEventListener("pointercancel", onUp);
+        return () => {
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+            window.removeEventListener("pointercancel", onUp);
+        };
+    }, []);
+
+    /**
      * 【2026-09-28】拖两道题之间的**虚线** ⇒ 调**上面那道题**的留白行数。
      * 他定的规则：向上拖 = 留白按**整行**减少、向下拖 = 整行增加，
      * 调节器上的数字跟着变到虚线所在的位置。
@@ -565,6 +671,22 @@ function PrintPreviewContent() {
         (id: string) => (e: React.PointerEvent) => {
             const box = (e.currentTarget as HTMLElement).parentElement;
             figureDragRef.current = {
+                id,
+                startX: e.clientX,
+                startPx: box ? box.getBoundingClientRect().width : 1,
+            };
+            document.body.style.cursor = "nwse-resize";
+            document.body.style.userSelect = "none";
+            e.preventDefault();
+        },
+        [],
+    );
+
+    /** 按住深挖纸正面的原题照片：开始缩放（与拖题图同一套） */
+    const handlePhotoDown = useCallback(
+        (id: string) => (e: React.PointerEvent) => {
+            const box = (e.currentTarget as HTMLElement).parentElement;
+            photoDragRef.current = {
                 id,
                 startX: e.clientX,
                 startPx: box ? box.getBoundingClientRect().width : 1,
@@ -631,6 +753,7 @@ function PrintPreviewContent() {
         setBlankOverrides({});
         setVolume(null);
         setVolumeSignature("");
+        setVolumeSelectionSig("");
         // 只在"卷别"变化时重置
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [volumeKind]);
@@ -866,11 +989,21 @@ function PrintPreviewContent() {
                                             ＋
                                         </Button>
                                     </div>
-                                    <Button size="sm" onClick={createVolume} disabled={volumeCreating || !reviewLayout || selectedItems.length === 0}>
+                                    {/* 【2026-09-29】按钮分三种，按他定的规则：
+                                        · 还没组卷 → 生成复练卷 / 生成积累卷（新卷号）
+                                        · 已组卷 + **选题没变**（只调了留白/图大小）→ 「更新组卷」原地覆盖
+                                        · 已组卷 + **选题变了** → 「新生成复练卷」→ 新卷号、存成新数据 */}
+                                    <Button
+                                        size="sm"
+                                        onClick={volume && !volumeSelectionChanged ? updateVolume : createVolume}
+                                        disabled={volumeCreating || !reviewLayout || selectedItems.length === 0}
+                                    >
                                         {volumeCreating || !reviewLayout
-                                            ? L("排版中…", "Laying out…")
+                                            ? L("保存中…", "Saving…")
                                             : volume
-                                              ? L("重新组卷", "Rebuild")
+                                              ? volumeSelectionChanged
+                                                ? L("新生成复练卷", "Build as new volume")
+                                                : L("更新组卷", "Update volume")
                                               : volumeKind === "build"
                                                 ? L("生成积累卷", "Build volume")
                                                 : L("生成复练卷", "Build volume")}
@@ -884,7 +1017,9 @@ function PrintPreviewContent() {
                                     )}
                                     {volumeStale && (
                                         <span className="text-xs text-amber-700">
-                                            {L("选择或留白改过了 —— 请点「重新组卷」，否则纸面与库里的卷对不上", "Selection changed — rebuild the volume")}
+                                            {volumeSelectionChanged
+                                                ? L("选题变了 —— 点「新生成复练卷」会得到新卷号；现在纸面与库里的卷对不上。", "Selection changed — build as a new volume.")
+                                                : L("留白或题图大小改过了 —— 点「更新组卷」存回去（卷号不变）。", "Spacing or figure size changed — press Update volume.")}
                                         </span>
                                     )}
                                     {volumeError && <span className="text-xs text-red-600">{volumeError}</span>}
@@ -978,6 +1113,9 @@ function PrintPreviewContent() {
                                     // 题图缩放与复练纸同一套（电脑拖把手 / 手机按住图左右拖）
                                     figureScaleOf={figureScaleOf}
                                     onFigureScaleStart={handleFigureDown}
+                                    // 正面原题照片也能拖把手（2026-09-29 他要求，与反面同一套机制）
+                                    photoScaleOf={photoScaleOf}
+                                    onPhotoScaleStart={handlePhotoDown}
                                     L={L}
                                 />
                             ))}
@@ -995,10 +1133,15 @@ function PrintPreviewContent() {
                             )}
                             {volumeStale && (
                                 <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
-                                    {L(
-                                        `题目、留白或卷别改过了，纸上现在是**新的**排版，而库里的还是 ${volume?.volumeNo ?? ""}。上纸之前请点一次「重新组卷」。`,
-                                        `Layout changed since ${volume?.volumeNo ?? ""} was built — rebuild before printing.`,
-                                    )}
+                                    {volumeSelectionChanged
+                                        ? L(
+                                              `选题变过了，纸上现在是**新的**排版，而库里的还是 ${volume?.volumeNo ?? ""}。上纸之前请点一次「新生成复练卷」（会得到新卷号，旧卷原样留着）。`,
+                                              `Selection changed since ${volume?.volumeNo ?? ""} — build as a new volume before printing.`,
+                                          )
+                                        : L(
+                                              `留白或题图大小改过了，而库里的 ${volume?.volumeNo ?? ""} 还是旧的。上纸之前请点一次「更新组卷」（卷号不变，覆盖保存）。`,
+                                              `Spacing or figure size changed — press Update volume before printing.`,
+                                          )}
                                 </div>
                             )}
                             {/* 组卷体检：题图疑似框歪 —— 排版本轮已经"永不裁图"，

@@ -127,7 +127,7 @@ function VolumeHeader({
                 overflow: 'hidden',
             }}
         >
-            <div style={{ height: '12mm', display: 'flex', alignItems: 'center', gap: '2.5mm', flex: '0 0 auto' }}>
+            <div style={{ height: '6mm', display: 'flex', alignItems: 'center', gap: '2.5mm', flex: '0 0 auto' }}>
                 {/* 阳文框：框与字同色、底为白 —— 与深挖纸（实底白字）恰好相反，一眼能分开"卷"和"纸" */}
                 <span
                     className={`print-volume-badge print-volume-badge-${kind}`}
@@ -161,19 +161,27 @@ function VolumeHeader({
                 <span style={{ fontSize: '8pt', color: '#555', whiteSpace: 'nowrap' }}>
                     {L('印于', 'printed')} {stampReadable(printDate)}
                 </span>
+            </div>
+            {/*
+                第二排（**2026-09-29 他要求改版**）：**横线 + 二维码并排**，两者共享纸面宽度 ——
+                  ① 横线右侧缩短：到二维码左边为止，不再从二维码底下穿过去；
+                  ② 横线略向上移、二维码适当向下移 ⇒ 两者落在同一条带上。
+                高度 6 + 9 = 15mm = VOLUME_HEADER_MM ⇒ **页面总高不变、分页结果不变**。
+                ⚠️ 二维码从 10mm 收到 9mm：它现在要和横线共享这 15mm 里的同一排，
+                   页眉不能涨高（涨了分页就变，已经印出来的卷就对不上了）。
+                   9mm 在 600dpi 下约 212px，25 模块的码每模块 8px 以上，扫码余量够。
+            */}
+            <div style={{ height: '9mm', display: 'flex', alignItems: 'center', gap: '2mm', flex: '0 0 auto' }}>
+                <span className="print-volume-header-rule" style={{ flex: 1, height: '0.25mm', background: '#666' }} />
                 {pageQr ? (
                     /* eslint-disable-next-line @next/next/no-img-element -- 打印页必须用原生 img：src 是 dataURL，要交给浏览器打印快照；next/image 会插一层优化/懒加载，反而可能打不出来 */
                     <img
                         className="print-qr print-volume-qr"
                         src={pageQr}
                         alt=""
-                        style={{ width: '10mm', height: '10mm', flex: '0 0 auto' }}
+                        style={{ width: '9mm', height: '9mm', flex: '0 0 auto' }}
                     />
                 ) : null}
-            </div>
-            {/* 横线：整条贯通（二维码已经上移到上面那一排，不再与它分宽度） */}
-            <div style={{ height: '2mm', display: 'flex', alignItems: 'center', flex: '0 0 auto' }}>
-                <span className="print-volume-header-rule" style={{ flex: 1, height: '0.25mm', background: '#666' }} />
             </div>
         </div>
     );

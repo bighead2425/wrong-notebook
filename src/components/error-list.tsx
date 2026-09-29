@@ -147,9 +147,43 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
     };
 
     // 多选模式相关函数
+    /**
+     * 【2026-09-29】他要求：点「多选」时**当前页筛选出的题全部默认选中**（"眼前的题都是选中状态"），
+     * 而不是像以前那样空着一道道勾。进多选时用当前列表（`filteredItems`）的 id 铺满选中集。
+     */
     const toggleSelectMode = () => {
-        setIsSelectMode(!isSelectMode);
-        setSelectedIds(new Set());
+        if (isSelectMode) {
+            setIsSelectMode(false);
+            setSelectedIds(new Set());
+            return;
+        }
+        setIsSelectMode(true);
+        setSelectedIds(new Set(filteredItems.map((item) => item.id)));
+    };
+
+    /** 清除：一键把所有选中状态抹掉（他要求在「取消」左边，蓝色字） */
+    const clearSelection = () => setSelectedIds(new Set());
+
+    /**
+     * 【2026-09-29】列表页**单题删除**（他要求：不进详情页也能删某一道）。
+     * 与详情页右上角「删除」走同一条路：`DELETE /api/error-items/[id]` 默认**软删进回收箱**
+     * （可还原，只有回收箱里的"彻底删除"才 hard=1），确认文案也用同一条 ⇒ "效果一样"。
+     * ⚠️ 卡片整体套在 `<Link>` 里，必须 preventDefault + stopPropagation，否则会跳去详情页。
+     */
+    const trashItem = async (id: string, e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const confirmMessage = t.common?.messages?.confirmMoveToTrash
+            || 'Move this question to the trash? You can restore it from the trash later.';
+        if (!confirm(confirmMessage)) return;
+        try {
+            await apiClient.delete(`/api/error-items/${id}`);
+            // 单题删除成功不弹窗：题从列表里消失本身就是反馈（他嫌"每次保存都跳确认"）
+            fetchItems();
+        } catch (error) {
+            console.error(error);
+            alert(t.common?.messages?.deleteFailed || 'Delete failed');
+        }
     };
 
     const toggleSelectItem = (id: string, e: React.MouseEvent) => {
@@ -179,7 +213,7 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
             await apiClient.post("/api/error-items/batch-delete", {
                 ids: Array.from(selectedIds),
             });
-            alert(t.notebook?.batchTrashSuccess || "Moved to trash");
+            // 成功不弹窗（同上：他嫌啰嗦）—— 已经确认过一次，题从列表里消失就是反馈
             setIsSelectMode(false);
             setSelectedIds(new Set());
             fetchItems();
@@ -432,7 +466,16 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
                                     />
                                 </div>
                             )}
-                            <Link href={isSelectMode ? "#" : `/error-items/${item.id}`} onClick={(e) => isSelectMode && e.preventDefault()}>
+                            {/* 【2026-09-29】多选模式下**点卡片任意空白处**即可切换选中（他要求），
+                                不再只在点左上角勾选框时才生效。 */}
+                            <Link
+                                href={isSelectMode ? "#" : `/error-items/${item.id}`}
+                                onClick={(e) => {
+                                    if (!isSelectMode) return;
+                                    e.preventDefault();
+                                    toggleSelectItem(item.id, e);
+                                }}
+                            >
                                 <Card className="h-full hover:border-primary/50 transition-colors cursor-pointer gap-2 pt-4">
                                     <CardHeader className="pb-0">
                                         <div className="flex justify-between items-start">
@@ -450,9 +493,22 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
                                                     </span>
                                                 )}
                                             </Badge>
-                                            <span className="text-xs text-muted-foreground">
-                                                {format(new Date(item.createdAt), "MM/dd")}
-                                            </span>
+                                            {/* 【2026-09-29】垃圾桶摆在"录入时间"后面（他要的位置）：
+                                                不用进详情页就能单独删这一道。 */}
+                                            <div className="flex items-center gap-0.5 shrink-0">
+                                                <span className="text-xs text-muted-foreground">
+                                                    {format(new Date(item.createdAt), "MM/dd")}
+                                                </span>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon-sm"
+                                                    className="text-muted-foreground hover:text-destructive"
+                                                    title={t.common?.delete || "Move to trash"}
+                                                    onClick={(e) => trashItem(item.id, e)}
+                                                >
+                                                    <Trash2 className="h-3.5 w-3.5" />
+                                                </Button>
+                                            </div>
                                         </div>
                                     </CardHeader>
                                     <CardContent>
@@ -477,8 +533,10 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
                                                 <Badge
                                                     key={tag}
                                                     variant={selectedTag === tag ? "default" : "outline"}
-                                                    className="text-xs cursor-pointer hover:bg-primary/10 transition-colors"
-                                                    onClick={(e) => {
+                                                    className={`text-xs transition-colors ${isSelectMode ? "" : "cursor-pointer hover:bg-primary/10"}`}
+                                                    /* 多选模式下标签不再响应点击：此时点卡片任意处＝切换选中，
+                                                       标签要是还能筛选题，就会出现"点一下同时干了两件事"的歧义 */
+                                                    onClick={isSelectMode ? undefined : (e) => {
                                                         e.preventDefault();
                                                         handleTagClick(tag);
                                                     }}
@@ -489,11 +547,11 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
                                             {tags.length > 3 && (
                                                 <Badge
                                                     variant="secondary"
-                                                    className="text-xs cursor-pointer hover:bg-secondary/80 transition-colors"
+                                                    className={`text-xs transition-colors ${isSelectMode ? "" : "cursor-pointer hover:bg-secondary/80"}`}
                                                     title={expandedTags.has(item.id)
                                                         ? (t.notebooks?.collapseTagsTooltip || "Click to collapse")
                                                         : (t.notebooks?.expandTagsTooltip || "Click to expand {count} tags").replace("{count}", (tags.length - 3).toString())}
-                                                    onClick={(e) => toggleTagsExpanded(item.id, e)}
+                                                    onClick={isSelectMode ? undefined : (e) => toggleTagsExpanded(item.id, e)}
                                                 >
                                                     {expandedTags.has(item.id) ? (
                                                         <>{t.notebooks?.collapseTags || "Collapse"}</>
@@ -537,7 +595,16 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
                         <span className="text-sm text-muted-foreground">
                             {(t.notebook?.selectedCount || "{count} selected").replace("{count}", selectedIds.size.toString())}
                         </span>
-                        <div className="flex gap-2">
+                        <div className="flex items-center gap-3">
+                            {/* 【2026-09-29】他要的「清除」：蓝色文字，摆在「取消」左边，一点全不选 */}
+                            <button
+                                type="button"
+                                className="text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline disabled:text-muted-foreground disabled:no-underline disabled:cursor-default"
+                                onClick={clearSelection}
+                                disabled={selectedIds.size === 0}
+                            >
+                                {t.notebook?.clearSelection || "清除"}
+                            </button>
                             <Button
                                 variant="outline"
                                 onClick={toggleSelectMode}

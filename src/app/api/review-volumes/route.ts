@@ -12,8 +12,8 @@ import {
     semesterOf,
     type VolumeKind,
 } from "@/lib/volume-code";
-import { isManageType } from "@/lib/manage-type";
 import { normalizeBlankLines, VOLUME_VARIANTS } from "@/lib/review-card";
+import { parseVolumeItems, resolvePageCount } from "@/lib/volume-input";
 
 const logger = createLogger("api:review-volumes");
 
@@ -84,46 +84,9 @@ export async function POST(request: Request) {
         const seq = nextVolumeSeq(recent.map((r) => r.volumeNo), kind, now);
         const volumeNo = buildVolumeNo(kind, now, seq);
 
-        type ItemInput = {
-            errorItemId: string | null;
-            seqInVolume: number;
-            pageIndex: number;
-            columnIndex: number;
-            seqInColumn: number;
-            itemNo: string | null;
-            questionText: string | null;
-            figureUrls: string | null;
-            manageType: string | null;
-            blankLines: number;
-        };
-
-        const items: ItemInput[] = rawItems.map((entry, index) => {
-            const e = (entry ?? {}) as Record<string, unknown>;
-            const figs = e.figureUrls;
-            const figureUrls = Array.isArray(figs)
-                ? JSON.stringify(figs.filter((x) => typeof x === "string"))
-                : typeof figs === "string"
-                    ? figs
-                    : null;
-            const mt = typeof e.manageType === "string" && isManageType(e.manageType) ? e.manageType : null;
-            return {
-                errorItemId: typeof e.errorItemId === "string" && e.errorItemId ? e.errorItemId : null,
-                seqInVolume: Number.isFinite(Number(e.seqInVolume)) ? Number(e.seqInVolume) : index + 1,
-                pageIndex: Number.isFinite(Number(e.pageIndex)) ? Number(e.pageIndex) : 1,
-                columnIndex: Number.isFinite(Number(e.columnIndex)) ? Number(e.columnIndex) : 0,
-                seqInColumn: Number.isFinite(Number(e.seqInColumn)) ? Number(e.seqInColumn) : 1,
-                itemNo: typeof e.itemNo === "string" ? e.itemNo : null,
-                questionText: typeof e.questionText === "string" ? e.questionText : null,
-                figureUrls,
-                manageType: mt,
-                blankLines: normalizeBlankLines(e.blankLines as number | null | undefined, defaultBlankLines),
-            };
-        });
-
-        const pageCountFromBody = Number(raw.pageCount);
-        const pageCount = Number.isFinite(pageCountFromBody) && pageCountFromBody > 0
-            ? Math.round(pageCountFromBody)
-            : Math.max(1, ...items.map((i) => i.pageIndex));
+        // 条目规范化 + 总页数都走 lib/volume-input（与"更新组卷"共用同一处，避免两边分叉）
+        const items = parseVolumeItems(rawItems, defaultBlankLines);
+        const pageCount = resolvePageCount(raw.pageCount, items);
 
         const created = await prisma.reviewVolume.create({
             data: {

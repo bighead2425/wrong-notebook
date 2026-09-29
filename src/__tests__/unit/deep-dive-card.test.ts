@@ -16,6 +16,7 @@ import {
     frontSideSlackMM,
     frontSideSlackWorstMM,
     maxFrontPhotoHeightMM,
+    maxFrontPhotoHeightHardMM,
     reviewDateSlots,
     sidePaddingMM,
 } from '@/lib/deep-dive-card';
@@ -57,6 +58,15 @@ describe('T1 深挖纸 · 纸张与内容区尺寸', () => {
     it('知识点行：一行 6mm、最多两行（写不下宁可不印，也不挤第三行）', () => {
         expect(T1_LAYOUT_MM.knowledgeRowMax).toBeGreaterThan(T1_LAYOUT_MM.knowledgeRow);
         expect(T1_LAYOUT_MM.knowledgeRowMax).toBeLessThan(T1_LAYOUT_MM.knowledgeRow * 2);
+    });
+
+    it('★ 正面照片"拖把手放大"的天花板 = 纸面空间极限（2026-09-29）', () => {
+        // 他要求正面原题照片也能拖把手调大小。往上放的边界不能随便给：
+        // 顶到天花板时，"知识点占两行"的最坏情况刚好用完富余（= 0），再多就会被裁。
+        const hard = maxFrontPhotoHeightHardMM();
+        expect(hard).toBeGreaterThanOrEqual(maxFrontPhotoHeightMM());
+        expect(frontSideSlackWorstMM(hard)).toBeCloseTo(0, 5);
+        expect(frontSideSlackWorstMM(hard - 0.1)).toBeGreaterThan(0);
     });
 
     it('反面末尾的虚线框：比颜色格宽得多、略高一点，且**不写用途**', () => {

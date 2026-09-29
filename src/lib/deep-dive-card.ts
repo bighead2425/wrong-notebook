@@ -152,16 +152,34 @@ export function frontSideSlackMM(photoHeightMM: number): number {
  * 组件直接拿它当 `max-height`，于是"装得下"是**算出来的**，不是打印出来拿尺子量才知道。
  */
 export function maxFrontPhotoHeightMM(): number {
-    const maxAllowed =
+    return Math.max(
+        T1_LAYOUT_MM.photoMin,
+        Math.min(T1_LAYOUT_MM.photoMax, frontPhotoSpaceMM()),
+    );
+}
+
+/** 正面照片的**可用空间**（还没和 P9 的观感上限取小） */
+function frontPhotoSpaceMM(): number {
+    return (
         SIDE_HEIGHT_MM -
         T1_LAYOUT_MM.identityBar -
         T1_LAYOUT_MM.knowledgeRowMax -
         T1_LAYOUT_MM.crosshairMin -
-        T1_LAYOUT_MM.frontGaps;
-    return Math.max(
-        T1_LAYOUT_MM.photoMin,
-        Math.min(T1_LAYOUT_MM.photoMax, maxAllowed),
+        T1_LAYOUT_MM.frontGaps
     );
+}
+
+/**
+ * 正面照片的**空间极限**高度（2026-09-29 加）—— 拖把手放大时的上限。
+ *
+ * 为什么需要一个"比 95mm 更大的上限"：照片的默认上限是 P9 定的**观感**值（95mm），
+ * 而纸面上真正还能用的是 `frontPhotoSpaceMM()`（≈105mm）。他要求"原题图片也能拖把手调大小"，
+ * 那就得允许往上长一点；但**只能长到这里** —— 再高就把下面的分析区（十字留白）压到 110mm 以下，
+ * 于是最后那点会被侧边 `overflow: hidden` 裁掉，裁掉的正好是分析区的下边框和两个角标
+ * （OCR 靠它们定方向）。所以：放大有天花板，不是随便拉。
+ */
+export function maxFrontPhotoHeightHardMM(): number {
+    return Math.max(T1_LAYOUT_MM.photoMin, frontPhotoSpaceMM());
 }
 
 /**
