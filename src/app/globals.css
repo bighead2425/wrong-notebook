@@ -795,3 +795,35 @@
     width: 100%;
   }
 }
+/* ============================================================================
+ * MdEditor（Milkdown 所见即所得，2026-09-29）
+ *
+ * 排版复用 .markdown-content（类名挂在编辑器根节点上，见 components/md-editor.tsx），
+ * 这里只补三样：编辑态自身的行为、mark 高亮的屏幕观感、空占位提示。
+ * ==========================================================================*/
+.md-editor .ProseMirror {
+  outline: none;
+  min-height: inherit;
+  cursor: text;
+}
+
+/* 空内容时的占位提示（Milkdown 无内置 placeholder，用 CSS 实现：
+   ProseMirror 空文档只有首个空段落 + 占位符 class 由 data-placeholder 提示） */
+.md-editor .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: #9ca3af;
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* `==高亮==` 在编辑器里与渲染端同观感。
+   ⚠️ 渲染端已有 .markdown-content mark（半透明黄，见上）与 @media print 的实心黄，
+   这里**只补编辑器专属的 .md-editor mark**，别再写 .markdown-content mark ——
+   写了会以"后者优先"把渲染端调好的颜色盖掉。 */
+.md-editor mark {
+  background-color: rgba(250, 204, 21, 0.35);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 2px;
+}

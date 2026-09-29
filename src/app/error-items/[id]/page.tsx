@@ -6,26 +6,16 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X, Sparkles, Loader2, Printer } from "lucide-react";
-import { Textarea } from "@/components/ui/textarea";
 import Link from "next/link";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
+import { MdEditor } from "@/components/md-editor";
 import { TagInput } from "@/components/tag-input";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiClient } from "@/lib/api-client";
 import { MISTAKE_CATEGORIES, getMistakeCategoryLabel } from "@/lib/mistake-category";
-import {
-    MANAGE_TYPES,
-    MANAGE_TYPE_DESC,
-    MANAGE_TYPE_LABEL,
-    MANAGE_TYPE_SOURCE_LABEL,
-    MANAGE_TYPE_UNDECIDED,
-    getManageTypeLabel,
-    normalizeManageTypeSource,
-    suggestManageType,
-} from "@/lib/manage-type";
-import { UserProfile, Notebook } from "@/types/api";
+import { MANAGE_TYPES, MANAGE_TYPE_LABEL, MANAGE_TYPE_UNDECIDED } from "@/lib/manage-type";
+import { UserProfile } from "@/types/api";
 import { getMistakeStatusLabel, normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { NotebookSelector } from "@/components/notebook-selector";
 import { CorrectionEditor, ParsedQuestionWithSubject } from "@/components/correction-editor";
@@ -70,6 +60,21 @@ interface ErrorItemDetail {
     attention?: number | null;
 }
 
+/**
+ * 【2026-09-29】年级/学期的固定选项 —— 他定的：试题信息里直接下拉，不再自由输入。
+ * 覆盖小学（一~六）× 上下学期 + 初中（七~九）+ 高中（高一~高三）× 上下学期。
+ * ⚠️ 数据库里已有的旧值如果不在清单里（如"三年级"），会作为「原值」补在最后，不会丢。
+ */
+const GRADE_SEMESTER_OPTIONS: string[] = [
+    ...(["一", "二", "三", "四", "五", "六", "七", "八", "九"].flatMap((g) => [`${g}年级上`, `${g}年级下`])),
+    "高一上",
+    "高一下",
+    "高二上",
+    "高二下",
+    "高三上",
+    "高三下",
+];
+
 export default function ErrorDetailPage() {
     const params = useParams();
     const router = useRouter();
@@ -81,17 +86,10 @@ export default function ErrorDetailPage() {
     const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
     const [isEditingTags, setIsEditingTags] = useState(false);
     const [tagsInput, setTagsInput] = useState<string[]>([]);
-    const [isEditingMetadata, setIsEditingMetadata] = useState(false);
     const [exportState, setExportState] = useState<"idle" | "doing" | "ok" | "err">("idle");
     // 需求六：「AI 重新分析」——用原图重跑 AI，进审核页，确认保存才覆盖
     const [reanalyzeData, setReanalyzeData] = useState<ParsedQuestion | null>(null);
     const [isReanalyzing, setIsReanalyzing] = useState(false);
-    const [gradeSemesterInput, setGradeSemesterInput] = useState("");
-    /** 【2026-09-28】**错题等级**：'' = 未定 / 'deep' 深挖 / 'review' 复练 */
-    const [manageTypeInput, setManageTypeInput] = useState("");
-    /** 【2026-09-28】错因（受控枚举 6 值，'' = 没打）——错题等级由它派生 */
-    const [mistakeCategoryInput, setMistakeCategoryInput] = useState("");
-    const [notebookInput, setNotebookInput] = useState<string | null>(null);
 
     const [educationStage, setEducationStage] = useState<string | undefined>(undefined);
 
@@ -284,43 +282,23 @@ export default function ErrorDetailPage() {
         setTagsInput([]);
     };
 
-    const startEditingMetadata = () => {
-        if (item) {
-            setNotebookInput(item.notebookId || null);
-            setGradeSemesterInput(item.gradeSemester || "");
-            setManageTypeInput(item.manageType || "");
-            setMistakeCategoryInput(item.mistakeCategory || "");
-            setIsEditingMetadata(true);
-        }
-    };
-
-    const saveMetadataHandler = async () => {
+    /**
+     * 【2026-09-29】试题信息的可改项（错题本/年级学期/错题等级/错因）**直接摆成下拉**，
+     * 改即存 —— 他定的："不用点击编辑再修改"。
+     *
+     * 每次只送改的那一个字段（服务端 PUT 本来就是逐字段校验、逐字段留痕）。
+     * ⚠️ 成功后**必须整条刷新**：改「错因」可能让服务端自动派生「错题等级」，
+     *    本地 setItem 对不齐 —— 这正是"派生+落定快照"的规矩，要以服务端为准。
+     */
+    const patchMetadata = async (patch: Record<string, unknown>) => {
+        if (!item) return;
         try {
-            await apiClient.put(`/api/error-items/${item?.id}`, {
-                notebookId: notebookInput || null,
-                gradeSemester: gradeSemesterInput,
-                // 【2026-09-28】错题等级：空串 = 未定（显式清空），非空 = 手动落定
-                manageType: manageTypeInput || null,
-                // 错因：改了它，若等级还没落定，服务端会按映射表派生一次（并留痕）
-                mistakeCategory: mistakeCategoryInput || null,
-            });
-
-            setIsEditingMetadata(false);
+            await apiClient.put(`/api/error-items/${item.id}`, patch);
             fetchItem(params.id as string);
-            alert(t.common?.messages?.metaUpdateSuccess || 'Metadata updated successfully!');
         } catch (error) {
             console.error(error);
             alert(t.common?.messages?.updateFailed || 'Update failed');
         }
-    };
-
-    const cancelEditingMetadata = () => {
-        setIsEditingMetadata(false);
-        setNotebookInput(null);
-        setGradeSemesterInput("");
-        // 【2026-09-28】错题等级/错因也已换成受控编辑，取消时一并复位
-        setManageTypeInput("");
-        setMistakeCategoryInput("");
     };
 
     const [isEditingQuestion, setIsEditingQuestion] = useState(false);
@@ -636,23 +614,26 @@ export default function ErrorDetailPage() {
 
                                 {isEditingQuestion ? (
                                     <div className="space-y-3">
-                                        <Textarea
+                                        {/* 【2026-09-29】所见即所得：编辑即渲染，保存的仍是 md 源 */}
+                                        <MdEditor
                                             value={questionInput}
-                                            onChange={(e) => setQuestionInput(e.target.value)}
-                                            placeholder="Enter question text..." // Consider localizing later
-                                            rows={8}
-                                            className="w-full font-mono text-sm"
+                                            onChange={setQuestionInput}
+                                            placeholder="Enter question text..."
+                                            minHeightPx={180}
                                         />
-                                        <div className="flex gap-2">
-                                            <Button size="sm" onClick={saveQuestionHandler}>
-                                                <Save className="h-4 w-4 mr-1" />
-                                                {t.common?.save || 'Save'}
-                                            </Button>
-                                            <Button size="sm" variant="outline" onClick={cancelEditingQuestion}>
-                                                <X className="h-4 w-4 mr-1" />
-                                                {t.common?.cancel || 'Cancel'}
-                                            </Button>
-                                        </div>
+                                        {/* 他定的：**检测到改动才出现保存/取消** —— 没改就不该有按钮 */}
+                                        {questionInput !== (item?.questionText ?? "") && (
+                                            <div className="flex gap-2">
+                                                <Button size="sm" onClick={saveQuestionHandler}>
+                                                    <Save className="h-4 w-4 mr-1" />
+                                                    {t.common?.save || 'Save'}
+                                                </Button>
+                                                <Button size="sm" variant="outline" onClick={cancelEditingQuestion}>
+                                                    <X className="h-4 w-4 mr-1" />
+                                                    {t.common?.cancel || 'Cancel'}
+                                                </Button>
+                                            </div>
+                                        )}
                                     </div>
                                 ) : (
                                     <MarkdownRenderer content={item.questionText} />
@@ -708,152 +689,124 @@ export default function ErrorDetailPage() {
                                     )}
                                 </div>
 
-                                {/* 年级/学期 和 试卷等级 */}
+                                {/* 试题信息 —— 【2026-09-29】四个可改项（错题本/年级学期/错题等级/错因）
+                                    **直接摆成下拉，改即保存**（他定的："不用点击编辑再修改"）。
+                                    题号 / 打印次数 / 关注档**只读不改**（题号是二维码的锚，
+                                    打印次数由打印动作 +1，关注档暂不开放手改）。
+                                    知识点在上一节，仍走"点编辑再改"（他要求不动）。 */}
                                 <div className="space-y-2 pt-4 border-t">
-                                    <div className="flex justify-between items-center">
-                                        <h4 className="text-sm font-semibold">
-                                            {t.detail?.questionInfo || 'Question Info'}
-                                        </h4>
-                                        {!isEditingMetadata && (
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={startEditingMetadata}
-                                            >
-                                                <Edit className="h-4 w-4 mr-1" />
-                                                {t.common?.edit || 'Edit'}
-                                            </Button>
-                                        )}
-                                    </div>
+                                    <h4 className="text-sm font-semibold">
+                                        {t.detail?.questionInfo || 'Question Info'}
+                                    </h4>
 
-                                    {isEditingMetadata ? (
-                                        <div className="space-y-3">
-                                            <div className="space-y-2">
-                                                <label className="text-sm text-muted-foreground">
-                                                    {t.notebooks?.title || 'Notebook'}
-                                                </label>
+                                    <div className="space-y-2.5 text-sm">
+                                        {/* 我的错题本：改即存（挪本） */}
+                                        <div className="flex justify-between items-center gap-3">
+                                            <span className="text-muted-foreground whitespace-nowrap">
+                                                {t.notebooks?.title || 'Notebook'}:
+                                            </span>
+                                            <div className="w-[200px] shrink-0">
                                                 <NotebookSelector
-                                                    value={notebookInput || undefined}
-                                                    onChange={(val) => setNotebookInput(val)}
+                                                    value={item.notebookId || undefined}
+                                                    onChange={(val) => patchMetadata({ notebookId: val || null })}
                                                 />
                                             </div>
-                                            <div className="space-y-2">
-                                                <label className="text-sm text-muted-foreground">
-                                                    {t.filter.grade}
-                                                </label>
-                                                <Input
-                                                    value={gradeSemesterInput}
-                                                    onChange={(e) => setGradeSemesterInput(e.target.value)}
-                                                    placeholder={t.notebook?.gradeSemesterPlaceholder || 'e.g. Grade 7, Semester 1'}
-                                                />
-                                            </div>
-                                            {/* 【2026-09-28】原来的"所属卷等级"（A级/B级/其他）改成**错题等级**：
-                                                深挖 / 复练 / 未定。老字段 paperLevel 保留在库里但界面不再用。 */}
-                                            <div className="space-y-2">
-                                                <label className="text-sm text-muted-foreground">
-                                                    错题等级
-                                                </label>
-                                                <Select
-                                                    value={manageTypeInput || "__undecided__"}
-                                                    onValueChange={(v) => setManageTypeInput(v === "__undecided__" ? "" : v)}
-                                                >
-                                                    <SelectTrigger>
-                                                        <SelectValue />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        <SelectItem value="__undecided__">{MANAGE_TYPE_UNDECIDED}</SelectItem>
-                                                        {MANAGE_TYPES.map((tp) => (
-                                                            <SelectItem key={tp} value={tp}>
-                                                                {MANAGE_TYPE_LABEL[tp]} —— {MANAGE_TYPE_DESC[tp]}
-                                                            </SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
-                                                <p className="text-xs text-muted-foreground">
-                                                    {suggestManageType(mistakeCategoryInput).reason}
-                                                </p>
-                                            </div>
-                                            {/* 错因：受控枚举。改了它，若等级还没落定，保存时自动派生一次 */}
-                                            <div className="space-y-2">
-                                                <label className="text-sm text-muted-foreground">
-                                                    错因
-                                                </label>
-                                                <Select
-                                                    value={mistakeCategoryInput || "__none__"}
-                                                    onValueChange={(v) => setMistakeCategoryInput(v === "__none__" ? "" : v)}
-                                                >
-                                                    <SelectTrigger>
-                                                        <SelectValue />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        <SelectItem value="__none__">没打</SelectItem>
-                                                        {MISTAKE_CATEGORIES.map((c) => (
-                                                            <SelectItem key={c} value={c}>
-                                                                {getMistakeCategoryLabel(c)}
-                                                            </SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
-                                            <div className="flex gap-2">
-                                                <Button size="sm" onClick={saveMetadataHandler}>
-                                                    <Save className="h-4 w-4 mr-1" />
-                                                    {t.common?.save || 'Save'}
-                                                </Button>
-                                                <Button size="sm" variant="outline" onClick={cancelEditingMetadata}>
-                                                    <X className="h-4 w-4 mr-1" />
-                                                    {t.common?.cancel || 'Cancel'}
-                                                </Button>
-                                            </div>
                                         </div>
-                                    ) : (
-                                        <div className="space-y-2 text-sm">
-                                            <div className="flex justify-between">
-                                                <span className="text-muted-foreground">{t.notebooks?.title || 'Notebook'}:</span>
-                                                <span className="font-medium">
-                                                    {item.notebook?.displayName || (t.common?.notSet || 'Not set')}
-                                                </span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span className="text-muted-foreground">{t.filter.grade}:</span>
-                                                <span className="font-medium">
-                                                    {item.gradeSemester || (t.common?.notSet || 'Not set')}
-                                                </span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span className="text-muted-foreground">错题等级:</span>
-                                                <span className="font-medium">
-                                                    {getManageTypeLabel(item.manageType)}
-                                                    {normalizeManageTypeSource(item.manageTypeSource) ? (
-                                                        <span className="ml-1 text-xs text-muted-foreground">
-                                                            （{MANAGE_TYPE_SOURCE_LABEL[normalizeManageTypeSource(item.manageTypeSource)!]}）
-                                                        </span>
-                                                    ) : null}
-                                                </span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span className="text-muted-foreground">错因:</span>
-                                                <span className="font-medium">
-                                                    {getMistakeCategoryLabel(item.mistakeCategory) || '没打'}
-                                                </span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span className="text-muted-foreground">题号:</span>
-                                                <span className="font-medium font-mono">
-                                                    {item.source || (t.common?.notSet || 'Not set')}
-                                                </span>
-                                            </div>
-                                            {/* #10 / T4：打印次数与关注档——只显不改，任何打印触发 +1 */}
-                                            <div className="flex justify-between">
-                                                <span className="text-muted-foreground">{t.detail.printCount}:</span>
-                                                <span className="font-medium tabular-nums">{item.printCount ?? 0}</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span className="text-muted-foreground">{t.detail.attention}:</span>
-                                                <span className="font-medium tabular-nums">{item.attention ?? 1}</span>
-                                            </div>
+
+                                        {/* 年级/学期：固定清单下拉；旧数据里清单外的值会作为「原值」补在最后 */}
+                                        <div className="flex justify-between items-center gap-3">
+                                            <span className="text-muted-foreground whitespace-nowrap">
+                                                {t.filter.grade}:
+                                            </span>
+                                            <Select
+                                                value={item.gradeSemester || "__none__"}
+                                                onValueChange={(v) =>
+                                                    patchMetadata({ gradeSemester: v === "__none__" ? null : v })
+                                                }
+                                            >
+                                                <SelectTrigger className="w-[160px] h-8">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="__none__">
+                                                        {t.common?.notSet || 'Not set'}
+                                                    </SelectItem>
+                                                    {GRADE_SEMESTER_OPTIONS.map((g) => (
+                                                        <SelectItem key={g} value={g}>
+                                                            {g}
+                                                        </SelectItem>
+                                                    ))}
+                                                    {item.gradeSemester && !GRADE_SEMESTER_OPTIONS.includes(item.gradeSemester) && (
+                                                        <SelectItem value={item.gradeSemester}>
+                                                            {item.gradeSemester}（原值）
+                                                        </SelectItem>
+                                                    )}
+                                                </SelectContent>
+                                            </Select>
                                         </div>
-                                    )}
+
+                                        {/* 错题等级：改即落定（manual），服务端留痕 */}
+                                        <div className="flex justify-between items-center gap-3">
+                                            <span className="text-muted-foreground whitespace-nowrap">错题等级:</span>
+                                            <Select
+                                                value={item.manageType || "__undecided__"}
+                                                onValueChange={(v) =>
+                                                    patchMetadata({ manageType: v === "__undecided__" ? null : v })
+                                                }
+                                            >
+                                                <SelectTrigger className="w-[160px] h-8">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="__undecided__">{MANAGE_TYPE_UNDECIDED}</SelectItem>
+                                                    {MANAGE_TYPES.map((tp) => (
+                                                        <SelectItem key={tp} value={tp}>
+                                                            {MANAGE_TYPE_LABEL[tp]}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+
+                                        {/* 错因：改即存；等级还没落定时服务端会按映射表派生一次（留痕） */}
+                                        <div className="flex justify-between items-center gap-3">
+                                            <span className="text-muted-foreground whitespace-nowrap">错因:</span>
+                                            <Select
+                                                value={item.mistakeCategory || "__none__"}
+                                                onValueChange={(v) =>
+                                                    patchMetadata({ mistakeCategory: v === "__none__" ? null : v })
+                                                }
+                                            >
+                                                <SelectTrigger className="w-[160px] h-8">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="__none__">没打</SelectItem>
+                                                    {MISTAKE_CATEGORIES.map((c) => (
+                                                        <SelectItem key={c} value={c}>
+                                                            {getMistakeCategoryLabel(c)}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+
+                                        {/* 以下三项**只读**（题号 = 二维码锚点；打印次数由打印动作维护） */}
+                                        <div className="flex justify-between">
+                                            <span className="text-muted-foreground">题号:</span>
+                                            <span className="font-medium font-mono">
+                                                {item.source || (t.common?.notSet || 'Not set')}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-muted-foreground">{t.detail.printCount}:</span>
+                                            <span className="font-medium tabular-nums">{item.printCount ?? 0}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-muted-foreground">{t.detail.attention}:</span>
+                                            <span className="font-medium tabular-nums">{item.attention ?? 1}</span>
+                                        </div>
+                                    </div>
                                 </div>
                             </CardContent>
                         </Card>
@@ -877,41 +830,34 @@ export default function ErrorDetailPage() {
                             <CardContent>
                                 {isEditingNotes ? (
                                     <div className="space-y-3">
-                                        <Textarea
+                                        <MdEditor
                                             value={notesInput}
-                                            onChange={(e) => setNotesInput(e.target.value)}
+                                            onChange={setNotesInput}
                                             placeholder={t.detail.notesPlaceholder || "Enter your notes..."}
-                                            rows={5}
-                                            className="w-full"
+                                            minHeightPx={110}
                                         />
-                                        <div className="flex gap-2">
-                                            <Button
-                                                size="sm"
-                                                onClick={saveNotes}
-                                            >
-                                                <Save className="h-4 w-4 mr-1" />
-                                                {t.common.save || "Save"}
-                                            </Button>
-                                            <Button
-                                                size="sm"
-                                                variant="outline"
-                                                onClick={cancelEditingNotes}
-                                            >
-                                                <X className="h-4 w-4 mr-1" />
-                                                {t.common.cancel || "Cancel"}
-                                            </Button>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="whitespace-pre-wrap">
-                                        {item.userNotes ? (
-                                            <p className="text-foreground">{item.userNotes}</p>
-                                        ) : (
-                                            <p className="text-muted-foreground italic">
-                                                {t.detail.noNotes}
-                                            </p>
+                                        {notesInput !== (item.userNotes ?? "") && (
+                                            <div className="flex gap-2">
+                                                <Button size="sm" onClick={saveNotes}>
+                                                    <Save className="h-4 w-4 mr-1" />
+                                                    {t.common.save || "Save"}
+                                                </Button>
+                                                <Button size="sm" variant="outline" onClick={cancelEditingNotes}>
+                                                    <X className="h-4 w-4 mr-1" />
+                                                    {t.common.cancel || "Cancel"}
+                                                </Button>
+                                            </div>
                                         )}
                                     </div>
+                                ) : (
+                                    // 【2026-09-29】笔记也走 md 了 ⇒ 只读态用渲染器（原来是纯文本 pre-wrap）
+                                    item.userNotes ? (
+                                        <MarkdownRenderer content={item.userNotes} />
+                                    ) : (
+                                        <p className="text-muted-foreground italic">
+                                            {t.detail.noNotes}
+                                        </p>
+                                    )
                                 )}
                             </CardContent>
                         </Card>
@@ -938,23 +884,24 @@ export default function ErrorDetailPage() {
                             <CardContent>
                                 {isEditingAnswer ? (
                                     <div className="space-y-3">
-                                        <Textarea
+                                        <MdEditor
                                             value={answerInput}
-                                            onChange={(e) => setAnswerInput(e.target.value)}
+                                            onChange={setAnswerInput}
                                             placeholder="Enter answer..."
-                                            rows={5}
-                                            className="w-full font-mono text-sm"
+                                            minHeightPx={120}
                                         />
-                                        <div className="flex gap-2">
-                                            <Button size="sm" onClick={saveAnswerHandler}>
-                                                <Save className="h-4 w-4 mr-1" />
-                                                {t.common?.save || 'Save'}
-                                            </Button>
-                                            <Button size="sm" variant="outline" onClick={cancelEditingAnswer}>
-                                                <X className="h-4 w-4 mr-1" />
-                                                {t.common?.cancel || 'Cancel'}
-                                            </Button>
-                                        </div>
+                                        {answerInput !== (item?.answerText ?? "") && (
+                                            <div className="flex gap-2">
+                                                <Button size="sm" onClick={saveAnswerHandler}>
+                                                    <Save className="h-4 w-4 mr-1" />
+                                                    {t.common?.save || 'Save'}
+                                                </Button>
+                                                <Button size="sm" variant="outline" onClick={cancelEditingAnswer}>
+                                                    <X className="h-4 w-4 mr-1" />
+                                                    {t.common?.cancel || 'Cancel'}
+                                                </Button>
+                                            </div>
+                                        )}
                                     </div>
                                 ) : (
                                     <MarkdownRenderer content={item.answerText} className="font-semibold" />
@@ -981,23 +928,24 @@ export default function ErrorDetailPage() {
                             <CardContent className="space-y-4">
                                 {isEditingAnalysis ? (
                                     <div className="space-y-3">
-                                        <Textarea
+                                        <MdEditor
                                             value={analysisInput}
-                                            onChange={(e) => setAnalysisInput(e.target.value)}
+                                            onChange={setAnalysisInput}
                                             placeholder="Enter analysis..."
-                                            rows={12}
-                                            className="w-full font-mono text-sm"
+                                            minHeightPx={260}
                                         />
-                                        <div className="flex gap-2">
-                                            <Button size="sm" onClick={saveAnalysisHandler}>
-                                                <Save className="h-4 w-4 mr-1" />
-                                                {t.common?.save || 'Save'}
-                                            </Button>
-                                            <Button size="sm" variant="outline" onClick={cancelEditingAnalysis}>
-                                                <X className="h-4 w-4 mr-1" />
-                                                {t.common?.cancel || 'Cancel'}
-                                            </Button>
-                                        </div>
+                                        {analysisInput !== (item?.analysis ?? "") && (
+                                            <div className="flex gap-2">
+                                                <Button size="sm" onClick={saveAnalysisHandler}>
+                                                    <Save className="h-4 w-4 mr-1" />
+                                                    {t.common?.save || 'Save'}
+                                                </Button>
+                                                <Button size="sm" variant="outline" onClick={cancelEditingAnalysis}>
+                                                    <X className="h-4 w-4 mr-1" />
+                                                    {t.common?.cancel || 'Cancel'}
+                                                </Button>
+                                            </div>
+                                        )}
                                     </div>
                                 ) : (
                                     <MarkdownRenderer content={item.analysis} />
@@ -1042,37 +990,36 @@ export default function ErrorDetailPage() {
                                         </div>
                                         <div className="space-y-2">
                                             <label className="text-sm text-muted-foreground">{t.editor?.wrongAnswerText || '错误解答原文'}</label>
-                                            <Textarea
+                                            <MdEditor
                                                 value={wrongAnswerInput}
-                                                onChange={(e) => {
-                                                    setWrongAnswerInput(e.target.value);
-                                                    if (e.target.value.trim()) setMistakeStatusInput('wrong_attempt');
+                                                onChange={(md) => {
+                                                    setWrongAnswerInput(md);
+                                                    if (md.trim()) setMistakeStatusInput('wrong_attempt');
                                                 }}
-                                                rows={5}
-                                                className="w-full font-mono text-sm"
+                                                minHeightPx={110}
                                             />
                                         </div>
                                         <div className="space-y-2">
                                             <label className="text-sm text-muted-foreground">{t.editor?.mistakeAnalysis || '错因分析'}</label>
-                                            <Textarea
+                                            <MdEditor
                                                 value={mistakeAnalysisInput}
-                                                onChange={(e) => {
-                                                    setMistakeAnalysisInput(e.target.value);
-                                                }}
-                                                rows={8}
-                                                className="w-full font-mono text-sm"
+                                                onChange={setMistakeAnalysisInput}
+                                                minHeightPx={170}
                                             />
                                         </div>
-                                        <div className="flex gap-2">
-                                            <Button size="sm" onClick={saveMistakeHandler}>
-                                                <Save className="h-4 w-4 mr-1" />
-                                                {t.common?.save || 'Save'}
-                                            </Button>
-                                            <Button size="sm" variant="outline" onClick={cancelEditingMistake}>
-                                                <X className="h-4 w-4 mr-1" />
-                                                {t.common?.cancel || 'Cancel'}
-                                            </Button>
-                                        </div>
+                                        {(wrongAnswerInput !== (item?.wrongAnswerText ?? "") ||
+                                            mistakeAnalysisInput !== (item?.mistakeAnalysis ?? "")) && (
+                                            <div className="flex gap-2">
+                                                <Button size="sm" onClick={saveMistakeHandler}>
+                                                    <Save className="h-4 w-4 mr-1" />
+                                                    {t.common?.save || 'Save'}
+                                                </Button>
+                                                <Button size="sm" variant="outline" onClick={cancelEditingMistake}>
+                                                    <X className="h-4 w-4 mr-1" />
+                                                    {t.common?.cancel || 'Cancel'}
+                                                </Button>
+                                            </div>
+                                        )}
                                     </div>
                                 ) : (
                                     <div className="space-y-4">

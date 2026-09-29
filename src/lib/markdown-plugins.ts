@@ -160,3 +160,67 @@ export function preprocess(content: string): string {
 
     return s;
 }
+
+/* ============================================================================
+ * 【2026-09-29 · 编辑器专用】严格版高亮：`==x==` → 独立的 `highlight` 节点。
+ *
+ * ⚠️ 上面渲染端的 `remarkHighlight` 把高亮**借用** emphasis 节点实现 ——
+ * 那是渲染的取巧（hName 直接映射成 <mark>）。但这个形态**绝不能给编辑器用**：
+ * Milkdown 编辑器内部就是 remark 引擎，它会把 emphasis 序列化回 `*x*` ——
+ * 「保存一次，高亮全变斜体」，原文被静默洗掉。
+ *
+ * 本插件是同一段 `==` 语法的**正规实现**，parse 与 stringify 两个方向都覆盖：
+ *   ① parse：文本节点里的 `==x==` 拆成**独立的** highlight 节点（复用 rewriteTextNodes）；
+ *   ② stringify：注册 highlight 节点的输出 handler（`==` 包回去）——
+ *      不注册的话 mdast-util-to-markdown 遇到不认识的节点类型会直接抛错。
+ * 渲染端**继续用**旧的 remarkHighlight（HTML 输出等价，历史行为不变）。
+ * ==========================================================================*/
+
+/** mdast-util-to-markdown 的 State 我们只用到 containerPhrasing 一个方法 */
+interface MdToMarkdownState {
+    containerPhrasing: (node: MdNode, info?: { before?: string; after?: string }) => string;
+}
+
+export const remarkHighlightStrict: Plugin = function remarkHighlightStrict(this) {
+    // unified 约定：remark-stringify 从 data('toMarkdownExtensions')（**数组**）里收集
+    // 输出扩展 —— 与 remark-gfm 往里推的是同一个键（data.toMarkdown 是错的，编译器不读）。
+    const data = this.data() as { toMarkdownExtensions?: unknown[] };
+    if (!data.toMarkdownExtensions) data.toMarkdownExtensions = [];
+    data.toMarkdownExtensions.push({
+        handlers: {
+            highlight(node: MdNode, _parent: unknown, rawState: unknown, info: unknown) {
+                const marker = '==';
+                const state = rawState as MdToMarkdownState;
+                return marker + state.containerPhrasing(node, { ...(info as { before?: string; after?: string }), before: marker, after: marker }) + marker;
+            },
+        },
+    });
+
+    return (tree) => {
+        rewriteTextNodes(tree as MdNode, (value) => {
+            if (!value.includes('==')) return null;
+
+            const re = /==([^=\n]+?)==/g;
+            const parts: MdNode[] = [];
+            let last = 0;
+            let m: RegExpExecArray | null;
+
+            while ((m = re.exec(value)) !== null) {
+                if (m.index > last) {
+                    parts.push({ type: 'text', value: value.slice(last, m.index) });
+                }
+                parts.push({
+                    type: 'highlight',
+                    children: [{ type: 'text', value: m[1] }],
+                });
+                last = m.index + m[0].length;
+            }
+
+            if (!parts.length) return null;
+            if (last < value.length) {
+                parts.push({ type: 'text', value: value.slice(last) });
+            }
+            return parts;
+        });
+    };
+};
