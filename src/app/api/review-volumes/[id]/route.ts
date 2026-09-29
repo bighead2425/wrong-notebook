@@ -5,7 +5,7 @@ import { getServerSession } from "next-auth";
 import { unauthorized, badRequest, notFound, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { normalizeBlankLines, VOLUME_VARIANTS } from "@/lib/review-card";
-import { parseVolumeItems, resolvePageCount } from "@/lib/volume-input";
+import { parseVolumeItems, resolvePageCount, normalizeVolumeTitle } from "@/lib/volume-input";
 import { VOLUME_KINDS, type VolumeKind } from "@/lib/volume-code";
 
 const logger = createLogger("api:review-volumes/[id]");
@@ -32,6 +32,7 @@ async function loadVolume(id: string) {
         select: {
             id: true,
             volumeNo: true,
+            title: true,
             kind: true,
             semester: true,
             gradeSemester: true,
@@ -86,11 +87,28 @@ export async function PATCH(request: Request, ctx: Ctx) {
 
     const raw = (body ?? {}) as Record<string, unknown>;
     const rawItems = Array.isArray(raw.items) ? raw.items : [];
-    if (rawItems.length === 0) return badRequest("items must not be empty");
+    /**
+     * 两条路：
+     *   · 带 items ⇒ **覆盖整卷**（"更新组卷"）
+     *   · 只带 title ⇒ **只改名**（管理页里"改个名"不该逼客户端把整卷条目再传一遍）
+     */
+    const hasItems = rawItems.length > 0;
+    const hasTitle = Object.prototype.hasOwnProperty.call(raw, "title");
+    if (!hasItems && !hasTitle) return badRequest("items must not be empty");
 
     try {
         const existing = await loadVolume(id);
         if (!existing) return notFound("Review volume not found");
+
+        if (!hasItems) {
+            const renamed = await prisma.reviewVolume.update({
+                where: { id },
+                data: { title: normalizeVolumeTitle(raw.title) },
+                select: { id: true, volumeNo: true, title: true, kind: true, pageCount: true, semester: true },
+            });
+            logger.info({ volumeNo: renamed.volumeNo, titled: !!renamed.title }, "Review volume renamed");
+            return NextResponse.json({ volume: renamed });
+        }
 
         // 卷别以**库里的**为准（body 里的 kind 不参与），默认留白沿用该卷别
         const kind = existing.kind as VolumeKind;
@@ -116,11 +134,13 @@ export async function PATCH(request: Request, ctx: Ctx) {
                 data: {
                     pageCount,
                     defaultBlankLines,
+                    // 覆盖保存**不动名字**（除非这次显式带了）
+                    ...(hasTitle ? { title: normalizeVolumeTitle(raw.title) } : {}),
                     gradeSemester:
                         typeof raw.gradeSemester === "string" ? raw.gradeSemester : existing.gradeSemester,
                     items: { create: items },
                 },
-                select: { id: true, volumeNo: true, kind: true, pageCount: true, semester: true },
+                select: { id: true, volumeNo: true, title: true, kind: true, pageCount: true, semester: true },
             });
         });
 

@@ -57,3 +57,14 @@ export function resolvePageCount(rawPageCount: unknown, items: VolumeItemInput[]
     if (Number.isFinite(n) && n > 0) return Math.round(n);
     return Math.max(1, ...items.map((i) => i.pageIndex));
 }
+
+/**
+ * 卷名规范化（2026-09-30）：去首尾空白、把连续空白压成一个空格、限长 60 字。
+ * 空串 / 全是空白 ⇒ `null`（= 没有名字，不是"名字叫空"）。
+ * ⚠️ 超长**截断**而不是报错 —— 名字是给人看的标签，不该因为写长了就存不下来。
+ */
+export function normalizeVolumeTitle(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const t = value.trim().replace(/\s+/g, ' ');
+    return t ? t.slice(0, 60) : null;
+}

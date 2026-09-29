@@ -89,6 +89,62 @@ function renderSheets(items: ErrorItem[], opts: RenderOptions = {}): string {
         .join('\n');
 }
 
+describe('卷 · 原题被删的占位（2026-09-30 他定的规矩）', () => {
+    /**
+     * 他的原话大意：错题本本来就该有进有出。卷里某道题的原题被删了，
+     * **不要重排整页**，就地留"题号 + 此题已无"，上下虚线隔开，后面题往前排，页尾空出来就空着。
+     * 理由：手机扫这一页二维码，跳出来的是**这一页**，题窜页了扫码就对不上。
+     */
+    const missingPage: MeasuredPageLayout = {
+        columns: [
+            {
+                blocks: [
+                    { key: 'missing:row1', heightMM: 0, seq: 1 },
+                    { key: 'e1', heightMM: 40, seq: 2 },
+                ],
+            },
+        ],
+    };
+
+    it('★ 传了 missing：该格留"题号 + 此题已无"，真题照旧在', () => {
+        const html = renderToStaticMarkup(
+            <ReviewSheet
+                page={missingPage}
+                pageNo={1}
+                pageCount={1}
+                volumeNo="RE20260930001"
+                kind="review"
+                printDate={new Date(2026, 8, 30)}
+                itemByKey={{ e1: item() }}
+                missing={{ 'missing:row1': 'SX20260916001' }}
+                L={(zh) => zh}
+            />,
+        );
+        expect(html).toContain('此题已无');
+        expect(html).toContain('SX20260916001');
+        expect(html).toContain('data-review-block="e1"'); // 真题没被连坐
+        // 铁律照旧：占位块上也不许出现 AI 内容
+        expect(html).not.toContain('参考答案');
+    });
+
+    it('没传 missing（打印预览页那条路）：什么都不画，行为与以前完全一致', () => {
+        const html = renderToStaticMarkup(
+            <ReviewSheet
+                page={missingPage}
+                pageNo={1}
+                pageCount={1}
+                volumeNo="RE20260930001"
+                kind="review"
+                printDate={new Date(2026, 8, 30)}
+                itemByKey={{ e1: item() }}
+                L={(zh) => zh}
+            />,
+        );
+        expect(html).not.toContain('此题已无');
+        expect(html).toContain('data-review-block="e1"');
+    });
+});
+
 describe('卷 · 纸上零 AI 内容', () => {
     it('解析 / 错因 / 参考答案一个字都不许出现', () => {
         const html = renderSheets([item()]);

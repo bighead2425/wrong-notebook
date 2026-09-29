@@ -40,6 +40,55 @@ import { PromoteBox } from './promote-box';
  * 铁律（与深挖纸同）：**纸上零 AI 内容** —— 不印答案 / 解析 / 错因 / 进度。
  */
 
+/**
+ * 卷头右上角那"二维码一栏"的宽度 = 二维码 10mm + 一点间隙。
+ * 第一排的文字与第二排的横线都靠它往左让位（见 VolumeHeader 里的说明）。
+ */
+const VOLUME_QR_COLUMN_MM = 11;
+
+/**
+ * 【2026-09-30】原题已被删除时的**占位块**（复练卷页专用）。
+ *
+ * 他定的规矩（原话大意）："错题本本来就该有进有出" —— 卷里某道题的原题被删了，
+ * **不要**把整页重排，就地把这道题换成"题号 + 此题已无"，上下虚线隔开，
+ * 后面的题往前移，这一页下面空出来就空着。
+ * 为什么坚持"不重排"：手机扫这一页的二维码，跳出来的是**这一页**的内容；
+ * 题在页之间窜来窜去，扫码就对不上了。扫到的页比纸上少一道题没关系，
+ * 少的那道对复练来说已经不重要了。
+ */
+function MissingQuestionBlock({
+    seq,
+    itemNo,
+    L,
+}: {
+    seq: number;
+    itemNo: string | null;
+    L: (zh: string, en: string) => string;
+}) {
+    return (
+        <div className="print-review-missing" style={{ padding: '2mm 0' }}>
+            {/* 上虚线：与上一道题隔开（第一块也画 —— 占位块本身就是一个"洞"） */}
+            <div style={{ borderTop: '0.2mm dashed #c0c0c0' }} />
+            <div
+                style={{
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    gap: '2mm',
+                    color: '#999',
+                    fontSize: '9pt',
+                    padding: '1.5mm 0',
+                }}
+            >
+                <span style={{ fontWeight: 700 }}>{seq}</span>
+                {itemNo ? <span>{itemNo}</span> : null}
+                <span>{L('此题已无', 'removed')}</span>
+            </div>
+            {/* 下虚线 */}
+            <div style={{ borderTop: '0.2mm dashed #c0c0c0' }} />
+        </div>
+    );
+}
+
 export interface ReviewSheetProps {
     /** 这一页的排布（复练 1 栏 / 积累 2 栏）—— 由纯函数按**真实高度**分好 */
     page: MeasuredPageLayout;
@@ -69,6 +118,11 @@ export interface ReviewSheetProps {
     onFigureScaleStart?: (itemId: string) => (e: ReactPointerEvent) => void;
     /** 按住两题之间的虚线（调上面那道题的留白行数） */
     onDividerDragStart?: (aboveItemId: string, startLines: number) => (e: ReactPointerEvent) => void;
+    /**
+     * 【2026-09-30】原题已被删的题：key → 题号快照（题号可能是 null）。
+     * 传了就在这里渲染"此题已无"占位块；不传就照旧什么都不画。
+     */
+    missing?: Record<string, string | null>;
     L: (zh: string, en: string) => string;
 }
 
@@ -125,9 +179,24 @@ function VolumeHeader({
                 display: 'flex',
                 flexDirection: 'column',
                 overflow: 'hidden',
+                // 二维码要绝对定位到右上角（往上提、上面不放内容）
+                position: 'relative',
             }}
         >
-            <div style={{ height: '6mm', display: 'flex', alignItems: 'center', gap: '2.5mm', flex: '0 0 auto' }}>
+            {/* 第一排：身份条文字。
+                `paddingRight` = **二维码那一栏的宽度** —— 于是：
+                  ① 页码 / 印刷时间被**往左推**（他 2026-09-30 要的）；
+                  ② 二维码上方那一块自然空出来（"二维码上面不放内容"）。 */}
+            <div
+                style={{
+                    height: '6.5mm',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '2.5mm',
+                    flex: '0 0 auto',
+                    paddingRight: `${VOLUME_QR_COLUMN_MM}mm`,
+                }}
+            >
                 {/* 阳文框：框与字同色、底为白 —— 与深挖纸（实底白字）恰好相反，一眼能分开"卷"和"纸" */}
                 <span
                     className={`print-volume-badge print-volume-badge-${kind}`}
@@ -163,26 +232,34 @@ function VolumeHeader({
                 </span>
             </div>
             {/*
-                第二排（**2026-09-29 他要求改版**）：**横线 + 二维码并排**，两者共享纸面宽度 ——
-                  ① 横线右侧缩短：到二维码左边为止，不再从二维码底下穿过去；
-                  ② 横线略向上移、二维码适当向下移 ⇒ 两者落在同一条带上。
-                高度 6 + 9 = 15mm = VOLUME_HEADER_MM ⇒ **页面总高不变、分页结果不变**。
-                ⚠️ 二维码从 10mm 收到 9mm：它现在要和横线共享这 15mm 里的同一排，
-                   页眉不能涨高（涨了分页就变，已经印出来的卷就对不上了）。
-                   9mm 在 600dpi 下约 212px，25 模块的码每模块 8px 以上，扫码余量够。
+                第二排（**2026-09-30 二改**，他实测反馈）：
+                  ① 二维码**往上提**（绝对定位到右上角、顶到纸面顶部）—— 它上面不再放任何内容；
+                  ② 页码 / 印刷时间**往左挪**（靠第一排的 paddingRight 让位）；
+                  ③ 横线**往上移**、离上面那排文字更近，右侧到二维码左边为止。
+                高度仍是 6.5 + 其余 = 15mm = VOLUME_HEADER_MM ⇒ **页面总高不变、分页结果不变**。
+                二维码 10mm：它已经独占右上角那一栏（不再与横线挤同一排），
+                所以从上一版的 9mm 放回 10mm —— 扫码余量更足。
             */}
-            <div style={{ height: '9mm', display: 'flex', alignItems: 'center', gap: '2mm', flex: '0 0 auto' }}>
+            <div
+                style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    flex: '0 0 auto',
+                    paddingRight: `${VOLUME_QR_COLUMN_MM}mm`,
+                    marginTop: '1mm',
+                }}
+            >
                 <span className="print-volume-header-rule" style={{ flex: 1, height: '0.25mm', background: '#666' }} />
-                {pageQr ? (
-                    /* eslint-disable-next-line @next/next/no-img-element -- 打印页必须用原生 img：src 是 dataURL，要交给浏览器打印快照；next/image 会插一层优化/懒加载，反而可能打不出来 */
-                    <img
-                        className="print-qr print-volume-qr"
-                        src={pageQr}
-                        alt=""
-                        style={{ width: '9mm', height: '9mm', flex: '0 0 auto' }}
-                    />
-                ) : null}
             </div>
+            {pageQr ? (
+                /* eslint-disable-next-line @next/next/no-img-element -- 打印页必须用原生 img：src 是 dataURL，要交给浏览器打印快照；next/image 会插一层优化/懒加载，反而可能打不出来 */
+                <img
+                    className="print-qr print-volume-qr"
+                    src={pageQr}
+                    alt=""
+                    style={{ position: 'absolute', top: '1mm', right: 0, width: '10mm', height: '10mm' }}
+                />
+            ) : null}
         </div>
     );
 }
@@ -409,6 +486,7 @@ export function ReviewSheet({
     figureScaleOf,
     onFigureScaleStart,
     onDividerDragStart,
+    missing,
     L,
 }: ReviewSheetProps) {
     /**
@@ -475,7 +553,13 @@ export function ReviewSheet({
                         >
                             {col.blocks.map((b, bi) => {
                                 const item = itemByKey[b.key];
-                                if (!item) return null;
+                                if (!item) {
+                                    // 原题已被删（快照还在）⇒ 就地留"此题已无"占位，**不重排整页**
+                                    if (missing && b.key in missing) {
+                                        return <MissingQuestionBlock key={b.key} seq={b.seq} itemNo={missing[b.key]} L={L} />;
+                                    }
+                                    return null;
+                                }
                                 const blank = blankValueOf ? blankValueOf(item.id) : 0;
                                 // 虚线画在本块顶上，所以"虚线上面那道题"是**前一块**
                                 const above = bi > 0 ? itemByKey[col.blocks[bi - 1].key] : null;

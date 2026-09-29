@@ -13,7 +13,7 @@ import {
     type VolumeKind,
 } from "@/lib/volume-code";
 import { normalizeBlankLines, VOLUME_VARIANTS } from "@/lib/review-card";
-import { parseVolumeItems, resolvePageCount } from "@/lib/volume-input";
+import { parseVolumeItems, resolvePageCount, normalizeVolumeTitle } from "@/lib/volume-input";
 
 const logger = createLogger("api:review-volumes");
 
@@ -96,9 +96,11 @@ export async function POST(request: Request) {
                 gradeSemester: typeof raw.gradeSemester === "string" ? raw.gradeSemester : null,
                 pageCount,
                 defaultBlankLines,
+                // 名字可选（管理页里还能改）；建卷时一般不给
+                title: normalizeVolumeTitle(raw.title),
                 items: { create: items },
             },
-            select: { id: true, volumeNo: true, kind: true, pageCount: true, semester: true },
+            select: { id: true, volumeNo: true, kind: true, pageCount: true, semester: true, title: true },
         });
 
         logger.info(
@@ -139,6 +141,7 @@ export async function GET(request: Request) {
             select: {
                 id: true,
                 volumeNo: true,
+                title: true,
                 kind: true,
                 semester: true,
                 gradeSemester: true,

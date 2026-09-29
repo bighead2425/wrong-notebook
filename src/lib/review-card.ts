@@ -274,6 +274,82 @@ export function countSheets(layout: MeasuredSheetLayout): number {
     return layout.pages.length;
 }
 
+/* ============ 按**快照**还原版面（复练卷页，2026-09-30）============ */
+
+/** 快照里的一行（就是 ReviewVolumeItem 里跟排版有关的那几个字段） */
+export interface SnapshotRow {
+    /** 题在界面里的 key（= 原题 id；题被删了也得有个 key，所以存快照时用它自己那行） */
+    key: string;
+    seq: number;
+    pageIndex: number;
+    columnIndex: number;
+    seqInColumn: number;
+}
+
+/**
+ * 按**快照**把卷还原成"每一页有哪些题" —— **不重量、不重排**。
+ *
+ * ── 为什么复练卷页必须用它，而不是像打印预览页那样 `paginateMeasured`（重新分页）
+ * 他 2026-09-30 的原话：*"在打印预览右栏中调整题图大小、留白大小，前一页调整后后一页
+ * 可能将最上面的题调整到前一页来，这是正常的。但对于复练卷页来说……每个卷的每一页
+ * 记录好排版的题后，就锁定了，可以适当调整题图大小、调整留白大小，但不会再让题
+ * 在各页之间移动了。"*
+ *
+ * 道理说透：卷是**印出去的凭证**，页号要跟着纸走（手机扫页上二维码要能对上这一页）。
+ * 一调留白就把题挪到别页，纸上那道题和库里那一页就对不上了。
+ * 所以复练卷页：
+ *   · 页归属**只认快照**；调留白/图大小只改**页内**高度 ⇒ 顶多这一页下面多点空白；
+ *   · 反过来，打印预览页（还没定稿）继续用 `paginateMeasured`，随便调、随便重排。
+ *
+ * @returns 与 `paginateMeasured` **同一种结构**（pages → columns → blocks），
+ *          好让 `ReviewSheet` 两处共用；`heightMM` 在这里用不上，给 0。
+ */
+export function layoutFromSnapshot(
+    rows: readonly SnapshotRow[],
+    kind: VolumeKind = 'review',
+): MeasuredSheetLayout {
+    const variant = VOLUME_VARIANTS[kind];
+    const pageCount = rows.reduce((max, r) => Math.max(max, r.pageIndex || 1), 1);
+
+    const pages: MeasuredPageLayout[] = [];
+    for (let pageNo = 1; pageNo <= pageCount; pageNo++) {
+        const onPage = rows
+            .filter((r) => (r.pageIndex || 1) === pageNo)
+            .sort((a, b) => (a.columnIndex - b.columnIndex) || (a.seqInColumn - b.seqInColumn));
+
+        // 按 columnIndex 归栏；页里没有的栏不凭空造（复练纸恒 1 栏）
+        const columns: MeasuredColumnLayout[] = [];
+        for (let ci = 0; ci < variant.columns; ci++) {
+            const inCol = onPage.filter((r) => (r.columnIndex || 0) === ci);
+            if (inCol.length) {
+                columns.push({ blocks: inCol.map((r) => ({ key: r.key, heightMM: 0, seq: r.seq })) });
+            }
+        }
+        // 空页（整页题都被删了）也要留着 —— 页号不能跳，纸是连续印的
+        pages.push({ columns: columns.length ? columns : [{ blocks: [] }] });
+    }
+
+    return { pages, overflow: [] };
+}
+
+/**
+ * 一页的**用量**（mm）：等于把这一页的题重新量出来的高度累加 + 每块的余量 ——
+ * 与 `paginateMeasured` 里那套算法**同一口径**（这就是它能拿来当安全阀的原因）。
+ *
+ * 用途：复练卷页里"页内锁定"之后，放大留白/题图不再会自动分页 ⇒
+ * 得自己盯着"别把一页撑爆"（纸高是死的，撑出去就被裁）。超出预算的页会被点名报出来。
+ */
+export function pageUsageMM(keys: readonly string[], heightOf: (key: string) => number): number {
+    let used = 0;
+    for (const key of keys) used += heightOf(key) + REVIEW_BLOCK_SLACK_MM;
+    return used;
+}
+
+/** 一页装得下吗（留一点余量吸收"量完再渲染"的取整差） */
+export function pageFits(usedMM: number): boolean {
+    return usedMM <= VOLUME_COLUMN_MM + EPS;
+}
+
 /* ===================== 拖虚线调留白（2026-09-28） ===================== */
 
 /**

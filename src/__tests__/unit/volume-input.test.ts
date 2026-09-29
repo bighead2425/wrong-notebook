@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseVolumeItems, resolvePageCount } from '@/lib/volume-input';
+import { parseVolumeItems, resolvePageCount, normalizeVolumeTitle } from '@/lib/volume-input';
 
 /**
  * 卷内条目的规范化 —— **建卷（POST）与更新组卷（PATCH）共用这一处**。
@@ -93,5 +93,27 @@ describe('卷内条目 · resolvePageCount', () => {
         expect(resolvePageCount(undefined, [{ pageIndex: 1 }, { pageIndex: 5 }] as never)).toBe(5);
         expect(resolvePageCount(0, [])).toBe(1);
         expect(resolvePageCount('abc', [{ pageIndex: 2 }] as never)).toBe(2);
+    });
+});
+
+/**
+ * 卷名（2026-09-30 他提的）：只存库里、**不上纸** —— 纸面的身份是卷号。
+ * 名字是给他自己在管理页里认卷、找卷用的。
+ */
+describe('卷名 normalizeVolumeTitle', () => {
+    it('去首尾空白、连续空白压成一个空格', () => {
+        expect(normalizeVolumeTitle('  第五单元  复练  ')).toBe('第五单元 复练');
+    });
+
+    it('空 / 全空白 / 非字符串 ⇒ null（= 没有名字，不是"名字叫空"）', () => {
+        expect(normalizeVolumeTitle('')).toBeNull();
+        expect(normalizeVolumeTitle('   ')).toBeNull();
+        expect(normalizeVolumeTitle(undefined)).toBeNull();
+        expect(normalizeVolumeTitle(123)).toBeNull();
+    });
+
+    it('超长截到 60 字（名字写长了不该拦住保存）', () => {
+        const long = 'x'.repeat(200);
+        expect(normalizeVolumeTitle(long)).toHaveLength(60);
     });
 });

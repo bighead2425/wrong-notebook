@@ -404,6 +404,12 @@ model ReviewVolume {
   /// 组这份卷时的默认留白行数（复练 5 / 积累 1）
   defaultBlankLines Int  @default(5)
 
+  /// 【2026-09-30】卷的**名字**（自取，如"第五单元 复练"）。
+  /// 只存在库里、**不上纸** —— 纸面的身份是卷号（页眉 + 页二维码都是它），
+  /// 页眉那一行已经排满（阳文框 / 卷号 / 年级学期 / 页码 / 印于 / 二维码），
+  /// 再塞一个名字只会变挤。名字的用途是"他在管理页里找卷、认卷"。
+  title         String?
+
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

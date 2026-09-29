@@ -20,7 +20,10 @@ import {
     blankLinesFromDrag,
     countSheets,
     effectiveBlankLines,
+    layoutFromSnapshot,
     normalizeBlankLines,
+    pageFits,
+    pageUsageMM,
     paginateMeasured,
     type MeasuredBlock,
 } from '@/lib/review-card';
@@ -235,5 +238,83 @@ describe('卷 · 分栏分页（吃真实高度）', () => {
     it('⚠️ 余量只加在**分页判断**上：块高度本身原样返回（渲染按它来）', () => {
         const { pages } = paginateMeasured([blk('a', 33.3)], 'review');
         expect(pages[0].columns[0].blocks[0].heightMM).toBe(33.3);
+    });
+});
+
+/**
+ * 复练卷页的"**页内锁定**"（他 2026-09-30 定的规矩）：
+ * 卷一旦印出去，页归属只认快照 —— 调留白/题图只改页内高度，题绝不再跨页移动。
+ * 打印预览页则相反（还没定稿，用 paginateMeasured 随便重排）。
+ */
+describe('按快照还原版面 layoutFromSnapshot', () => {
+    const rows = [
+        { key: 'a', seq: 1, pageIndex: 1, columnIndex: 0, seqInColumn: 1 },
+        { key: 'b', seq: 2, pageIndex: 1, columnIndex: 0, seqInColumn: 2 },
+        { key: 'c', seq: 3, pageIndex: 2, columnIndex: 0, seqInColumn: 1 },
+    ];
+
+    it('★ 页归属只认快照：给什么页就是什么页，与"装不装得下"无关', () => {
+        const { pages } = layoutFromSnapshot(rows, 'review');
+        expect(pages).toHaveLength(2);
+        expect(pages[0].columns[0].blocks.map((b) => b.key)).toEqual(['a', 'b']);
+        expect(pages[1].columns[0].blocks.map((b) => b.key)).toEqual(['c']);
+        // 流水号跟着快照走（不是页内重新从 1 数）
+        expect(pages[1].columns[0].blocks[0].seq).toBe(3);
+    });
+
+    it('栏内顺序按 seqInColumn 排（喂乱序也照样排好）', () => {
+        const { pages } = layoutFromSnapshot(
+            [
+                { key: 'z', seq: 2, pageIndex: 1, columnIndex: 0, seqInColumn: 2 },
+                { key: 'y', seq: 1, pageIndex: 1, columnIndex: 0, seqInColumn: 1 },
+            ],
+            'review',
+        );
+        expect(pages[0].columns[0].blocks.map((b) => b.key)).toEqual(['y', 'z']);
+    });
+
+    it('中间有整页空着也留着（页号不能跳 —— 纸是连续印的）', () => {
+        const { pages } = layoutFromSnapshot(
+            [
+                { key: 'a', seq: 1, pageIndex: 1, columnIndex: 0, seqInColumn: 1 },
+                { key: 'b', seq: 2, pageIndex: 3, columnIndex: 0, seqInColumn: 1 },
+            ],
+            'review',
+        );
+        expect(pages).toHaveLength(3);
+        expect(pages[1].columns[0].blocks).toEqual([]);
+    });
+
+    it('积累纸（两栏）：页内按栏分开，栏序按 columnIndex', () => {
+        const { pages } = layoutFromSnapshot(
+            [
+                { key: 'L', seq: 1, pageIndex: 1, columnIndex: 0, seqInColumn: 1 },
+                { key: 'R', seq: 2, pageIndex: 1, columnIndex: 1, seqInColumn: 1 },
+            ],
+            'build',
+        );
+        expect(pages[0].columns).toHaveLength(2);
+        expect(pages[0].columns[0].blocks[0].key).toBe('L');
+        expect(pages[0].columns[1].blocks[0].key).toBe('R');
+    });
+
+    it('没有 overflow 这一说：装不下也不许把题挪走（页内锁定的代价交给安全阀管）', () => {
+        const { overflow } = layoutFromSnapshot(rows, 'review');
+        expect(overflow).toEqual([]);
+    });
+});
+
+describe('页用量与安全阀 pageUsageMM / pageFits', () => {
+    const heights: Record<string, number> = { a: 100, b: 50 };
+
+    it('与 paginateMeasured 同一口径：每块都加那点余量', () => {
+        expect(pageUsageMM(['a', 'b'], (k) => heights[k])).toBeCloseTo(100 + 50 + REVIEW_BLOCK_SLACK_MM * 2, 5);
+    });
+
+    it('★ 一页刚好装得下 = 通过；再多一点就判超', () => {
+        expect(pageFits(VOLUME_COLUMN_MM)).toBe(true);
+        expect(pageFits(VOLUME_COLUMN_MM + 1)).toBe(false);
+        // 单块就超过一栏（和 paginateMeasured 的 overflow 判据一致）
+        expect(pageUsageMM(['big'], () => VOLUME_COLUMN_MM)).toBeGreaterThan(VOLUME_COLUMN_MM);
     });
 });
