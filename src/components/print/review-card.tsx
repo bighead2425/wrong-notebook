@@ -50,41 +50,41 @@ const VOLUME_QR_COLUMN_MM = 11;
  * 【2026-09-30】原题已被删除时的**占位块**（复练卷页专用）。
  *
  * 他定的规矩（原话大意）："错题本本来就该有进有出" —— 卷里某道题的原题被删了，
- * **不要**把整页重排，就地把这道题换成"题号 + 此题已无"，上下虚线隔开，
- * 后面的题往前移，这一页下面空出来就空着。
+ * **不要**重排整页，就地把这道题换成"题号 + 此题已无"，后面的题往前移，
+ * 这一页下面空出来就空着。
  * 为什么坚持"不重排"：手机扫这一页的二维码，跳出来的是**这一页**的内容；
- * 题在页之间窜来窜去，扫码就对不上了。扫到的页比纸上少一道题没关系，
- * 少的那道对复练来说已经不重要了。
+ * 题在页之间窜来窜去，扫码就对不上了。
+ *
+ * ⚠️ **它就是一道普通的题**（他 2026-09-30 二改的原话："没有必要搞这么特殊"）——
+ *    所以：① 自己**不画**任何虚线；② 上方那条虚线跟别的题一样，由 `showDivider`
+ *    （本栏内不是第一块）决定。早先版本自己上下各画一条，结果是
+ *    页首多一条线、和下一题之间多出一条**双线**。
  */
 function MissingQuestionBlock({
     seq,
     itemNo,
+    showDivider,
     L,
 }: {
     seq: number;
     itemNo: string | null;
+    showDivider: boolean;
     L: (zh: string, en: string) => string;
 }) {
     return (
-        <div className="print-review-missing" style={{ padding: '2mm 0' }}>
-            {/* 上虚线：与上一道题隔开（第一块也画 —— 占位块本身就是一个"洞"） */}
-            <div style={{ borderTop: '0.2mm dashed #c0c0c0' }} />
-            <div
-                style={{
-                    display: 'flex',
-                    alignItems: 'baseline',
-                    gap: '2mm',
-                    color: '#999',
-                    fontSize: '9pt',
-                    padding: '1.5mm 0',
-                }}
-            >
+        <div
+            style={{
+                flex: '0 0 auto',
+                // 与 `ReviewQuestionBlock` 完全同一条规则：虚线画在**本块顶上**、本栏第一块不画
+                borderTop: showDivider ? '0.3mm dashed #cfcfcf' : undefined,
+                padding: '1.5mm 0',
+            }}
+        >
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '2mm', color: '#999', fontSize: '9pt' }}>
                 <span style={{ fontWeight: 700 }}>{seq}</span>
                 {itemNo ? <span>{itemNo}</span> : null}
                 <span>{L('此题已无', 'removed')}</span>
             </div>
-            {/* 下虚线 */}
-            <div style={{ borderTop: '0.2mm dashed #c0c0c0' }} />
         </div>
     );
 }
@@ -556,7 +556,15 @@ export function ReviewSheet({
                                 if (!item) {
                                     // 原题已被删（快照还在）⇒ 就地留"此题已无"占位，**不重排整页**
                                     if (missing && b.key in missing) {
-                                        return <MissingQuestionBlock key={b.key} seq={b.seq} itemNo={missing[b.key]} L={L} />;
+                                        return (
+                                            <MissingQuestionBlock
+                                                key={b.key}
+                                                seq={b.seq}
+                                                itemNo={missing[b.key]}
+                                                showDivider={bi > 0}
+                                                L={L}
+                                            />
+                                        );
                                     }
                                     return null;
                                 }

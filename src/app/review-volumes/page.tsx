@@ -44,6 +44,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { whenImagesDecoded, whenImagesSettled } from "@/lib/print-image-readiness";
 import { makeQrDataUrl } from "@/lib/qr";
 import { ReviewSheet, ReviewQuestionBlock, pageQrPayload } from "@/components/print/review-card";
+import { SheetZoom } from "@/components/print/sheet-zoom";
 import {
     VOLUME_VARIANTS,
     blankLinesFromDrag,
@@ -710,10 +711,38 @@ export default function ReviewVolumesPage() {
 
                     {/* ===== 右栏：选中卷的纸面 ===== */}
                     <main className="print-preview-right">
+                        {/* ⚠️ 量尺**必须留在缩放外面**（`SheetZoom` 的外面）：
+                            `getBoundingClientRect()` 拿到的是**缩放后**的像素，
+                            装进去量出来的 mm 会整体偏小 ⇒ 分页会以为"一页能装更多"，直接印错版面。 */}
+                        {items.length > 0 && (
+                            <div
+                                ref={measureRef}
+                                aria-hidden="true"
+                                className="print-review-measure no-print"
+                                style={{ width: `${VOLUME_VARIANTS[kind].columnWidthMM}mm` }}
+                            >
+                                {items.map((item) => (
+                                    <ReviewQuestionBlock
+                                        key={item.id}
+                                        item={item}
+                                        seq={snapshotRows.find((r) => r.key === item.id)?.seq ?? 1}
+                                        blankLines={blankValueOf(item.id)}
+                                        showDivider={false}
+                                        figureScale={figureScaleOf(item.id)}
+                                        L={L}
+                                    />
+                                ))}
+                            </div>
+                        )}
+
                         {/* ⚠️ 这两层不能少：`mx-auto max-w-6xl px-4` 负责"不顶边、别太宽"，
                             `print-sheet` 负责把纸定成 **152mm 宽**（纸边靠它撑出来）。
-                            少了这层，纸会被拉成整个右栏那么宽 —— 他看到的"横向、不是 B5"就是这个。 */}
-                        <div className="mx-auto max-w-6xl px-4 py-6 print:max-w-none print:px-0 print:py-0">
+                            少了这层，纸会被拉成整个右栏那么宽 —— 他看到的"横向、不是 B5"就是这个。
+                            `SheetZoom` 再包一层：双击纸面空白处切"实际大小 / 适应宽度"（手机不用左右拉）。 */}
+                        <SheetZoom
+                            className="mx-auto max-w-6xl px-4 py-6 print:max-w-none print:px-0 print:py-0"
+                            L={L}
+                        >
                             <div className="print-sheet">
                                 {!selectedId && (
                                     <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground no-print">
@@ -821,27 +850,7 @@ export default function ReviewVolumesPage() {
                                     </div>
                                 )}
 
-                                {/* 隐藏量尺：与正式版面**同宽同内容**，量到的才是印出来的 */}
-                                {items.length > 0 && (
-                                    <div
-                                        ref={measureRef}
-                                        aria-hidden="true"
-                                        className="print-review-measure no-print"
-                                        style={{ width: `${VOLUME_VARIANTS[kind].columnWidthMM}mm` }}
-                                    >
-                                        {items.map((item) => (
-                                            <ReviewQuestionBlock
-                                                key={item.id}
-                                                item={item}
-                                                seq={snapshotRows.find((r) => r.key === item.id)?.seq ?? 1}
-                                                blankLines={blankValueOf(item.id)}
-                                                showDivider={false}
-                                                figureScale={figureScaleOf(item.id)}
-                                                L={L}
-                                            />
-                                        ))}
-                                    </div>
-                                )}
+                                {/* 隐藏量尺**已移到右栏顶部**（缩放外面）—— 见那里的说明 */}
 
                                 {layout?.pages.map((page, i) => (
                                     <ReviewSheet
@@ -865,7 +874,7 @@ export default function ReviewVolumesPage() {
                                     />
                                 ))}
                             </div>
-                        </div>
+                        </SheetZoom>
                     </main>
                 </div>
             </div>

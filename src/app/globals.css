@@ -695,6 +695,12 @@
     overflow: visible !important;
   }
 
+  /* 【2026-09-30】屏幕上的"适应宽度"缩放（双击纸面空白处切的档）**绝不能带去打印**：
+     否则在手机上按了适应宽度再打印，会印出一张缩小的纸。 */
+  [data-sheet-zoom] {
+    zoom: 1 !important;
+  }
+
   .print-review-measure,
   .print-preview-left,
   .print-preview-splitter,

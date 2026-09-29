@@ -127,6 +127,26 @@ describe('卷 · 原题被删的占位（2026-09-30 他定的规矩）', () => {
         expect(html).not.toContain('参考答案');
     });
 
+    it('★ 占位块**自己一条虚线都不画** —— 就当它是一道普通的题（他 09-30 二改）', () => {
+        // 他实测发现：占位块自己上下各画一条 ⇒ 页首多一条、和下一题之间成一**双线**。
+        // 规则回到"虚线画在每块**顶上**、本栏第一块不画"：
+        // 这里第一块是占位（不画）、第二块是真题（画一条）⇒ 全文只该有 1 条虚线。
+        const html = renderToStaticMarkup(
+            <ReviewSheet
+                page={missingPage}
+                pageNo={1}
+                pageCount={1}
+                volumeNo="RE20260930001"
+                kind="review"
+                printDate={new Date(2026, 8, 30)}
+                itemByKey={{ e1: item() }}
+                missing={{ 'missing:row1': 'SX20260916001' }}
+                L={(zh) => zh}
+            />,
+        );
+        expect((html.match(/dashed/g) ?? []).length).toBe(1);
+    });
+
     it('没传 missing（打印预览页那条路）：什么都不画，行为与以前完全一致', () => {
         const html = renderToStaticMarkup(
             <ReviewSheet

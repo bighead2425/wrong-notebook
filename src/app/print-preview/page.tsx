@@ -25,6 +25,7 @@ import { makeQrDataUrl } from "@/lib/qr";
 import { ErrorCard } from "@/components/print/error-card";
 import { DeepDiveCard } from "@/components/print/deep-dive-card";
 import { ReviewSheet, ReviewQuestionBlock, pageQrPayload } from "@/components/print/review-card";
+import { SheetZoom } from "@/components/print/sheet-zoom";
 import {
     BUILD_DEFAULT_BLANK_LINES,
     blankLinesFromDrag,
@@ -1097,8 +1098,13 @@ function PrintPreviewContent() {
                 )}
 
                 <main className="print-preview-right">
-                    {/* 跟主页一个口径：居中 + 最大宽 + 左右留白，别顶进浏览器边上 */}
-                    <div className="mx-auto max-w-6xl px-4 py-6 print:max-w-none print:px-0 print:py-0">
+                    {/* 跟主页一个口径：居中 + 最大宽 + 左右留白，别顶进浏览器边上。
+                        `SheetZoom` 再包一层：双击纸面空白处可在**实际大小 / 适应宽度**两档之间切
+                        （手机上不用左右拉就能看全一页宽）。 */}
+                    <SheetZoom
+                        className="mx-auto max-w-6xl px-4 py-6 print:max-w-none print:px-0 print:py-0"
+                        L={L}
+                    >
                         <div className="print-sheet">
                     {isDeep ? (
                         <>
@@ -1286,7 +1292,7 @@ function PrintPreviewContent() {
                         </div>
                     )}
                         </div>
-                    </div>
+                    </SheetZoom>
                 </main>
               </div>
             </div>
