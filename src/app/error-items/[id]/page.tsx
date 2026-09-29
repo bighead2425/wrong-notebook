@@ -244,7 +244,7 @@ export default function ErrorDetailPage() {
         });
         setReanalyzeData(null);
         await fetchItem(item.id);
-        alert(t.common?.messages?.saveSuccess || "保存成功！");
+        // 【2026-09-29】成功不再弹窗（同上）：审核页会关闭、列表会刷新，本身就是反馈
     };
 
     const startEditingTags = () => {
@@ -276,7 +276,7 @@ export default function ErrorDetailPage() {
 
             setIsEditingTags(false);
             await fetchItem(params.id as string);
-            alert(t.common?.messages?.tagUpdateSuccess || 'Tags updated successfully!');
+            // 【2026-09-29】成功不再弹窗（同上）：编辑态关闭、标签即刷新，本身就是反馈
         } catch (error) {
             console.error("[Frontend] Error updating:", error);
             alert(t.common?.messages?.updateFailed || 'Update failed');
@@ -317,12 +317,28 @@ export default function ErrorDetailPage() {
     const [mistakeAnalysisInput, setMistakeAnalysisInput] = useState("");
     const [mistakeStatusInput, setMistakeStatusInput] = useState("unknown");
 
+    /**
+     * 【2026-09-29】"有未保存改动"的统一判定 —— **一处算、两处用**：
+     *   ① 决定框下面那份「保存 / 取消」出不出来；
+     *   ② 决定框的边框要不要变橙黄（作为 `dirty` 传给 MdEditor）。
+     * 两处共用一个判断，才不会出现"按钮冒出来了、框却没变色"这种不一致。
+     * 保存成功（item 被更新 / 重新拉取）或取消（输入归位）后，这里自然变回 false ⇒ 颜色复原。
+     */
+    const dirtyQuestion = questionInput !== (item?.questionText ?? "");
+    const dirtyAnswer = answerInput !== (item?.answerText ?? "");
+    const dirtyAnalysis = analysisInput !== (item?.analysis ?? "");
+    const dirtyWrongAnswer = wrongAnswerInput !== (item?.wrongAnswerText ?? "");
+    const dirtyMistakeAnalysis = mistakeAnalysisInput !== (item?.mistakeAnalysis ?? "");
+    const dirtyNotes = notesInput !== (item?.userNotes ?? "");
+
     // --- Question Handlers ---
     const saveQuestionHandler = async () => {
         try {
             await apiClient.put(`/api/error-items/${item?.id}`, { questionText: questionInput });
             if (item) setItem({ ...item, questionText: questionInput });
-            alert(t.common?.messages?.saveSuccess || 'Saved successfully');
+            // 【2026-09-29】成功不再弹窗（他实测："每次保存都跳确认，太啰嗦"）：
+            // 反馈改由界面承担 —— 框的橙黄边框复位、「保存 / 取消」按钮消失。
+            // ⚠️ **失败提示一律保留**：静默失败比啰嗦更糟。
         } catch (error) {
             console.error(error);
             alert(t.common?.messages?.saveFailed || 'Save failed');
@@ -333,7 +349,9 @@ export default function ErrorDetailPage() {
         try {
             await apiClient.put(`/api/error-items/${item?.id}`, { answerText: answerInput });
             if (item) setItem({ ...item, answerText: answerInput });
-            alert(t.common?.messages?.saveSuccess || 'Saved successfully');
+            // 【2026-09-29】成功不再弹窗（他实测："每次保存都跳确认，太啰嗦"）：
+            // 反馈改由界面承担 —— 框的橙黄边框复位、「保存 / 取消」按钮消失。
+            // ⚠️ **失败提示一律保留**：静默失败比啰嗦更糟。
         } catch (error) {
             console.error(error);
             alert(t.common?.messages?.saveFailed || 'Save failed');
@@ -344,7 +362,9 @@ export default function ErrorDetailPage() {
         try {
             await apiClient.put(`/api/error-items/${item?.id}`, { analysis: analysisInput });
             if (item) setItem({ ...item, analysis: analysisInput });
-            alert(t.common?.messages?.saveSuccess || 'Saved successfully');
+            // 【2026-09-29】成功不再弹窗（他实测："每次保存都跳确认，太啰嗦"）：
+            // 反馈改由界面承担 —— 框的橙黄边框复位、「保存 / 取消」按钮消失。
+            // ⚠️ **失败提示一律保留**：静默失败比啰嗦更糟。
         } catch (error) {
             console.error(error);
             alert(t.common?.messages?.saveFailed || 'Save failed');
@@ -370,7 +390,9 @@ export default function ErrorDetailPage() {
                     mistakeStatus: normalizedStatus,
                 });
             }
-            alert(t.common?.messages?.saveSuccess || 'Saved successfully');
+            // 【2026-09-29】成功不再弹窗（他实测："每次保存都跳确认，太啰嗦"）：
+            // 反馈改由界面承担 —— 框的橙黄边框复位、「保存 / 取消」按钮消失。
+            // ⚠️ **失败提示一律保留**：静默失败比啰嗦更糟。
         } catch (error) {
             console.error(error);
             alert(t.common?.messages?.saveFailed || 'Save failed');
@@ -383,7 +405,8 @@ export default function ErrorDetailPage() {
         try {
             await apiClient.patch(`/api/error-items/${item.id}/notes`, { userNotes: notesInput });
             setItem({ ...item, userNotes: notesInput });
-            alert(t.common?.messages?.noteSaveSuccess || 'Notes saved successfully');
+            // 【2026-09-29】成功不再弹窗（就是他在截图里报的那条"笔记保存成功"）：
+            // 橙黄边框复位 + 保存/取消按钮消失，已经够明确了
         } catch (error) {
             console.error(error);
             alert(t.common?.messages?.saveFailed || 'Save failed');
@@ -551,8 +574,9 @@ export default function ErrorDetailPage() {
                                     onChange={setQuestionInput}
                                     placeholder="Enter question text..."
                                     minHeightPx={180}
+                                    dirty={dirtyQuestion}
                                 />
-                                {questionInput !== (item?.questionText ?? "") && (
+                                {dirtyQuestion && (
                                     <div className="flex gap-2">
                                         <Button size="sm" onClick={saveQuestionHandler}>
                                             <Save className="h-4 w-4 mr-1" />
@@ -754,8 +778,9 @@ export default function ErrorDetailPage() {
                                     onChange={setNotesInput}
                                     placeholder={t.detail.notesPlaceholder || "Enter your notes..."}
                                     minHeightPx={110}
+                                    dirty={dirtyNotes}
                                 />
-                                {notesInput !== (item.userNotes ?? "") && (
+                                {dirtyNotes && (
                                     <div className="flex gap-2">
                                         <Button size="sm" onClick={saveNotes}>
                                             <Save className="h-4 w-4 mr-1" />
@@ -789,8 +814,9 @@ export default function ErrorDetailPage() {
                                     onChange={setAnswerInput}
                                     placeholder="Enter answer..."
                                     minHeightPx={120}
+                                    dirty={dirtyAnswer}
                                 />
-                                {answerInput !== (item?.answerText ?? "") && (
+                                {dirtyAnswer && (
                                     <div className="flex gap-2">
                                         <Button size="sm" onClick={saveAnswerHandler}>
                                             <Save className="h-4 w-4 mr-1" />
@@ -821,8 +847,9 @@ export default function ErrorDetailPage() {
                                     onChange={setAnalysisInput}
                                     placeholder="Enter analysis..."
                                     minHeightPx={260}
+                                    dirty={dirtyAnalysis}
                                 />
-                                {analysisInput !== (item?.analysis ?? "") && (
+                                {dirtyAnalysis && (
                                     <div className="flex gap-2">
                                         <Button size="sm" onClick={saveAnalysisHandler}>
                                             <Save className="h-4 w-4 mr-1" />
@@ -876,6 +903,7 @@ export default function ErrorDetailPage() {
                                                     if (md.trim()) setMistakeStatusInput('wrong_attempt');
                                                 }}
                                                 minHeightPx={110}
+                                                dirty={dirtyWrongAnswer}
                                             />
                                         </div>
                                         <div className="space-y-2">
@@ -884,10 +912,10 @@ export default function ErrorDetailPage() {
                                                 value={mistakeAnalysisInput}
                                                 onChange={setMistakeAnalysisInput}
                                                 minHeightPx={170}
+                                                dirty={dirtyMistakeAnalysis}
                                             />
                                         </div>
-                                        {(wrongAnswerInput !== (item?.wrongAnswerText ?? "") ||
-                                            mistakeAnalysisInput !== (item?.mistakeAnalysis ?? "")) && (
+                                        {(dirtyWrongAnswer || dirtyMistakeAnalysis) && (
                                             <div className="flex gap-2">
                                                 <Button size="sm" onClick={saveMistakeHandler}>
                                                     <Save className="h-4 w-4 mr-1" />

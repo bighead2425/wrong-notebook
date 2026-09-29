@@ -806,6 +806,28 @@
   overflow-x: auto;
 }
 
+/* ---------------------------------------------------------------------------
+ * **"有未保存的改动"**（2026-09-29 他要的）：框下面一旦冒出「保存 / 取消」，
+ * 框的边框就变橙黄 + 一圈淡橙光晕 —— 防止"改完忘了点保存"。
+ * 判定由父组件给（`data-dirty`）：父组件本来就掌握"基准值"和"按钮出不出来"，
+ * 两边共用一个判断，才不会出现"按钮冒出来了、框却没变色"这种不一致。
+ * 保存 / 取消后父组件的判断变回 false ⇒ 颜色自动复原。
+ * ⚠️ 用父级属性选择器（而不是给框加类）：两种模式（所见即所得 / 源码 textarea）
+ *    的边框落在两个不同元素上，这样一句话同时管住。
+ * ------------------------------------------------------------------------- */
+.md-editor,
+.md-editor-source {
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.md-editor-wrap[data-dirty='true'] .md-editor,
+.md-editor-wrap[data-dirty='true'] .md-editor-source {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 3px rgb(245 158 11 / 0.18);
+}
+
 .md-editor .ProseMirror {
   outline: none;
   min-height: inherit;

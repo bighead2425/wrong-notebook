@@ -464,6 +464,13 @@ export interface MdEditorProps {
     /** 编辑区最小高度（px），默认 140 */
     minHeightPx?: number;
     className?: string;
+    /**
+     * 【2026-09-29】框里有**未保存的改动**（由父组件判定 —— 它同时掌握"基准值"和
+     * "保存/取消按钮出不出来"，两边用同一个判断才不会打架）。
+     * 为 true 时给框加橙黄边框 + 淡橙光晕，提醒"别忘了点保存"；
+     * 保存或取消后父组件的判断变回 false，颜色自动恢复。
+     */
+    dirty?: boolean;
 }
 
 /**
@@ -479,7 +486,14 @@ export interface MdEditorProps {
  * 需要看/改原始 md（比如排查转义、手工微调空格）时切过去，改完切回来。
  * 日常书写仍在所见即所得里，这就是他要的"输入感受"。
  */
-export function MdEditor({ value, onChange, placeholder, minHeightPx = 140, className = '' }: MdEditorProps) {
+export function MdEditor({
+    value,
+    onChange,
+    placeholder,
+    minHeightPx = 140,
+    className = '',
+    dirty = false,
+}: MdEditorProps) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     /** 源码模式的 textarea（要按内容"量身高"，见下面的 effect） */
     const sourceRef = useRef<HTMLTextAreaElement | null>(null);
@@ -573,7 +587,9 @@ export function MdEditor({ value, onChange, placeholder, minHeightPx = 140, clas
     }, [sourceMode, value]);
 
     return (
-        <div className={`md-editor-wrap relative ${className}`}>
+        // `data-dirty` 而不是给框加类：两种模式（所见即所得 / 源码 textarea）的边框
+        // 在两个不同元素上，用父级属性选择器一句话就能同时管住，见 globals.css。
+        <div className={`md-editor-wrap relative ${className}`} data-dirty={dirty ? 'true' : undefined}>
             {/* 源码模式开关：悬停才显形，不干扰日常书写 */}
             <button
                 type="button"

@@ -231,6 +231,41 @@ describe('MdEditor · 编辑器必须自己补回被 preflight 冲掉的样式',
     });
 });
 
+describe('MdEditor · 「有未保存的改动」的橙黄边框', () => {
+    /**
+     * 他要的效果：框下面一旦冒出「保存 / 取消」，框的边框就变橙黄，提醒别忘点保存。
+     * 判定权在**父组件**（它同时决定按钮出不出来）⇒ 这里只验证"传了 dirty 就带标记"，
+     * 以及"样式里确实有对应的橙黄规则"（jsdom 拿不到 Tailwind 产物的计算样式）。
+     */
+    it('★ dirty=true 时框上带 data-dirty，不传则没有', async () => {
+        const { renderToStaticMarkup } = await import('react-dom/server');
+        const { MdEditor } = await import('@/components/md-editor');
+        const on = renderToStaticMarkup(<MdEditor value="甲" onChange={() => undefined} dirty />);
+        expect(on).toContain('data-dirty="true"');
+        const off = renderToStaticMarkup(<MdEditor value="甲" onChange={() => undefined} />);
+        expect(off).not.toContain('data-dirty');
+    });
+
+    it('样式里有橙黄边框规则，且**两种模式**（所见即所得 / 源码框）都覆盖到', async () => {
+        const css = await import('node:fs/promises').then((m) => m.readFile('src/app/globals.css', 'utf-8'));
+        expect(css).toMatch(/\[data-dirty='true'\] \.md-editor,/);
+        expect(css).toMatch(/\[data-dirty='true'\] \.md-editor-source/);
+    });
+});
+
+describe('保存成功不再弹窗（他实测："每次保存都跳确认，太啰嗦"）', () => {
+    it('★ 详情页不许再有"保存成功"类 alert —— 但**失败提示必须保留**', async () => {
+        const src = await import('node:fs/promises').then((m) =>
+            m.readFile('src/app/error-items/[id]/page.tsx', 'utf-8'),
+        );
+        expect(src).not.toMatch(/alert\([^)]*saveSuccess/);
+        expect(src).not.toMatch(/alert\([^)]*noteSaveSuccess/);
+        expect(src).not.toMatch(/alert\([^)]*tagUpdateSuccess/);
+        // 静默失败比啰嗦更糟：失败提示得有
+        expect(src).toMatch(/alert\([^)]*saveFailed/);
+    });
+});
+
 describe('normalizeMilkdownArtifacts（纯函数）', () => {
     it('整行的 `<br />` 换回空行；行内的不动', () => {
         expect(normalizeMilkdownArtifacts('甲\n\n<br />\n\n乙')).toBe('甲\n\n\n\n乙');
