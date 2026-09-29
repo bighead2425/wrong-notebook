@@ -917,6 +917,58 @@
   font-weight: 600;
 }
 
+/* ---------------------------------------------------------------------------
+ * **代码块 / 行内代码 / 引用**（同一个病根：编辑器里是没 class 的裸标签，
+ * 只剩 preflight 给的那点默认样式）。规格照打印端对齐 ——
+ * 打印端：pre = bg-muted + rounded-lg + p-4 + font-mono/text-sm；
+ *         code = bg-muted + 圆角小内边距；blockquote = 左侧 4px 主色竖条 + 斜体 + 灰字。
+ * 编辑区里做两处**有意为之**的收档：外边距收小（框小、留白太大会显空）、
+ * 字号 13px（打印端是 14px，纸面更宽）。改这里记得两边一起看。
+ * ------------------------------------------------------------------------- */
+.md-editor pre,
+.md-editor code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.md-editor pre {
+  background: var(--muted);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin: 0.5em 0;
+  font-size: 13px;
+  line-height: 1.5;
+  /* 长代码行**自己横向滚**，不撑破卡片（与宽表格同一策略） */
+  overflow-x: auto;
+}
+
+/* ⚠️ 代码块里的 code 不能再叠一层底色，否则出现"块中块" ——
+   渲染端那条 `.markdown-content pre code` 就是干这个的，编辑器要有一条同样的。 */
+.md-editor pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* 行内代码 */
+.md-editor code {
+  background: var(--muted);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--foreground);
+}
+
+/* 引用：左侧主色竖条 + 斜体灰字（打印端：border-l-4 border-primary pl-4 italic） */
+.md-editor blockquote {
+  border-left: 4px solid var(--primary);
+  padding-left: 12px;
+  margin: 0.75em 0;
+  font-style: italic;
+  color: var(--muted-foreground);
+}
+
 /* 空内容时的占位提示（Milkdown 无内置 placeholder，用 CSS 实现：
    ProseMirror 空文档只有首个空段落 + 占位符 class 由 data-placeholder 提示） */
 .md-editor .ProseMirror p.is-editor-empty:first-child::before {

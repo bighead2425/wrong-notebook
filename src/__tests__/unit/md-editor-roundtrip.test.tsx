@@ -213,6 +213,17 @@ describe('MdEditor · 编辑器必须自己补回被 preflight 冲掉的样式',
         expect(css).toMatch(/\.md-editor ol \{[\s\S]*?list-style:\s*decimal/);
     });
 
+    it('★ 代码块 / 行内代码 / 引用：也都得给样式（裸标签的最后一组）', async () => {
+        const css = await readCss();
+        expect(css).toMatch(/\.md-editor pre,/); // pre 与 code 共享字体那条
+        expect(css).toMatch(/\.md-editor pre \{/);
+        expect(css).toMatch(/\.md-editor code \{/);
+        expect(css).toMatch(/\.md-editor blockquote \{/);
+        // 代码块里的 code 必须把底色/内边距去掉，否则出"块中块"
+        // （渲染端靠 `.markdown-content pre code` 同一条，见 globals.css 上面的注释）
+        expect(css).toMatch(/\.md-editor pre code \{[\s\S]*?background:\s*transparent/);
+    });
+
     it('源码框：去掉原生拖拽把手、不出现滚动条（高度交给 JS 按内容算）', async () => {
         const css = await readCss();
         expect(css).toMatch(/\.md-editor-source \{[\s\S]*?resize:\s*none/);
