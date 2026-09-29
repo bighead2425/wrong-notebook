@@ -105,6 +105,83 @@ describe('MdEditor · 公式样式（他报的"显示成两份"）', () => {
     });
 });
 
+describe('MdEditor · 整行公式与"框里空白"（2026-09-29 他实测报的）', () => {
+    /**
+     * 他给的这条公式：`\begin{equation}` 包 `aligned`，里面有积分/求和/极限/行列式。
+     * 他前后加了 `$` 之后**整个编辑框空白**。两个原因叠在一起（都不是他的写法问题）：
+     *   ① 插件自带的 math_block 节点渲染时 `displayMode` 没传 ⇒ 整行公式被按**行内**渲染，
+     *      而 `\begin{equation}` / `align` / `gather` 这三种环境**只允许整行** ⇒ KaTeX 报错；
+     *   ② 插件的 `throwOnError` 是 KaTeX 默认的 `true` ⇒ 它在 ProseMirror 建 DOM 的途中抛出去
+     *      ⇒ 整棵 DOM 建不完 ⇒ **框里空白**（线索只在控制台里）。
+     * 修法：公式节点自己写（displayMode 按行内/整行分别给对 + 出错绝不抛）。见 md-editor.tsx。
+     */
+    const USER_FORMULA = [
+        '$$',
+        '\\begin{equation}',
+        '\\begin{aligned}',
+        'Z & = \\int_{-\\infty}^{\\infty} \\left( \\sum_{n=1}^{N} \\frac{\\alpha_n e^{i \\beta_n x}}{1 + x^2} \\right) \\, dx + \\lim_{x \\to 0} \\left( \\frac{\\sin x}{x} \\right) \\\\',
+        '& + \\sum_{k=0}^{\\infty} \\left( \\frac{1}{k!} \\left( \\frac{d^k}{dx^k} \\left( e^{x^2} \\right) \\Bigg|_{x=0} \\right) \\right) + \\left| \\begin{matrix}',
+        'a & b & c \\\\',
+        'd & e & f \\\\',
+        'g & h & i',
+        '\\end{matrix} \\right|',
+        '\\end{aligned}',
+        '\\end{equation}',
+        '$$',
+    ].join('\n');
+
+    it('★ 他这条公式（$$ 整行）能渲染：不报错、框不空白、往返不变形', async () => {
+        const { root, instance } = await build(USER_FORMULA);
+        expect(root.innerHTML).toContain('ProseMirror'); // 编辑器活着（空白时这里就没内容了）
+        expect(root.innerHTML).toContain('class="katex"');
+        expect(root.innerHTML).not.toContain('katex-error'); // 一处都不许报错
+        expect(instance.getMarkdown()).toBe(`${USER_FORMULA}\n`);
+    });
+
+    it('★ 整行公式按 display 模式渲染（`\begin{equation}` 只许出现在整行公式里）', async () => {
+        const src = '$$\n\\begin{equation}\na = b\n\\end{equation}\n$$';
+        const { root } = await build(src);
+        expect(root.innerHTML).toContain('katex-display'); // KaTeX 的整行样式
+        expect(root.innerHTML).not.toContain('katex-error');
+    });
+
+    it('★ 写错时红字报错，绝不把编辑框留成空白（行内 `$` 装不下 equation）', async () => {
+        // 单个 `$` 包 equation 是**注定**失败的（KaTeX 的规矩），但失败的方式应该是"看得见"
+        const { root } = await build('$\\begin{equation}x=1\\end{equation}$');
+        expect(root.innerHTML).toContain('ProseMirror'); // 框还在
+        expect(root.innerHTML).toContain('katex-error'); // 有问题的片段被染红
+        expect(root.innerHTML).toContain('md-math-broken'); // 整块还套了个虚线红框（不然红字在长公式里看不见）
+        expect(root.innerHTML).not.toContain('katex-display');
+    });
+
+    it('空公式块（敲 `$$ ` 会建出它）不炸、也不留一个看不见的空盒子', async () => {
+        const { root, instance } = await build('$$\n\n$$');
+        expect(root.innerHTML).toContain('md-math-empty'); // 有灰字提示
+        expect(instance.getMarkdown()).toContain('$$'); // 保存不抛异常
+    });
+
+    it('整行公式里的公式**独占一行**才算整行；`$$x=1$$` 同一行是行内（与 remark-math 同口径）', async () => {
+        const { docTypes } = await build('$$x=1$$');
+        expect(docTypes()).toContain('math_inline');
+        expect(docTypes()).not.toContain('math_block');
+    });
+
+    it('粘贴进来的整段 `$$ … $$`（换行留在同一段里）会被收成整行公式', async () => {
+        // 转义美元号喂进去 = 一段普通文字里带着 `$$` 与换行，等价于"从别处复制一大段 LaTeX 粘进来"
+        const { docTypes, instance } = await build('\\$\\$\n\\frac{a}{b}\n\\$\\$');
+        expect(docTypes()).toContain('math_block');
+        expect(instance.getMarkdown()).toBe('$$\n\\frac{a}{b}\n$$\n');
+    });
+
+    it('粘贴成三个段落（`$$` / 公式 / `$$`）一样能收；夹在正文中间时正文不动', async () => {
+        const { docTypes, instance } = await build('前面一段\n\n\\$\\$\n\n\\frac{a}{b}\n\n\\$\\$\n\n后面一段');
+        expect(docTypes()).toEqual(['paragraph', 'math_block', 'paragraph']);
+        expect(instance.getMarkdown()).toContain('前面一段');
+        expect(instance.getMarkdown()).toContain('后面一段');
+        expect(instance.getMarkdown()).toContain('\\frac{a}{b}');
+    });
+});
+
 describe('normalizeMilkdownArtifacts（纯函数）', () => {
     it('整行的 `<br />` 换回空行；行内的不动', () => {
         expect(normalizeMilkdownArtifacts('甲\n\n<br />\n\n乙')).toBe('甲\n\n\n\n乙');

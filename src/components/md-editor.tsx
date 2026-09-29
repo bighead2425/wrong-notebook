@@ -22,10 +22,16 @@
  *      ProseMirror 纯文本插入 ⇒ 公式只是普通文字，保存时还会被**转义**
  *      （`$`→`\$`、`\l`→`\\l`），存进库就再也不是公式了（他实测就是这个问题）。
  *      这里用一个 ProseMirror 插件把"文本形态的成对 `$…$`"换成真正的数学节点。
+ *   5. **公式节点是我们自己写的**（顶掉 `@milkdown/plugin-math` 自带的，2026-09-29）：
+ *      自带那版把**整行公式**也按行内模式渲染（`displayMode` 没传 ⇒ `\begin{equation}`
+ *      这类"只许整行"的环境一律报错），而且**报错就抛异常** —— 那是在 ProseMirror
+ *      渲染文档途中抛的，直接把整个编辑框留成**空白**（他实测）。见下面 `renderKatexInto`。
  */
 
 import { useEffect, useRef, useState } from 'react';
 import type { Editor } from '@milkdown/kit/core';
+// 只是类型（会被编译期擦除）—— 不会把 ProseMirror 拖进 SSR
+import type { Transaction } from '@milkdown/kit/prose/state';
 // 样式：ProseMirror 的基础排版（contenteditable 行为），静态导入没问题；
 // 正文排版复用全局的 .markdown-content（挂在编辑器根节点上，见下）。
 import '@milkdown/kit/prose/view/style/prosemirror.css';
@@ -90,10 +96,12 @@ export async function createMdEditorInstance(opts: {
         { gfm },
         { listener, listenerCtx },
         { history },
-        { $markAttr, $markSchema, $remark, $inputRule, $prose, getMarkdown },
+        { $markAttr, $markSchema, $remark, $inputRule, $prose, $nodeSchema, getMarkdown },
         { markRule },
         { Plugin: ProsePlugin },
-        { math, mathInlineSchema },
+        { Fragment },
+        { remarkMathPlugin, mathInlineInputRule, mathBlockInputRule },
+        katexModule,
     ] = await Promise.all([
         import('@milkdown/kit/core'),
         import('@milkdown/kit/preset/commonmark'),
@@ -103,8 +111,13 @@ export async function createMdEditorInstance(opts: {
         import('@milkdown/kit/utils'),
         import('@milkdown/kit/prose'),
         import('@milkdown/kit/prose/state'),
+        import('@milkdown/kit/prose/model'),
         import('@milkdown/plugin-math'),
+        import('katex'),
     ]);
+
+    /** KaTeX 主对象（`default ?? 命名空间`：ESM/CJS 两种打包口径都兜住） */
+    const katex = katexModule.default ?? katexModule;
 
     /**
      * ⚠️ commonmark 默认带一个「保留空行」插件：它把**空段落**写成字面 `<br />`
@@ -151,6 +164,134 @@ export async function createMdEditorInstance(opts: {
         markRule(/(?<![\w:/])(==)([^=\n]+?)\1(?!==)/, highlightSchema.type(ctx)),
     );
 
+    // ================= 公式：自建两个节点，**顶掉插件自带的那两个** =================
+    /** mdast 的 `math` / `inlineMath` 节点把公式放在 `value` 上（类型上得自己收窄） */
+    function teXOf(node: unknown): string {
+        const value = (node as { value?: unknown }).value;
+        return typeof value === 'string' ? value : '';
+    }
+
+    /**
+     * ⚠️ **为什么不用 `@milkdown/plugin-math` 自带的节点**（2026-09-29，他报"公式变空白"）。
+     *
+     * 那版 `toDOM` 写的是 `katex.render(tex, el, {})` —— 两个致命默认值：
+     *   1. **`displayMode` 没给 ⇒ 永远是 `false`（行内模式）**。而 `\begin{equation}`、
+     *      `\begin{align}`、`\begin{gather}` 这三种环境**只允许出现在整行公式里**，
+     *      KaTeX 会直接报 `{equation} can be used only in display mode`。
+     *      也就是说：**整行公式（`$$…$$`）被当成行内公式渲染了**，写法没错也照样报错。
+     *   2. **`throwOnError` 没给 ⇒ KaTeX 默认 `true`（抛异常）**。而 `toDOM` 是
+     *      ProseMirror **渲染整篇文档**时被调的 —— 它在半路抛出去，整棵 DOM 建不完，
+     *      结果就是**整个编辑框一片空白**（他看到的正是这个），线索只在控制台里。
+     * 对照：渲染端（rehype-katex）两件事都做对了（块公式给 displayMode、出错退化成红字），
+     * 所以打印/预览那条路一直是好的 —— 只有编辑器这条路在裸奔。
+     *
+     * 我们这版：`displayMode` 按「行内 / 整行」分别给对；出错**绝不抛**，
+     * 用 KaTeX 自带的 `throwOnError: false` 把有问题的那一小段染红继续渲，
+     * 真救不回来就退回显示原始 TeX（能看见、能复制，绝不空白）。
+     */
+    const renderKatexInto = (el: HTMLElement, tex: string, displayMode: boolean) => {
+        try {
+            katex.render(tex, el, { displayMode, throwOnError: false, strict: 'ignore' });
+        } catch (error) {
+            el.textContent = tex;
+            el.classList.add('md-math-raw');
+            el.title = `公式渲染失败：${(error as Error).message}`;
+            return;
+        }
+        // KaTeX 会把有问题的片段染红放进 `.katex-error`（并带 title=原因）。
+        // 顺手在整块公式外面加个虚线框标记 —— 他这次就是"东西没了却没有任何提示"，
+        // 光靠一小段红字在长公式里容易被忽略。
+        const broken = el.querySelector('.katex-error');
+        if (broken) {
+            el.classList.add('md-math-broken');
+            el.title = broken.getAttribute('title') ?? '公式写法有误';
+        }
+    };
+
+    /** 行内公式 `$…$`：TeX 存在**文本内容**里（与插件一致，往返 `$…$` 不变形） */
+    const ownMathInline = $nodeSchema('math_inline', () => ({
+        group: 'inline',
+        content: 'text*',
+        inline: true,
+        atom: true,
+        parseDOM: [
+            {
+                tag: 'span[data-type="math_inline"]',
+                getContent: (dom, schema) => {
+                    const value = (dom as HTMLElement).dataset.value ?? '';
+                    return value ? Fragment.from(schema.text(value)) : Fragment.empty;
+                },
+            },
+        ],
+        toDOM: (node) => {
+            const el = document.createElement('span');
+            el.dataset.type = 'math_inline';
+            el.dataset.value = node.textContent;
+            renderKatexInto(el, node.textContent, false);
+            return el;
+        },
+        parseMarkdown: {
+            match: (node) => node.type === 'inlineMath',
+            runner: (state, node, type) => {
+                state.openNode(type).addText(teXOf(node)).closeNode();
+            },
+        },
+        toMarkdown: {
+            match: (node) => node.type.name === 'math_inline',
+            runner: (state, node) => {
+                state.addNode('inlineMath', undefined, node.textContent);
+            },
+        },
+    }));
+
+    /**
+     * 整行公式 `$$ … $$`（⚠️ 两个 `$$` 必须**各占一行**，与 remark-math 的判定一致）；
+     * TeX 存在 attr 里（与插件一致）。
+     */
+    const ownMathBlock = $nodeSchema('math_block', () => ({
+        content: 'text*',
+        group: 'block',
+        marks: '',
+        defining: true,
+        atom: true,
+        isolating: true,
+        attrs: { value: { default: '' } },
+        parseDOM: [
+            {
+                tag: 'div[data-type="math_block"]',
+                preserveWhitespace: 'full',
+                getAttrs: (dom) => ({ value: (dom as HTMLElement).dataset.value ?? '' }),
+            },
+        ],
+        toDOM: (node) => {
+            const tex = String(node.attrs.value ?? '');
+            const el = document.createElement('div');
+            el.dataset.type = 'math_block';
+            el.dataset.value = tex;
+            if (tex.trim() === '') {
+                // 敲 `$$ ` 会建出一个空公式块（它是个 atom，光靠打字填不进去）——
+                // 给句提示，否则就是个看不见的空盒子
+                el.textContent = '（空公式：点右上角 md 切到源码模式，把 LaTeX 填进 $$ 中间）';
+                el.classList.add('md-math-empty');
+            } else {
+                renderKatexInto(el, tex, true);
+            }
+            return el;
+        },
+        parseMarkdown: {
+            match: (node) => node.type === 'math',
+            runner: (state, node, type) => {
+                state.addNode(type, { value: teXOf(node) });
+            },
+        },
+        toMarkdown: {
+            match: (node) => node.type.name === 'math_block',
+            runner: (state, node) => {
+                state.addNode('math', undefined, String(node.attrs.value ?? ''));
+            },
+        },
+    }));
+
     /**
      * 【2026-09-29】把**文本形态**的 `$公式$` 换成真正的数学节点（粘贴场景的救命稻草）。
      *
@@ -159,15 +300,76 @@ export async function createMdEditorInstance(opts: {
      * 手敲的 `$x$` 由 math 插件自带的输入规则先接管，这里不会重复劳动。
      */
     const mathFromText = $prose((ctx) => {
-        const mathType = mathInlineSchema.type(ctx);
+        const mathType = ownMathInline.type(ctx);
+        const blockType = ownMathBlock.type(ctx);
+        /** 开 `$` 后不能是空白、闭 `$` 前不能是空白 —— 「价格 $5 到 $10」这类普通文字不会被误认 */
         const pair = /\$(?=\S)([^$\n]+?)(?<=\S)\$/g;
+        /** 一段文字是不是"只写 `$$` 的围栏行" */
+        const isFence = (text: string) => text.trim() === '$$';
+
+        /**
+         * 收集"该收成整行公式"的区间（位置基于 tr.doc）。
+         * 两种形态都认 —— 粘贴在不同路径下会长成不同的样子：
+         *   ① **一个段落**，整段文字就是 `$$\n…\n$$`（VSCode/网页里复制出来的那种）
+         *   ② **三个以上段落**，首尾两段文字各是 `$$`，中间是公式（逐行粘进去的那种）
+         * ⚠️ `$$` 必须独占一行才算整行公式 —— 写成 `$$x=1$$` 时 remark-math 认它是**行内**
+         * 公式（实测如此），这里跟着它的口径走，免得编辑器与渲染端不一致。
+         */
+        const collectBlocks = (tr: Transaction) => {
+            const doc = tr.doc;
+            /** 每个顶层子节点的起始位置（先算好，免得边遍历边累加算错） */
+            const starts: number[] = [];
+            for (let i = 0, acc = 0; i < doc.childCount; i++) {
+                starts.push(acc);
+                acc += doc.child(i).nodeSize;
+            }
+            const endOf = (i: number) => starts[i] + doc.child(i).nodeSize;
+            const spots: { from: number; to: number; tex: string }[] = [];
+            let i = 0;
+            while (i < doc.childCount) {
+                const child = doc.child(i);
+                if (child.type.name === 'paragraph') {
+                    const lines = child.textContent.split('\n');
+                    if (isFence(child.textContent)) {
+                        // 形态②：往后找配对的收尾 `$$`
+                        let j = i + 1;
+                        while (j < doc.childCount && !isFence(doc.child(j).textContent)) j++;
+                        if (j < doc.childCount) {
+                            const inner: string[] = [];
+                            for (let k = i + 1; k < j; k++) inner.push(doc.child(k).textContent);
+                            spots.push({ from: starts[i], to: endOf(j), tex: inner.join('\n') });
+                            i = j + 1;
+                            continue;
+                        }
+                    } else if (lines.length >= 2 && isFence(lines[0]) && isFence(lines[lines.length - 1])) {
+                        // 形态①：整段就是一段公式
+                        spots.push({ from: starts[i], to: endOf(i), tex: lines.slice(1, -1).join('\n') });
+                    }
+                }
+                i += 1;
+            }
+            return spots;
+        };
+
         return new ProsePlugin({
             appendTransaction(trs, _old, next) {
                 // 正常取 docChanged；另有"初始化归一化"的显式 meta（见下面的 dispatch）
                 if (!trs.some((tr) => tr.docChanged || tr.getMeta(NORMALIZE_MATH_META))) return null;
-                // 先收集全部命中（边遍历边改会打乱位置），再从后往前替换
+                const tr = next.tr;
+                let touched = false;
+
+                // ① 先收整行公式：这是"段落级"的替换，会挪动它后面的所有位置，
+                //    所以必须在行内替换**之前**做完（从后往前替换，前面的位置才不错位）
+                const spots = collectBlocks(tr);
+                for (let i = spots.length - 1; i >= 0; i--) {
+                    const spot = spots[i];
+                    tr.replaceWith(spot.from, spot.to, blockType.create({ value: spot.tex.trim() }));
+                    touched = true;
+                }
+
+                // ② 再把剩下的"文本形态 `$…$`"换成行内公式（位置在①之后重新找）
                 const hits: { from: number; to: number; value: string }[] = [];
-                next.doc.descendants((node, pos) => {
+                tr.doc.descendants((node, pos) => {
                     if (!node.isText || !node.text || !node.text.includes('$')) return true;
                     pair.lastIndex = 0;
                     let m: RegExpExecArray | null;
@@ -176,15 +378,15 @@ export async function createMdEditorInstance(opts: {
                     }
                     return true;
                 });
-                if (hits.length === 0) return null;
-                const tr = next.tr;
-                const schema = next.doc.type.schema;
+                const schema = tr.doc.type.schema;
                 for (const hit of hits.reverse()) {
-                    // ⚠️ 数学节点的公式源是**文本内容**（schema: content 'text*'），
+                    // ⚠️ 行内公式的公式源是**文本内容**（schema: content 'text*'），
                     //    不是 attr —— 传 { value } 会建出一个空公式（导出成 `$$`，他实测会变这样）。
                     tr.replaceWith(hit.from, hit.to, mathType.create(null, schema.text(hit.value)));
+                    touched = true;
                 }
-                return tr.setMeta('addToHistory', false);
+
+                return touched ? tr.setMeta('addToHistory', false) : null;
             },
         });
     });
@@ -208,7 +410,13 @@ export async function createMdEditorInstance(opts: {
         .use(gfm)
         .use(listener)
         .use(history)
-        .use(math)
+        // 公式：只借插件的「md ↔ 公式节点」解析与输入规则，**节点本身用我们自己的**
+        //（自带那两个把整行公式按行内渲染、出错还会把编辑框整片搞白 —— 见上面注释）
+        .use(remarkMathPlugin)
+        .use(mathInlineInputRule)
+        .use(mathBlockInputRule)
+        .use(ownMathInline)
+        .use(ownMathBlock)
         .use(mathFromText)
         .use(highlightAttr)
         .use(highlightSchema)

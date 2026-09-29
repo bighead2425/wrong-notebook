@@ -855,6 +855,55 @@
 }
 
 /* ============================================================================
+ * 公式（2026-09-29）
+ *
+ * 背景：编辑器里公式的渲染由我们自己写的两个节点负责（见 components/md-editor.tsx
+ * 的 `renderKatexInto`）。这里只管三件**观感**上的事：
+ *   1. 整行公式宽了能横向滚 —— 别把编辑框撑破（手机上尤其明显）；
+ *   2. 渲染失败时退回显示原始 TeX（红字）—— 绝不把框留成空白；
+ *   3. 空公式块给个灰字提示（它是 atom，光靠打字填不进去）。
+ * ==========================================================================*/
+.md-editor [data-type='math_block'] {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}
+
+/* KaTeX 的 display 模式自带上下外边距，在框里显得太挤，收一点 */
+.md-editor [data-type='math_block'] .katex-display {
+  margin: 0.4em 0;
+}
+
+/* KaTeX 的 display 公式默认不换行；公式比栏宽时让它能在块内滚，而不是被裁掉 */
+.md-editor [data-type='math_block'] .katex-display > .katex {
+  white-space: normal;
+}
+
+/* 渲染失败：原样显示 TeX（能选中、能复制去别处试） */
+.md-math-raw {
+  display: block;
+  color: #cc0000;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* 有小问题（KaTeX 只染红了其中一段）：整块给个虚线红框，别让人找不到 */
+.md-math-broken {
+  outline: 1px dashed #ef4444;
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* 空公式块 */
+.md-math-empty {
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+/* ============================================================================
  * MdEditor 的**源码模式开关**（2026-09-29）
  *
  * 他问过"能不能像 Obsidian 那样，光标所在处显示 `**加粗**` 源码" ——
