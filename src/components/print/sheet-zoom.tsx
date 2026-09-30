@@ -36,14 +36,22 @@ export function fitZoomFor(availablePx: number, fullWidthPx: number = SHEET_FULL
 export function SheetZoom({
     children,
     className = "",
+    defaultFit = false,
     L,
 }: {
     children: ReactNode;
     className?: string;
+    /**
+     * 【2026-10-01】打开时**先给哪一档**。
+     * 打印预览页/复练卷页保持默认（实际大小，他习惯了）；
+     * 扫码浏览那屏给 `true` —— 他要求"双击**放大**到应有大小、再双击回到适应窗口大小"
+     * ⇒ 也就是说**默认那档是"适应窗口"**（手机上纸本来就比屏宽，先给看得全的那档）。
+     */
+    defaultFit?: boolean;
     L: (zh: string, en: string) => string;
 }) {
     const ref = useRef<HTMLDivElement | null>(null);
-    const [fit, setFit] = useState(false);
+    const [fit, setFit] = useState(defaultFit);
     /**
      * 可用宽度（px）。**只存宽度、不存缩放值** ——
      * 缩放由渲染时算（`fit ? fitZoomFor(avail) : 1`）。

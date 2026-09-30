@@ -1,14 +1,10 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Search, Filter, CheckCircle, Clock, ChevronDown, Printer, ListChecks, Trash2, X, Combine, Flame, Layers } from "lucide-react";
-import Link from "next/link";
-import { format } from "date-fns";
+import { Search, Filter, ChevronDown, Printer, ListChecks, Trash2, X, Layers } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useRouter } from "next/navigation";
 import {
@@ -23,25 +19,15 @@ import { KnowledgeFilter } from "@/components/knowledge-filter";
 import { ErrorItem, PaginatedResponse } from "@/types/api";
 import { apiClient } from "@/lib/api-client";
 import {
-    DEEP_NUDGE_COLOR,
     MANAGE_TYPE_LABEL,
     MANAGE_TYPE_UNDECIDED,
     cycleManageType,
-    getManageTypeLabel,
-    manageTypeScreenColor,
-    needsDeepPrintNudge,
 } from "@/lib/manage-type";
-import { cleanMarkdown } from "@/lib/markdown-utils";
 import { Pagination } from "@/components/ui/pagination";
 import { DEFAULT_PAGE_SIZE } from "@/lib/constants/pagination";
-import {
-    getMistakeCategoryLabel,
-    normalizeMistakeCategory,
-} from "@/lib/mistake-category";
-import { attentionLevelOf, ATTENTION_LEVELS, cycleAttentionLevel, isAttentionUnfiltered } from "@/lib/attention-level";
+import { ATTENTION_LEVELS, cycleAttentionLevel, isAttentionUnfiltered } from "@/lib/attention-level";
 import { AttentionMultiSelect } from "@/components/attention-multi-select";
-import { ReviewDots } from "@/components/review-dots";
-import { PrintCounts } from "@/components/print-counts";
+import { ErrorItemCard } from "@/components/error-item-card";
 import { DatePickerCalendar } from "@/components/date-picker-calendar";
 import { countByDay, dayBoundsISO, rangeBoundsISO } from "@/lib/calendar-grid";
 
@@ -692,199 +678,30 @@ export function ErrorList({ notebookId, subjectName, notebookInfo, onCountChange
             )}
 
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {filteredItems.map((item) => {
-                    // 【2026-10-01】"深挖了还没印"要不要提醒（卡片图标上色）—— 判定只有一处
-                    const nudge = needsDeepPrintNudge(item);
-                    // 优先使用 tags 关联，回退到 knowledgePoints
-                    let tags: string[] = [];
-                    if (item.tags && item.tags.length > 0) {
-                        tags = item.tags.map((tag) => tag.name);
-                    } else {
-                        try {
-                            tags = JSON.parse(item.knowledgePoints || "[]");
-                        } catch {
-                            tags = [];
-                        }
-                    }
-                    return (
-                        <div key={item.id} className="relative">
-                            {/* 选择模式下的复选框 */}
-                            {isSelectMode && (
-                                <div
-                                    className="absolute top-2 left-2 z-10"
-                                    onClick={(e) => toggleSelectItem(item.id, e)}
-                                >
-                                    <Checkbox
-                                        checked={selectedIds.has(item.id)}
-                                        className="h-5 w-5 border-2 bg-background shadow-sm"
-                                    />
-                                </div>
-                            )}
-                            {/* 【2026-09-29】多选模式下**点卡片任意空白处**即可切换选中（他要求），
-                                不再只在点左上角勾选框时才生效。 */}
-                            <Link
-                                href={isSelectMode ? "#" : `/error-items/${item.id}`}
-                                onClick={(e) => {
-                                    if (!isSelectMode) return;
-                                    e.preventDefault();
-                                    toggleSelectItem(item.id, e);
-                                }}
-                            >
-                                <Card className="h-full hover:border-primary/50 transition-colors cursor-pointer gap-2 pt-4">
-                                    <CardHeader className="pb-0">
-                                        <div className="flex justify-between items-start">
-                                            {/* 【2026-09-30 他要求】左上角的「待复习 / 已掌握」**点一下互转**并保存。
-                                                ⚠️ 点到"已掌握"后，这道题就不在主库了（四分法：主库 = masteryLevel<2），
-                                                   刷新/换筛选后它会进"已掌握分区"；再点回来就回来。 */}
-                                            <Badge
-                                                variant={item.masteryLevel > 0 ? "default" : "secondary"}
-                                                className={`${item.masteryLevel > 0 ? "bg-green-600 hover:bg-green-700" : ""} ${isSelectMode ? "" : "cursor-pointer"}`}
-                                                title={item.masteryLevel > 0
-                                                    ? L("点一下改回「待复习」", "Click to mark as to-review")
-                                                    : L("点一下标成「已掌握」", "Click to mark as mastered")}
-                                                onClick={isSelectMode ? undefined : (e) => toggleMastery(item, e)}
-                                            >
-                                                {item.masteryLevel > 0 ? (
-                                                    <span className="flex items-center gap-1">
-                                                        <CheckCircle className="h-3 w-3" /> {t.notebook.mastered}
-                                                    </span>
-                                                ) : (
-                                                    <span className="flex items-center gap-1">
-                                                        <Clock className="h-3 w-3" /> {t.notebook.review}
-                                                    </span>
-                                                )}
-                                            </Badge>
-                                            {/* 右上角：**等级奖牌** + 录入时间 + 垃圾桶。
-                                                奖牌点一下升一级（👑 之后回 🥉）—— 他 2026-09-30 的要求。 */}
-                                            <div className="flex items-center gap-0.5 shrink-0">
-                                                <button
-                                                    type="button"
-                                                    className={`mr-0.5 rounded px-0.5 text-sm leading-none ${isSelectMode ? "cursor-default" : "cursor-pointer hover:bg-muted"}`}
-                                                    title={L(
-                                                        `等级：${attentionLevelOf(item.attention).zh}（点一下升一级）`,
-                                                        `Level: ${attentionLevelOf(item.attention).en} (click to upgrade)`,
-                                                    )}
-                                                    onClick={isSelectMode ? undefined : (e) => cycleAttention(item, e)}
-                                                >
-                                                    {attentionLevelOf(item.attention).medal}
-                                                </button>
-                                                <span className="text-xs text-muted-foreground">
-                                                    {format(new Date(item.createdAt), "MM/dd")}
-                                                </span>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon-sm"
-                                                    className="text-muted-foreground hover:text-destructive"
-                                                    title={t.common?.delete || "Move to trash"}
-                                                    onClick={(e) => trashItem(item.id, e)}
-                                                >
-                                                    <Trash2 className="h-3.5 w-3.5" />
-                                                </Button>
-                                            </div>
-                                        </div>
-                                    </CardHeader>
-                                    <CardContent>
-                                        <div className="text-sm line-clamp-3">
-                                            {(() => {
-                                                // 提取文本并清理 LaTeX/Markdown 格式
-                                                const rawText = (item.questionText || "").split('\n\n')[0]; // 取第一段
-                                                const cleanText = cleanMarkdown(rawText);
-
-                                                return cleanText.length > 80
-                                                    ? cleanText.substring(0, 80) + "..."
-                                                    : cleanText;
-                                            })()}
-                                        </div>
-                                        {/* 【2026-09-30 他要求】这里原来显示**作答状态**（不会做/做错了/未判断），
-                                            现在换成**错因**（8 种里的一种）。没打错因就不占位。 */}
-                                        <div className="flex flex-wrap gap-2 mt-3">
-                                            {normalizeMistakeCategory(item.mistakeCategory) && (
-                                                <Badge variant="secondary" className="text-xs">
-                                                    {getMistakeCategoryLabel(item.mistakeCategory, language)}
-                                                </Badge>
-                                            )}
-                                        </div>
-                                        <div className="flex flex-wrap gap-2 mt-3">
-                                            {(expandedTags.has(item.id) ? tags : tags.slice(0, 3)).map((tag: string) => (
-                                                <Badge
-                                                    key={tag}
-                                                    variant={selectedTag === tag ? "default" : "outline"}
-                                                    className={`text-xs transition-colors ${isSelectMode ? "" : "cursor-pointer hover:bg-primary/10"}`}
-                                                    /* 多选模式下标签不再响应点击：此时点卡片任意处＝切换选中，
-                                                       标签要是还能筛选题，就会出现"点一下同时干了两件事"的歧义 */
-                                                    onClick={isSelectMode ? undefined : (e) => {
-                                                        e.preventDefault();
-                                                        handleTagClick(tag);
-                                                    }}
-                                                >
-                                                    {tag}
-                                                </Badge>
-                                            ))}
-                                            {tags.length > 3 && (
-                                                <Badge
-                                                    variant="secondary"
-                                                    className={`text-xs transition-colors ${isSelectMode ? "" : "cursor-pointer hover:bg-secondary/80"}`}
-                                                    title={expandedTags.has(item.id)
-                                                        ? (t.notebooks?.collapseTagsTooltip || "Click to collapse")
-                                                        : (t.notebooks?.expandTagsTooltip || "Click to expand {count} tags").replace("{count}", (tags.length - 3).toString())}
-                                                    onClick={isSelectMode ? undefined : (e) => toggleTagsExpanded(item.id, e)}
-                                                >
-                                                    {expandedTags.has(item.id) ? (
-                                                        <>{t.notebooks?.collapseTags || "Collapse"}</>
-                                                    ) : (
-                                                        <>{(t.notebooks?.expandTags || "+{count} more").replace("{count}", (tags.length - 3).toString())}</>
-                                                    )}
-                                                </Badge>
-                                            )}
-                                        </div>
-                                    </CardContent>
-                                </Card>
-                            </Link>
-                            {/* 右下角：这道题的**复习类型**（深挖 / 复练 / 未定）。
-                                【2026-09-30 他要求】点一下轮转 深挖→复练→未定→深挖，文字与颜色一起变、即点即存。
-                                ⚠️ 仍然用绝对定位而不是塞进标签流：标签会换行，
-                                   `ml-auto` 在 flex-wrap 里靠不住（他会看到它乱跑）。 */}
-                            <button
-                                type="button"
-                                className={`absolute bottom-2 right-3 text-[11px] font-semibold ${isSelectMode ? "cursor-default" : "cursor-pointer hover:underline"}`}
-                                style={{ color: manageTypeScreenColor(item.manageType) }}
-                                title={L("点一下换类型：深挖 → 复练 → 未定", "Click to cycle: deep → review → undecided")}
-                                onClick={isSelectMode ? undefined : (e) => cycleManageTypeOnCard(item, e)}
-                            >
-                                {getManageTypeLabel(item.manageType)}
-                            </button>
-                            {/* 【2026-10-01 他要求】左下角：
-                                最左边一个**打印机图标**（点它 = 把这一道送进深挖纸编辑界面），
-                                接着是两个打印次数。
-                                图标**上色**表示"这是深挖题、但一次深挖纸都没印过"（判定见 lib/manage-type
-                                的 `needsDeepPrintNudge`，与详情页那个黄底计数共用同一个函数）。 */}
-                            <span className="absolute bottom-2 left-3 flex items-center gap-1 text-[11px]">
-                                <button
-                                    type="button"
-                                    className={`shrink-0 rounded p-0.5 ${isSelectMode ? "cursor-default" : "cursor-pointer hover:bg-muted"}`}
-                                    style={{ color: nudge ? DEEP_NUDGE_COLOR : undefined }}
-                                    title={nudge
-                                        ? L("这是深挖题、还没印过 —— 点这里去印深挖纸", "Deep-dive item, not printed yet — click to print")
-                                        : L("打印这道题的深挖纸", "Print the deep-dive sheet for this item")}
-                                    onClick={(e) => openDeepDivePrint(item.id, e)}
-                                >
-                                    <Printer className="h-3.5 w-3.5" />
-                                </button>
-                                <span
-                                    className="pointer-events-none"
-                                    title={`深挖纸打印次数 ${item.printCount ?? 0} ｜ 复练纸印刷次数 ${item.reviewPrintCount ?? 0}`}
-                                >
-                                    <PrintCounts deep={item.printCount} review={item.reviewPrintCount} compact />
-                                </span>
-                            </span>
-                            {/* 【2026-09-30】底端**中间**：四个复习结果圆圈
-                                （前三个 = 第 1/7/21 天计划复习，第四个 = 最近一次），与左右两边同一行。 */}
-                            <span className="absolute bottom-2 left-1/2 -translate-x-1/2 pointer-events-none">
-                                <ReviewDots outcomes={item.reviewOutcomes} language={language} />
-                            </span>
-                        </div>
-                    );
-                })}
+                {filteredItems.map((item) => (
+                    /* 【2026-10-01】卡片本体已抽到 components/error-item-card.tsx ——
+                       扫码结果页要的就是**同一张卡**（他原话），抄第二份必然走样。
+                       这里只负责把"点了哪个"接到列表页自己的保存逻辑上。 */
+                    <ErrorItemCard
+                        key={item.id}
+                        item={item}
+                        selectMode={isSelectMode}
+                        selected={selectedIds.has(item.id)}
+                        selectedTag={selectedTag}
+                        tagsExpanded={expandedTags.has(item.id)}
+                        onToggleSelect={(e) => toggleSelectItem(item.id, e)}
+                        onToggleMastery={(e) => toggleMastery(item, e)}
+                        onCycleAttention={(e) => cycleAttention(item, e)}
+                        onCycleManageType={(e) => cycleManageTypeOnCard(item, e)}
+                        onTrash={(e) => trashItem(item.id, e)}
+                        onDeepDivePrint={(e) => openDeepDivePrint(item.id, e)}
+                        onToggleTagsExpanded={(e) => toggleTagsExpanded(item.id, e)}
+                        onTagClick={(tag, e) => {
+                            e.preventDefault();
+                            handleTagClick(tag);
+                        }}
+                    />
+                ))}
             </div>
 
             {/* 分页器 */}

@@ -103,6 +103,17 @@ export default function ErrorDetailPage() {
     const { t, language } = useLanguage();
     /** 本页新文案的双语助手（与列表页/复练卷页同一写法） */
     const L = (zh: string, en: string) => (language === "zh" ? zh : en);
+    /**
+     * 【2026-10-01】`?back=` —— 从扫码那边点进来的"上一步"（见返回键那段注释）。
+     * ⚠️ 只认**站内路径**（`/` 开头且不是 `//`）：`back` 是从地址栏读来的，
+     *    不校验的话它就变成一个"想跳哪就跳哪"的开放重定向口子。
+     * 在 effect 里读 `window.location`：服务端渲染时没有 window。
+     */
+    const [backTo, setBackTo] = useState<string | null>(null);
+    useEffect(() => {
+        const b = new URLSearchParams(window.location.search).get("back");
+        if (b && b.startsWith("/") && !b.startsWith("//")) setBackTo(b);
+    }, []);
     const [item, setItem] = useState<ErrorItemDetail | null>(null);
     const [loading, setLoading] = useState(true);
     const [notesInput, setNotesInput] = useState("");
@@ -500,7 +511,11 @@ export default function ErrorDetailPage() {
             <div className="container mx-auto p-4 space-y-6 pb-20">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div className="flex items-center gap-4">
-                        <Link href={item.notebookId ? `/notebooks/${item.notebookId}` : "/notebooks"}>
+                        {/* 【2026-10-01】返回键去哪，看 `?back=`：
+                            从扫码那边点进来的（`/scan?vol=..&item=..`）要**退回那一屏**，
+                            这样"详情页 → 错题卡 → 卷浏览"的层层后退才成立；
+                            平时（从错题本点进来）还是回那个错题本。 */}
+                        <Link href={backTo || (item.notebookId ? `/notebooks/${item.notebookId}` : "/notebooks")}>
                             <Button variant="ghost" size="icon">
                                 <ArrowLeft className="w-4 h-4" />
                             </Button>

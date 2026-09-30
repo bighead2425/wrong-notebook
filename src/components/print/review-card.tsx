@@ -116,6 +116,17 @@ export interface ReviewSheetProps {
     figureScaleOf?: (itemId: string) => number;
     /** 按下题图（开始缩放） */
     onFigureScaleStart?: (itemId: string) => (e: ReactPointerEvent) => void;
+    /**
+     * 【2026-10-01 扫码用】**每道题罩一个天蓝框 + 框中间一个蓝圆白加号**：
+     * 传了这个回调，每个题块上就会盖一层框与加号（只在屏幕上画，不进打印）。
+     * 点加号 ⇒ 回调拿到这道题 ⇒ 调用方据此打开"这道题的错题卡"。
+     *
+     * ⚠️ 框与加号**画在纸的 DOM 里面**（绝对定位在本块上），不是浮在纸外面的另一层 ——
+     *    这样纸滚动/缩放时框天然跟着走，**不可能漂移**（他专门点过这条）。
+     */
+    onQuestionPlusClick?: (item: ErrorItem) => void;
+    /** 加号的悬停提示（可选） */
+    plusTitle?: string;
     /** 按住两题之间的虚线（调上面那道题的留白行数） */
     onDividerDragStart?: (aboveItemId: string, startLines: number) => (e: ReactPointerEvent) => void;
     /**
@@ -487,6 +498,8 @@ export function ReviewSheet({
     onFigureScaleStart,
     onDividerDragStart,
     missing,
+    onQuestionPlusClick,
+    plusTitle,
     L,
 }: ReviewSheetProps) {
     /**
@@ -571,24 +584,87 @@ export function ReviewSheet({
                                 const blank = blankValueOf ? blankValueOf(item.id) : 0;
                                 // 虚线画在本块顶上，所以"虚线上面那道题"是**前一块**
                                 const above = bi > 0 ? itemByKey[col.blocks[bi - 1].key] : null;
-                                return (
-                                    <ReviewQuestionBlock
-                                        key={b.key}
-                                        item={item}
-                                        seq={b.seq}
-                                        blankLines={blank}
-                                        showDivider={bi > 0}
-                                        blankValue={blankValueOf ? blank : undefined}
-                                        onBlankChange={onBlankChange}
-                                        figureScale={figureScaleOf ? figureScaleOf(item.id) : 100}
-                                        onFigureScaleStart={onFigureScaleStart}
-                                        onDividerDragStart={
-                                            canDragDivider && above
-                                                ? (e) => onDividerDragStart!(above.id, blankValueOf!(above.id))(e)
-                                                : undefined
-                                        }
-                                        L={L}
-                                    />
+                                return onQuestionPlusClick ? (
+                                    /**
+                                     * 【2026-10-01 扫码浏览】每道题罩一层**天蓝框** + 框中间一个**蓝圆白加号**。
+                                     * ⚠️ 框/加号都是**本块内的绝对定位元素**（不是浮在纸外面的另一层）——
+                                     *    纸滚动、缩放时它们天然跟着走，不会漂移（他明说的要求）。
+                                     * 外面这层 div 只是为了给绝对定位一个参照系，尺寸与题块一致 ⇒ 布局不变。
+                                     */
+                                    <div key={b.key} style={{ position: 'relative', flex: '0 0 auto' }}>
+                                        <ReviewQuestionBlock
+                                            item={item}
+                                            seq={b.seq}
+                                            blankLines={blank}
+                                            showDivider={bi > 0}
+                                            figureScale={figureScaleOf ? figureScaleOf(item.id) : 100}
+                                            L={L}
+                                        />
+                                        <span
+                                            aria-hidden="true"
+                                            className="no-print"
+                                            style={{
+                                                position: 'absolute',
+                                                inset: '0.8mm 1mm',
+                                                border: '0.45mm solid #38bdf8',
+                                                borderRadius: '1.6mm',
+                                                boxSizing: 'border-box',
+                                                pointerEvents: 'none',
+                                            }}
+                                        />
+                                        <button
+                                            type="button"
+                                            className="no-print"
+                                            title={plusTitle}
+                                            onClick={() => onQuestionPlusClick(item)}
+                                            style={{
+                                                position: 'absolute',
+                                                left: '50%',
+                                                top: '50%',
+                                                transform: 'translate(-50%, -50%)',
+                                                width: '10mm',
+                                                height: '10mm',
+                                                borderRadius: '9999px',
+                                                background: '#2563eb',
+                                                border: 'none',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                cursor: 'pointer',
+                                                zIndex: 6,
+                                                boxShadow: '0 0.4mm 1.2mm rgba(0,0,0,0.35)',
+                                            }}
+                                        >
+                                            <svg viewBox="0 0 24 24" style={{ width: '5.5mm', height: '5.5mm' }} aria-hidden="true">
+                                                <path
+                                                    d="M12 5v14M5 12h14"
+                                                    stroke="#ffffff"
+                                                    strokeWidth={3.4}
+                                                    strokeLinecap="round"
+                                                    fill="none"
+                                                />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <Fragment key={b.key}>
+                                        <ReviewQuestionBlock
+                                            item={item}
+                                            seq={b.seq}
+                                            blankLines={blank}
+                                            showDivider={bi > 0}
+                                            blankValue={blankValueOf ? blank : undefined}
+                                            onBlankChange={onBlankChange}
+                                            figureScale={figureScaleOf ? figureScaleOf(item.id) : 100}
+                                            onFigureScaleStart={onFigureScaleStart}
+                                            onDividerDragStart={
+                                                canDragDivider && above
+                                                    ? (e) => onDividerDragStart!(above.id, blankValueOf!(above.id))(e)
+                                                    : undefined
+                                            }
+                                            L={L}
+                                        />
+                                    </Fragment>
                                 );
                             })}
                         </div>

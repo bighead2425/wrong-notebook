@@ -1,29 +1,42 @@
 "use client";
 
+/**
+ * 扫码页（#11 / T8）—— 纸面二维码回流系统。
+ *
+ * ── 2026-10-01 改版（他要的"扫码后的路径"）───────────────────────────
+ * 以前：扫到题号 ⇒ 弹一个小框（题号/题目/难度 + 打印·看原题·已会·合并·删除）。
+ * 现在按**扫到的是哪种二维码**分成两条路：
+ *
+ *   ① 扫到**深挖纸的题号码**（裸题号，如 `SX20260930001`）
+ *      ⇒ 直接给出**这道题在错题本页里的错题卡**（同一份组件）+ 卡片下面
+ *        **详情页复习结果那一栏的四行**；点卡片进详情页。
+ *   ② 扫到**复练卷某一页的页码**（`RE20260930001-02`）
+ *      ⇒ 打开这份卷的版面、**自动滚到扫到的那一页**，每道题罩天蓝框、中间蓝圆白加号；
+ *        点加号 ⇒ 进 ① 那一屏（同一张错题卡 + 复习四行）。
+ *      也就是说：扫深挖纸直达，扫复练卷**中间多一步"从卷上挑一道题"**（他原话）。
+ *
+ * ── 三层返回是怎么做到的（这一条值得说清）─────────────────────────
+ * 他要的是"从详情页退回错题卡、再从错题卡退回卷浏览"这种**层层后退**。
+ * 实现上**不做内存里的栈**（刷新就没了），而是**把状态放进 URL**：
+ *   `/scan?vol=RE…-02`            → 卷浏览
+ *   `/scan?vol=RE…-02&item=<id>`  → 该题的错题卡（返回 = 去掉 item）
+ *   点卡片进详情页时带上 `?back=<当前这串>`，详情页的返回键就回到这一屏。
+ * 这样三层是三个真实的 URL，**刷新、浏览器后退、换设备都不会串**。
+ */
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import jsQR from "jsqr";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
-import { SubjectChip } from "@/components/subject-chip";
+import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api-client";
-import { ErrorItem } from "@/types/api";
+import type { ErrorItem } from "@/types/api";
 import { useLanguage } from "@/contexts/LanguageContext";
-import {
-    Printer,
-    ExternalLink,
-    Check,
-    Trash2,
-    Combine,
-    X,
-    Loader2,
-    Camera,
-    CameraOff,
-    ScanLine,
-    Minus,
-    Plus,
-    RotateCcw,
-} from "lucide-react";
+import { parsePageCode } from "@/lib/volume-code";
+import { ScanItemPanel } from "@/components/scan-item-panel";
+import { ScanVolumeView } from "@/components/scan-volume-view";
+import { Camera, CameraOff, Loader2, ScanLine, Search } from "lucide-react";
 
 interface ScanResponse {
     found: boolean;
@@ -31,43 +44,30 @@ interface ScanResponse {
     item: ErrorItem | null;
 }
 
-/**
- * 扫码交互（#11 / T8）—— 纸面二维码回流系统
- *
- * 链路：主页左上「扫一扫」→ 本页调摄像头 → 扫到题号 → **停扫** → 弹界面 → 6 功能。
- *
- * 6 功能（#11 定稿）：
- *   ① 打印（跳打印页，计数由打印页在真正点打印时 +1）
- *   ② 关注管理 1-5 档（G8：语义=难度档，+/- 调整，存后台供筛选）
- *   ③ 跳转原题详情
- *   ④ 已会（等同标已掌握，masteryLevel = 2）
- *   ⑤ 删题（确认后进回收箱，非彻底删）
- *   ⑥ 合并（#14 新增）
- *
- * 交互细节（蓝图明确要求）：
- *   - 「点关闭关；点其他处不消失，除非点跳转」→ 弹层不加遮罩点击关闭。
- *   - 「扫码先主库检索，无则启回收箱库检索，界面底色不同」→ 按 source 换底色。
- *
- * 实现说明：解码用 jsQR（纯 JS，任何浏览器可跑）；BarcodeDetector 依赖
- * Google Play Services，安卓设备不一定可用，故不采用。
- * 另加「手动输入题号」兜底：摄像头不可用、二维码磨损、光线差时不至于卡死。
- */
+type View = "scanner" | "volume" | "card";
+
 export default function ScanPage() {
     const { language } = useLanguage();
     const zh = language === "zh";
-    const L = (a: string, b: string) => (zh ? a : b);
+    /**
+     * 双语助手。⚠️ 用 `useCallback` 包一层：它是若干 `useCallback` 的依赖，
+     *    每次渲染新建一个函数会让那些回调每轮都重建（eslint 会提醒，也确实没必要）。
+     */
+    const L = useCallback((a: string, b: string) => (zh ? a : b), [zh]);
     const router = useRouter();
+
+    const [view, setView] = useState<View>("scanner");
+    /** 卷浏览：纸上的页码码（卷号-页码） */
+    const [volumeCode, setVolumeCode] = useState<string | null>(null);
+    /** 错题卡：题 id + 这道题是从主库还是回收箱查出来的（H2/#12：界面底色不同） */
+    const [itemId, setItemId] = useState<string | null>(null);
+    const [itemSource, setItemSource] = useState<"main" | "trash">("main");
 
     const [scanning, setScanning] = useState(false);
     const [camError, setCamError] = useState<string | null>(null);
     const [busy, setBusy] = useState<string | null>(null);
     const [manualNo, setManualNo] = useState("");
     const [missNo, setMissNo] = useState<string | null>(null);
-    const [result, setResult] = useState<ScanResponse | null>(null);
-
-    // #14 合并（手机端扫码）：攒够 2 道以上才能合并
-    const [mergeMode, setMergeMode] = useState(false);
-    const [mergeItems, setMergeItems] = useState<ErrorItem[]>([]);
 
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -86,40 +86,84 @@ export default function ScanPage() {
         setScanning(false);
     }, []);
 
-    /** 查库：先主库、后回收箱（H2/#12 由 /api/scan 内部保证顺序） */
-    const lookup = useCallback(
-        async (rawNo: string, keepScanning = false) => {
+    /**
+     * 地址栏跟着状态一起变。
+     * ⚠️ 用 `replaceState` 而不是路由跳转：层与层之间用**页面上的返回键**走（他描述的就是这个手感），
+     *    不用把浏览器历史塞满；而且这三屏本来就是同一个页面。
+     */
+    const syncUrl = useCallback(
+        (next: { vol?: string | null; item?: string | null; src?: "main" | "trash" }) => {
+            const qs = new URLSearchParams();
+            const vol = next.vol === undefined ? volumeCode : next.vol;
+            const item = next.item === undefined ? itemId : next.item;
+            if (vol) qs.set("vol", vol);
+            if (item) {
+                qs.set("item", item);
+                qs.set("src", next.src ?? itemSource);
+            }
+            window.history.replaceState(null, "", `/scan${qs.toString() ? `?${qs.toString()}` : ""}`);
+        },
+        [volumeCode, itemId, itemSource],
+    );
+
+    /** 打开"某道题的错题卡"这一屏 */
+    const openCard = useCallback(
+        (id: string, source: "main" | "trash", keepVolume = true) => {
+            stopScan();
+            setItemId(id);
+            setItemSource(source);
+            setView("card");
+            syncUrl({ item: id, src: source, vol: keepVolume ? volumeCode : null });
+        },
+        [stopScan, syncUrl, volumeCode],
+    );
+
+    /** 打开"复练卷浏览"这一屏 */
+    const openVolume = useCallback(
+        (code: string) => {
+            stopScan();
+            setVolumeCode(code);
+            setItemId(null);
+            setView("volume");
+            syncUrl({ vol: code, item: null });
+        },
+        [stopScan, syncUrl],
+    );
+
+    /** 回到扫码（把两层都清掉） */
+    const backToScanner = useCallback(() => {
+        setView("scanner");
+        setVolumeCode(null);
+        setItemId(null);
+        syncUrl({ vol: null, item: null });
+    }, [syncUrl]);
+
+    /** 错题卡 → 上一层（有卷就回卷，没卷就回扫码） */
+    const backFromCard = useCallback(() => {
+        if (volumeCode) {
+            setItemId(null);
+            setView("volume");
+            syncUrl({ item: null });
+        } else {
+            backToScanner();
+        }
+    }, [volumeCode, backToScanner, syncUrl]);
+
+    /** 查库：先主库、后回收箱（顺序由 /api/scan 内部保证） */
+    const lookupQuestion = useCallback(
+        async (rawNo: string) => {
             const no = rawNo.trim().toUpperCase();
             if (!no) return;
-            if (!keepScanning) stopScan();
+            stopScan();
             setMissNo(null);
             setBusy("lookup");
             try {
-                const res = await apiClient.get<ScanResponse>(
-                    `/api/scan?no=${encodeURIComponent(no)}`,
-                );
+                const res = await apiClient.get<ScanResponse>(`/api/scan?no=${encodeURIComponent(no)}`);
                 if (!res.found || !res.item) {
                     setMissNo(no);
-                    setResult(null);
                     return;
                 }
-
-                // 合并模式：把扫到的题攒起来（不可重复），继续扫下一道
-                if (mergeMode) {
-                    const item = res.item;
-                    setMergeItems((prev) => {
-                        if (prev.some((x) => x.id === item.id)) {
-                            alert(L("这道题已经选过了", "Already selected"));
-                            return prev;
-                        }
-                        return [...prev, item];
-                    });
-                    setResult(null);
-                    if (keepScanning) return;
-                    return;
-                }
-
-                setResult(res);
+                openCard(res.item.id, res.source === "trash" ? "trash" : "main");
             } catch (error) {
                 console.error(error);
                 alert(L("查询失败", "Lookup failed"));
@@ -127,10 +171,28 @@ export default function ScanPage() {
                 setBusy(null);
             }
         },
-        [L, mergeMode, stopScan],
+        [L, openCard, stopScan],
     );
 
-    /** 解码：每 250ms 取一帧交给 jsQR（比 requestAnimationFrame 省电、够灵敏） */
+    /**
+     * 扫到东西了：**先看是不是卷页码，再当题号查**。
+     * 两条路互不干扰（卷页码形如 `RE…-02`、题号是 `SX…`）—— 先试 `parsePageCode`、
+     * 不中再走题号（见 `lib/volume-code.ts` 里那段说明）。
+     */
+    const handleScanned = useCallback(
+        (raw: string) => {
+            const code = raw.trim().toUpperCase();
+            if (!code) return;
+            if (parsePageCode(code)) {
+                openVolume(code);
+                return;
+            }
+            lookupQuestion(code);
+        },
+        [lookupQuestion, openVolume],
+    );
+
+    /** 解码：每 250ms 取一帧交给 jsQR（纯 JS，任何浏览器可跑；比 rAF 省电） */
     const startDecodeLoop = useCallback(() => {
         if (timerRef.current) clearInterval(timerRef.current);
         timerRef.current = setInterval(() => {
@@ -146,13 +208,10 @@ export default function ScanPage() {
             const code = jsQR(image.data, image.width, image.height, {
                 inversionAttempts: "dontInvert",
             });
-            if (code?.data) {
-                // 扫到即停扫（蓝图：扫到题号特征 → 停扫）
-                // 合并模式下不停，继续扫下一道
-                lookup(code.data, mergeMode);
-            }
+            // 扫到即停（`handleScanned` 会 stopScan）
+            if (code?.data) handleScanned(code.data);
         }, 250);
-    }, [lookup, mergeMode]);
+    }, [handleScanned]);
 
     const startScan = useCallback(async () => {
         setCamError(null);
@@ -172,8 +231,8 @@ export default function ScanPage() {
             console.error(error);
             setCamError(
                 L(
-                    "打不开摄像头。可以检查浏览器授权，或用下面的「手动输入题号」。",
-                    "Cannot open camera. Check permission, or type the question no. below.",
+                    "打不开摄像头。可以检查浏览器授权，或用下面的「手动输入」。",
+                    "Cannot open camera. Check permission, or type the code below.",
                 ),
             );
             setScanning(false);
@@ -182,124 +241,76 @@ export default function ScanPage() {
 
     useEffect(() => () => stopScan(), [stopScan]);
 
-    /** ① 打印：跳打印页，计数在真正点「打印」时 +1（避免点了没打也计数） */
-    const handlePrint = () => {
-        const item = result?.item;
-        if (!item) return;
-        router.push(`/print-preview?ids=${item.id}&mode=card`);
-    };
-
-    /** ② 关注档 1-5（G8 难度档） */
-    const handleAttention = async (next: number) => {
-        const item = result?.item;
-        if (!item) return;
-        const clamped = Math.max(1, Math.min(5, next));
-        setBusy("attention");
-        try {
-            await apiClient.put(`/api/error-items/${item.id}`, { attention: clamped });
-            setResult((prev) =>
-                prev?.item ? { ...prev, item: { ...prev.item, attention: clamped } } : prev,
-            );
-        } catch (error) {
-            console.error(error);
-            alert(L("调整失败", "Update failed"));
-        } finally {
-            setBusy(null);
+    /**
+     * 进来时**先看地址栏**有没有 vol / item：有就直接进那一屏。
+     * 这一步就是三层返回能成立的关键（从详情页退回来时，URL 里带着 `item=`）。
+     */
+    useEffect(() => {
+        const qs = new URLSearchParams(window.location.search);
+        const vol = qs.get("vol");
+        const item = qs.get("item");
+        if (vol) setVolumeCode(vol);
+        if (item) {
+            setItemId(item);
+            setItemSource(qs.get("src") === "trash" ? "trash" : "main");
+            setView("card");
+        } else if (vol) {
+            setView("volume");
         }
-    };
+    }, []);
 
-    /** ③ 跳转原题详情（蓝图：点跳转时弹层可以消失） */
-    const handleJump = () => {
-        const item = result?.item;
-        if (!item) return;
-        setResult(null);
-        router.push(`/error-items/${item.id}`);
-    };
-
-    /** ④ 已会 = 标已掌握（masteryLevel = 2） */
-    const handleMastered = async () => {
-        const item = result?.item;
-        if (!item) return;
-        if (!confirm(L(`${item.source || item.id} 标为「已会」？`, `Mark ${item.source || item.id} as mastered?`))) return;
-        setBusy("mastered");
-        try {
-            await apiClient.patch(`/api/error-items/${item.id}/mastery`, { masteryLevel: 2 });
-            setResult(null);
-            alert(L("已标为已会", "Marked as mastered"));
-        } catch (error) {
-            console.error(error);
-            alert(L("操作失败", "Failed"));
-        } finally {
-            setBusy(null);
+    /** 当前这一屏的 URL（给详情页的 `?back=` 用） */
+    const currentUrl = (() => {
+        const qs = new URLSearchParams();
+        if (volumeCode) qs.set("vol", volumeCode);
+        if (itemId) {
+            qs.set("item", itemId);
+            qs.set("src", itemSource);
         }
-    };
+        return `/scan${qs.toString() ? `?${qs.toString()}` : ""}`;
+    })();
 
-    /** ⑤ 删题：进回收箱（软删，不是彻底删） */
-    const handleDelete = async () => {
-        const item = result?.item;
-        if (!item) return;
-        if (!confirm(L(`把 ${item.source || item.id} 删进回收箱？`, `Move ${item.source || item.id} to trash?`))) return;
-        setBusy("delete");
-        try {
-            await apiClient.delete(`/api/error-items/${item.id}`);
-            setResult(null);
-            alert(L("已移入回收箱", "Moved to trash"));
-        } catch (error) {
-            console.error(error);
-            alert(L("删除失败", "Delete failed"));
-        } finally {
-            setBusy(null);
-        }
-    };
+    // ===================== 层二 / 层三 =====================
 
-    /** ⑥ 合并：进入合并模式，第 1 题先入库，然后继续扫下一道（#14） */
-    const handleStartMerge = () => {
-        const item = result?.item;
-        if (!item) return;
-        setMergeItems([item]);
-        setMergeMode(true);
-        setResult(null);
-        // 合并模式下不停扫，继续扫下一道
-        if (!scanning) startScan();
-    };
+    if (view === "card" && itemId) {
+        return (
+            <main className="min-h-screen p-4 md:p-8 bg-background">
+                <div className="max-w-3xl mx-auto space-y-5">
+                    <h1 className="flex items-center gap-2 text-xl font-bold">
+                        <ScanLine className="h-5 w-5" />
+                        {L("扫到的这道题", "Scanned question")}
+                    </h1>
+                    <ScanItemPanel
+                        itemId={itemId}
+                        source={itemSource}
+                        onBack={backFromCard}
+                        backLabel={volumeCode ? L("回到复练卷", "Back to volume") : L("回到扫码", "Back to scanner")}
+                        backTo={currentUrl}
+                    />
+                </div>
+            </main>
+        );
+    }
 
-    const handleConfirmMerge = async () => {
-        if (mergeItems.length < 2) {
-            alert(L("至少要有 2 道题才能合并", "Select at least 2 questions"));
-            return;
-        }
-        setBusy("merge");
-        try {
-            const res = await apiClient.post<{ item: ErrorItem }>("/api/error-items/merge", {
-                ids: mergeItems.map((x) => x.id),
-            });
-            alert(
-                L(
-                    `合并完成，新题号：${res.item.source || res.item.id}（原题已进回收箱）`,
-                    `Merged. New no: ${res.item.source || res.item.id} (originals moved to trash)`,
-                ),
-            );
-            setMergeMode(false);
-            setMergeItems([]);
-            stopScan();
-        } catch (error) {
-            console.error(error);
-            alert(L("合并失败", "Merge failed"));
-        } finally {
-            setBusy(null);
-        }
-    };
+    if (view === "volume" && volumeCode) {
+        return (
+            <main className="min-h-screen bg-background p-4 md:p-6">
+                <div className="mx-auto w-full max-w-6xl space-y-4">
+                    <h1 className="flex items-center gap-2 text-xl font-bold">
+                        <ScanLine className="h-5 w-5" />
+                        {L("扫到的复练卷", "Scanned volume")}
+                    </h1>
+                    <ScanVolumeView
+                        code={volumeCode}
+                        onPickItem={(item) => openCard(item.id, "main", true)}
+                        onBack={backToScanner}
+                    />
+                </div>
+            </main>
+        );
+    }
 
-    const cancelMerge = () => {
-        setMergeMode(false);
-        setMergeItems([]);
-        setResult(null);
-    };
-
-    const item = result?.item;
-    const isTrash = result?.source === "trash";
-    // 回收箱里扫出来的题，界面底色不同（#12 明确要求）
-    const tone = isTrash ? "rose" : "emerald";
+    // ===================== 层一：扫码 =====================
 
     return (
         <main className="min-h-screen p-4 md:p-8 bg-background">
@@ -313,60 +324,18 @@ export default function ScanPage() {
                         </h1>
                         <p className="text-muted-foreground text-sm sm:text-base">
                             {L(
-                                "对准纸面左上角的二维码，扫到就停。扫到后可以打印、调难度、标已会、删题或合并。",
-                                "Aim at the QR code on the paper. Once read, you can print, set difficulty, mark mastered, delete or merge.",
+                                "扫深挖纸上的题号码 ⇒ 直接出这道题的卡；扫复练卷某一页的码 ⇒ 先看卷、再点题目中间的加号选一道题。",
+                                "Scan a question code on a deep-dive sheet, or a page code on a review volume.",
                             )}
                         </p>
                     </div>
                 </div>
 
-                {/* ===== 合并模式提示条 ===== */}
-                {mergeMode && (
-                    <div className="rounded-lg border border-sky-500/40 bg-sky-500/10 p-3 space-y-2">
-                        <div className="text-sm font-medium">
-                            {L(
-                                `合并中：已选 ${mergeItems.length} 道（继续扫下一道，或直接合并）`,
-                                `Merging: ${mergeItems.length} selected (scan more, or merge now)`,
-                            )}
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                            {mergeItems.map((m) => (
-                                <span
-                                    key={m.id}
-                                    className="inline-flex items-center gap-1.5 rounded border bg-background px-2 py-1 text-xs font-mono"
-                                >
-                                    <SubjectChip subjectKey={m.notebook?.subject} showLabel={false} />
-                                    {m.source || m.id}
-                                </span>
-                            ))}
-                        </div>
-                        <div className="flex gap-2">
-                            <Button size="sm" onClick={handleConfirmMerge} disabled={mergeItems.length < 2 || busy === "merge"}>
-                                {busy === "merge" ? (
-                                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                                ) : (
-                                    <Combine className="mr-1.5 h-4 w-4" />
-                                )}
-                                {L("合并这几道", "Merge")}
-                            </Button>
-                            <Button size="sm" variant="outline" onClick={cancelMerge}>
-                                {L("取消合并", "Cancel merge")}
-                            </Button>
-                        </div>
-                    </div>
-                )}
-
                 {/* ===== 摄像头区 ===== */}
                 <div className="relative rounded-lg overflow-hidden border bg-black aspect-[4/3]">
-                    <video
-                        ref={videoRef}
-                        playsInline
-                        muted
-                        className="w-full h-full object-cover"
-                    />
+                    <video ref={videoRef} playsInline muted className="w-full h-full object-cover" />
                     <canvas ref={canvasRef} className="hidden" />
 
-                    {/* 取景框 */}
                     {scanning && (
                         <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
                             <div className="w-56 h-56 border-2 border-white/80 rounded-lg" />
@@ -392,9 +361,9 @@ export default function ScanPage() {
                     )}
 
                     {busy === "lookup" && (
-                        <div className="absolute inset-x-0 bottom-0 bg-black/60 text-white text-sm py-2 flex items-center justify-center gap-2">
+                        <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 bg-black/60 py-2 text-sm text-white">
                             <Loader2 className="h-4 w-4 animate-spin" />
-                            {L("正在查这道题…", "Looking up…")}
+                            {L("正在查…", "Looking up…")}
                         </div>
                     )}
                 </div>
@@ -408,145 +377,54 @@ export default function ScanPage() {
                     ) : (
                         <Button onClick={startScan}>
                             <Camera className="mr-1.5 h-4 w-4" />
-                            {L("重新扫描", "Scan again")}
+                            {L("开始扫描", "Start")}
                         </Button>
                     )}
                 </div>
 
-                {/* ===== 手动兜底：摄像头不可用 / 二维码磨损时用 ===== */}
-                <div className="rounded-lg border p-3 space-y-2">
-                    <div className="text-sm font-medium">
-                        {L("手动输入题号（兜底）", "Type the question no. (fallback)")}
-                    </div>
-                    <div className="flex gap-2">
-                        <input
-                            value={manualNo}
-                            onChange={(e) => setManualNo(e.target.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === "Enter") lookup(manualNo, mergeMode);
-                            }}
-                            placeholder="SX20260916001"
-                            className="flex-1 rounded-md border bg-background px-3 py-2 text-sm font-mono uppercase"
-                        />
-                        <Button onClick={() => lookup(manualNo, mergeMode)} disabled={!manualNo.trim() || busy === "lookup"}>
-                            {L("查询", "Look up")}
-                        </Button>
-                    </div>
-                </div>
-
-                {/* ===== 没找到 ===== */}
-                {missNo && (
-                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+                {/* 手动输入兜底：摄像头不可用、码磨损、光线差时不至于卡死 */}
+                <div className="space-y-2 rounded-lg border p-3">
+                    <p className="text-sm text-muted-foreground">
                         {L(
-                            `没找到题号 ${missNo}。可能是主库和回收箱里都没有，或题号扫错了。`,
-                            `No match for ${missNo}. It may not exist in main or trash, or the no. is wrong.`,
+                            "摄像头用不了？手动输入纸上的编码（题号，或卷上那一页的页码）。",
+                            "Camera not working? Type the code printed on the paper.",
                         )}
-                    </div>
-                )}
-
-                {/* ===== 结果弹层（蓝图：点关闭关，点其他处不消失）===== */}
-                {item && (
-                    <div
-                        className={`rounded-lg border-2 p-4 space-y-4 ${
-                            isTrash
-                                ? "border-rose-500/50 bg-rose-500/5"
-                                : "border-emerald-500/50 bg-emerald-500/5"
-                        }`}
-                    >
-                        <div className="flex items-start justify-between gap-3">
-                            <div className="space-y-1 min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                    <SubjectChip subjectKey={item.notebook?.subject} />
-                                    <span className="font-mono font-semibold">{item.source || item.id}</span>
-                                    {isTrash && (
-                                        <span className="text-xs rounded bg-rose-500/20 text-rose-700 dark:text-rose-300 px-1.5 py-0.5">
-                                            {L("在回收箱里", "in trash")}
-                                        </span>
-                                    )}
-                                </div>
-                                {item.notebook?.displayName && (
-                                    <div className="text-sm text-muted-foreground">{item.notebook.displayName}</div>
+                    </p>
+                    <div className="flex gap-2">
+                        <div className="relative flex-1">
+                            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                            <Input
+                                className="pl-8 font-mono"
+                                placeholder={L(
+                                    "如 SX20260930001 或 RE20260930001-02",
+                                    "e.g. SX20260930001 / RE20260930001-02",
                                 )}
-                            </div>
-                            <Button size="icon" variant="ghost" onClick={() => setResult(null)} title={L("关闭", "Close")}>
-                                <X className="h-5 w-5" />
-                            </Button>
+                                value={manualNo}
+                                onChange={(e) => setManualNo(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter") handleScanned(manualNo);
+                                }}
+                            />
                         </div>
-
-                        {item.questionText && (
-                            <p className="text-sm text-muted-foreground line-clamp-3">{item.questionText}</p>
-                        )}
-
-                        {/* ② 关注档 1-5 */}
-                        <div className="flex items-center gap-3 rounded-md border bg-background p-2.5">
-                            <span className="text-sm">{L("关注档（难度）", "Attention (difficulty)")}</span>
-                            <Button
-                                size="icon"
-                                variant="outline"
-                                className="h-7 w-7"
-                                disabled={busy === "attention" || (item.attention ?? 1) <= 1}
-                                onClick={() => handleAttention((item.attention ?? 1) - 1)}
-                            >
-                                <Minus className="h-3.5 w-3.5" />
-                            </Button>
-                            <span className="font-semibold tabular-nums w-6 text-center">{item.attention ?? 1}</span>
-                            <Button
-                                size="icon"
-                                variant="outline"
-                                className="h-7 w-7"
-                                disabled={busy === "attention" || (item.attention ?? 1) >= 5}
-                                onClick={() => handleAttention((item.attention ?? 1) + 1)}
-                            >
-                                <Plus className="h-3.5 w-3.5" />
-                            </Button>
-                            <span className="text-xs text-muted-foreground">
-                                {L("1 容易 → 5 困难", "1 easy → 5 hard")}
-                            </span>
-                        </div>
-
-                        {/* 6 功能 */}
-                        <div className="grid grid-cols-2 gap-2">
-                            <Button variant="outline" onClick={handlePrint}>
-                                <Printer className="mr-1.5 h-4 w-4" />
-                                {L("打印", "Print")}
-                            </Button>
-                            <Button variant="outline" onClick={handleJump}>
-                                <ExternalLink className="mr-1.5 h-4 w-4" />
-                                {L("看原题", "Open")}
-                            </Button>
-                            <Button variant="outline" onClick={handleMastered} disabled={busy === "mastered"}>
-                                <Check className="mr-1.5 h-4 w-4" />
-                                {L("已会", "Mastered")}
-                            </Button>
-                            <Button variant="outline" onClick={handleStartMerge}>
-                                <Combine className="mr-1.5 h-4 w-4" />
-                                {L("合并", "Merge")}
-                            </Button>
-                            <Button
-                                variant="destructive"
-                                className="col-span-2"
-                                onClick={handleDelete}
-                                disabled={busy === "delete"}
-                            >
-                                <Trash2 className="mr-1.5 h-4 w-4" />
-                                {L("删题（进回收箱）", "Delete (to trash)")}
-                            </Button>
-                        </div>
-
-                        {(item.printCount ?? 0) > 0 && (
-                            <div className="text-xs text-muted-foreground">
-                                {L(`已打印 ${item.printCount} 次`, `Printed ${item.printCount}×`)}
-                            </div>
-                        )}
+                        <Button
+                            onClick={() => handleScanned(manualNo)}
+                            disabled={!manualNo.trim() || busy === "lookup"}
+                        >
+                            {L("查", "Go")}
+                        </Button>
                     </div>
-                )}
-
-                <div className="flex items-center gap-2 text-xs text-muted-foreground pt-2">
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    {L(
-                        "扫到的题先查主库，主库没有才去回收箱找；回收箱里的题会用不同底色标出。",
-                        "Lookup checks main first, then trash; items from trash use a different tone.",
+                    {missNo && (
+                        <p className="text-sm text-rose-600">
+                            {L(`没查到这个编码：${missNo}`, `Not found: ${missNo}`)}
+                        </p>
                     )}
+                </div>
+
+                {/* 顺手留个口子：手机上没键盘，翻卷去那一页看更省事 */}
+                <div className="text-center">
+                    <Button variant="ghost" size="sm" onClick={() => router.push("/review-volumes")}>
+                        {L("或者：去复练卷页翻一翻", "Or browse all volumes")}
+                    </Button>
                 </div>
             </div>
         </main>

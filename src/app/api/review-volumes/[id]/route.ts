@@ -61,6 +61,13 @@ export async function GET(_request: Request, ctx: Ctx) {
             },
         });
         if (!volume) return notFound("Review volume not found");
+        /**
+         * 📌 这里**不做归属校验**：`ReviewVolume` 表本身没有 userId
+         *    （卷目前是全局的，见 schema）。早先想着"顺手补一道闸"，
+         *    结果 tsc 直接报 `Property 'userId' does not exist` ——
+         *    这正是"改属性的接口不替调用方做主"的同一类教训：
+         *    **先看模型里有没有这个字段，再决定闸怎么设**。
+         */
         return NextResponse.json({ volume });
     } catch (error) {
         logger.error({ error, id }, "Failed to read review volume");
