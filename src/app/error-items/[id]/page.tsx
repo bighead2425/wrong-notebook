@@ -37,6 +37,7 @@ import { attentionLevelOf, ATTENTION_LEVELS } from "@/lib/attention-level";
 import { GRADE_SEMESTER_OPTIONS as GRADE_SEMESTER_OPTIONS_SHARED } from "@/lib/grade-semester-options";
 import { ReviewOutcomeEditor } from "@/components/review-outcome-editor";
 import { serializeReviewOutcomes, type ReviewOutcomes } from "@/lib/review-outcomes";
+import { dayKey } from "@/lib/calendar-grid";
 
 interface KnowledgeTag {
     id: string;
@@ -361,6 +362,100 @@ export default function ErrorDetailPage() {
             console.error(error);
             alert(t.common?.messages?.updateFailed || 'Update failed');
             fetchItem(item.id);
+        }
+    };
+
+    // ================= 日积月累（2026-10-01 接上，路径 1：从错题来） =================
+
+    /** 库里那一栏对应的条目（按**题号**关联、一题一条；null = 还没送过库） */
+    const [insight, setInsight] = useState<{ id: string; code: string; content: string | null } | null>(null);
+    const [insightInput, setInsightInput] = useState("");
+    const [insightBusy, setInsightBusy] = useState<"ai" | "direct" | null>(null);
+    const dirtyInsight = insightInput !== (insight?.content ?? "");
+
+    useEffect(() => {
+        const no = item?.source;
+        if (!no) {
+            setInsight(null);
+            setInsightInput("");
+            return;
+        }
+        let alive = true;
+        apiClient
+            .get<{ insights: Array<{ id: string; code: string; content: string | null }> }>(
+                `/api/insights?errorItemNo=${encodeURIComponent(no)}`,
+            )
+            .then((res) => {
+                if (!alive) return;
+                const row = res.insights?.[0] ?? null;
+                setInsight(row ? { id: row.id, code: row.code, content: row.content } : null);
+                setInsightInput(row?.content ?? "");
+            })
+            .catch((error) => console.error(error));
+        return () => {
+            alive = false;
+        };
+    }, [item?.id, item?.source]);
+
+    /**
+     * 送进日积月累库（【直送】与【AI 送】共用的最后一步）。
+     * ⚠️ 服务端按**题号**当钥匙：已有就覆盖（编号不变），没有才新建 —— 客户端不需要记编号。
+     */
+    const upsertInsight = async (content: string) => {
+        if (!item?.source) return null;
+        const created = await apiClient.post<{ id: string; code: string; content: string | null }>(
+            "/api/insights",
+            {
+                dateKey: dayKey(new Date()),
+                gradeSemester: item.gradeSemester || null,
+                subject: item.notebook?.subject || null,
+                content,
+                errorItemNo: item.source,
+                source: "question",
+            },
+        );
+        setInsight({ id: created.id, code: created.code, content: created.content });
+        setInsightInput(created.content ?? "");
+        return created;
+    };
+
+    /** 【直送】：不做 AI 分析，把栏里的内容原样送进库 */
+    const directSendInsight = async () => {
+        if (!item || !insightInput.trim()) return;
+        setInsightBusy("direct");
+        try {
+            await upsertInsight(insightInput);
+        } catch (error) {
+            console.error(error);
+            alert(t.common?.messages?.saveFailed || "Save failed");
+        } finally {
+            setInsightBusy(null);
+        }
+    };
+
+    /**
+     * 【AI 送】：把 **题干 + 错因 + 她写的话** 送给 AI（他拍板的第 2 项），
+     * AI 把"她对这道题的理解与看法"理顺成一段话，**用斜体批注追加在原文后面**
+     * （他拍板的第 1 项：保留她的原话，AI 写的用斜体），然后自动送进库。
+     */
+    const aiSendInsight = async () => {
+        if (!item || !insightInput.trim()) return;
+        setInsightBusy("ai");
+        try {
+            const res = await apiClient.post<{ note: string }>("/api/insights/ai", {
+                errorItemNo: item.source,
+                content: insightInput,
+            });
+            // AI 被要求只输出一段正文；这里再把换行收掉，保证斜体不被断开
+            const note = (res.note || "").replace(/\s*\n+\s*/g, " ").trim();
+            const next = `${insightInput.trim()}\n\n*—— AI 批注：${note}*`;
+            setInsightInput(next);
+            await upsertInsight(next);
+        } catch (error) {
+            console.error(error);
+            alert(t.detail?.aiReanalyzeFailed || "AI 分析失败，请重试。");
+        } finally {
+            setInsightBusy(null);
         }
     };
 
@@ -943,27 +1038,77 @@ export default function ErrorDetailPage() {
                             </CardContent>
                         </Card>
 
-                        {/* 【2026-09-30 他要求】**新增「日积月累」栏**，并**挪到「你的笔记/答案」下面**
-                            （先留口子，暂不接数据）。将来的用法（他描述的）：孩子的**深挖纸回录**后，
-                              ① AI 识别出她具体写了什么 ⇒ 进「错误解答原文 / 你的笔记」那一栏；
-                              ② 在这基础上对她这道题与她的分析做总结，形成几句话 ⇒ 进「日积月累」，
-                                 并送往**日积月累库**（那张表还没建，等他定了内容再开发）。
-                            ⚠️ 所以这一栏现在**刻意不做可编辑输入框** —— 假输入框比空栏更误导人：
-                               敲进去的字没地方存。等库定了再接。
-                            📌 与「错因分析」的区别一句话：错因分析=AI 讲这题错在哪；
-                               日积月累=**从这道题攒下的一句人话**（她的收获）。 */}
+                        {/* 【2026-10-01 接上】**「日积月累」栏** —— 从占位变成真功能（他设计答复的路径 1）。
+                            这里的内容就是**日积月累库里那一条**（按题号关联、一题一条）：
+                              · 手动改 ⇒ 点【直送】就送进库（改的是同一条，编号不变）；
+                              · 【AI 送】⇒ 把**题干 + 错因 + 她写的话**送给 AI，AI 把"她对这道题的理解与看法"
+                                理顺成一段话，**用斜体批注追加在原文后面**（她的原话一个字不动 —— 他拍板的），
+                                然后自动送进库。
+                            没送过库时显示"还没送进库"；送过就显示 JL 编号。 */}
                         <Card>
                             <CardHeader>
-                                <div className="flex justify-between items-center">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
                                     <CardTitle>{language === "zh" ? "日积月累" : "Takeaways"}</CardTitle>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        {insight && (
+                                            <span
+                                                className="font-mono text-xs text-muted-foreground"
+                                                title={L("这条在日积月累库里的编号（一题一条，覆盖不变号）", "Its code in the takeaways library")}
+                                            >
+                                                {insight.code}
+                                            </span>
+                                        )}
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            disabled={insightBusy !== null || !insightInput.trim()}
+                                            onClick={aiSendInsight}
+                                            title={L(
+                                                "把题干、错因和她写的话一起送给 AI，AI 把她的理解理顺成一段批注（斜体，追加在原文后）",
+                                                "Let AI polish her takeaway into an italic note",
+                                            )}
+                                        >
+                                            {insightBusy === "ai" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Sparkles className="mr-1 h-4 w-4" />}
+                                            AI 送
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            disabled={insightBusy !== null || !insightInput.trim()}
+                                            onClick={directSendInsight}
+                                            title={L("不做 AI 分析，把栏里的内容原样送进日积月累库", "Send as-is to the takeaways library")}
+                                        >
+                                            {insightBusy === "direct" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}
+                                            直送
+                                        </Button>
+                                    </div>
                                 </div>
                             </CardHeader>
-                            <CardContent>
-                                <div className="rounded-md border border-dashed bg-muted/30 px-4 py-6 text-sm text-muted-foreground">
-                                    {language === "zh"
-                                        ? "还没有内容。等深挖纸回录接上后，AI 会把她这道题的收获总结成几句话放在这里，并归入「日积月累」。"
-                                        : "Nothing yet. Once the deep-dive sheet is scanned back, a few lines summarizing what she learned will appear here."}
-                                </div>
+                            <CardContent className="space-y-2">
+                                <MdEditor
+                                    value={insightInput}
+                                    onChange={setInsightInput}
+                                    placeholder={L(
+                                        "她从这道题里攒下的收获写在这里…（写完点【直送】进库；或点【AI 送】让 AI 帮她理顺）",
+                                        "Write what she learned from this question…",
+                                    )}
+                                    minHeightPx={140}
+                                    dirty={dirtyInsight}
+                                />
+                                <p className="text-[11px] leading-tight text-muted-foreground">
+                                    {insight
+                                        ? L(
+                                              "已送进日积月累库。改完点【直送】覆盖那一条（编号不变）；AI 写的部分是斜体批注，她的原话在前面。",
+                                              "Saved in the library. AI part is the italic note; her own words stay untouched.",
+                                          )
+                                        : L(
+                                              "还没送进日积月累库 —— 点【直送】或【AI 送】就会建一条（一题一条）。",
+                                              "Not in the library yet — press 直送 or AI 送 to create it.",
+                                          )}
+                                </p>
+                                <Link href="/insights" className="inline-block text-xs text-primary hover:underline">
+                                    {L("去日积月累页看全文 / 配图 →", "Open the takeaways page →")}
+                                </Link>
                             </CardContent>
                         </Card>
                     </div>

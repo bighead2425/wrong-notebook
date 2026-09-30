@@ -162,15 +162,20 @@ export function ErrorItemCard({
                                 <span className="text-xs text-muted-foreground">
                                     {format(new Date(item.createdAt), "MM/dd")}
                                 </span>
-                                <Button
-                                    variant="ghost"
-                                    size="icon-sm"
-                                    className="text-muted-foreground hover:text-destructive"
-                                    title={t.common?.delete || "Move to trash"}
-                                    onClick={onTrash}
-                                >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
+                                {/* 【2026-10-01】垃圾桶**只在给了 onTrash 时出现**：
+                                    日积月累页也出这张卡，但在那里点"删错题"人会发懵
+                                    （"我删的是积累还是错题？"）—— 删除回错题本页/扫码页做。 */}
+                                {onTrash && (
+                                    <Button
+                                        variant="ghost"
+                                        size="icon-sm"
+                                        className="text-muted-foreground hover:text-destructive"
+                                        title={t.common?.delete || "Move to trash"}
+                                        onClick={onTrash}
+                                    >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                )}
                             </div>
                         </div>
                     </CardHeader>

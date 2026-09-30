@@ -1,27 +1,20 @@
 "use client";
 
 /**
- * 【2026-10-01 新增】**日积月累页**（`/insights`）。
+ * 【2026-10-01 新增，同日按他的设计答复改】**日积月累页**（`/insights`）。
  *
- * 他定的结构（原话拆解）：
- *   · 两层构成：第一层是**录入与浏览**（左右两栏）；
- *   · 左栏 = 已有的全部条目，每条按 `JLyyyymmddxxx` 编号（yyyymmdd 日期 + 当日流水 001 起）；
- *   · 右栏 = 条目的编辑区，从上到下：
- *       ① 左边「年级/学期」选择框，右边 **9 大学科 + 其他** 共 10 个按钮；
- *       ② 一个能编辑 md 的大编辑框（比错题详情页那个再大一点）；
- *       ③ 一个**拍照**按钮（调终端摄像头），右边一个**方形按钮**：
- *          若这条积累与某道错题有关联 ⇒ 按钮上显示**二维码**（可被终端扫到），
- *          点它进入那道题的错题卡/详情页。
+ * 他定的结构：左右两栏。左栏 = 条目清单（编号 `JLyyyymmddxxx`）+ **筛选**（年级/学期 + 学科多选 + 检索）；
+ * 右栏 = 年级/学期 + 10 个学科按钮 + 大 md 编辑框 + 拍照 + **相关错题的错题卡**（他说"给卡比给二维码直接"）。
  *
- * ── 三处刻意的取舍 ───────────────────────────────────────────────
- *  ① **编号由服务端发**（`JL` + 日期 + 当日流水）：多设备同时建也不会撞号。
- *     但**日期段由本页算好传上去** —— 容器跑在 UTC，服务端自己分"天"会把半夜录的
- *     条目记到前一天（全项目的时区铁律，见 `calendar-grid.ts`）。
- *  ② **配图存 data URL**（与 `ErrorItem.originalImageUrl` 同一套存法），
- *     不新建上传接口、不新增 NAS 目录 —— 少一个"谁能往哪写"的口子。
- *     压缩走现成的 `processImageFile`（>1MB 自动降到 1MB 以内）。
- *  ③ **改动即存**（有改动才出现保存/取消）—— 全项目统一的手感。
- *     切到另一条之前会先看你有没有未保存的改动，有就问一句，不静默丢。
+ * ── 三个实现要点（都来自 2026-10-01 的设计答复）─────────────────────
+ *  ① **图片不在列表里**：存储改正后图片在 `InsightPhoto` 表，选中某条时才单独取
+ *     （列表查询完全不碰它 —— "字典不贴照片"）。
+ *  ② **关联错题用题号**（`errorItemNo`）：题被删了条目还挂着题号；
+ *     活题由接口按题号查回来（回收箱里的题会带 `inTrash` 标记）。
+ *  ③ **错题卡不显示删除**（共享卡片不给 onTrash 就没有那个按钮）：
+ *     在积累页点"删错题"人会发懵 —— 删除回错题本页做。
+ *
+ * 其余（编号由服务端发、data URL 存图、改动即存）见第一版的文件头。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -45,8 +38,9 @@ import { GRADE_SEMESTER_OPTIONS } from '@/lib/grade-semester-options';
 import { SUBJECT_OPTIONS, subjectLabel } from '@/lib/notebook-fields';
 import { cleanMarkdown } from '@/lib/markdown-utils';
 import { dayKey } from '@/lib/calendar-grid';
-import { makeQrDataUrl } from '@/lib/qr';
-import { Camera, House, Plus, QrCode, Save, Search, Trash2, X } from 'lucide-react';
+import { ErrorItemCard } from '@/components/error-item-card';
+import type { ErrorItem } from '@/types/api';
+import { Camera, House, Plus, Save, Search, Trash2, X } from 'lucide-react';
 
 interface InsightRow {
     id: string;
@@ -56,10 +50,15 @@ interface InsightRow {
     gradeSemester: string | null;
     subject: string | null;
     content: string | null;
-    photoUrl: string | null;
-    errorItemId: string | null;
-    errorItem?: { id: string; source: string | null; questionText: string | null } | null;
+    errorItemNo: string | null;
+    source: string | null;
     createdAt: string;
+}
+
+/** 选中的条目单独取详情时，接口额外给的（图片本体 + 活题） */
+interface InsightDetail extends InsightRow {
+    photo: string | null;
+    question: ErrorItem | null;
 }
 
 export default function InsightsPage() {
@@ -67,83 +66,92 @@ export default function InsightsPage() {
     const L = (zh: string, en: string) => (language === 'zh' ? zh : en);
 
     const [rows, setRows] = useState<InsightRow[]>([]);
+    const [questions, setQuestions] = useState<Record<string, ErrorItem>>({});
     const [loading, setLoading] = useState(true);
+
+    // 筛选（他 2026-10-01 定的：年级学期 + 学科多选 + 检索；日期只排先后不筛）
+    const [grade, setGrade] = useState('');
+    const [subjectSet, setSubjectSet] = useState<Set<string>>(new Set());
     const [query, setQuery] = useState('');
 
     const [currentId, setCurrentId] = useState<string | null>(null);
     const current = useMemo(() => rows.find((r) => r.id === currentId) ?? null, [rows, currentId]);
 
-    // 编辑区状态（与"当前条目"解耦：改完点保存才回写列表）
-    const [grade, setGrade] = useState('');
-    const [subject, setSubject] = useState('');
+    // 编辑区状态
+    const [gradeDraft, setGradeDraft] = useState('');
+    const [subjectDraft, setSubjectDraft] = useState('');
     const [content, setContent] = useState('');
-    const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+    const [photo, setPhoto] = useState<string | null>(null);
+    /** 打开这条时**库里的**图片长什么样（脏判断的基准；改了图没保存 ⇒ photo !== loadedPhoto） */
+    const [loadedPhoto, setLoadedPhoto] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
-    const [qrUrl, setQrUrl] = useState<string | null>(null);
     const fileRef = useRef<HTMLInputElement | null>(null);
 
     const dirty =
         !!current &&
-        (grade !== (current.gradeSemester ?? '') ||
-            subject !== (current.subject ?? '') ||
+        (gradeDraft !== (current.gradeSemester ?? '') ||
+            subjectDraft !== (current.subject ?? '') ||
             content !== (current.content ?? '') ||
-            photoUrl !== (current.photoUrl ?? null));
+            photo !== loadedPhoto);
 
-    const fetchList = useCallback(async () => {
-        setLoading(true);
-        try {
-            const res = await apiClient.get<{ insights: InsightRow[] }>('/api/insights');
-            setRows(res.insights || []);
-        } catch (error) {
-            console.error(error);
-        } finally {
-            setLoading(false);
-        }
-    }, []);
+    const fetchList = useCallback(
+        async () => {
+            setLoading(true);
+            try {
+                const qs = new URLSearchParams();
+                if (grade) qs.set('grade', grade);
+                if (subjectSet.size > 0) qs.set('subjects', [...subjectSet].join(','));
+                if (query.trim()) qs.set('q', query.trim());
+                const res = await apiClient.get<{ insights: InsightRow[]; questions: Record<string, ErrorItem> }>(
+                    `/api/insights${qs.toString() ? `?${qs.toString()}` : ''}`,
+                );
+                setRows(res.insights || []);
+                setQuestions(res.questions || {});
+                return res.insights || [];
+            } catch (error) {
+                console.error(error);
+                return [];
+            } finally {
+                setLoading(false);
+            }
+        },
+        [grade, subjectSet, query],
+    );
 
     useEffect(() => {
         fetchList();
     }, [fetchList]);
 
-    /** 把选中条目装进编辑区 */
+    /** 选中某条 ⇒ 单独取详情（**图片在这里才取**，列表不背） */
     useEffect(() => {
         if (!current) return;
-        setGrade(current.gradeSemester ?? '');
-        setSubject(current.subject ?? '');
-        setContent(current.content ?? '');
-        setPhotoUrl(current.photoUrl ?? null);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [current?.id]);
-
-    /** 关联错题的二维码：内容 = **裸题号**（与纸上、扫码页同一个约定，见 lib/qr.ts） */
-    useEffect(() => {
         let alive = true;
-        const src = current?.errorItem?.source;
-        if (!src) {
-            setQrUrl(null);
-            return;
-        }
-        // 二维码内容 = **裸题号**（与纸上、扫码页同一个约定，见 lib/qr.ts）
-        makeQrDataUrl(src, { width: 160 })
-            .then((url) => {
-                if (alive) setQrUrl(url);
+        setLoadedPhoto(null);
+        apiClient
+            .get<InsightDetail>(`/api/insights/${current.id}`)
+            .then((d) => {
+                if (!alive) return;
+                setGradeDraft(d.gradeSemester ?? '');
+                setSubjectDraft(d.subject ?? '');
+                setContent(d.content ?? '');
+                setLoadedPhoto(d.photo ?? null);
+                setPhoto(d.photo ?? null);
             })
-            .catch(() => {
-                if (alive) setQrUrl(null);
-            });
+            .catch((error) => console.error(error));
         return () => {
             alive = false;
         };
-    }, [current?.id, current?.errorItem?.source]);
+    }, [current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
     /** 新建：编号由服务端发（日期段用**本地日期**） */
     const createOne = async () => {
         try {
             const created = await apiClient.post<InsightRow>('/api/insights', {
                 dateKey: dayKey(new Date()),
-                gradeSemester: grade || null,
-                subject: subject || null,
+                gradeSemester: gradeDraft || null,
+                subject: subjectDraft || null,
                 content: '',
+                source: 'page',
             });
             setRows((prev) => [created, ...prev]);
             setCurrentId(created.id);
@@ -167,12 +175,13 @@ export default function InsightsPage() {
         setSaving(true);
         try {
             const updated = await apiClient.patch<InsightRow>(`/api/insights/${current.id}`, {
-                gradeSemester: grade || null,
-                subject: subject || null,
+                gradeSemester: gradeDraft || null,
+                subject: subjectDraft || null,
                 content,
-                photoUrl,
+                photo,
             });
             setRows((prev) => prev.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
+            setLoadedPhoto(photo);
         } catch (error) {
             console.error(error);
             alert(t.common?.messages?.saveFailed || 'Save failed');
@@ -183,10 +192,10 @@ export default function InsightsPage() {
 
     const discard = () => {
         if (!current) return;
-        setGrade(current.gradeSemester ?? '');
-        setSubject(current.subject ?? '');
+        setGradeDraft(current.gradeSemester ?? '');
+        setSubjectDraft(current.subject ?? '');
         setContent(current.content ?? '');
-        setPhotoUrl(current.photoUrl ?? null);
+        setPhoto(loadedPhoto);
     };
 
     const remove = async () => {
@@ -202,27 +211,41 @@ export default function InsightsPage() {
         }
     };
 
-    /** 拍照：就地压缩成 data URL（不新增上传接口，见文件头 ②） */
+    /** 拍照：就地压缩成 data URL（本次会话先存草稿，保存时才进图片表） */
     const onPickPhoto = async (file: File | undefined) => {
         if (!file) return;
         try {
             const dataUrl = await processImageFile(file);
-            setPhotoUrl(dataUrl);
+            setPhoto(dataUrl);
         } catch (error) {
             console.error(error);
             alert(L('这张图读不出来，换一张试试', 'Could not read that image'));
         }
     };
 
+    /** 学科多选：点一下选中（可组合），再点取消 */
+    const toggleSubject = (key: string) => {
+        setSubjectSet((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+        });
+    };
+
     const visible = useMemo(() => {
         const q = query.trim().toLowerCase();
         if (!q) return rows;
         return rows.filter(
-            (r) =>
-                r.code.toLowerCase().includes(q) ||
-                (r.content || '').toLowerCase().includes(q),
+            (r) => r.code.toLowerCase().includes(q) || (r.content || '').toLowerCase().includes(q),
         );
     }, [rows, query]);
+
+    /** 右栏要出的错题卡（关联题号 → 活题；回收箱里的题卡片会带提示） */
+    const linkedQuestion: ErrorItem | null =
+        current?.errorItemNo && questions[current.errorItemNo]
+            ? (questions[current.errorItemNo] as ErrorItem)
+            : null;
 
     return (
         <main className="min-h-screen bg-background">
@@ -249,8 +272,39 @@ export default function InsightsPage() {
 
             <div className="mx-auto w-full max-w-[1400px] px-4 py-4 md:px-8">
                 <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
-                    {/* ===== 左栏：条目清单 ===== */}
+                    {/* ===== 左栏：筛选 + 条目清单 ===== */}
                     <aside className="space-y-2">
+                        {/* 【2026-10-01 他定的】筛选：年级/学期 + 学科**多选**；日期只排先后不筛 */}
+                        <Select value={grade || '__all__'} onValueChange={(v) => setGrade(v === '__all__' ? '' : v)}>
+                            <SelectTrigger className="h-9 w-[150px] text-sm">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="__all__">{L('全部学期', 'All terms')}</SelectItem>
+                                {GRADE_SEMESTER_OPTIONS.map((g) => (
+                                    <SelectItem key={g} value={g}>
+                                        {g}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        <div className="flex flex-wrap gap-1">
+                            {SUBJECT_OPTIONS.map((s) => {
+                                const on = subjectSet.has(s.key);
+                                return (
+                                    <Button
+                                        key={s.key}
+                                        type="button"
+                                        size="sm"
+                                        variant={on ? 'secondary' : 'outline'}
+                                        className={`h-7 px-2 text-xs ${on ? 'bg-zinc-300 text-zinc-900 hover:bg-zinc-300/90' : ''}`}
+                                        onClick={() => toggleSubject(s.key)}
+                                    >
+                                        {s.label}
+                                    </Button>
+                                );
+                            })}
+                        </div>
                         <div className="relative">
                             <Search className="absolute left-2 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
                             <Input
@@ -261,7 +315,7 @@ export default function InsightsPage() {
                             />
                         </div>
 
-                        <div className="max-h-[70vh] space-y-1.5 overflow-y-auto rounded-md border p-2">
+                        <div className="max-h-[62vh] space-y-1.5 overflow-y-auto rounded-md border p-2">
                             {loading && (
                                 <p className="px-2 py-6 text-center text-sm text-muted-foreground">
                                     {t.common?.loading || 'Loading…'}
@@ -269,7 +323,7 @@ export default function InsightsPage() {
                             )}
                             {!loading && visible.length === 0 && (
                                 <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-                                    {L('还没有条目。点右上角「新建一条」开始。', 'Nothing yet — press New to start.')}
+                                    {L('没有符合条件的条目。点右上角「新建一条」开始。', 'Nothing here — press New to start.')}
                                 </p>
                             )}
                             {visible.map((r) => {
@@ -286,9 +340,9 @@ export default function InsightsPage() {
                                     >
                                         <div className="flex items-center gap-2">
                                             <span className="font-mono text-xs font-semibold">{r.code}</span>
-                                            {r.errorItem?.source && (
+                                            {r.errorItemNo && (
                                                 <Badge variant="outline" className="px-1 py-0 text-[10px]">
-                                                    {L('题', 'Q')} {r.errorItem.source}
+                                                    {L('题', 'Q')} {r.errorItemNo}
                                                 </Badge>
                                             )}
                                         </div>
@@ -323,8 +377,8 @@ export default function InsightsPage() {
                                             {L('年级/学期', 'Grade')}:
                                         </span>
                                         <Select
-                                            value={grade || '__none__'}
-                                            onValueChange={(v) => setGrade(v === '__none__' ? '' : v)}
+                                            value={gradeDraft || '__none__'}
+                                            onValueChange={(v) => setGradeDraft(v === '__none__' ? '' : v)}
                                         >
                                             <SelectTrigger className="h-8 w-[150px]">
                                                 <SelectValue />
@@ -338,9 +392,8 @@ export default function InsightsPage() {
                                                         {g}
                                                     </SelectItem>
                                                 ))}
-                                                {/* 旧值不在清单里也留着（与错题详情页同一条规矩） */}
-                                                {grade && !GRADE_SEMESTER_OPTIONS.includes(grade) && (
-                                                    <SelectItem value={grade}>{grade}（原值）</SelectItem>
+                                                {gradeDraft && !GRADE_SEMESTER_OPTIONS.includes(gradeDraft) && (
+                                                    <SelectItem value={gradeDraft}>{gradeDraft}（原值）</SelectItem>
                                                 )}
                                             </SelectContent>
                                         </Select>
@@ -352,9 +405,9 @@ export default function InsightsPage() {
                                                 key={s.key}
                                                 type="button"
                                                 size="sm"
-                                                variant={subject === s.key ? 'secondary' : 'outline'}
-                                                className={`h-7 px-2 text-xs ${subject === s.key ? 'bg-zinc-300 text-zinc-900 hover:bg-zinc-300/90' : ''}`}
-                                                onClick={() => setSubject(subject === s.key ? '' : s.key)}
+                                                variant={subjectDraft === s.key ? 'secondary' : 'outline'}
+                                                className={`h-7 px-2 text-xs ${subjectDraft === s.key ? 'bg-zinc-300 text-zinc-900 hover:bg-zinc-300/90' : ''}`}
+                                                onClick={() => setSubjectDraft(subjectDraft === s.key ? '' : s.key)}
                                             >
                                                 {s.label}
                                             </Button>
@@ -371,7 +424,7 @@ export default function InsightsPage() {
                                     dirty={dirty}
                                 />
 
-                                {/* ③ 拍照 + 关联错题的二维码按钮 */}
+                                {/* ③ 拍照 + 删除 */}
                                 <div className="flex flex-wrap items-center gap-3">
                                     <input
                                         ref={fileRef}
@@ -389,61 +442,22 @@ export default function InsightsPage() {
                                         {L('拍照', 'Photo')}
                                     </Button>
 
-                                    {photoUrl && (
+                                    {photo && (
                                         <span className="flex items-center gap-2">
                                             {/* eslint-disable-next-line @next/next/no-img-element -- 存的是 dataURL，next/image 用不上 */}
-                                            <img
-                                                src={photoUrl}
-                                                alt=""
-                                                className="h-14 w-14 rounded border object-cover"
-                                            />
+                                            <img src={photo} alt="" className="h-14 w-14 rounded border object-cover" />
                                             <button
                                                 type="button"
                                                 className="text-xs text-muted-foreground hover:text-destructive"
-                                                onClick={() => setPhotoUrl(null)}
+                                                onClick={() => setPhoto(null)}
                                             >
                                                 {L('去掉这张图', 'Remove photo')}
                                             </button>
                                         </span>
                                     )}
 
-                                    {/* 方形按钮：有关联错题 ⇒ 显示二维码（可被终端扫到），点它去那道题 */}
-                                    {current.errorItem?.source ? (
-                                        <Link
-                                            href={`/error-items/${current.errorItem.id}`}
-                                            title={L(
-                                                `关联的错题：${current.errorItem.source}（二维码内容就是题号，终端可直接扫）`,
-                                                `Linked question ${current.errorItem.source}`,
-                                            )}
-                                            className="flex h-[54px] w-[54px] shrink-0 items-center justify-center rounded-md border bg-white p-1 hover:border-primary"
-                                        >
-                                            {qrUrl ? (
-                                                /* eslint-disable-next-line @next/next/no-img-element -- 同上：dataURL */
-                                                <img src={qrUrl} alt="" className="h-full w-full" />
-                                            ) : (
-                                                <QrCode className="h-5 w-5 text-muted-foreground" />
-                                            )}
-                                        </Link>
-                                    ) : (
-                                        <span
-                                            className="flex h-[54px] w-[54px] shrink-0 items-center justify-center rounded-md border border-dashed text-muted-foreground"
-                                            title={L(
-                                                '这条积累还没有关联错题（将来自动从深挖纸回录里生成）',
-                                                'No linked question yet',
-                                            )}
-                                        >
-                                            <QrCode className="h-5 w-5 opacity-40" />
-                                        </span>
-                                    )}
-
-                                    {current.errorItem?.source && (
-                                        <span className="text-xs text-muted-foreground">
-                                            {L('关联题号', 'Question')}:{' '}
-                                            <span className="font-mono">{current.errorItem.source}</span>
-                                        </span>
-                                    )}
-
                                     <span className="flex-1" />
+
                                     <Button
                                         variant="ghost"
                                         size="sm"
@@ -453,6 +467,34 @@ export default function InsightsPage() {
                                         <Trash2 className="mr-1.5 h-4 w-4" />
                                         {L('删除', 'Delete')}
                                     </Button>
+                                </div>
+
+                                {/* ③' 相关错题的**错题卡** —— 与错题本页同一份组件。
+                                    ⚠️ 故意**不给 onTrash**（共享卡片因此不出垃圾桶）：
+                                    在积累页点"删错题"人会发懵；轻操作照常，删除回错题本页做。 */}
+                                <div>
+                                    <div className="mb-2 text-sm font-medium">
+                                        {L('相关错题', 'Linked question')}
+                                        {current.errorItemNo && (
+                                            <span className="ml-2 font-mono text-xs text-muted-foreground">
+                                                {current.errorItemNo}
+                                            </span>
+                                        )}
+                                    </div>
+                                    {linkedQuestion ? (
+                                        <div className="max-w-[520px]">
+                                            <ErrorItemCard item={linkedQuestion} />
+                                        </div>
+                                    ) : (
+                                        <div className="rounded-md border border-dashed px-4 py-5 text-sm text-muted-foreground">
+                                            {current.errorItemNo
+                                                ? L(
+                                                      `按题号 ${current.errorItemNo} 没找到活题（可能已彻底删除）`,
+                                                      `Question ${current.errorItemNo} not found`,
+                                                  )
+                                                : L('这条积累还没有关联错题。', 'No linked question yet.')}
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* 保存 / 取消（有改动才出现 —— 全项目统一手感） */}

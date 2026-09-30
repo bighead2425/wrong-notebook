@@ -204,8 +204,9 @@ model ErrorItem {
   stateChangeLogs StateChangeLog[]  // 状态变更日志（R15）
   /// 【T2/T3 2026-09-28】这道题被编进过哪些卷（可空关系：题删了卷里那一行仍在，只是断了链）
   volumeItems     ReviewVolumeItem[]
-  /// 【2026-10-01】这道题"运出来"的日积月累条目（题被彻底删掉时条目保留、只把链断掉）
-  insights        Insight[]
+  /// 【2026-10-01 改】日积月累与题的关联**不再走外键**，改存**题号**（`Insight.errorItemNo`）：
+  /// 好处是"题被彻底删掉，积累条目还挂着题号"（去回收箱都能找回、导出 Obsidian 双链也认它），
+  /// 坏处是没有级联 —— 但这正是要的效果（题没了话还在）。
 
   @@index([notebookId])
   @@index([deletedAt])
@@ -515,18 +516,60 @@ model Insight {
   subject       String?
   /// 正文（md 源）
   content       String?
-  /// 配图（data URL —— 与题图同一套存法，见 ErrorItem.originalImageUrl）
-  photoUrl      String?
 
-  /// 这条积累是从哪道错题运出来的（可空：也可以自己凭空记一条）
+  /// 【2026-10-01 起，这是**正钥匙**】相关错题的**题号**（如 SX20260930001），不是内部 id。
+  /// 存题号的两个理由：① 扫码/回录链路里手里只有题号，"按题号反查"才能做到
+  ///    **送两次不重复建**（见下面 `@@unique([userId, errorItemNo])`）；② 将来导出成
+  ///    Obsidian 双链，双链认的也是题号。题被删了这条积累**留着**
+  ///    （题号还在，原题去回收箱也能找回）。
+  ///
+  /// ⚠️ **唯一索引为什么写成 `[userId, errorItemNo]` 而不是只写题号**：
+  ///    SQLite（与 SQL 标准一致）在唯一索引里**把 NULL 当成互不相同的值** ——
+  ///    所以"没关联错题的条目"（errorItemNo 为 NULL）可以有任意多条，
+  ///    而"关联了某道题的条目"一人只能有一条。**正是要的效果，不需要部分索引。**
+  ///    （一开始我写成了 SQLite 特有的 `WHERE errorItemNo IS NOT NULL` 部分索引，
+  ///     那样既跨不了库、又因为 schema 里表达不出来而会被下次 migrate 当成多余索引删掉 —— 已改。）
+  ///    另外必须带 userId：只按题号唯一的话，两个用户录到同一题号会互相撞。
+  errorItemNo String?
+
+  /// 这条从哪来的：question（错题送）/ page（日积月累页建）/ external（外部送，留口子）
+  source String?
+
+  /// ⚠️【2026-10-01 起弃用·保留列】原来存错题内部 id + 图片 data URL。
+  /// 弃用原因见迁移 20261001200000：按学期/题号检索时被迫把图片一起搬进内存（"字典每页贴照片"）。
+  /// 图片已搬到 `InsightPhoto`；关联改用 `errorItemNo`（题号）。老数据已回填，新代码不再写这两列。
   errorItemId String?
-  errorItem   ErrorItem? @relation(fields: [errorItemId], references: [id], onDelete: SetNull)
+  photoUrl    String?
+
+  /// 配图（**最多一张**，本体在 `InsightPhoto` 表，主表查询完全不碰它）
+  photo InsightPhoto?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([userId, code])
   @@unique([userId, dateKey, seq])
+  /// 一题一条（他定的规则）：关联了某道题的积累条目，同一人只能有一条 ⇒ 送两次是覆盖不是新建。
+  /// 没关联错题的（errorItemNo 为 NULL）不受限，可以随便建 —— 理由见 errorItemNo 的注释。
+  @@unique([userId, errorItemNo])
   @@index([userId, createdAt])
   @@index([errorItemId])
+}
+
+/// 【2026-10-01】日积月累的**配图**（一张积累最多一张图，他定的规则）。
+///
+/// 为什么单独一张表：正文是几 KB 的文字，图片是几百 KB 的 data URL ——
+/// 挤在同一行里，**每次列表查询都被迫把所有照片一起搬进内存**
+/// （"字典每一页都贴了照片，只想查一个词也得整页翻"）。
+/// 分表之后主表查询完全不碰它，"加一条"和"加一万条"手感一样。
+/// 将来若导出到 Obsidian（图片要落成文件），只改这一处的读写。
+model InsightPhoto {
+  id        String   @id @default(cuid())
+  insightId String
+  insight   Insight  @relation(fields: [insightId], references: [id], onDelete: Cascade)
+  /// 图片本体（data URL）
+  data      String
+  createdAt DateTime @default(now())
+
+  @@unique([insightId])
 }
