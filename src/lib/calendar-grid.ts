@@ -36,6 +36,22 @@ export function addDays(key: string, delta: number): string {
     return dayKey(d);
 }
 
+/**
+ * 加减**月**（返回那个月的 1 号）。
+ *
+ * 用途：日历至少要画到"今天往前一年"，否则一旦记录都集中在本月，
+ * 整个日历就只有一个月 —— 滚轮和手指拖动都"没东西可滚"，
+ * 他也跨不了月去选日期（2026-09-30 他实测报的 bug 1）。
+ * 只取月份、固定落在 1 号：这样不会有"3 月 31 日往前一个月 = 2 月 31 日"那种溢出。
+ */
+export function addMonths(key: string, delta: number): string {
+    const d = parseDayKey(key);
+    // 先落到 1 号再加月份：绕开"月末 + 月"的溢出（JS 的 Date 会自动滚到下个月）
+    d.setDate(1);
+    d.setMonth(d.getMonth() + delta);
+    return dayKey(d);
+}
+
 /** 本地某天的 `[00:00, 次日00:00)` 转成 ISO 时刻（给服务端做精确比较用） */
 export function dayBoundsISO(key: string): { start: string; end: string } {
     const start = parseDayKey(key);

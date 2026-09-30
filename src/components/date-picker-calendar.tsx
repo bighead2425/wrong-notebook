@@ -21,6 +21,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+    addMonths,
     buildMonths,
     dayKey,
     inDayRange,
@@ -34,6 +35,15 @@ const GREEN = '#4caf50';
 const BLUE = '#3b82f6';
 const LIGHT_BLUE = '#dbeafe';
 const TODAY = '#d9480f';
+
+/**
+ * 【2026-09-30 修 bug 1】**日历至少要画到今天往前一年**。
+ *
+ * 原来只画 min(记录最早)..max(记录最晚, 今天) —— 记录都集中在本月时，
+ * 整个日历只有一个月：**没东西可滚**（滚轮于是滚了背后的列表），也就跨不了月选日期。
+ * 现在固定向前铺 12 个月，记录更早的话再往前延伸。
+ */
+const MONTHS_BACK = 12;
 
 type Selection = { points: string[]; range: { from: string; to: string } | null };
 
@@ -68,13 +78,60 @@ export function DatePickerCalendar({
     const rangeStartRef = useRef<{ x: number; y: number } | null>(null);
 
     const todayKey = useMemo(() => dayKey(new Date()), []);
-    /** 今天必须始终在日历里（哪怕数据都在别的月份） */
+    /**
+     * 日历画哪一段：
+     *   · 下界 = min(最早有记录的那天, **今天往前 12 个月**) —— 保证永远有得滚、跨得了月
+     *   · 上界 = max(最晚有记录的那天, 今天)
+     */
     const { from, to } = useMemo(() => {
-        const lo = [minKey || todayKey, todayKey].sort()[0];
+        const lo = [minKey || todayKey, addMonths(todayKey, -MONTHS_BACK), todayKey].sort()[0];
         const hi = [maxKey || todayKey, todayKey].sort().slice(-1)[0];
         return { from: lo, to: hi };
     }, [minKey, maxKey, todayKey]);
     const months = useMemo(() => buildMonths(from, to), [from, to]);
+
+    /**
+     * 【2026-09-30 修 bug 1】锁住背后的页面滚动。
+     *
+     * 他实测："滚轮滚的是后面错题卡的滚动条，日历里的日期不上下动。"
+     * 根因有两层：① 日历本身没得滚（只有一个月，见 MONTHS_BACK）；
+     * ② 打开日历时**没有锁背后的页面** —— 滚轮没被日历吃掉就落到页面上。
+     * 两层都要修：这里锁页面，上面那层给足月份。
+     */
+    useEffect(() => {
+        const html = document.documentElement;
+        const prevHtml = html.style.overflow;
+        const prevBody = document.body.style.overflow;
+        html.style.overflow = 'hidden';
+        document.body.style.overflow = 'hidden';
+        return () => {
+            html.style.overflow = prevHtml;
+            document.body.style.overflow = prevBody;
+        };
+    }, []);
+
+    /**
+     * 【2026-09-30 修 bug 1】打开时**直接滚到该看的位置**。
+     * 现在上面铺了一年的月份，不滚过去的话他会看到"一年前的那个月"。
+     * 优先定位到：① 已选的第一个日子（或区间起点）→ ② 今天。
+     */
+    useEffect(() => {
+        const sc = scrollRef.current;
+        if (!sc) return;
+        const target =
+            selection.range?.from ?? selection.points[0] ?? todayKey;
+        // 等一帧：月份列表刚挂上，尺寸还没量出来
+        const raf = requestAnimationFrame(() => {
+            const el = sc.querySelector<HTMLElement>(`[data-day="${target}"]`);
+            if (!el) return;
+            // 用 offsetTop 自己算（容器是 relative ⇒ offsetParent 就是它），
+            // 不用 scrollIntoView：后者会连带滚动外层祖先，容易把背后的页面也带跑。
+            sc.scrollTop = Math.max(0, el.offsetTop - sc.clientHeight / 2 + el.offsetHeight / 2);
+        });
+        return () => cancelAnimationFrame(raf);
+        // 只在打开时定位一次（on mount）—— 之后用户自己滚，别跟他抢
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const hasRecords = useCallback((key: string) => (counts[key] ?? 0) > 0, [counts]);
 
@@ -192,10 +249,13 @@ export function DatePickerCalendar({
                     ))}
                 </div>
 
-                {/* 月历本体：上下滚动（手机拖动 / 电脑滚轮） */}
+                {/* 月历本体：**自己的滚动条**（手机拖动 / 电脑滚轮）。
+                    【2026-09-30 修 bug 1】`h-[62vh]` 固定高（不再 max-h）+ `relative`：
+                      · 固定高 ⇒ 即使只有一个月，这个盒子也照样吃掉滚轮，不会漏到背后的列表；
+                      · relative ⇒ 里面的日期按钮 offsetTop 相对本容器，定位"滚到今天"才准。 */}
                 <div
                     ref={scrollRef}
-                    className="max-h-[62vh] overflow-y-auto overscroll-contain px-3 pb-2 touch-pan-y"
+                    className="relative h-[62vh] overflow-y-auto overscroll-contain px-3 pb-2 touch-pan-y"
                 >
                     {cells.map(({ month, flat }) => (
                         <div key={month.title} className="mb-3">

@@ -395,18 +395,25 @@ export function ErrorList({ notebookId, subjectName, notebookInfo, onCountChange
     }, [page, search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionSelection, datePoints, dateRange]);
 
     /**
-     * 当前筛选条件 → 查询参数（**一处实现，三处共用**：列表 / 导出打印 / 多选全选）。
+     * 当前筛选条件 → 查询参数（**一处实现**：列表 / 导出打印 / 跨页全选 / 日历共用）。
      * 各写一份的话，迟早在某个条件上分叉 —— 那就会出现
      * "列表里筛出 20 道、全选却只选中 18 道"这种最难查的不一致。
+     *
+     * @param opts.withoutDates 【2026-09-30 修 bug 用】**不要把"日期筛选"带上**。
+     *   日历里"哪些天录过错题"（浅粉底）必须问的是"**这本里所有录过的日子**"，
+     *   不能带着"我当前选了哪几天"去问 —— 带着问就是**自己筛自己**，
+     *   结果只剩已选的那几天还有粉色，其余的日子全变白且点不动。
+     *   （他实测报的就是这个：确认后重新打开日历，只剩 19/26 是绿的、别的粉色没了；
+     *    切到"近一周"再回来粉色又回来了 —— 因为那时参数里没有日期条件了。）
      */
-    function buildFilterParams(): URLSearchParams {
+    function buildFilterParams(opts: { withoutDates?: boolean } = {}): URLSearchParams {
         const params = new URLSearchParams();
         if (notebookId) params.append("notebookId", notebookId);
         if (search) params.append("query", search);
         if (masteryFilter !== "all") {
             params.append("mastery", masteryFilter === "mastered" ? "1" : "0");
         }
-        if (timeFilter !== "all") {
+        if (timeFilter !== "all" && !opts.withoutDates) {
             params.append("timeRange", timeFilter);
             /**
              * 【2026-09-30】「其他日期」：**传绝对时刻，不传"日子"**。
@@ -482,7 +489,8 @@ export function ErrorList({ notebookId, subjectName, notebookInfo, onCountChange
     const openCalendar = async () => {
         setCalendarOpen(true);
         try {
-            const params = buildFilterParams();
+            // ⚠️ **不带日期条件**去问"哪些天有记录" —— 否则等于自己筛自己（见 buildFilterParams 注释）
+            const params = buildFilterParams({ withoutDates: true });
             params.set("mode", "dates");
             const res = await apiClient.get<{ stamps: string[] }>(`/api/error-items/list?${params.toString()}`);
             const stamps = res.stamps || [];

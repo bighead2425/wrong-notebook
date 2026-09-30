@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     addDays,
+    addMonths,
     buildMonths,
     countByDay,
     dayBoundsISO,
@@ -119,5 +120,38 @@ describe('日历 · 按天汇总录入量', () => {
     it('ISO 字符串 / 脏值：脏值直接跳过，不抛', () => {
         const iso = new Date(2026, 8, 30, 9, 0).toISOString();
         expect(countByDay([iso, 'not-a-date'])).toEqual({ '2026-09-30': 1 });
+    });
+});
+
+/**
+ * 【2026-09-30 修 bug 1】日历跨月：`addMonths` + "至少画到今天往前一年"。
+ *
+ * 他实测报的：日历只有当前一个月，滚轮滚的是背后列表，跨不了月选日期。
+ * 根因是"画哪一段"只按**记录的数据范围**算 ⇒ 记录都集中在本月时整个日历就一个月。
+ */
+describe('日历 · 跨月窗口（addMonths）', () => {
+    it('加减月份，固定落在 1 号（只取"哪个月"，不关心日号）', () => {
+        expect(addMonths('2026-09-30', 0)).toBe('2026-09-01');
+        expect(addMonths('2026-09-30', -1)).toBe('2026-08-01');
+        expect(addMonths('2026-09-30', 1)).toBe('2026-10-01');
+    });
+
+    it('跨年也对', () => {
+        expect(addMonths('2026-01-15', -1)).toBe('2025-12-01');
+        expect(addMonths('2026-12-31', 1)).toBe('2027-01-01');
+    });
+
+    it('★ 月末不溢出：3-31 往前一个月是 2-01，不是"3 月 3 日"那种滚出去的结果', () => {
+        // JS 的 Date 把"2 月 31 日"自动滚成 3 月 3 日 —— 正是要先落到 1 号的原因
+        expect(addMonths('2026-03-31', -1)).toBe('2026-02-01');
+        expect(addMonths('2026-05-31', -3)).toBe('2026-02-01');
+    });
+
+    it('画出来的月份数 = 从哪个到哪个（今天往前一年 + 今天 ⇒ 13 个月）', () => {
+        const today = '2026-09-30';
+        const months = buildMonths(addMonths(today, -12), today);
+        expect(months).toHaveLength(13);
+        expect(months[0].title).toBe('2025年9月');
+        expect(months[12].title).toBe('2026年9月');
     });
 });
