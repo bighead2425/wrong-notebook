@@ -96,6 +96,12 @@ export interface ErrorItem {
 
     // 状态字段（5.3 单一事实来源）
     printCount?: number;
+    /**
+     * 【2026-10-01】「深挖了还没印」提醒的**手动按掉**标记。
+     * 提醒条件（类型=deep 且 printCount=0 且 本标记为假）由 `lib/manage-type.ts` 的
+     * `needsDeepPrintNudge()` 一处判定；类型被改动时服务端会把它复位。
+     */
+    deepNudgeDismissed?: boolean;
     /** 【2026-09-30】复练纸印刷次数（印一次卷，卷内每道题 +1）—— 与 printCount 分开记 */
     reviewPrintCount?: number;
     attention?: number;

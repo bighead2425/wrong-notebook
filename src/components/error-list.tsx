@@ -23,11 +23,13 @@ import { KnowledgeFilter } from "@/components/knowledge-filter";
 import { ErrorItem, PaginatedResponse } from "@/types/api";
 import { apiClient } from "@/lib/api-client";
 import {
+    DEEP_NUDGE_COLOR,
     MANAGE_TYPE_LABEL,
     MANAGE_TYPE_UNDECIDED,
     cycleManageType,
     getManageTypeLabel,
     manageTypeScreenColor,
+    needsDeepPrintNudge,
 } from "@/lib/manage-type";
 import { cleanMarkdown } from "@/lib/markdown-utils";
 import { Pagination } from "@/components/ui/pagination";
@@ -168,6 +170,17 @@ export function ErrorList({ notebookId, subjectName, notebookInfo, onCountChange
         e.stopPropagation();
         const next = cycleManageType(item.manageType);
         patchItemFields(item.id, { manageType: next }, { manageType: next });
+    };
+
+    /**
+     * 【2026-10-01 他要求】卡片左下角那个**打印机图标**：
+     * 点了 = 把**这一道题**送进「深挖纸」编辑界面（`mode=deep` + `ids=<这一道>`）。
+     * 走的就是扫码/多选导出那条单题路径，不新造入口。
+     */
+    const openDeepDivePrint = (id: string, e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        router.push(`/print-preview?ids=${encodeURIComponent(id)}&mode=deep`);
     };
 
     /**
@@ -680,6 +693,8 @@ export function ErrorList({ notebookId, subjectName, notebookInfo, onCountChange
 
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {filteredItems.map((item) => {
+                    // 【2026-10-01】"深挖了还没印"要不要提醒（卡片图标上色）—— 判定只有一处
+                    const nudge = needsDeepPrintNudge(item);
                     // 优先使用 tags 关联，回退到 knowledgePoints
                     let tags: string[] = [];
                     if (item.tags && item.tags.length > 0) {
@@ -838,12 +853,29 @@ export function ErrorList({ notebookId, subjectName, notebookInfo, onCountChange
                             >
                                 {getManageTypeLabel(item.manageType)}
                             </button>
-                            {/* 【2026-09-30】左下角：两个打印次数（暗红 | 深绿） */}
-                            <span
-                                className="absolute bottom-2 left-3 text-[11px] pointer-events-none"
-                                title={`深挖纸打印次数 ${item.printCount ?? 0} ｜ 复练纸印刷次数 ${item.reviewPrintCount ?? 0}`}
-                            >
-                                <PrintCounts deep={item.printCount} review={item.reviewPrintCount} compact />
+                            {/* 【2026-10-01 他要求】左下角：
+                                最左边一个**打印机图标**（点它 = 把这一道送进深挖纸编辑界面），
+                                接着是两个打印次数。
+                                图标**上色**表示"这是深挖题、但一次深挖纸都没印过"（判定见 lib/manage-type
+                                的 `needsDeepPrintNudge`，与详情页那个黄底计数共用同一个函数）。 */}
+                            <span className="absolute bottom-2 left-3 flex items-center gap-1 text-[11px]">
+                                <button
+                                    type="button"
+                                    className={`shrink-0 rounded p-0.5 ${isSelectMode ? "cursor-default" : "cursor-pointer hover:bg-muted"}`}
+                                    style={{ color: nudge ? DEEP_NUDGE_COLOR : undefined }}
+                                    title={nudge
+                                        ? L("这是深挖题、还没印过 —— 点这里去印深挖纸", "Deep-dive item, not printed yet — click to print")
+                                        : L("打印这道题的深挖纸", "Print the deep-dive sheet for this item")}
+                                    onClick={(e) => openDeepDivePrint(item.id, e)}
+                                >
+                                    <Printer className="h-3.5 w-3.5" />
+                                </button>
+                                <span
+                                    className="pointer-events-none"
+                                    title={`深挖纸打印次数 ${item.printCount ?? 0} ｜ 复练纸印刷次数 ${item.reviewPrintCount ?? 0}`}
+                                >
+                                    <PrintCounts deep={item.printCount} review={item.reviewPrintCount} compact />
+                                </span>
                             </span>
                             {/* 【2026-09-30】底端**中间**：四个复习结果圆圈
                                 （前三个 = 第 1/7/21 天计划复习，第四个 = 最近一次），与左右两边同一行。 */}

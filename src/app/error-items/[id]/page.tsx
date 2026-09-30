@@ -19,11 +19,13 @@ import {
     normalizeMistakeCategory,
 } from "@/lib/mistake-category";
 import {
+    DEEP_NUDGE_BG,
     MANAGE_TYPES,
     MANAGE_TYPE_LABEL,
     MANAGE_TYPE_SCREEN_COLOR,
     MANAGE_TYPE_UNDECIDED,
     MANAGE_TYPE_UNDECIDED_COLOR,
+    needsDeepPrintNudge,
 } from "@/lib/manage-type";
 import { UserProfile } from "@/types/api";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
@@ -32,6 +34,7 @@ import { CorrectionEditor, ParsedQuestionWithSubject } from "@/components/correc
 import { ParsedQuestion } from "@/lib/ai";
 import { PrintCounts } from "@/components/print-counts";
 import { attentionLevelOf, ATTENTION_LEVELS } from "@/lib/attention-level";
+import { GRADE_SEMESTER_OPTIONS as GRADE_SEMESTER_OPTIONS_SHARED } from "@/lib/grade-semester-options";
 import { ReviewOutcomeEditor } from "@/components/review-outcome-editor";
 import { serializeReviewOutcomes, type ReviewOutcomes } from "@/lib/review-outcomes";
 
@@ -88,15 +91,10 @@ interface ErrorItemDetail {
  * 【2026-09-29】年级/学期的固定选项 —— 他定的：试题信息里直接下拉，不再自由输入。
  * 覆盖小学（一~六）× 上下学期 + 初中（七~九）+ 高中（高一~高三）× 上下学期。
  * ⚠️ 数据库里已有的旧值如果不在清单里（如"三年级"），会作为「原值」补在最后，不会丢。
+ * 【2026-10-01】清单已抽到 `lib/grade-semester-options.ts`（日积月累页要用同一份，别抄第二份）。
  */
 const GRADE_SEMESTER_OPTIONS: string[] = [
-    ...(["一", "二", "三", "四", "五", "六", "七", "八", "九"].flatMap((g) => [`${g}年级上`, `${g}年级下`])),
-    "高一上",
-    "高一下",
-    "高二上",
-    "高二下",
-    "高三上",
-    "高三下",
+    ...GRADE_SEMESTER_OPTIONS_SHARED,
 ];
 
 export default function ErrorDetailPage() {
@@ -464,6 +462,9 @@ export default function ErrorDetailPage() {
     if (loading) return <div className="p-8 text-center">{t.common.loading}</div>;
     if (!item) return <div className="p-8 text-center">{t.detail.notFound || "Item not found"}</div>;
 
+    /** 【2026-10-01】"深挖了还没印"要不要提醒（题号右边那个计数要不要黄底）—— 判定只有一处 */
+    const deepNudge = needsDeepPrintNudge(item);
+
     // 需求六：AI 重新分析 → 先过审核页，点保存才写回
     if (reanalyzeData) {
         return (
@@ -597,7 +598,24 @@ export default function ErrorDetailPage() {
                                     <CardTitle className="font-mono text-base">
                                         {item.source || t.detail.question}
                                     </CardTitle>
-                                    <span className="text-sm font-medium whitespace-nowrap">
+                                    {/* 【2026-10-01 他要求】「深挖 X | 复练 Y」——
+                                        当"类型=深挖 且 深挖打印次数=0"时**底色转黄**（提醒该去印深挖纸了）；
+                                        **双击它**表示『这次我知道了』，提醒解除（写 deepNudgeDismissed）。
+                                        判定与列表卡片上那个上色的打印机图标**共用同一个函数**。 */}
+                                    <span
+                                        className={`text-sm font-medium whitespace-nowrap rounded px-1.5 py-0.5 ${deepNudge ? "cursor-pointer" : ""}`}
+                                        style={deepNudge ? { background: DEEP_NUDGE_BG } : undefined}
+                                        title={deepNudge
+                                            ? L(
+                                                  "这是深挖题、还没印过深挖纸。去打印一次，或双击这里表示『这次我知道了』。",
+                                                  "Deep-dive item not printed yet. Print it, or double-click here to dismiss.",
+                                              )
+                                            : undefined}
+                                        onDoubleClick={() => {
+                                            if (!deepNudge) return;
+                                            patchMetadata({ deepNudgeDismissed: true });
+                                        }}
+                                    >
                                         <PrintCounts
                                             deep={item.printCount}
                                             review={item.reviewPrintCount}

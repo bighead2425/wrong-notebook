@@ -108,6 +108,11 @@ export async function PUT(
              * 结构不乱、也不留非法值（"right"/"wrong"/null 三态，别的一律当没结果）。
              */
             reviewOutcomes,
+            /**
+             * 【2026-10-01】「深挖了还没印」提醒**手动按掉**（详情页双击那个计数）。
+             * 只接受布尔值；非布尔当没传（改属性接口不替调用方做主）。
+             */
+            deepNudgeDismissed,
         } = body;
 
         const errorItem = await prisma.errorItem.findUnique({
@@ -239,6 +244,12 @@ export async function PUT(
                 updateData.manageType = nextType;
                 // 清成"未定"时来源也一并清空（避免"未定但来源写着手动"这种自相矛盾）
                 updateData.manageTypeSource = nextType ? (fromAi ? 'ai' : 'manual') : null;
+                /**
+                 * 【2026-10-01】类型一变，把「深挖了还没印」的**按掉标记复位**。
+                 * 理由：按掉表示"这次提醒我知道了"；类型又动过（比如 深挖→复练→深挖）
+                 * 就是新一轮了，该提醒还是要提醒 —— 否则"我按掉过一次"就永久失效。
+                 */
+                updateData.deepNudgeDismissed = false;
                 stateLogs.push({
                     errorItemId: id,
                     field: 'manageType',
@@ -249,6 +260,15 @@ export async function PUT(
                     note: fromAi ? '采纳 AI 建议' : '手动定级',
                 });
             }
+        }
+
+        /**
+         * 【2026-10-01】手动按掉提醒。**放在类型处理之后**：
+         * 若同一次请求里既改了类型又传了这个标记，以调用方显式给的为准
+         * （列表页"点一下变深挖"只传类型 ⇒ 走上面的复位；详情页双击只传本标记 ⇒ 走这里）。
+         */
+        if (typeof deepNudgeDismissed === 'boolean') {
+            updateData.deepNudgeDismissed = deepNudgeDismissed;
         }
 
         if (notebookId !== undefined) {

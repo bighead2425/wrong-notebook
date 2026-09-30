@@ -15,7 +15,7 @@ import { AnalyzeResponse, Notebook, AppConfig } from "@/types/api";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { processImageFile } from "@/lib/image-utils";
-import { Upload, BookOpen, Tags, LogOut, BarChart3, QrCode, Layers } from "lucide-react";
+import { Upload, BookOpen, Tags, LogOut, BarChart3, QrCode, Layers, Sprout } from "lucide-react";
 import { SettingsDialog } from "@/components/settings-dialog";
 /**
  * 【custom-v24】公告通知按钮按用户要求从首页撤下（功能保留，组件文件不动）。
@@ -469,6 +469,18 @@ function HomeContent() {
                                 >
                                     <Layers className="mr-2 h-4 w-4 shrink-0" />
                                     <span className="truncate">{t.app?.reviewVolumes || '复练卷页'}</span>
+                                </Button>
+                            </Link>
+
+                            {/* 【2026-10-01 他要求】「日积月累」入口，就放在复练卷页旁边。
+                                那一页是"从错题里攒下来的一句话"，条目按 JLyyyymmddxxx 编号。 */}
+                            <Link href="/insights">
+                                <Button
+                                    variant="outline"
+                                    className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
+                                >
+                                    <Sprout className="mr-2 h-4 w-4 shrink-0" />
+                                    <span className="truncate">{t.app?.insights || '日积月累'}</span>
                                 </Button>
                             </Link>
                         </>

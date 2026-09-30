@@ -121,6 +121,49 @@ export function cycleManageType(value: unknown): ManageType | null {
     return MANAGE_TYPE_CYCLE[(idx + 1) % MANAGE_TYPE_CYCLE.length];
 }
 
+/* ============================ 「深挖了还没印」提醒 ============================ */
+
+/**
+ * 【2026-10-01 他要求】**提醒"该印深挖纸了"**。
+ *
+ * 触发条件（三个都成立才提醒）：
+ *   ① 类型 = 深挖（deep）—— 不管是录入时就定成深挖，还是后来从复练升上来的；
+ *   ② **深挖打印次数 = 0**（从没印过深挖纸）；
+ *   ③ 他还没"手动按掉"过这次提醒（`deepNudgeDismissed`）。
+ *
+ * 两种解除途径（都是他定的）：
+ *   A **印过一次** ⇒ 次数变成 1 ⇒ 条件②不成立，自动解除（不用清标记）；
+ *   B **在详情页双击那个计数** ⇒ 写 `deepNudgeDismissed = true`（这次我知道了）。
+ *
+ * ⚠️ `deepNudgeDismissed` 在**类型被改动时复位**（见 api/error-items/[id]）：
+ *    按掉之后类型又变了一次（比如深挖→复练→深挖），说明这是新一轮，
+ *    该提醒还是要提醒 —— 不然"我按掉过一次"就永久失效了。
+ *
+ * 判定放这一处：列表卡片（打印图标要不要上色）与详情页（计数要不要黄底）**共用同一个函数**，
+ * 免得出现"卡片变色了、详情页没变"这种两处打架。
+ */
+export interface DeepNudgeInput {
+    manageType?: unknown;
+    printCount?: number | null;
+    deepNudgeDismissed?: boolean | null;
+}
+
+export function needsDeepPrintNudge(item: DeepNudgeInput): boolean {
+    if (normalizeManageType(item.manageType) !== 'deep') return false;
+    if ((Number(item.printCount) || 0) > 0) return false;
+    return !item.deepNudgeDismissed;
+}
+
+/**
+ * 提醒的**配色**（一处定义，列表卡片与详情页共用）：
+ *   图标 = 琥珀色（在白底上看得见，又不像红色那样像"报错"）
+ *   背景 = 浅黄底（详情页那个计数条）
+ * ⚠️ 与「深挖=暗红」那套**刻意不同**：那个讲的是"这是什么类型"，
+ *    这个讲的是"有件事你还没做" —— 同一屏上两种语义不能用同一个颜色。
+ */
+export const DEEP_NUDGE_COLOR = '#d97706';
+export const DEEP_NUDGE_BG = '#fef3c7';
+
 /* ============================ 来源（落定快照） ============================ */
 
 export type ManageTypeSource = 'default' | 'derived' | 'ai' | 'manual' | 'upgrade';

@@ -10,6 +10,7 @@ import {
     MANAGE_TYPE_DEFAULT,
     MANAGE_TYPE_SCREEN_COLOR,
     MANAGE_TYPES,
+    needsDeepPrintNudge,
     normalizeManageType,
     normalizeManageTypeSource,
     PROMOTE_BOX,
@@ -112,6 +113,13 @@ describe('manage-type · 从错因派生（只建议，不落定）', () => {
     });
 });
 
+describe('manage-type · 屏幕上的红绿只给"深挖/复练"用（未定是灰的）', () => {
+    it('界面取色只认这一处', () => {
+        expect(MANAGE_TYPE_SCREEN_COLOR.deep.toLowerCase()).toBe('#8e2b2b');
+        expect(MANAGE_TYPE_SCREEN_COLOR.review.toLowerCase()).toBe('#1f5c3a');
+    });
+});
+
 describe('manage-type · 卡片右下角点一下的轮转', () => {
     it('★ 他定的圈：深挖 → 复练 → 未定 → 深挖', () => {
         expect(MANAGE_TYPE_CYCLE).toEqual(['deep', 'review', null]);
@@ -124,10 +132,35 @@ describe('manage-type · 卡片右下角点一下的轮转', () => {
         expect(cycleManageType(undefined)).toBe('deep');
         expect(cycleManageType('build')).toBe('deep');
     });
+});
 
-    it('⚠️ 屏幕上的红绿只给"深挖/复练"用（未定是灰的）—— 界面取色只认这一处', () => {
-        expect(MANAGE_TYPE_SCREEN_COLOR.deep.toLowerCase()).toBe('#8e2b2b');
-        expect(MANAGE_TYPE_SCREEN_COLOR.review.toLowerCase()).toBe('#1f5c3a');
+/**
+ * 【2026-10-01】「深挖了还没印」提醒。
+ *
+ * 他定的条件：类型=深挖 且 深挖打印次数=0（不管这个深挖是录入时定的还是从复练升上来的）；
+ * 两种解除：① 印过一次（次数变 1 ⇒ 自动不提醒）② 详情页双击那个计数（写按掉标记）。
+ */
+describe('manage-type · 「深挖了还没印」提醒', () => {
+    it('★ 深挖 + 没印过 + 没按掉过 ⇒ 提醒', () => {
+        expect(needsDeepPrintNudge({ manageType: 'deep', printCount: 0, deepNudgeDismissed: false })).toBe(true);
+        expect(needsDeepPrintNudge({ manageType: 'deep', printCount: null })).toBe(true); // 老数据没这个数
+    });
+
+    it('★ 印过一次（次数 ≥ 1）⇒ 自动解除，不需要清标记', () => {
+        expect(needsDeepPrintNudge({ manageType: 'deep', printCount: 1 })).toBe(false);
+        expect(needsDeepPrintNudge({ manageType: 'deep', printCount: 8 })).toBe(false);
+    });
+
+    it('★ 手动按掉过一次 ⇒ 不再提醒（但类型一变，服务端会把标记复位）', () => {
+        expect(
+            needsDeepPrintNudge({ manageType: 'deep', printCount: 0, deepNudgeDismissed: true }),
+        ).toBe(false);
+    });
+
+    it('不是深挖（复练 / 未定）⇒ 不提醒（未定更不能催她印）', () => {
+        expect(needsDeepPrintNudge({ manageType: 'review', printCount: 0 })).toBe(false);
+        expect(needsDeepPrintNudge({ manageType: null, printCount: 0 })).toBe(false);
+        expect(needsDeepPrintNudge({ printCount: 0 })).toBe(false);
     });
 });
 

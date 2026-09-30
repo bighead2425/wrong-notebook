@@ -31,6 +31,7 @@ model User {
   practiceRecords PracticeRecord[]
   customTags KnowledgeTag[] // User's custom tags
   printBatches PrintBatch[] // 打印批次（一次交付 = 一批）
+  insights   Insight[]      // 【2026-10-01】日积月累条目
 }
 
 // 统一知识点标签表 (支持无限层级)
@@ -167,6 +168,11 @@ model ErrorItem {
   /// 规则只在一处实现：`src/lib/review-outcomes.ts`（计划内做完 ⇒ last 同步成同一结果；
   /// 计划外只动 last，前三个不动）。本轮只显示，录入入口等深挖纸回录链路。
   reviewOutcomes   String?
+  /// 【2026-10-01】「深挖了还没印」提醒**手动按掉**的标记。
+  /// 条件（类型=deep 且 printCount=0）成立且本列为 false 时：卡片左下打印机图标上色、
+  /// 详情页计数黄底。印过一次（printCount>0）自动解除；详情页双击计数置 true。
+  /// ⚠️ **类型被改动时复位**（新一轮就别再沿用上次的"我知道了"）。
+  deepNudgeDismissed Boolean @default(false)
   redoCount        Int       @default(0)  // 复做计次，扫码复做 +1（H1 不闭环 / T7）
   mergeSource      String?               // 合并来源原题号组（#14 / T6）
   deletedAt        DateTime?             // 软删标记，非空=在回收箱（H2 / T2）
@@ -198,6 +204,8 @@ model ErrorItem {
   stateChangeLogs StateChangeLog[]  // 状态变更日志（R15）
   /// 【T2/T3 2026-09-28】这道题被编进过哪些卷（可空关系：题删了卷里那一行仍在，只是断了链）
   volumeItems     ReviewVolumeItem[]
+  /// 【2026-10-01】这道题"运出来"的日积月累条目（题被彻底删掉时条目保留、只把链断掉）
+  insights        Insight[]
 
   @@index([notebookId])
   @@index([deletedAt])
@@ -477,5 +485,48 @@ model ReviewVolumeItem {
   createdAt    DateTime     @default(now())
 
   @@index([volumeId])
+  @@index([errorItemId])
+}
+
+/// 【2026-10-01 新增】**日积月累**（Insight）—— 从这道题攒下来的一句人话。
+///
+/// 与「错题」的区别（他 2026-09-30 的原话）：
+///   错因分析 = AI 讲**这题错在哪**；日积月累 = **从这道题攒下的收获**。
+/// 它是**另一种内容**，所以自立一张表 —— 这也是当初 `manageType` 只有
+/// deep/review 两个值、没有第三档 "积累" 的原因（积累点背后可以没有错题行）。
+///
+/// 编号规则（他定的）：`JL` + `yyyymmdd`（**本地日期**）+ 三位当日流水（001 起），如 `JL20260930001`。
+/// ⚠️ 日期段由**客户端**算好传上来（容器跑在 UTC，服务端自己分"天"会偏 8 小时，
+///    与全项目的时区铁律一致）；服务端只负责"在这个日期段里发下一个流水号"。
+model Insight {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// 完整编号 JLyyyymmddxxx
+  code    String
+  /// 编号里的日期段 `YYYY-MM-DD`（本地日期）
+  dateKey String
+  /// 当日流水号，001 起
+  seq     Int
+
+  gradeSemester String?
+  /// 学科（9 科 + 其他，取值见 lib/notebook-fields.ts 的 SUBJECT_OPTIONS）
+  subject       String?
+  /// 正文（md 源）
+  content       String?
+  /// 配图（data URL —— 与题图同一套存法，见 ErrorItem.originalImageUrl）
+  photoUrl      String?
+
+  /// 这条积累是从哪道错题运出来的（可空：也可以自己凭空记一条）
+  errorItemId String?
+  errorItem   ErrorItem? @relation(fields: [errorItemId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, code])
+  @@unique([userId, dateKey, seq])
+  @@index([userId, createdAt])
   @@index([errorItemId])
 }
