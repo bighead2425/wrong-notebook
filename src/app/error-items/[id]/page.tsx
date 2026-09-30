@@ -10,17 +10,23 @@ import Link from "next/link";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { MdEditor } from "@/components/md-editor";
 import { TagInput } from "@/components/tag-input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiClient } from "@/lib/api-client";
-import { MISTAKE_CATEGORIES, getMistakeCategoryLabel } from "@/lib/mistake-category";
-import { MANAGE_TYPES, MANAGE_TYPE_LABEL, MANAGE_TYPE_UNDECIDED } from "@/lib/manage-type";
+import { MISTAKE_CATEGORY_DESC_ZH, MISTAKE_GROUPS, getMistakeCategoryLabel } from "@/lib/mistake-category";
+import {
+    MANAGE_TYPES,
+    MANAGE_TYPE_LABEL,
+    MANAGE_TYPE_SCREEN_COLOR,
+    MANAGE_TYPE_UNDECIDED,
+    MANAGE_TYPE_UNDECIDED_COLOR,
+} from "@/lib/manage-type";
 import { UserProfile } from "@/types/api";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { NotebookSelector } from "@/components/notebook-selector";
 import { CorrectionEditor, ParsedQuestionWithSubject } from "@/components/correction-editor";
 import { ParsedQuestion } from "@/lib/ai";
 import { PrintCounts } from "@/components/print-counts";
-import { attentionLabel, attentionLevelOf } from "@/lib/attention-level";
+import { attentionLevelOf, ATTENTION_LEVELS } from "@/lib/attention-level";
 
 interface KnowledgeTag {
     id: string;
@@ -703,9 +709,13 @@ export default function ErrorDetailPage() {
                                             </Select>
                                         </div>
 
-                                        {/* 错题等级：改即落定（manual），服务端留痕 */}
+                                        {/* 【2026-09-30 他要求】「错题等级」改叫「**复习类型**」，
+                                            选项顺序 = 深挖 → 复练 → 未定（未定挪到最后），
+                                            并且**深挖暗红、复练深绿**（色值仍取自 MANAGE_TYPE_SCREEN_COLOR，
+                                            与列表卡片右下角那个小标签同一处取色）。
+                                            改即落定（manual），服务端留痕。 */}
                                         <div className="flex justify-between items-center gap-3">
-                                            <span className="text-muted-foreground whitespace-nowrap">错题等级:</span>
+                                            <span className="text-muted-foreground whitespace-nowrap">复习类型:</span>
                                             <Select
                                                 value={item.manageType || "__undecided__"}
                                                 onValueChange={(v) =>
@@ -716,17 +726,29 @@ export default function ErrorDetailPage() {
                                                     <SelectValue />
                                                 </SelectTrigger>
                                                 <SelectContent>
-                                                    <SelectItem value="__undecided__">{MANAGE_TYPE_UNDECIDED}</SelectItem>
                                                     {MANAGE_TYPES.map((tp) => (
-                                                        <SelectItem key={tp} value={tp}>
+                                                        <SelectItem
+                                                            key={tp}
+                                                            value={tp}
+                                                            style={{ color: MANAGE_TYPE_SCREEN_COLOR[tp] }}
+                                                            className="font-medium"
+                                                        >
                                                             {MANAGE_TYPE_LABEL[tp]}
                                                         </SelectItem>
                                                     ))}
+                                                    <SelectItem
+                                                        value="__undecided__"
+                                                        style={{ color: MANAGE_TYPE_UNDECIDED_COLOR }}
+                                                    >
+                                                        {MANAGE_TYPE_UNDECIDED}
+                                                    </SelectItem>
                                                 </SelectContent>
                                             </Select>
                                         </div>
 
-                                        {/* 错因：改即存；等级还没落定时服务端会按映射表派生一次（留痕） */}
+                                        {/* 【2026-09-30 换新】错因：**三组八项**（不掌握 / 没做对 / 其他）。
+                                            一题只留一个 —— 多个原因同时存在时按优先级取（顺序见 lib/mistake-category）。
+                                            改即存；复习类型还没落定时服务端会按"组 → 类型"派生一次（留痕）。 */}
                                         <div className="flex justify-between items-center gap-3">
                                             <span className="text-muted-foreground whitespace-nowrap">错因:</span>
                                             <Select
@@ -740,10 +762,28 @@ export default function ErrorDetailPage() {
                                                 </SelectTrigger>
                                                 <SelectContent>
                                                     <SelectItem value="__none__">没打</SelectItem>
-                                                    {MISTAKE_CATEGORIES.map((c) => (
-                                                        <SelectItem key={c} value={c}>
-                                                            {getMistakeCategoryLabel(c)}
-                                                        </SelectItem>
+                                                    {MISTAKE_GROUPS.map((g) => (
+                                                        <SelectGroup key={g.key}>
+                                                            <SelectLabel className="text-xs text-muted-foreground">
+                                                                {g.zh}
+                                                                {/* 组名后面直接写出它派生出的复习类型 —— 他定的规则，
+                                                                    摆在这儿就不用另开文档解释 */}
+                                                                {g.key === "not_mastered"
+                                                                    ? " → 深挖"
+                                                                    : g.key === "not_right"
+                                                                      ? " → 复练"
+                                                                      : " → 先不定"}
+                                                            </SelectLabel>
+                                                            {g.items.map((c) => (
+                                                                <SelectItem
+                                                                    key={c}
+                                                                    value={c}
+                                                                    title={MISTAKE_CATEGORY_DESC_ZH[c]}
+                                                                >
+                                                                    {getMistakeCategoryLabel(c)}
+                                                                </SelectItem>
+                                                            ))}
+                                                        </SelectGroup>
                                                     ))}
                                                 </SelectContent>
                                             </Select>
@@ -756,23 +796,33 @@ export default function ErrorDetailPage() {
                                                 {item.source || (t.common?.notSet || 'Not set')}
                                             </span>
                                         </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-muted-foreground">{t.detail.printCount}:</span>
-                                            {/* 【2026-09-30】他要求两个次数并排：深挖（暗红）｜复练（深绿） */}
+                                        <div className="flex justify-between items-center gap-3">
+                                            <span className="text-muted-foreground whitespace-nowrap">{t.detail.printCount}:</span>
+                                            {/* 【2026-09-30 他要求】两个次数并排、用简称：`深挖X | 复练Y`
+                                                （"深挖纸打印次数 8 | 复练纸印刷次数 0"太长了他嫌啰嗦）。
+                                                颜色：深挖暗红、复练深绿。 */}
                                             <span className="font-medium">
-                                                <PrintCounts deep={item.printCount} review={item.reviewPrintCount} />
+                                                <PrintCounts deep={item.printCount} review={item.reviewPrintCount} compact />
                                             </span>
                                         </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-muted-foreground">{t.detail.attention}:</span>
-                                            {/* 【2026-09-30】关注档改叫**等级**，显示成奖牌：🥉🥈🥇💎👑
-                                                （他只要求先改显示；分级规则以后再定） */}
-                                            <span
-                                                className="font-medium"
-                                                title={`${attentionLevelOf(item.attention).zh}（等级 ${item.attention ?? 1}/5）`}
+                                        {/* 【2026-09-30 他要求】等级也给下拉：🥉青铜 … 👑王者，**选中即存** */}
+                                        <div className="flex justify-between items-center gap-3">
+                                            <span className="text-muted-foreground whitespace-nowrap">{t.detail.attention}:</span>
+                                            <Select
+                                                value={String(attentionLevelOf(item.attention).value)}
+                                                onValueChange={(v) => patchMetadata({ attention: Number(v) })}
                                             >
-                                                {attentionLabel(item.attention, language === "zh")}
-                                            </span>
+                                                <SelectTrigger className="w-[160px] h-8">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {ATTENTION_LEVELS.map((lv) => (
+                                                        <SelectItem key={lv.value} value={String(lv.value)}>
+                                                            {lv.medal} {lv.zh}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
                                         </div>
                                     </div>
                                 </div>
@@ -888,34 +938,16 @@ export default function ErrorDetailPage() {
                                     <CardTitle>{t.detail?.mistakeAnalysis || '错因分析'}</CardTitle>
                                 </div>
                             </CardHeader>
-                            {/* 【2026-09-29】整块一直可编辑；**作答状态下拉保留**（它本来就不是 md，
-                                他专门点过名：不能跟着一起去掉） */}
+                            {/* 【2026-09-30 他要求】这一栏**去掉「作答状态」**（那张截图里的下拉），
+                                并且错因已经挪到上面的「试题信息」栏里按三组八项选。
+                                这里只留：错误解答原文 + 错因分析。 */}
                             <CardContent className="space-y-4">
                                 <div className="space-y-4">
-                                        <div className="space-y-2">
-                                            <label className="text-sm text-muted-foreground">{t.editor?.mistakeStatus || '作答状态'}</label>
-                                            <Select
-                                                value={mistakeStatusInput}
-                                                onValueChange={setMistakeStatusInput}
-                                            >
-                                                <SelectTrigger>
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="not_attempted">{t.editor?.mistakeStatuses?.notAttempted || '不会做'}</SelectItem>
-                                                    <SelectItem value="wrong_attempt">{t.editor?.mistakeStatuses?.wrongAttempt || '做错了'}</SelectItem>
-                                                    <SelectItem value="unknown">{t.editor?.mistakeStatuses?.unknown || '未判断'}</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
                                         <div className="space-y-2">
                                             <label className="text-sm text-muted-foreground">{t.editor?.wrongAnswerText || '错误解答原文'}</label>
                                             <MdEditor
                                                 value={wrongAnswerInput}
-                                                onChange={(md) => {
-                                                    setWrongAnswerInput(md);
-                                                    if (md.trim()) setMistakeStatusInput('wrong_attempt');
-                                                }}
+                                                onChange={setWrongAnswerInput}
                                                 minHeightPx={110}
                                                 dirty={dirtyWrongAnswer}
                                             />
@@ -949,6 +981,30 @@ export default function ErrorDetailPage() {
                                                 </Button>
                                             </div>
                                         )}
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        {/* 【2026-09-30 他要求】**新增「日积月累」栏**（先留口子，暂不接数据）。
+                            将来的用法（他描述的）：孩子的**深挖纸回录**后，
+                              ① AI 识别出她具体写了什么 ⇒ 进「错误解答原文 / 你的笔记」那一栏；
+                              ② 在这基础上对她这道题与她的分析做总结，形成几句话 ⇒ 进「日积月累」，
+                                 并送往**日积月累库**（那张表还没建，等他定了内容再开发）。
+                            ⚠️ 所以这一栏现在**刻意不做可编辑输入框** —— 假输入框比空栏更误导人：
+                               敲进去的字没地方存。等库定了再接。
+                            📌 与「错因分析」的区别一句话：错因分析=AI 讲这题错在哪；
+                               日积月累=**从这道题攒下的一句人话**（她的收获）。 */}
+                        <Card>
+                            <CardHeader>
+                                <div className="flex justify-between items-center">
+                                    <CardTitle>{language === "zh" ? "日积月累" : "Takeaways"}</CardTitle>
+                                </div>
+                            </CardHeader>
+                            <CardContent>
+                                <div className="rounded-md border border-dashed bg-muted/30 px-4 py-6 text-sm text-muted-foreground">
+                                    {language === "zh"
+                                        ? "还没有内容。等深挖纸回录接上后，AI 会把她这道题的收获总结成几句话放在这里，并归入「日积月累」。"
+                                        : "Nothing yet. Once the deep-dive sheet is scanned back, a few lines summarizing what she learned will appear here."}
                                 </div>
                             </CardContent>
                         </Card>

@@ -25,6 +25,13 @@ export default function NotebookDetailPage() {
     const [loading, setLoading] = useState(true);
     const [renameDialogOpen, setRenameDialogOpen] = useState(false);
     const [analyzeOpen, setAnalyzeOpen] = useState(false);
+    /**
+     * 【2026-09-30】页头那句「共 XX 道错题，当前选中 YY 道题」的两个数 ——
+     * 由 `ErrorList` 报上来（它才知道"筛选后还剩几道"）：
+     *   total         = 当前筛选后剩多少道
+     *   notebookTotal = 这本一共多少道（不带筛选）
+     */
+    const [counts, setCounts] = useState<{ total: number; notebookTotal: number | null } | null>(null);
 
     useEffect(() => {
         if (params.id) {
@@ -86,7 +93,14 @@ export default function NotebookDetailPage() {
                             </Button>
                         </div>
                         <p className="text-muted-foreground text-sm sm:text-base">
-                            {(t.notebooks?.totalErrors || "Total {count} errors").replace("{count}", (notebook._count?.errorItems || 0).toString())}
+                            {/* 【2026-09-30 他要求】"共 XX 道错题" → "共 XX 道错题，当前选中 YY 道题"。
+                                XX = 整个错题本的总量（不带筛选，服务端算）；YY = 当前筛选后还剩几道。
+                                数据还没回来时退回原来的样子，不闪空。 */}
+                            {counts && counts.notebookTotal !== null
+                                ? (t.notebooks?.totalErrorsSelected || "Total {total} wrong answers · {selected} shown")
+                                    .replace("{total}", counts.notebookTotal.toString())
+                                    .replace("{selected}", counts.total.toString())
+                                : (t.notebooks?.totalErrors || "Total {count} errors").replace("{count}", (notebook._count?.errorItems || 0).toString())}
                         </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -168,6 +182,8 @@ export default function NotebookDetailPage() {
                         gradeTerm: notebook.grade ? `${notebook.grade}${notebook.semester || "上"}` : undefined,
                         subject: notebook.subject || undefined,
                     }}
+                    /* 【2026-09-30】把"筛完还剩几道 / 这本一共几道"报上来，给页头那句话用 */
+                    onCountChange={setCounts}
                 />
 
                 <RenameNotebookDialog

@@ -25,13 +25,20 @@ import { apiClient } from "@/lib/api-client";
 import {
     MANAGE_TYPE_LABEL,
     MANAGE_TYPE_UNDECIDED,
+    cycleManageType,
     getManageTypeLabel,
     manageTypeScreenColor,
 } from "@/lib/manage-type";
 import { cleanMarkdown } from "@/lib/markdown-utils";
 import { Pagination } from "@/components/ui/pagination";
 import { DEFAULT_PAGE_SIZE } from "@/lib/constants/pagination";
-import { getMistakeStatusLabel } from "@/lib/mistake-status";
+import {
+    getMistakeCategoryLabel,
+    normalizeMistakeCategory,
+} from "@/lib/mistake-category";
+import { attentionLevelOf, ATTENTION_LEVELS, cycleAttentionLevel, isAttentionUnfiltered } from "@/lib/attention-level";
+import { AttentionMultiSelect } from "@/components/attention-multi-select";
+import { ReviewDots } from "@/components/review-dots";
 import { PrintCounts } from "@/components/print-counts";
 import { DatePickerCalendar } from "@/components/date-picker-calendar";
 import { countByDay, dayBoundsISO, rangeBoundsISO } from "@/lib/calendar-grid";
@@ -60,6 +67,13 @@ interface ErrorListProps {
      * （复练卷页的筛选就是这两项）。不给也不影响本页任何功能。
      */
     notebookInfo?: { gradeTerm?: string; subject?: string };
+    /**
+     * 【2026-09-30】把两个数报上去，给页面头部那句
+     * 「共 XX 道错题，当前选中 YY 道题」用（那句在错题本页的页头，不在这里）。
+     *   total         = 当前筛选后剩多少道
+     *   notebookTotal = 这本一共多少道（不带筛选；全局列表页没有"这本"⇒ null）
+     */
+    onCountChange?: (counts: { total: number; notebookTotal: number | null }) => void;
 }
 
 type KnowledgeFilterChange = {
@@ -68,7 +82,7 @@ type KnowledgeFilterChange = {
     tag?: string | null;
 };
 
-export function ErrorList({ notebookId, subjectName, notebookInfo }: ErrorListProps = {}) {
+export function ErrorList({ notebookId, subjectName, notebookInfo, onCountChange }: ErrorListProps = {}) {
     const [items, setItems] = useState<ErrorItem[]>([]);
     const [, setLoading] = useState(true);
     const [search, setSearch] = useState("");
@@ -87,8 +101,13 @@ export function ErrorList({ notebookId, subjectName, notebookInfo }: ErrorListPr
     const [manageTypeFilter, setManageTypeFilter] = useState<"all" | "deep" | "review" | "undecided">("all");
     const [selectedTag, setSelectedTag] = useState<string | null>(null);
     const [expandedTags, setExpandedTags] = useState<Set<string>>(new Set());
-    // 关注档下限筛选（G8 / T5）：0=全部，1..5=至少该档
-    const [attentionFilter, setAttentionFilter] = useState(0);
+    /**
+     * 【2026-09-30】等级筛选**改成多选**：默认 5 档全选（= 没筛）。
+     * 只勾了几档 ⇒ `attention=1,3,5`。
+     */
+    const [attentionSelection, setAttentionSelection] = useState<number[]>(
+        ATTENTION_LEVELS.map((l) => l.value),
+    );
     // 分页状态
     const [page, setPage] = useState(1);
     const [pageSize] = useState(DEFAULT_PAGE_SIZE);
@@ -101,6 +120,70 @@ export function ErrorList({ notebookId, subjectName, notebookInfo }: ErrorListPr
     const [isMerging, setIsMerging] = useState(false);
     const { t, language } = useLanguage();
     const router = useRouter();
+    /** 本页新文案的双语助手（跟复练卷页一个写法，不再往 translations 里塞碎键） */
+    const L = (zh: string, en: string) => (language === "zh" ? zh : en);
+
+    /**
+     * 【2026-09-30】**卡片上的行内小操作**统一走这里：等级升级 / 复习类型轮转 / 待复习↔已掌握。
+     *
+     * 做法：**先改本地、再发请求**（乐观更新）——卡片的字马上变，不用等一个来回；
+     * 失败就弹提示 + 拉一次真实列表回正（**失败提示一律保留**：静默失败比啰嗦更糟）。
+     * ⚠️ 全部走 `PUT /api/error-items/[id]`（改属性接口**不替调用方做主**，传什么改什么）。
+     */
+    const patchItemFields = async (
+        id: string,
+        patch: Record<string, unknown>,
+        optimistic: Partial<ErrorItem>,
+    ) => {
+        setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...optimistic } : it)));
+        try {
+            await apiClient.put(`/api/error-items/${id}`, patch);
+        } catch (error) {
+            console.error(error);
+            alert(t.common?.messages?.updateFailed || 'Update failed');
+            fetchItems();
+        }
+    };
+
+    /**
+     * 右上角那枚等级奖牌：**点一下升一级，👑 之后回到 🥉**（循环）。
+     * 出处：他 2026-09-30 的原话 ——
+     *   *"点击错题卡上的等级图标，则图标自动升级并保存，顺序从🥉…👑升级，已经是👑的跳回🥉。"*
+     */
+    const cycleAttention = (item: ErrorItem, e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // 循环规则写在 lib 里（唯一实现；扫码页加等级也走同一个函数）
+        const next = cycleAttentionLevel(item.attention);
+        patchItemFields(item.id, { attention: next }, { attention: next });
+    };
+
+    /**
+     * 右下角的「深挖 / 复练 / 未定」：点一下轮转**深挖 → 复练 → 未定 → 深挖**（循环）。
+     * 顺序写在 `lib/manage-type.ts` 的 `cycleManageType` 里（唯一实现）。
+     * 文字与颜色一起变（颜色仍取自 `MANAGE_TYPE_SCREEN_COLOR`，一处取色）。
+     */
+    const cycleManageTypeOnCard = (item: ErrorItem, e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const next = cycleManageType(item.manageType);
+        patchItemFields(item.id, { manageType: next }, { manageType: next });
+    };
+
+    /**
+     * 左上角的「待复习 / 已掌握」：点一下互转。
+     *
+     * ⚠️ 一个必须说清的后果：**点到"已掌握"（masteryLevel=2）后，这道题就不在主库里了**
+     *    （四分法：主库 = masteryLevel < 2，见 api/error-items/list 的 scope=main）。
+     *    所以当前会话里卡片还留在原地（乐观更新），下次刷新/换筛选它就"进已掌握分区"了。
+     *    再点回去（变回 0）它就会回来 —— 这正是四分法要的效果，不是 bug。
+     */
+    const toggleMastery = (item: ErrorItem, e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const next = item.masteryLevel > 0 ? 0 : 2;
+        patchItemFields(item.id, { masteryLevel: next }, { masteryLevel: next });
+    };
 
     const handleExportPrint = () => {
         // 【2026-09-30】筛选参数**只在一处生成**（`buildFilterParams`）——
@@ -280,7 +363,7 @@ export function ErrorList({ notebookId, subjectName, notebookInfo }: ErrorListPr
     };
 
     // 追踪筛选条件是否变化（用于判断是否需要重置页码）
-    const prevFiltersRef = useRef({ search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionFilter, datePoints, dateRange });
+    const prevFiltersRef = useRef({ search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionSelection, datePoints, dateRange });
 
     useEffect(() => {
         const prevFilters = prevFiltersRef.current;
@@ -293,13 +376,13 @@ export function ErrorList({ notebookId, subjectName, notebookInfo }: ErrorListPr
             prevFilters.gradeFilter !== gradeFilter ||
             prevFilters.chapterFilter !== chapterFilter ||
             prevFilters.manageTypeFilter !== manageTypeFilter ||
-            prevFilters.attentionFilter !== attentionFilter ||
+            prevFilters.attentionSelection !== attentionSelection ||
             // 日历里改选的日子/区段也算"筛选变了"
             JSON.stringify(prevFilters.datePoints) !== JSON.stringify(datePoints) ||
             JSON.stringify(prevFilters.dateRange) !== JSON.stringify(dateRange);
 
         // 更新 ref
-        prevFiltersRef.current = { search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionFilter, datePoints, dateRange };
+        prevFiltersRef.current = { search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionSelection, datePoints, dateRange };
 
         if (filtersChanged && page !== 1) {
             // 筛选条件变化且不在第一页，重置到第一页（会再次触发此 effect）
@@ -309,7 +392,7 @@ export function ErrorList({ notebookId, subjectName, notebookInfo }: ErrorListPr
 
         // 正常请求数据
         fetchItems();
-    }, [page, search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionFilter, datePoints, dateRange]);
+    }, [page, search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionSelection, datePoints, dateRange]);
 
     /**
      * 当前筛选条件 → 查询参数（**一处实现，三处共用**：列表 / 导出打印 / 多选全选）。
@@ -344,8 +427,13 @@ export function ErrorList({ notebookId, subjectName, notebookInfo }: ErrorListPr
         if (gradeFilter) params.append("gradeSemester", gradeFilter);
         if (chapterFilter) params.append("chapter", chapterFilter); // 章节筛选
         if (manageTypeFilter !== "all") params.append("manageType", manageTypeFilter);
-        // 关注档下限（导出打印要跟列表同口径）
-        if (attentionFilter >= 1) params.append("attention", String(attentionFilter));
+        /**
+         * 等级（**多选**）：5 档全选 = 没筛，一个参数都不传；
+         * 只勾了几档 ⇒ `attention=1,3,5`（服务端按 `in` 过滤）。
+         */
+        if (attentionSelection.length > 0 && !isAttentionUnfiltered(attentionSelection)) {
+            params.append("attention", attentionSelection.join(","));
+        }
         return params;
     }
 
@@ -357,10 +445,13 @@ export function ErrorList({ notebookId, subjectName, notebookInfo }: ErrorListPr
             params.append("page", page.toString());
             params.append("pageSize", pageSize.toString());
 
-            const response = await apiClient.get<PaginatedResponse<ErrorItem>>(`/api/error-items/list?${params.toString()}`);
+            const response = await apiClient.get<PaginatedResponse<ErrorItem> & { notebookTotal?: number | null }>(`/api/error-items/list?${params.toString()}`);
             setItems(response.items);
             setTotal(response.total);
             setTotalPages(response.totalPages);
+            const nbTotal = response.notebookTotal ?? null;
+            // 报给页头那句「共 XX 道错题，当前选中 YY 道题」
+            onCountChange?.({ total: response.total, notebookTotal: nbTotal });
         } catch (error) {
             console.error(error);
         } finally {
@@ -407,9 +498,10 @@ export function ErrorList({ notebookId, subjectName, notebookInfo }: ErrorListPr
     };
 
     /**
-     * 【2026-09-30】有没有"正在生效的筛选" —— 决定筛选按钮是不是「已筛」+银灰底。
-     * 只算**筛选下拉里的那些条件**（掌握度/时间/标签/年级/章节/等级/关注档）；
+     * 【2026-09-30 改多选】有没有"正在生效的筛选" —— 决定筛选按钮是不是「已筛」+银灰底。
+     * 只算**筛选下拉里的那些条件**（掌握度/时间/标签/年级/章节/分类/等级）；
      * 搜索框不算（它就在旁边、看得见，而且不属于"下拉里设过的条件"）。
+     * ⚠️ 等级：**5 档全选 = 没筛**（跟选"全部"一个意思），所以只在"没全选"时才算已筛。
      */
     const hasActiveFilter =
         masteryFilter !== "all" ||
@@ -418,7 +510,7 @@ export function ErrorList({ notebookId, subjectName, notebookInfo }: ErrorListPr
         !!gradeFilter ||
         !!chapterFilter ||
         manageTypeFilter !== "all" ||
-        attentionFilter >= 1;
+        !isAttentionUnfiltered(attentionSelection);
 
     return (
         <div className="space-y-6">            <div className="flex flex-col sm:flex-row gap-4">
@@ -431,51 +523,21 @@ export function ErrorList({ notebookId, subjectName, notebookInfo }: ErrorListPr
                         onChange={(e) => setSearch(e.target.value)}
                     />
                 </div>
-                <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                        {/* 【2026-09-30】有任何筛选条件 ⇒ 按钮变「已筛」+ **银灰底**。
-                            他实测的原话："有的时候我会忘了我已经进行了筛选"。
-                            ⚠️ 搜索框**不算**在里头（它自己就看得见，且就在旁边）。 */}
-                        <Button
-                            variant={hasActiveFilter ? "secondary" : "outline"}
-                            className={hasActiveFilter ? "bg-zinc-300 text-zinc-900 hover:bg-zinc-300/90" : ""}
-                        >
-                            <Filter className="mr-2 h-4 w-4" />
-                            {hasActiveFilter ? (language === "zh" ? "已筛" : "Filtered") : t.notebook.filter}
-                            <ChevronDown className="ml-2 h-4 w-4" />
-                        </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-48">
-                        <DropdownMenuLabel>{t.filter.masteryStatus || "Mastery Status"}</DropdownMenuLabel>
-                        <DropdownMenuItem onClick={() => setMasteryFilter("all")}>
-                            {masteryFilter === "all" && "✓ "}{t.filter.all || "All"}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => setMasteryFilter("unmastered")}>
-                            {masteryFilter === "unmastered" && "✓ "}{t.filter.review || "To Review"}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => setMasteryFilter("mastered")}>
-                            {masteryFilter === "mastered" && "✓ "}{t.filter.mastered || "Mastered"}
-                        </DropdownMenuItem>
-
-                        <DropdownMenuSeparator />
-
-                        {/* 【2026-09-30】时间范围扩到 7 档 + 「其他日期」（点它开日历） */}
-                        <DropdownMenuLabel>{t.filter.timeRange || "Time Range"}</DropdownMenuLabel>
-                        <DropdownMenuItem onClick={() => setTimeFilter("all")}>
-                            {timeFilter === "all" && "✓ "}{t.filter.allTime || "All Time"}
-                        </DropdownMenuItem>
-                        {TIME_RANGE_OPTIONS.map(([key, zh, en]) => (
-                            <DropdownMenuItem key={key} onClick={() => setTimeFilter(key)}>
-                                {timeFilter === key && "✓ "}
-                                {language === "zh" ? zh : en}
-                            </DropdownMenuItem>
-                        ))}
-                        <DropdownMenuItem onClick={openCalendar}>
-                            {timeFilter === "other" && "✓ "}
-                            {language === "zh" ? "其他日期…" : "Custom dates…"}
-                        </DropdownMenuItem>
-                    </DropdownMenuContent>
-                </DropdownMenu>
+                {/* 【2026-09-30 他要求换位】「复练卷」从第二行挪到第一行右上（原来"筛选"待的地方），
+                    「筛选」则挪到第二行、紧挨着「分类」。 */}
+                <Button
+                    variant="outline"
+                    onClick={() => {
+                        const qs = new URLSearchParams();
+                        if (notebookInfo?.gradeTerm) qs.set("grade", notebookInfo.gradeTerm);
+                        if (notebookInfo?.subject) qs.set("subject", notebookInfo.subject);
+                        router.push(`/review-volumes${qs.toString() ? `?${qs.toString()}` : ""}`);
+                    }}
+                    title={L("看这本的复练卷", "Review volumes of this notebook")}
+                >
+                    <Layers className="mr-2 h-4 w-4" />
+                    {L("复练卷", "Volumes")}
+                </Button>
                 <Button variant="outline" onClick={handleExportPrint}>
                     <Printer className="mr-2 h-4 w-4" />
                     {t.notebook?.exportPrint || "导出打印"}
@@ -501,54 +563,98 @@ export function ErrorList({ notebookId, subjectName, notebookInfo }: ErrorListPr
                         hideGrade={!!notebookId}
                     />
                 </div>
+                {/* 【2026-09-30 他要求重排】原来「全部 / 深挖 / 复练 / 未定」四个按钮占一行，
+                    现在收成【分类】一个下拉（单选、选中打勾、选完按钮变灰），
+                    右边接【筛选】，再右边是新加的【等级】多选。 */}
                 <div className="flex flex-wrap gap-2">
-                    <Button
-                        variant={manageTypeFilter === "all" ? "secondary" : "outline"}
-                        size="sm"
-                        onClick={() => setManageTypeFilter("all")}
-                    >
-                        {t.filter.all || "All"}
-                    </Button>
-                    {/* 【2026-09-28】错题等级：深挖 / 复练 / 未定（原 A卷/B卷/其他 已废） */}
-                    <Button
-                        variant={manageTypeFilter === "deep" ? "secondary" : "outline"}
-                        size="sm"
-                        onClick={() => setManageTypeFilter("deep")}
-                    >
-                        {MANAGE_TYPE_LABEL.deep}
-                    </Button>
-                    <Button
-                        variant={manageTypeFilter === "review" ? "secondary" : "outline"}
-                        size="sm"
-                        onClick={() => setManageTypeFilter("review")}
-                    >
-                        {MANAGE_TYPE_LABEL.review}
-                    </Button>
-                    <Button
-                        variant={manageTypeFilter === "undecided" ? "secondary" : "outline"}
-                        size="sm"
-                        onClick={() => setManageTypeFilter("undecided")}
-                    >
-                        {MANAGE_TYPE_UNDECIDED}
-                    </Button>
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button
+                                variant={manageTypeFilter === "all" ? "outline" : "secondary"}
+                                size="sm"
+                                className={manageTypeFilter === "all" ? "" : "bg-zinc-300 text-zinc-900 hover:bg-zinc-300/90"}
+                            >
+                                {L("分类", "Category")}
+                                {manageTypeFilter !== "all" &&
+                                    ` · ${
+                                        manageTypeFilter === "deep"
+                                            ? MANAGE_TYPE_LABEL.deep
+                                            : manageTypeFilter === "review"
+                                              ? MANAGE_TYPE_LABEL.review
+                                              : MANAGE_TYPE_UNDECIDED
+                                    }`}
+                                <ChevronDown className="ml-1.5 h-3.5 w-3.5" />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="w-40">
+                            {([
+                                ["all", t.filter.all || "All"],
+                                ["deep", MANAGE_TYPE_LABEL.deep],
+                                ["review", MANAGE_TYPE_LABEL.review],
+                                ["undecided", MANAGE_TYPE_UNDECIDED],
+                            ] as const).map(([key, label]) => (
+                                <DropdownMenuItem key={key} onClick={() => setManageTypeFilter(key)}>
+                                    <span className="w-4 shrink-0">{manageTypeFilter === key ? "✓" : ""}</span>
+                                    <span>{label}</span>
+                                </DropdownMenuItem>
+                            ))}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
 
-                    {/* 【2026-09-30】他要求：等级按钮后加一条灰色短竖线，再接一个「复练卷」入口 ——
-                        从错题本直接跳到复练卷页，并**带上这本的年级学期 + 学科**作为筛选。 */}
-                    <span className="mx-1 h-5 w-px shrink-0 self-center bg-zinc-400/70" aria-hidden="true" />
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                            const qs = new URLSearchParams();
-                            if (notebookInfo?.gradeTerm) qs.set("grade", notebookInfo.gradeTerm);
-                            if (notebookInfo?.subject) qs.set("subject", notebookInfo.subject);
-                            router.push(`/review-volumes${qs.toString() ? `?${qs.toString()}` : ""}`);
-                        }}
-                        title={language === "zh" ? "看这本的复练卷" : "Review volumes of this notebook"}
-                    >
-                        <Layers className="mr-1.5 h-3.5 w-3.5" />
-                        {language === "zh" ? "复练卷" : "Volumes"}
-                    </Button>
+                    {/* 筛选（从第一行换到这儿，内容没动） */}
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            {/* 有任何筛选条件 ⇒ 按钮变「已筛」+ **银灰底**。
+                                他实测的原话："有的时候我会忘了我已经进行了筛选"。
+                                ⚠️ 搜索框**不算**在里头（它自己就看得见，且就在旁边）。 */}
+                            <Button
+                                variant={hasActiveFilter ? "secondary" : "outline"}
+                                size="sm"
+                                className={hasActiveFilter ? "bg-zinc-300 text-zinc-900 hover:bg-zinc-300/90" : ""}
+                            >
+                                <Filter className="mr-1.5 h-3.5 w-3.5" />
+                                {hasActiveFilter ? L("已筛", "Filtered") : t.notebook.filter}
+                                <ChevronDown className="ml-1.5 h-3.5 w-3.5" />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="w-48">
+                            <DropdownMenuLabel>{t.filter.masteryStatus || "Mastery Status"}</DropdownMenuLabel>
+                            <DropdownMenuItem onClick={() => setMasteryFilter("all")}>
+                                {masteryFilter === "all" && "✓ "}{t.filter.all || "All"}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setMasteryFilter("unmastered")}>
+                                {masteryFilter === "unmastered" && "✓ "}{t.filter.review || "To Review"}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setMasteryFilter("mastered")}>
+                                {masteryFilter === "mastered" && "✓ "}{t.filter.mastered || "Mastered"}
+                            </DropdownMenuItem>
+
+                            <DropdownMenuSeparator />
+
+                            {/* 时间范围 7 档 + 「其他日期」（点它开日历） */}
+                            <DropdownMenuLabel>{t.filter.timeRange || "Time Range"}</DropdownMenuLabel>
+                            <DropdownMenuItem onClick={() => setTimeFilter("all")}>
+                                {timeFilter === "all" && "✓ "}{t.filter.allTime || "All Time"}
+                            </DropdownMenuItem>
+                            {TIME_RANGE_OPTIONS.map(([key, zh, en]) => (
+                                <DropdownMenuItem key={key} onClick={() => setTimeFilter(key)}>
+                                    {timeFilter === key && "✓ "}
+                                    {L(zh, en)}
+                                </DropdownMenuItem>
+                            ))}
+                            <DropdownMenuItem onClick={openCalendar}>
+                                {timeFilter === "other" && "✓ "}
+                                {L("其他日期…", "Custom dates…")}
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+
+                    {/* 等级（多选：🥉青铜 … 👑王者，至少留一个，底部 全选/取消/确认） */}
+                    <AttentionMultiSelect
+                        value={attentionSelection}
+                        onConfirm={setAttentionSelection}
+                        language={language}
+                    />
                 </div>
             </div>
 
@@ -604,9 +710,16 @@ export function ErrorList({ notebookId, subjectName, notebookInfo }: ErrorListPr
                                 <Card className="h-full hover:border-primary/50 transition-colors cursor-pointer gap-2 pt-4">
                                     <CardHeader className="pb-0">
                                         <div className="flex justify-between items-start">
+                                            {/* 【2026-09-30 他要求】左上角的「待复习 / 已掌握」**点一下互转**并保存。
+                                                ⚠️ 点到"已掌握"后，这道题就不在主库了（四分法：主库 = masteryLevel<2），
+                                                   刷新/换筛选后它会进"已掌握分区"；再点回来就回来。 */}
                                             <Badge
                                                 variant={item.masteryLevel > 0 ? "default" : "secondary"}
-                                                className={item.masteryLevel > 0 ? "bg-green-600 hover:bg-green-700" : ""}
+                                                className={`${item.masteryLevel > 0 ? "bg-green-600 hover:bg-green-700" : ""} ${isSelectMode ? "" : "cursor-pointer"}`}
+                                                title={item.masteryLevel > 0
+                                                    ? L("点一下改回「待复习」", "Click to mark as to-review")
+                                                    : L("点一下标成「已掌握」", "Click to mark as mastered")}
+                                                onClick={isSelectMode ? undefined : (e) => toggleMastery(item, e)}
                                             >
                                                 {item.masteryLevel > 0 ? (
                                                     <span className="flex items-center gap-1">
@@ -618,9 +731,20 @@ export function ErrorList({ notebookId, subjectName, notebookInfo }: ErrorListPr
                                                     </span>
                                                 )}
                                             </Badge>
-                                            {/* 【2026-09-29】垃圾桶摆在"录入时间"后面（他要的位置）：
-                                                不用进详情页就能单独删这一道。 */}
+                                            {/* 右上角：**等级奖牌** + 录入时间 + 垃圾桶。
+                                                奖牌点一下升一级（👑 之后回 🥉）—— 他 2026-09-30 的要求。 */}
                                             <div className="flex items-center gap-0.5 shrink-0">
+                                                <button
+                                                    type="button"
+                                                    className={`mr-0.5 rounded px-0.5 text-sm leading-none ${isSelectMode ? "cursor-default" : "cursor-pointer hover:bg-muted"}`}
+                                                    title={L(
+                                                        `等级：${attentionLevelOf(item.attention).zh}（点一下升一级）`,
+                                                        `Level: ${attentionLevelOf(item.attention).en} (click to upgrade)`,
+                                                    )}
+                                                    onClick={isSelectMode ? undefined : (e) => cycleAttention(item, e)}
+                                                >
+                                                    {attentionLevelOf(item.attention).medal}
+                                                </button>
                                                 <span className="text-xs text-muted-foreground">
                                                     {format(new Date(item.createdAt), "MM/dd")}
                                                 </span>
@@ -648,10 +772,14 @@ export function ErrorList({ notebookId, subjectName, notebookInfo }: ErrorListPr
                                                     : cleanText;
                                             })()}
                                         </div>
+                                        {/* 【2026-09-30 他要求】这里原来显示**作答状态**（不会做/做错了/未判断），
+                                            现在换成**错因**（8 种里的一种）。没打错因就不占位。 */}
                                         <div className="flex flex-wrap gap-2 mt-3">
-                                            <Badge variant={item.mistakeStatus === "wrong_attempt" ? "default" : "secondary"} className="text-xs">
-                                                {getMistakeStatusLabel(item.mistakeStatus, language)}
-                                            </Badge>
+                                            {normalizeMistakeCategory(item.mistakeCategory) && (
+                                                <Badge variant="secondary" className="text-xs">
+                                                    {getMistakeCategoryLabel(item.mistakeCategory, language)}
+                                                </Badge>
+                                            )}
                                         </div>
                                         <div className="flex flex-wrap gap-2 mt-3">
                                             {(expandedTags.has(item.id) ? tags : tags.slice(0, 3)).map((tag: string) => (
@@ -689,23 +817,30 @@ export function ErrorList({ notebookId, subjectName, notebookInfo }: ErrorListPr
                                     </CardContent>
                                 </Card>
                             </Link>
-                            {/* 右下角：这道题的**错题等级**（深挖 / 复练 / 未定）。
-                                ⚠️ 用绝对定位而不是塞进标签流：标签会换行，
+                            {/* 右下角：这道题的**复习类型**（深挖 / 复练 / 未定）。
+                                【2026-09-30 他要求】点一下轮转 深挖→复练→未定→深挖，文字与颜色一起变、即点即存。
+                                ⚠️ 仍然用绝对定位而不是塞进标签流：标签会换行，
                                    `ml-auto` 在 flex-wrap 里靠不住（他会看到它乱跑）。 */}
-                            <span
-                                className="absolute bottom-2 right-3 text-[11px] font-semibold pointer-events-none"
+                            <button
+                                type="button"
+                                className={`absolute bottom-2 right-3 text-[11px] font-semibold ${isSelectMode ? "cursor-default" : "cursor-pointer hover:underline"}`}
                                 style={{ color: manageTypeScreenColor(item.manageType) }}
-                                title={`错题等级：${getManageTypeLabel(item.manageType)}`}
+                                title={L("点一下换类型：深挖 → 复练 → 未定", "Click to cycle: deep → review → undecided")}
+                                onClick={isSelectMode ? undefined : (e) => cycleManageTypeOnCard(item, e)}
                             >
                                 {getManageTypeLabel(item.manageType)}
-                            </span>
-                            {/* 【2026-09-30】左下角：两个打印次数（暗红 | 深绿）。
-                                卡片上一行放不下全称，用简称；详情页写全称。 */}
+                            </button>
+                            {/* 【2026-09-30】左下角：两个打印次数（暗红 | 深绿） */}
                             <span
                                 className="absolute bottom-2 left-3 text-[11px] pointer-events-none"
                                 title={`深挖纸打印次数 ${item.printCount ?? 0} ｜ 复练纸印刷次数 ${item.reviewPrintCount ?? 0}`}
                             >
                                 <PrintCounts deep={item.printCount} review={item.reviewPrintCount} compact />
+                            </span>
+                            {/* 【2026-09-30】底端**中间**：四个复习结果圆圈
+                                （前三个 = 第 1/7/21 天计划复习，第四个 = 最近一次），与左右两边同一行。 */}
+                            <span className="absolute bottom-2 left-1/2 -translate-x-1/2 pointer-events-none">
+                                <ReviewDots outcomes={item.reviewOutcomes} language={language} />
                             </span>
                         </div>
                     );

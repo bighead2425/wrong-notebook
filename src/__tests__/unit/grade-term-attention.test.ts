@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GRADE_TERMS, normalizeTerm, splitGradeText, termLabel, volumeMatchesTerm } from '@/lib/grade-term';
-import { ATTENTION_LEVELS, attentionLabel, attentionLevelOf } from '@/lib/attention-level';
+import { ATTENTION_LEVELS, attentionLabel, attentionLevelOf, cycleAttentionLevel, isAttentionUnfiltered, toggleAttentionLevel } from '@/lib/attention-level';
 
 /**
  * 年级·学期的归一（复练卷页"年级/学期"筛选用）。
@@ -85,5 +85,47 @@ describe('等级 · 奖牌映射', () => {
     it('显示串：徽章 + 名称（中/英）', () => {
         expect(attentionLabel(3, true)).toBe('🥇 黄金');
         expect(attentionLabel(3, false)).toBe('🥇 Gold');
+    });
+});
+
+/**
+ * 【2026-09-30】等级在界面上有两个动作，两条规则都写进 lib（唯一实现）：
+ *   ① 卡片右边那枚奖牌点一下：**升一级，👑 之后回 🥉**
+ *   ② 「等级」多选下拉点一下：切换勾选，但**至少留一个勾**
+ */
+describe('等级 · 点一下升一级（卡片上的奖牌）', () => {
+    it('1→2→3→4→5，5 之后回 1', () => {
+        expect(cycleAttentionLevel(1)).toBe(2);
+        expect(cycleAttentionLevel(2)).toBe(3);
+        expect(cycleAttentionLevel(3)).toBe(4);
+        expect(cycleAttentionLevel(4)).toBe(5);
+        expect(cycleAttentionLevel(5)).toBe(1);
+    });
+
+    it('空值 / 越界值也能安全升（老数据没有这道坎）', () => {
+        expect(cycleAttentionLevel(null)).toBe(2); // 空按青铜(1) 算 ⇒ 升到白银
+        expect(cycleAttentionLevel(9)).toBe(1); // 越界按王者(5) 算 ⇒ 回青铜
+    });
+});
+
+describe('等级 · 多选下拉的勾选', () => {
+    it('点没勾的 ⇒ 勾上，并按 1→5 排序（URL 参数才是稳定的 1,3,5）', () => {
+        expect(toggleAttentionLevel([1, 5], 3)).toEqual([1, 3, 5]);
+        expect(toggleAttentionLevel([4], 2)).toEqual([2, 4]);
+    });
+
+    it('点已勾的 ⇒ 取消它', () => {
+        expect(toggleAttentionLevel([1, 3, 5], 3)).toEqual([1, 5]);
+    });
+
+    it('★ 只剩一个勾时，点它不动 —— 他明说的"不能让对号消失"', () => {
+        expect(toggleAttentionLevel([3], 3)).toEqual([3]);
+        expect(toggleAttentionLevel([1, 3], 1)).toEqual([3]);
+    });
+
+    it('5 档全选 = 没筛（判"已筛"、决定要不要传 attention 参数都用它）', () => {
+        expect(isAttentionUnfiltered([1, 2, 3, 4, 5])).toBe(true);
+        expect(isAttentionUnfiltered([1, 2, 3, 4])).toBe(false);
+        expect(isAttentionUnfiltered([])).toBe(false);
     });
 });

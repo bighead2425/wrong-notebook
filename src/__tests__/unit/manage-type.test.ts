@@ -4,8 +4,11 @@ import { describe, expect, it } from 'vitest';
 import { MISTAKE_CATEGORIES } from '@/lib/mistake-category';
 import {
     canAutoRewrite,
+    cycleManageType,
     getManageTypeLabel,
+    MANAGE_TYPE_CYCLE,
     MANAGE_TYPE_DEFAULT,
+    MANAGE_TYPE_SCREEN_COLOR,
     MANAGE_TYPES,
     normalizeManageType,
     normalizeManageTypeSource,
@@ -72,24 +75,25 @@ describe('manage-type · 落定快照（谁能被自动改写）', () => {
 });
 
 describe('manage-type · 从错因派生（只建议，不落定）', () => {
-    it('概念不清 / 完全不会 / 方法没想到 ⇒ 建议深挖', () => {
-        for (const c of ['concept', 'blank', 'no_method']) {
-            const s = suggestManageType(c);
-            expect(s.type).toBe('deep');
-            expect(s.reason.length).toBeGreaterThan(0);
-        }
+    it('★ 他定的三条：不掌握⇒深挖 / 没做对⇒复练 / 其他⇒不定', () => {
+        expect(suggestManageType('concept_vague').type).toBe('deep');
+        expect(suggestManageType('knowledge_gap').type).toBe('deep');
+        expect(suggestManageType('memory_weak').type).toBe('deep');
+        expect(suggestManageType('misread').type).toBe('review');
+        expect(suggestManageType('calc_slip').type).toBe('review');
+        expect(suggestManageType('fixed_mindset').type).toBe('review');
+        expect(suggestManageType('just_record').type).toBeNull();
+        expect(suggestManageType('unknown_reason').type).toBeNull();
     });
 
-    it('算错写错 / 看漏条件 ⇒ 建议复练', () => {
-        for (const c of ['computation', 'missed_condition']) {
-            const s = suggestManageType(c);
-            expect(s.type).toBe('review');
-            expect(s.reason.length).toBeGreaterThan(0);
-        }
+    it('映射粒度是**组**：同组内换个错因，类型不变（少一次无意义的"静默改级"）', () => {
+        expect(suggestManageType('concept_vague').type).toBe(suggestManageType('memory_weak').type);
+        expect(suggestManageType('misread').type).toBe(suggestManageType('fixed_mindset').type);
     });
 
-    it('错因是"其他" ⇒ 不硬猜，保持未定', () => {
-        expect(suggestManageType('other').type).toBeNull();
+    it('理由里带上**具体错因名**（她打的是"知识盲区"，就不该只说"属不掌握"）', () => {
+        expect(suggestManageType('knowledge_gap').reason).toContain('知识盲区');
+        expect(suggestManageType('calc_slip').reason).toContain('计算失误');
     });
 
     it('还没打错因 ⇒ 未定，并说明"打了错因才会给建议"', () => {
@@ -105,6 +109,25 @@ describe('manage-type · 从错因派生（只建议，不落定）', () => {
             expect(s.reason.length).toBeGreaterThan(0);
             expect(s.from).toBe(c);
         }
+    });
+});
+
+describe('manage-type · 卡片右下角点一下的轮转', () => {
+    it('★ 他定的圈：深挖 → 复练 → 未定 → 深挖', () => {
+        expect(MANAGE_TYPE_CYCLE).toEqual(['deep', 'review', null]);
+        expect(cycleManageType('deep')).toBe('review');
+        expect(cycleManageType('review')).toBeNull();
+        expect(cycleManageType(null)).toBe('deep');
+    });
+
+    it('老数据 / 不认识的值 ⇒ 从这个圈的起点开始（深挖）', () => {
+        expect(cycleManageType(undefined)).toBe('deep');
+        expect(cycleManageType('build')).toBe('deep');
+    });
+
+    it('⚠️ 屏幕上的红绿只给"深挖/复练"用（未定是灰的）—— 界面取色只认这一处', () => {
+        expect(MANAGE_TYPE_SCREEN_COLOR.deep.toLowerCase()).toBe('#8e2b2b');
+        expect(MANAGE_TYPE_SCREEN_COLOR.review.toLowerCase()).toBe('#1f5c3a');
     });
 });
 

@@ -84,11 +84,13 @@ export interface ErrorItem {
     /** 这个等级怎么来的：default / derived / ai / manual / upgrade（决定能不能被自动派生改写） */
     manageTypeSource?: string | null;
     /**
-     * 【M0 字段 · 2026-09-28 才接上界面】错因（受控枚举 6 值）：
-     * missed_condition 看漏条件 / no_method 方法没想到 / computation 算错写错 /
-     * concept 概念不清 / blank 完全不会 / other 其他。
+     * 【M0 字段 · 2026-09-28 接上界面，**2026-09-30 换新枚举**】错因（受控枚举 **8 值、分 3 组**）：
+     *   不掌握：concept_vague 概念模糊 / knowledge_gap 知识盲区 / memory_weak 记忆不牢
+     *   没做对：misread 审题不清 / calc_slip 计算失误 / fixed_mindset 思维定式
+     *   其他：  just_record 就想记录 / unknown_reason 未知错因
      * ⚠️ 与 `errorType`（外部导入透传的英文自由文本）**不是一回事**，别混用。
-     * 错题等级就是从它**派生**的（见 `lib/manage-type.ts` 的映射表）。
+     * 复习类型就是从它按"**组**"派生的（见 `lib/manage-type.ts` 的 GROUP_TO_TYPE）。
+     * 一题只留一个：多个原因同时存在时按 `MISTAKE_CATEGORIES` 的顺序取最靠前的。
      */
     mistakeCategory?: string | null;
 
@@ -97,6 +99,12 @@ export interface ErrorItem {
     /** 【2026-09-30】复练纸印刷次数（印一次卷，卷内每道题 +1）—— 与 printCount 分开记 */
     reviewPrintCount?: number;
     attention?: number;
+    /**
+     * 【2026-09-30】**复习结果**（卡片底部四个圆圈的原材料）。
+     * JSON 字符串：`{"planned":["right",null,null],"last":"wrong"}`
+     * 前三个 = 第 1/7/21 天计划复习，最后一个 = 最近一次复习（规则见 lib/review-outcomes.ts）。
+     */
+    reviewOutcomes?: string | null;
     redoCount?: number;
     mergeSource?: string | null;
     deletedAt?: string | null;

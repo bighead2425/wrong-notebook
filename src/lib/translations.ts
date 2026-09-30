@@ -341,6 +341,8 @@ export const translations = {
             items: "items",
             notFound: "Notebook not found",
             totalErrors: "Total {count} wrong answers",
+            /** 【2026-09-30】他把页脚那句加了一半：还要知道"筛完之后眼前有多少道" */
+            totalErrorsSelected: "Total {total} wrong answers · {selected} shown",
             addError: "Add Wrong Answer",
             collapseTags: "Collapse",
             expandTags: "+{count} more",
@@ -1190,6 +1192,8 @@ export const translations = {
             items: "道题目",
             notFound: "错题本不存在",
             totalErrors: "共 {count} 道错题",
+            /** 【2026-09-30】他要求加上"当前选中 YY 道题"（YY = 当前筛选后还剩几道） */
+            totalErrorsSelected: "共 {total} 道错题，当前选中 {selected} 道题",
             addError: "添加错题",
             collapseTags: "收起 ↑",
             expandTags: "+{count} 个 ↓",

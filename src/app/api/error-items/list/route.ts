@@ -34,7 +34,14 @@ export async function GET(req: Request) {
     // 指定 ID 列表（单题打印跳转用）
     const idsParam = searchParams.get("ids");
 
-    // 关注档下限（G8 / T5）：attention=N 表示筛选 >= N
+    /**
+     * 【2026-09-30 改语义】等级筛选 = **多选**：`attention=1,3,5`（逗号分隔的等级列表）。
+     *
+     * 改之前是 `attention=N` ⇒ `gte N`（"至少该档"）。现在界面是**勾选若干档**，
+     * "勾了青铜+王者"意思就是只要这两档 —— 用 `in` 才对得上，`gte` 会把中间几档塞进来。
+     * 老链接（单个值）仍然能用，只是语义从"≥N"变成"=N"；本参数只有错题本页在用，
+     * 与界面同时改，没有别处依赖。
+     */
     const attentionParam = searchParams.get("attention");
 
     // 分页参数
@@ -102,11 +109,15 @@ export async function GET(req: Request) {
             whereClause.printCount = 0;
         }
 
-        // 关注档下限筛选（G8 难度档：1 容易 ~ 5 困难）
+        // 等级筛选（多选）：1,3,5 ⇒ in
         if (attentionParam) {
-            const lv = Number(attentionParam);
-            if (Number.isFinite(lv) && lv >= 1 && lv <= 5) {
-                whereClause.attention = { gte: Math.round(lv) };
+            const levels = attentionParam
+                .split(",")
+                .map((s) => Number(s.trim()))
+                .filter((n) => Number.isFinite(n) && n >= 1 && n <= 5)
+                .map((n) => Math.round(n));
+            if (levels.length > 0) {
+                whereClause.attention = { in: levels };
             }
         }
 
@@ -276,10 +287,25 @@ export async function GET(req: Request) {
             });
         }
 
-        // 获取总数
+        // 获取总数（= 当前筛选下有多少道）
         const total = await prisma.errorItem.count({
             where: whereClause,
         });
+
+        /**
+         * 【2026-09-30】这本的**总错题量**（不带任何筛选）—— 给页脚那句
+         * 「共 XX 道错题，当前选中 YY 道题」里的 XX 用。
+         *
+         * ⚠️ 只在**进了某个错题本**（传了 notebookId）时算：全局列表页没有"这本"可言。
+         *    口径 = 该本下、未进回收箱的题（不套 masteryLevel<2 那条主库规则 ——
+         *    他说的是"整个错题本的总错题量"，把已掌握的排除掉就不是"整个"了）。
+         */
+        let notebookTotal: number | null = null;
+        if (notebookId) {
+            notebookTotal = await prisma.errorItem.count({
+                where: { userId: user.id, notebookId, deletedAt: null },
+            });
+        }
 
         // 分页查询
         const errorItems = await prisma.errorItem.findMany({
@@ -301,6 +327,8 @@ export async function GET(req: Request) {
             page,
             pageSize,
             totalPages,
+            /** 本子总错题量（不带筛选）；没传 notebookId 时为 null */
+            notebookTotal,
         });
     } catch (error) {
         logger.error({ error }, 'Error fetching items');

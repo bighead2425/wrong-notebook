@@ -21,8 +21,11 @@
  */
 
 import {
+    getMistakeCategoryLabel,
+    groupOf,
     normalizeMistakeCategory,
     type MistakeCategory,
+    type MistakeGroup,
 } from './mistake-category';
 
 /* ============================ 错题等级 ============================ */
@@ -99,6 +102,25 @@ export function getManageTypeLabel(value: unknown): string {
     return t ? MANAGE_TYPE_LABEL[t] : MANAGE_TYPE_UNDECIDED;
 }
 
+/**
+ * 【2026-09-30】列表卡片右下角那个小标签，**点一下轮转**的顺序：
+ *   深挖 → 复练 → 未定 → 深挖
+ *
+ * 出处：他 2026-09-30 的原话 ——
+ *   *"当前为深挖则点击后成为复练，当前为复练的点击后变成未定，
+ *     如果当前为未定，则点击后成为深挖。"*
+ *
+ * ⚠️ 与 `MANAGE_TYPES`（只有 deep/review）**不是一回事**：那个是"有依据的两种类型"，
+ *    这个是"点击轮转的完整一圈"，未定（null）也在圈上。
+ */
+export const MANAGE_TYPE_CYCLE: readonly (ManageType | null)[] = ['deep', 'review', null];
+
+export function cycleManageType(value: unknown): ManageType | null {
+    const cur = normalizeManageType(value);
+    const idx = MANAGE_TYPE_CYCLE.findIndex((x) => x === cur);
+    return MANAGE_TYPE_CYCLE[(idx + 1) % MANAGE_TYPE_CYCLE.length];
+}
+
 /* ============================ 来源（落定快照） ============================ */
 
 export type ManageTypeSource = 'default' | 'derived' | 'ai' | 'manual' | 'upgrade';
@@ -162,45 +184,29 @@ export interface ManageTypeSuggestion {
 }
 
 /**
- * 错因 → 等级的映射表（**改标准只改这一张表**）。
+ * **错因的"组" → 复习类型**（**改标准只改这一张表**）。
  *
- * 出处：二次设计《T2复练纸_T3积累纸_设计讨论》§二③ 的那张表。
+ * 出处：他 2026-09-30 亲口定的三条 ——
+ *   *"不掌握初步判断错题类型为「深挖」，没作对初步判断错题类型为「复练」，
+ *     其他初步判断错题类型为「未定」。"*
  *
- * | 错因（设计原文的说法） | 等级 |
- * |---|---|
- * | 概念没懂 / 不会做 / 思路错 | **深挖** |
- * | 计算错 / 抄错 / 漏条件 / 粗心 / 时间不够 | **复练** |
- * | 字词 / 单词 / 公式 / 结论记错 | 提炼成**积累点**（不是"题"的等级）|
- *
- * ⚠️ 照实说明一处**对不齐**：当前受控枚举（`lib/mistake-category.ts`）只有 6 个值
- *   （看漏条件 / 方法没想到 / 算错写错 / 概念不清 / 完全不会 / 其他），
- *   **没有"记错"这一类**。所以设计表里的第三行现在没有对应值可映射 ——
- *   这里**不硬凑**（不把 other 猜成积累点），等积累建表时再加一个类目。
+ * ⚠️ 映射的**粒度是"组"不是"单个错因"**（2026-09-30 换新）。
+ *    上一版是"6 个错因 → 逐一映射"，现在 8 个错因分三组、组决定类型 ——
+ *    这样她改错因（比如从"概念模糊"改成"知识盲区"）时，类型**本来就不该变**
+ *    （同属"不掌握" ⇒ 都是深挖），少一次无意义的"静默改级"。
  */
-const DERIVE_TABLE: Record<MistakeCategory, { type: ManageType | null; reason: string }> = {
-    concept: {
+const GROUP_TO_TYPE: Record<MistakeGroup, { type: ManageType | null; reason: string }> = {
+    not_mastered: {
         type: 'deep',
-        reason: '错因是"概念不清"——要搞懂，不是练熟就能会的，建议深挖',
+        reason: '错因属"不掌握"——要搞懂，不是练熟就能会的，建议深挖',
     },
-    blank: {
-        type: 'deep',
-        reason: '错因是"完全不会"——里面一定有没搞懂的东西，建议深挖',
-    },
-    no_method: {
-        type: 'deep',
-        reason: '错因是"方法没想到"——要想通路子，建议深挖',
-    },
-    computation: {
+    not_right: {
         type: 'review',
-        reason: '错因是"算错写错"——方法会，只是不熟，练几遍就行，建议复练',
-    },
-    missed_condition: {
-        type: 'review',
-        reason: '错因是"看漏条件"——习惯问题，多练几遍就稳，建议复练',
+        reason: '错因属"没做对"——方法会、只是不稳，练几遍就行，建议复练',
     },
     other: {
         type: null,
-        reason: '错因是"其他"，没有可靠依据，先不定',
+        reason: '错因属"其他"——没有可靠依据，先不定',
     },
 };
 
@@ -217,8 +223,13 @@ export function suggestManageType(mistakeCategory: unknown): ManageTypeSuggestio
             from: null,
         };
     }
-    const hit = DERIVE_TABLE[from];
-    return { type: hit.type, reason: hit.reason, from };
+    const hit = GROUP_TO_TYPE[groupOf(from)];
+    return {
+        type: hit.type,
+        // 理由带上**具体错因名**（她打的是"知识盲区"，就不该只说"属不掌握"）
+        reason: hit.reason.replace('错因属', `错因"${getMistakeCategoryLabel(from)}"属`),
+        from,
+    };
 }
 
 /* ============================ 纸面上的升降级小框 ============================ */
