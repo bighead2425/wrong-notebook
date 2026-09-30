@@ -313,7 +313,7 @@ export const translations = {
             review: "Review",
             gradeSemesterPlaceholder: "e.g. Grade 7, Semester 1",
             added: "Added",
-            exportPrint: "Export for Print",
+            exportPrint: "Export",
             selectMode: "Select",
             cancelSelect: "Cancel",
             clearSelection: "Clear",
@@ -342,7 +342,7 @@ export const translations = {
             notFound: "Notebook not found",
             totalErrors: "Total {count} wrong answers",
             /** 【2026-09-30】他把页脚那句加了一半：还要知道"筛完之后眼前有多少道" */
-            totalErrorsSelected: "Total {total} wrong answers · {selected} shown",
+            totalErrorsSelected: "Total {total} · {selected} shown",
             addError: "Add Wrong Answer",
             collapseTags: "Collapse",
             expandTags: "+{count} more",
@@ -359,7 +359,7 @@ export const translations = {
             trash: "Trash",
             printAllUnprinted: "Print All Unprinted",
             printAllHint: "Print every never-printed question across all notebooks as error cards.",
-            printThisUnprinted: "Print Unprinted in This Notebook",
+            printThisUnprinted: "Print New",
             aiAnalyze: "AI Analyze",
             dialog: {
                 title: "Create New Notebook",
@@ -1164,7 +1164,7 @@ export const translations = {
             review: "待复习",
             gradeSemesterPlaceholder: "例如：初一，上期",
             added: "添加于",
-            exportPrint: "导出打印",
+            exportPrint: "导出",
             selectMode: "多选",
             cancelSelect: "取消",
             clearSelection: "清除",
@@ -1193,7 +1193,7 @@ export const translations = {
             notFound: "错题本不存在",
             totalErrors: "共 {count} 道错题",
             /** 【2026-09-30】他要求加上"当前选中 YY 道题"（YY = 当前筛选后还剩几道） */
-            totalErrorsSelected: "共 {total} 道错题，当前选中 {selected} 道题",
+            totalErrorsSelected: "共 {total} 道，选中 {selected} 道",
             addError: "添加错题",
             collapseTags: "收起 ↑",
             expandTags: "+{count} 个 ↓",
@@ -1210,7 +1210,7 @@ export const translations = {
             trash: "回收箱",
             printAllUnprinted: "打印所有未打印",
             printAllHint: "把各本里从没打过的题一次打成错题卡",
-            printThisUnprinted: "打印本册未打印",
+            printThisUnprinted: "印新录入",
             aiAnalyze: "AI 分析",
             dialog: {
                 title: "创建新错题本",

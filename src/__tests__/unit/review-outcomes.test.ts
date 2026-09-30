@@ -4,10 +4,14 @@ import { describe, expect, it } from 'vitest';
 import {
     emptyReviewOutcomes,
     normalizeReviewOutcomes,
+    PLANNED_REVIEW_OFFSET_DAYS,
     PLANNED_REVIEW_ROUNDS,
+    plannedReviewDates,
     recordReviewResult,
     reviewDots,
     serializeReviewOutcomes,
+    setLastOutcome,
+    setPlannedOutcome,
 } from '@/lib/review-outcomes';
 
 /**
@@ -106,5 +110,109 @@ describe('复习结果 · 四个圈的画法', () => {
 
     it('空值也返回四个圈（画面上不能少一个，否则"第几个"就对不上了）', () => {
         expect(reviewDots(undefined)).toHaveLength(4);
+    });
+});
+
+/**
+ * 【2026-09-30 详情页四圈编辑器】界面上**直接改某一格**的规则。
+ *
+ * 他口述得很啰嗦，落成两条结论：
+ *   A 改前三行 ⇒ "最近一次"跟着变成**最后一个有结果的**那个；三格全空 / 完全没变 ⇒ 不动它。
+ *   B 只改"最近一次"那一行 ⇒ 前三行一个字都不许动（计划外复习走这条）。
+ */
+describe('复习结果 · 改前三行（入口 A：人工更正）', () => {
+    it('★ 他举的例子：只有第 1 次、标成做对 ⇒ 最近一次也是做对', () => {
+        const o = setPlannedOutcome(null, 0, 'right');
+        expect(o.planned).toEqual(['right', null, null]);
+        expect(o.last).toBe('right');
+    });
+
+    it('★ 改中间那次（前面空着）⇒ 最近一次 = 那次的结果', () => {
+        const o = setPlannedOutcome(null, 1, 'wrong');
+        expect(o.planned).toEqual([null, 'wrong', null]);
+        expect(o.last).toBe('wrong');
+    });
+
+    it('★ 补改前面的、后面已有结果 ⇒ 最近一次**不动**（他已定型）', () => {
+        // 先录第 2 次(wrong)：last=wrong
+        const a = setPlannedOutcome(null, 1, 'wrong');
+        // 再补第 1 次(right)：最后一个非空仍是第 2 次 ⇒ last 还是 wrong
+        const b = setPlannedOutcome(a, 0, 'right');
+        expect(b.planned).toEqual(['right', 'wrong', null]);
+        expect(b.last).toBe('wrong');
+    });
+
+    it('★ 最后一次是第 21 天那位 ⇒ 最近一次就等于它', () => {
+        const o = setPlannedOutcome({ planned: ['right', 'right', null], last: 'right' }, 2, 'wrong');
+        expect(o.planned).toEqual(['right', 'right', 'wrong']);
+        expect(o.last).toBe('wrong');
+    });
+
+    it('★ 改动**没带来任何变化** ⇒ 原样返回（"AI 给的和已记录的一样 ⇒ 最近一次保持不变"）', () => {
+        const before = { planned: ['right', null, null] as const, last: 'wrong' as const };
+        const after = setPlannedOutcome(before, 0, 'right');
+        expect(after).toEqual(normalizeReviewOutcomes(before)); // 值相同
+        expect(after.last).toBe('wrong'); // 关键：last 没被"同步"成 right
+    });
+
+    it('★ 三格全空 ⇒ 最近一次**保持当前状态不变**（他明说的）', () => {
+        const before = { planned: ['right', null, null], last: 'wrong' };
+        const after = setPlannedOutcome(before, 0, null);
+        expect(after.planned).toEqual([null, null, null]);
+        expect(after.last).toBe('wrong');
+    });
+
+    it('整批（AI 回传）也走同一条：结果与库里一致 ⇒ last 不动', () => {
+        const before = '{"planned":["right","wrong",null],"last":"wrong"}';
+        const same = setPlannedOutcome(normalizeReviewOutcomes(before), 1, 'wrong');
+        expect(same.last).toBe('wrong');
+    });
+});
+
+describe('复习结果 · 只改"最近一次"（入口 B：计划外复习）', () => {
+    it('★ 前三行一个字都不动', () => {
+        const o = setLastOutcome({ planned: ['right', 'right', 'right'], last: 'right' }, 'wrong');
+        expect(o.planned).toEqual(['right', 'right', 'right']);
+        expect(o.last).toBe('wrong');
+    });
+
+    it('第 21 天已有结果后，再来新结果就只落在这里（计划位不再动）', () => {
+        const before = setPlannedOutcome(null, 2, 'right');
+        const after = setLastOutcome(before, 'wrong');
+        expect(after.planned).toEqual([null, null, 'right']);
+        expect(after.last).toBe('wrong');
+    });
+
+    it('把它清回"无结果"也只动它自己', () => {
+        const o = setLastOutcome({ planned: ['wrong'], last: 'right' }, null);
+        expect(o.last).toBeNull();
+        expect(o.planned).toEqual(['wrong', null, null]);
+    });
+});
+
+describe('复习结果 · 三个计划节点的日期', () => {
+    it('录入日 +1 / +7 / +21 天，YYYY-MM-DD', () => {
+        expect(PLANNED_REVIEW_OFFSET_DAYS).toEqual([1, 7, 21]);
+        // 用本地时间构造，避免时区把日子挪掉
+        const d = new Date(2026, 8, 30, 10, 0); // 2026-09-30
+        expect(plannedReviewDates(d)).toEqual(['2026-10-01', '2026-10-07', '2026-10-21']);
+    });
+
+    it('ISO 字符串（接口给的样子）也算对', () => {
+        const iso = new Date(2026, 8, 30, 10, 0).toISOString();
+        expect(plannedReviewDates(iso)[0]).toBe('2026-10-01');
+    });
+
+    it('跨月跨年也对', () => {
+        expect(plannedReviewDates(new Date(2026, 11, 20, 9, 0))).toEqual([
+            '2026-12-21',
+            '2026-12-27',
+            '2027-01-10',
+        ]);
+    });
+
+    it('没录入时间 ⇒ 三个空串（宁可不显示，也不要编一个日期出来）', () => {
+        expect(plannedReviewDates(null)).toEqual(['', '', '']);
+        expect(plannedReviewDates('不是日期')).toEqual(['', '', '']);
     });
 });

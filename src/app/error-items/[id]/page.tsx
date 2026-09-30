@@ -12,7 +12,12 @@ import { MdEditor } from "@/components/md-editor";
 import { TagInput } from "@/components/tag-input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiClient } from "@/lib/api-client";
-import { MISTAKE_CATEGORY_DESC_ZH, MISTAKE_GROUPS, getMistakeCategoryLabel } from "@/lib/mistake-category";
+import {
+    MISTAKE_CATEGORY_DESC_ZH,
+    MISTAKE_GROUPS,
+    getMistakeCategoryLabel,
+    normalizeMistakeCategory,
+} from "@/lib/mistake-category";
 import {
     MANAGE_TYPES,
     MANAGE_TYPE_LABEL,
@@ -27,6 +32,8 @@ import { CorrectionEditor, ParsedQuestionWithSubject } from "@/components/correc
 import { ParsedQuestion } from "@/lib/ai";
 import { PrintCounts } from "@/components/print-counts";
 import { attentionLevelOf, ATTENTION_LEVELS } from "@/lib/attention-level";
+import { ReviewOutcomeEditor } from "@/components/review-outcome-editor";
+import { serializeReviewOutcomes, type ReviewOutcomes } from "@/lib/review-outcomes";
 
 interface KnowledgeTag {
     id: string;
@@ -46,6 +53,8 @@ interface ErrorItemDetail {
     masteryLevel: number;
     originalImageUrl: string;
     userNotes: string | null;
+    /** 录入时间（ISO）—— 复习结果那三行的日期 = 它 +1 / +7 / +21 天 */
+    createdAt?: string;
     notebookId?: string | null;
     notebook?: {
         id: string;
@@ -67,6 +76,12 @@ interface ErrorItemDetail {
     reviewPrintCount?: number | null;
     /** G8 / T5：关注档（难度）1-5 */
     attention?: number | null;
+    /**
+     * 【2026-09-30】复习结果四圆点的原材料（JSON 字符串）：
+     * `{"planned":["right",null,null],"last":"wrong"}`
+     * 规则全在 `lib/review-outcomes.ts`（计划内同步 last、计划外只动 last）。
+     */
+    reviewOutcomes?: string | null;
 }
 
 /**
@@ -88,6 +103,8 @@ export default function ErrorDetailPage() {
     const params = useParams();
     const router = useRouter();
     const { t, language } = useLanguage();
+    /** 本页新文案的双语助手（与列表页/复练卷页同一写法） */
+    const L = (zh: string, en: string) => (language === "zh" ? zh : en);
     const [item, setItem] = useState<ErrorItemDetail | null>(null);
     const [loading, setLoading] = useState(true);
     const [notesInput, setNotesInput] = useState("");
@@ -314,6 +331,27 @@ export default function ErrorDetailPage() {
         } catch (error) {
             console.error(error);
             alert(t.common?.messages?.updateFailed || 'Update failed');
+        }
+    };
+
+    /**
+     * 【2026-09-30】复习结果四圆点：改一格即存。
+     *
+     * ⚠️ 与 `patchMetadata` **故意不同**：这里**不重新拉整条 item**，只做乐观更新。
+     *    原因：重新拉 item 会触发上面那个"初始化输入状态"的 effect 之外的连带刷新，
+     *    而四圆点是高频连点的地方（点三下 = 三次请求），每次重拉整页会闪。
+     *    失败时再拉真实数据回正（**失败提示一律保留**）。
+     */
+    const saveReviewOutcomes = async (next: ReviewOutcomes) => {
+        if (!item) return;
+        const serialized = serializeReviewOutcomes(next);
+        setItem({ ...item, reviewOutcomes: serialized });
+        try {
+            await apiClient.put(`/api/error-items/${item.id}`, { reviewOutcomes: serialized });
+        } catch (error) {
+            console.error(error);
+            alert(t.common?.messages?.updateFailed || 'Update failed');
+            fetchItem(item.id);
         }
     };
 
@@ -552,8 +590,20 @@ export default function ErrorDetailPage() {
                     <div className="space-y-6 min-w-0">
                         <Card>
                             <CardHeader>
-                                <div className="flex justify-between items-center">
-                                    <CardTitle>{t.detail.question}</CardTitle>
+                                {/* 【2026-09-30 他要求】原来写「题目」，现在直接写**这道题的题号**
+                                    （"反正也知道这是题目，还不如把题号放到上面去 —— 既有科目分类又有录入时间"）。
+                                    题号是二维码的锚点，只读。右侧放两个打印次数（只读计数，放这儿正好）。 */}
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <CardTitle className="font-mono text-base">
+                                        {item.source || t.detail.question}
+                                    </CardTitle>
+                                    <span className="text-sm font-medium whitespace-nowrap">
+                                        <PrintCounts
+                                            deep={item.printCount}
+                                            review={item.reviewPrintCount}
+                                            compact
+                                        />
+                                    </span>
                                 </div>
                             </CardHeader>
                             <CardContent className="space-y-4">
@@ -709,13 +759,57 @@ export default function ErrorDetailPage() {
                                             </Select>
                                         </div>
 
-                                        {/* 【2026-09-30 他要求】「错题等级」改叫「**复习类型**」，
-                                            选项顺序 = 深挖 → 复练 → 未定（未定挪到最后），
-                                            并且**深挖暗红、复练深绿**（色值仍取自 MANAGE_TYPE_SCREEN_COLOR，
-                                            与列表卡片右下角那个小标签同一处取色）。
-                                            改即落定（manual），服务端留痕。 */}
+                                        {/* 【2026-09-30 换新】错因：**三组八项**（不掌握 / 没做对 / 其他）。
+                                            一题只留一个 —— 多个原因同时存在时按优先级取（顺序见 lib/mistake-category）。
+                                            改即存；类型还没落定时服务端会按"组 → 类型"派生一次（留痕）。
+                                            ⚠️ **删掉了"没打"这一项**（他 2026-09-30 要求："这个'没打'不再作为一个错因了"）
+                                              ⇒ 没打错因时下拉显示的是占位文案（灰字），不是一个可选项。
+                                            ⚠️ 三个**组标题**改成黑体、**顶格**（他说的是"改黑体字顶格"）：
+                                              SelectLabel 默认有缩进（pl-8），这里 pl-0 顶到最左。 */}
                                         <div className="flex justify-between items-center gap-3">
-                                            <span className="text-muted-foreground whitespace-nowrap">复习类型:</span>
+                                            <span className="text-muted-foreground whitespace-nowrap">错因:</span>
+                                            <Select
+                                                value={normalizeMistakeCategory(item.mistakeCategory) ?? ""}
+                                                onValueChange={(v) => patchMetadata({ mistakeCategory: v })}
+                                            >
+                                                <SelectTrigger className="w-[160px] h-8">
+                                                    <SelectValue placeholder="未打错因" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {MISTAKE_GROUPS.map((g) => (
+                                                        <SelectGroup key={g.key}>
+                                                            <SelectLabel className="pl-0 text-xs font-semibold text-foreground">
+                                                                {g.zh}
+                                                                {/* 组名后面直接写出它派生出的类型 —— 他定的规则，
+                                                                    摆在这儿就不用另开文档解释 */}
+                                                                {g.key === "not_mastered"
+                                                                    ? " → 深挖"
+                                                                    : g.key === "not_right"
+                                                                      ? " → 复练"
+                                                                      : " → 先不定"}
+                                                            </SelectLabel>
+                                                            {g.items.map((c) => (
+                                                                <SelectItem
+                                                                    key={c}
+                                                                    value={c}
+                                                                    title={MISTAKE_CATEGORY_DESC_ZH[c]}
+                                                                >
+                                                                    {getMistakeCategoryLabel(c)}
+                                                                </SelectItem>
+                                                            ))}
+                                                        </SelectGroup>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+
+                                        {/* 【2026-09-30 他要求】「复习类型」→「**类型**」：
+                                            "在找到错因的基础上才定类型" ⇒ 所以它排在**错因后面**。
+                                            选项顺序 = 深挖 → 复练 → 未定（未定挪到最后），
+                                            并且**深挖暗红、复练深绿**（色值取自 MANAGE_TYPE_SCREEN_COLOR，
+                                            与列表卡片右下角那个小标签同一处取色）。改即落定（manual），服务端留痕。 */}
+                                        <div className="flex justify-between items-center gap-3">
+                                            <span className="text-muted-foreground whitespace-nowrap">类型:</span>
                                             <Select
                                                 value={item.manageType || "__undecided__"}
                                                 onValueChange={(v) =>
@@ -746,65 +840,6 @@ export default function ErrorDetailPage() {
                                             </Select>
                                         </div>
 
-                                        {/* 【2026-09-30 换新】错因：**三组八项**（不掌握 / 没做对 / 其他）。
-                                            一题只留一个 —— 多个原因同时存在时按优先级取（顺序见 lib/mistake-category）。
-                                            改即存；复习类型还没落定时服务端会按"组 → 类型"派生一次（留痕）。 */}
-                                        <div className="flex justify-between items-center gap-3">
-                                            <span className="text-muted-foreground whitespace-nowrap">错因:</span>
-                                            <Select
-                                                value={item.mistakeCategory || "__none__"}
-                                                onValueChange={(v) =>
-                                                    patchMetadata({ mistakeCategory: v === "__none__" ? null : v })
-                                                }
-                                            >
-                                                <SelectTrigger className="w-[160px] h-8">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="__none__">没打</SelectItem>
-                                                    {MISTAKE_GROUPS.map((g) => (
-                                                        <SelectGroup key={g.key}>
-                                                            <SelectLabel className="text-xs text-muted-foreground">
-                                                                {g.zh}
-                                                                {/* 组名后面直接写出它派生出的复习类型 —— 他定的规则，
-                                                                    摆在这儿就不用另开文档解释 */}
-                                                                {g.key === "not_mastered"
-                                                                    ? " → 深挖"
-                                                                    : g.key === "not_right"
-                                                                      ? " → 复练"
-                                                                      : " → 先不定"}
-                                                            </SelectLabel>
-                                                            {g.items.map((c) => (
-                                                                <SelectItem
-                                                                    key={c}
-                                                                    value={c}
-                                                                    title={MISTAKE_CATEGORY_DESC_ZH[c]}
-                                                                >
-                                                                    {getMistakeCategoryLabel(c)}
-                                                                </SelectItem>
-                                                            ))}
-                                                        </SelectGroup>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-
-                                        {/* 以下三项**只读**（题号 = 二维码锚点；打印次数由打印动作维护） */}
-                                        <div className="flex justify-between">
-                                            <span className="text-muted-foreground">题号:</span>
-                                            <span className="font-medium font-mono">
-                                                {item.source || (t.common?.notSet || 'Not set')}
-                                            </span>
-                                        </div>
-                                        <div className="flex justify-between items-center gap-3">
-                                            <span className="text-muted-foreground whitespace-nowrap">{t.detail.printCount}:</span>
-                                            {/* 【2026-09-30 他要求】两个次数并排、用简称：`深挖X | 复练Y`
-                                                （"深挖纸打印次数 8 | 复练纸印刷次数 0"太长了他嫌啰嗦）。
-                                                颜色：深挖暗红、复练深绿。 */}
-                                            <span className="font-medium">
-                                                <PrintCounts deep={item.printCount} review={item.reviewPrintCount} compact />
-                                            </span>
-                                        </div>
                                         {/* 【2026-09-30 他要求】等级也给下拉：🥉青铜 … 👑王者，**选中即存** */}
                                         <div className="flex justify-between items-center gap-3">
                                             <span className="text-muted-foreground whitespace-nowrap">{t.detail.attention}:</span>
@@ -823,6 +858,18 @@ export default function ErrorDetailPage() {
                                                     ))}
                                                 </SelectContent>
                                             </Select>
+                                        </div>
+
+                                        {/* 【2026-09-30 他要求】把卡片上那**四个复习结果圆圈**纳进详情页，
+                                            摆在试题信息栏的最后（等级后面）。
+                                            前三行 = 录入日 +1 / +7 / +21 天（写具体日期），最后一行 = 最近一次情况。 */}
+                                        <div className="pt-2 border-t">
+                                            <ReviewOutcomeEditor
+                                                value={item.reviewOutcomes}
+                                                createdAt={item.createdAt}
+                                                onChange={saveReviewOutcomes}
+                                                L={L}
+                                            />
                                         </div>
                                     </div>
                                 </div>
@@ -860,6 +907,30 @@ export default function ErrorDetailPage() {
                                         </Button>
                                     </div>
                                 )}
+                            </CardContent>
+                        </Card>
+
+                        {/* 【2026-09-30 他要求】**新增「日积月累」栏**，并**挪到「你的笔记/答案」下面**
+                            （先留口子，暂不接数据）。将来的用法（他描述的）：孩子的**深挖纸回录**后，
+                              ① AI 识别出她具体写了什么 ⇒ 进「错误解答原文 / 你的笔记」那一栏；
+                              ② 在这基础上对她这道题与她的分析做总结，形成几句话 ⇒ 进「日积月累」，
+                                 并送往**日积月累库**（那张表还没建，等他定了内容再开发）。
+                            ⚠️ 所以这一栏现在**刻意不做可编辑输入框** —— 假输入框比空栏更误导人：
+                               敲进去的字没地方存。等库定了再接。
+                            📌 与「错因分析」的区别一句话：错因分析=AI 讲这题错在哪；
+                               日积月累=**从这道题攒下的一句人话**（她的收获）。 */}
+                        <Card>
+                            <CardHeader>
+                                <div className="flex justify-between items-center">
+                                    <CardTitle>{language === "zh" ? "日积月累" : "Takeaways"}</CardTitle>
+                                </div>
+                            </CardHeader>
+                            <CardContent>
+                                <div className="rounded-md border border-dashed bg-muted/30 px-4 py-6 text-sm text-muted-foreground">
+                                    {language === "zh"
+                                        ? "还没有内容。等深挖纸回录接上后，AI 会把她这道题的收获总结成几句话放在这里，并归入「日积月累」。"
+                                        : "Nothing yet. Once the deep-dive sheet is scanned back, a few lines summarizing what she learned will appear here."}
+                                </div>
                             </CardContent>
                         </Card>
                     </div>
@@ -981,30 +1052,6 @@ export default function ErrorDetailPage() {
                                                 </Button>
                                             </div>
                                         )}
-                                </div>
-                            </CardContent>
-                        </Card>
-
-                        {/* 【2026-09-30 他要求】**新增「日积月累」栏**（先留口子，暂不接数据）。
-                            将来的用法（他描述的）：孩子的**深挖纸回录**后，
-                              ① AI 识别出她具体写了什么 ⇒ 进「错误解答原文 / 你的笔记」那一栏；
-                              ② 在这基础上对她这道题与她的分析做总结，形成几句话 ⇒ 进「日积月累」，
-                                 并送往**日积月累库**（那张表还没建，等他定了内容再开发）。
-                            ⚠️ 所以这一栏现在**刻意不做可编辑输入框** —— 假输入框比空栏更误导人：
-                               敲进去的字没地方存。等库定了再接。
-                            📌 与「错因分析」的区别一句话：错因分析=AI 讲这题错在哪；
-                               日积月累=**从这道题攒下的一句人话**（她的收获）。 */}
-                        <Card>
-                            <CardHeader>
-                                <div className="flex justify-between items-center">
-                                    <CardTitle>{language === "zh" ? "日积月累" : "Takeaways"}</CardTitle>
-                                </div>
-                            </CardHeader>
-                            <CardContent>
-                                <div className="rounded-md border border-dashed bg-muted/30 px-4 py-6 text-sm text-muted-foreground">
-                                    {language === "zh"
-                                        ? "还没有内容。等深挖纸回录接上后，AI 会把她这道题的收获总结成几句话放在这里，并归入「日积月累」。"
-                                        : "Nothing yet. Once the deep-dive sheet is scanned back, a few lines summarizing what she learned will appear here."}
                                 </div>
                             </CardContent>
                         </Card>

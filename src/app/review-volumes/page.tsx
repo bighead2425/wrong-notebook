@@ -587,36 +587,43 @@ export default function ReviewVolumesPage() {
 
     return (
         <div className="print-preview-shell">
-            {/* ===== 顶栏：左＝返回 + 标题；右＝隐藏左栏 / 打印 / 主页 ===== */}
-            <div className="no-print flex items-center gap-2 border-b bg-background px-3 py-2">
-                <BackButton fallbackUrl="/" className="shrink-0" />
-                <h1 className="text-base sm:text-lg font-semibold truncate">{L("复练卷页", "Review volumes")}</h1>
-                <span className="text-xs text-muted-foreground hidden lg:inline">
-                    {L("已生成的卷都在这里（新卷请到打印预览页组）", "All built volumes live here")}
-                </span>
-                <span className="flex-1" />
-                <Button
-                    variant="outline"
-                    size="icon"
-                    title={L("隐藏 / 显示左栏", "Toggle list")}
-                    onClick={() => setLeftHidden((v) => !v)}
-                >
-                    {leftHidden ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-                </Button>
-                <Button
-                    variant="outline"
-                    size="icon"
-                    title={L("打印这一卷（会把卷内每道题的复练纸次数 +1）", "Print this volume")}
-                    disabled={!layout}
-                    onClick={printVolume}
-                >
-                    <Printer className="h-4 w-4" />
-                </Button>
-                <Link href="/">
-                    <Button variant="ghost" size="icon" title={L("返回主页", "Home")}>
-                        <House className="h-5 w-5" />
+            {/* ===== 顶栏：左＝返回 + 标题；右＝隐藏左栏 / 打印 / 主页 =====
+                【2026-09-30 他要求】原来这一排是**整屏宽**（标题贴左边缘、按钮贴右边缘），
+                而下面两栏是 `max-w-[1600px]` 居中的 ⇒ 大屏上"上面顶两头、下面缩中间"，
+                他原话"实在是太难看了"。修法：顶栏**内容**用与两栏**同一套**包裹
+                （同样 max-w + 同样左右内边距 + 居中），这样标题与左栏对齐、按钮与右栏右缘对齐；
+                分隔线仍走整屏（`border-b` 在外层），不然会断成一小截。 */}
+            <div className="no-print border-b bg-background">
+                <div className="mx-auto flex w-full max-w-[1600px] items-center gap-2 px-4 py-2 md:px-8">
+                    <BackButton fallbackUrl="/" className="shrink-0" />
+                    <h1 className="text-base sm:text-lg font-semibold truncate">{L("复练卷页", "Review volumes")}</h1>
+                    <span className="text-xs text-muted-foreground hidden lg:inline">
+                        {L("已生成的卷都在这里（新卷请到打印预览页组）", "All built volumes live here")}
+                    </span>
+                    <span className="flex-1" />
+                    <Button
+                        variant="outline"
+                        size="icon"
+                        title={L("隐藏 / 显示左栏", "Toggle list")}
+                        onClick={() => setLeftHidden((v) => !v)}
+                    >
+                        {leftHidden ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
                     </Button>
-                </Link>
+                    <Button
+                        variant="outline"
+                        size="icon"
+                        title={L("打印这一卷（会把卷内每道题的复练纸次数 +1）", "Print this volume")}
+                        disabled={!layout}
+                        onClick={printVolume}
+                    >
+                        <Printer className="h-4 w-4" />
+                    </Button>
+                    <Link href="/">
+                        <Button variant="ghost" size="icon" title={L("返回主页", "Home")}>
+                            <House className="h-5 w-5" />
+                        </Button>
+                    </Link>
+                </div>
             </div>
 
             {/* 两栏作为整体居中、不顶到浏览器两侧 —— 与打印预览页同一个口径（他 2026-09-30 提的） */}

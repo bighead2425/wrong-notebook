@@ -8,6 +8,7 @@ import { createLogger } from "@/lib/logger";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { normalizeMistakeCategory } from "@/lib/mistake-category";
+import { normalizeReviewOutcomes, serializeReviewOutcomes } from "@/lib/review-outcomes";
 import {
     canAutoRewrite,
     normalizeManageType,
@@ -101,6 +102,12 @@ export async function PUT(
             manageType,
             manageTypeSource,
             mistakeCategory,
+            /**
+             * 【2026-09-30】复习结果四圆点（详情页直接改，改即存）。
+             * 收 JSON 字符串或对象，一律**过一遍 `normalizeReviewOutcomes` 再落库** ——
+             * 结构不乱、也不留非法值（"right"/"wrong"/null 三态，别的一律当没结果）。
+             */
+            reviewOutcomes,
         } = body;
 
         const errorItem = await prisma.errorItem.findUnique({
@@ -150,6 +157,15 @@ export async function PUT(
         // ⚠️ Q4/G6：wrongAnswerText 已弃用，保留列但**不再写入**（仅接收用于推算 mistakeStatus）
         if (mistakeAnalysis !== undefined) updateData.mistakeAnalysis = mistakeAnalysis || null;
         if (userNotes !== undefined) updateData.userNotes = userNotes || null;
+
+        /**
+         * 【2026-09-30】复习结果：**整包覆盖**（它的形状本身就是"这四个位置各是什么"）。
+         * 空值（null / 空串）当"没提供"，不把已有的结果抹掉 —— 与 cropRegions 同一条规矩：
+         * 详情页改个备注，不该顺手把她的复习记录清空。
+         */
+        if (reviewOutcomes !== undefined && reviewOutcomes !== null && reviewOutcomes !== '') {
+            updateData.reviewOutcomes = serializeReviewOutcomes(normalizeReviewOutcomes(reviewOutcomes));
+        }
 
         // 关注档 1-5（G8 难度档）：夹到 1..5，非法值忽略
         if (attention !== undefined) {

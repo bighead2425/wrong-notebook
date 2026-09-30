@@ -80,7 +80,7 @@ export default function NotebookDetailPage() {
             <div className="max-w-6xl mx-auto space-y-6 md:space-y-8">
                 <div className="flex items-start gap-4">
                     <BackButton fallbackUrl="/notebooks" className="shrink-0" />
-                    <div className="flex-1 min-w-0 space-y-1">
+                    <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight truncate">{notebook.displayName}</h1>
                             <Button
@@ -92,16 +92,6 @@ export default function NotebookDetailPage() {
                                 <Pencil className="h-4 w-4" />
                             </Button>
                         </div>
-                        <p className="text-muted-foreground text-sm sm:text-base">
-                            {/* 【2026-09-30 他要求】"共 XX 道错题" → "共 XX 道错题，当前选中 YY 道题"。
-                                XX = 整个错题本的总量（不带筛选，服务端算）；YY = 当前筛选后还剩几道。
-                                数据还没回来时退回原来的样子，不闪空。 */}
-                            {counts && counts.notebookTotal !== null
-                                ? (t.notebooks?.totalErrorsSelected || "Total {total} wrong answers · {selected} shown")
-                                    .replace("{total}", counts.notebookTotal.toString())
-                                    .replace("{selected}", counts.total.toString())
-                                : (t.notebooks?.totalErrors || "Total {count} errors").replace("{count}", (notebook._count?.errorItems || 0).toString())}
-                        </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                         {/* #10 三级打印 · 第 2 级：只打这一本里还没打过的 */}
@@ -160,6 +150,18 @@ export default function NotebookDetailPage() {
                         </Link>
                     </div>
                 </div>
+
+                {/* 【2026-09-30 他要求】计数单独占一整行（原来夹在标题与按钮之间，窄屏被挤成两行很难看），
+                    文案也缩短成「共 XX 道，选中 YY 道」。
+                    XX = 整个错题本的总量（不带筛选，服务端算）；YY = 当前筛选后还剩几道。
+                    数据还没回来时退回原来的样子，不闪空。 */}
+                <p className="text-muted-foreground text-sm">
+                    {counts && counts.notebookTotal !== null
+                        ? (t.notebooks?.totalErrorsSelected || "Total {total} · {selected} shown")
+                            .replace("{total}", counts.notebookTotal.toString())
+                            .replace("{selected}", counts.total.toString())
+                        : (t.notebooks?.totalErrors || "Total {count} errors").replace("{count}", (notebook._count?.errorItems || 0).toString())}
+                </p>
 
                 {notebook.archiveStatus === "archived" && (
                     <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">

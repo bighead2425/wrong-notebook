@@ -544,7 +544,7 @@ export function ErrorList({ notebookId, subjectName, notebookInfo, onCountChange
                     title={L("看这本的复练卷", "Review volumes of this notebook")}
                 >
                     <Layers className="mr-2 h-4 w-4" />
-                    {L("复练卷", "Volumes")}
+                    {L("复练", "Volumes")}
                 </Button>
                 <Button variant="outline" onClick={handleExportPrint}>
                     <Printer className="mr-2 h-4 w-4" />

@@ -25,6 +25,8 @@
  *   {"planned":["right",null,null],"last":"wrong"}
  */
 
+import { addDays, dayKey } from './calendar-grid';
+
 export type ReviewOutcome = 'right' | 'wrong';
 
 export interface ReviewOutcomes {
@@ -43,6 +45,12 @@ export const PLANNED_REVIEW_LABELS_EN = ['Day 1 review', 'Day 7 review', 'Day 21
 export function isReviewOutcome(value: unknown): value is ReviewOutcome {
     return value === 'right' || value === 'wrong';
 }
+
+/**
+ * 【2026-09-30】计划复习的三个节点：录入后 **第 1 / 7 / 21 天**。
+ * 详情页那三行要**写出具体日期**（YYYY-MM-DD），所以偏移量必须只有这一份。
+ */
+export const PLANNED_REVIEW_OFFSET_DAYS = [1, 7, 21] as const;
 
 export function emptyReviewOutcomes(): ReviewOutcomes {
     return { planned: [null, null, null], last: null };
@@ -108,6 +116,70 @@ export interface ReviewDot {
     zh: string;
     /** 悬停提示（英文） */
     en: string;
+}
+
+/**
+ * 三个计划节点各自的**日期**（`YYYY-MM-DD`，本地时区）。
+ * 录入日 +1 / +7 / +21 天 —— 出处：R14「第 0 天首次深挖 / 第 7 天 / 第 21 天」。
+ * 日期算不出来（没录入时间）就返回空串，界面上那格留空而不是显示瞎编的日期。
+ */
+export function plannedReviewDates(createdAt: unknown): string[] {
+    const d = createdAt instanceof Date ? createdAt : new Date(String(createdAt ?? ''));
+    if (Number.isNaN(d.getTime())) return PLANNED_REVIEW_OFFSET_DAYS.map(() => '');
+    return PLANNED_REVIEW_OFFSET_DAYS.map((delta) => addDays(dayKey(d), delta));
+}
+
+/* ============================ 写入：两条入口，别搞混 ============================ */
+
+/**
+ * 【入口 A】界面上**直接改前三行里的某一格**（人工更正）—— 他要的规则：
+ *
+ *   出处：他 2026-09-30 的原话（很啰嗦但意思清楚）——
+ *     · "三行过后的下面一行写最近一次情况……如果前三个有改动的情况下，
+ *        照前三个中**最后一个已选**亮绿色对号或粉色错号的结果作为自己的结果"；
+ *     · "如果前三个改动后，**没有任何一个**绿色对号或粉色错号，则**保持当前状态不变**"；
+ *     · "如果前三次的调整是来自于 AI 提供的信息，且……与更新前的结果是**一样的**，
+ *        那么最近一次情况应**保持不变**"。
+ *
+ *   落成三条：
+ *     ① 改完与改前**完全一样** ⇒ 原样返回（`last` 不动）；
+ *     ② 改完三格**全空** ⇒ `last` 不动（他说"保持当前状态不变"）；
+ *     ③ 否则 ⇒ `last` = **三格里最后一个非空**的值（第 21 天 → 第 7 天 → 第 1 天 倒着找）。
+ *
+ *   ⚠️ 为什么 ③ 能同时满足他"先改第 2 次、再补改第 1 次就别跟着动"：
+ *     补改第 1 次之后，"最后一个非空"仍然是第 2 次那颗 ⇒ `last` 算出来跟原来一样。
+ *     规则本身不需要知道"谁先谁后"，只看"最后一个有结果的计划节点"。
+ */
+export function setPlannedOutcome(
+    current: unknown,
+    index: 0 | 1 | 2,
+    value: ReviewOutcome | null,
+): ReviewOutcomes {
+    const base = normalizeReviewOutcomes(current);
+    const planned = [...base.planned];
+    planned[index] = value;
+
+    // ① 没变化 ⇒ 什么都不动（AI 重复回传同一批结果就走这条路）
+    if (planned.every((v, i) => v === base.planned[i])) return base;
+
+    // ③ 倒着找最后一个有结果的计划节点
+    const lastFilled = [...planned].reverse().find((v) => v !== null) ?? null;
+
+    // ② 全空 ⇒ last 不动；否则同步
+    return { planned, last: lastFilled === null ? base.last : lastFilled };
+}
+
+/**
+ * 【入口 B】只改**最近一次情况**那一行（计划外的复习、或人工直接指定）。
+ *
+ * 他说得最直白的一句："如果前三次记录中第三次（即 21 天后）记录已经存在，
+ * 并记录为绿色对号或粉色错号，则再提供来这道题的复习情况，无论是对号还是错，
+ * **就只在"最近一次情况"中予以记录更新**。"
+ * —— 也就是"计划位满了以后，新结果只落在这里，前三行不再动"。
+ */
+export function setLastOutcome(current: unknown, value: ReviewOutcome | null): ReviewOutcomes {
+    const base = normalizeReviewOutcomes(current);
+    return { planned: base.planned, last: value };
 }
 
 /**
