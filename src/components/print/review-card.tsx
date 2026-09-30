@@ -161,7 +161,14 @@ export function stripMarkdownImages(text: string): string {
  * ────────────────────────────────────────────────────────────────────────────────
  * ```
  */
-function VolumeHeader({
+/**
+ * 卷头（卷号 / 年级学期 / 页码 / 印于 / 页二维码）—— **复练纸与积累纸共用同一份**。
+ *
+ * 【2026-10-01】加了 export：积累纸那一屏要复用它。
+ * 不抄第二份的理由和错题卡那次一样 —— 页眉上"第几页"、二维码位置、打孔让位
+ * 这些一旦两边各写一遍，迟早出现"积累纸页码和复练纸差一格"这种对不上的事。
+ */
+export function VolumeHeader({
     kind,
     volumeNo,
     pageNo,

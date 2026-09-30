@@ -466,11 +466,21 @@ model ReviewVolumeItem {
   errorItemId  String?
   errorItem    ErrorItem?   @relation(fields: [errorItemId], references: [id], onDelete: SetNull)
 
-  /// 题号快照（= ErrorItem.source，如 SX20260916001）
+  /// 【2026-10-01 第三轮：积累纸】这条是**哪条日积月累**（软链接，用来跳回原条目）。
+  /// 与 errorItemId **互斥**：复练卷的行挂题，积累卷的行挂积累条目。
+  /// ⚠️ 只是软链接 —— **纸面的一切都走下面的快照**（定盘星：印出去的凭证存快照）。
+  insightId    String?
+  insight      Insight?     @relation(fields: [insightId], references: [id], onDelete: SetNull)
+
+  /// 【复练卷】题号快照（= ErrorItem.source，如 SX20260916001）
+  /// 【积累卷】**JL 编号快照**（如 JL20261001001）—— 同一个槽位，装的是这条内容的"编号"。
+  /// 语义一致：都是纸上印的那个号，所以复用一列而不新开。
   itemNo       String?
-  /// 题干快照（OCR 文字）
+  /// 【复练卷】题干快照（OCR 文字）
+  /// 【积累卷】**积累正文快照**（md 源）—— 同上，复用一列。
   questionText String?
-  /// 题图快照（JSON 数组，元素是 dataURL 或路径）
+  /// 【复练卷】题图快照（JSON 数组，元素是 dataURL 或路径）
+  /// 【积累卷】**积累配图快照**（同上格式；一条最多一张，规则是他定的）
   figureUrls   String?
   /// 印这一刻这道题的错题等级（决定那是"↑升级"还是"↓降级"小框）
   manageType   String?
@@ -543,6 +553,10 @@ model Insight {
 
   /// 配图（**最多一张**，本体在 `InsightPhoto` 表，主表查询完全不碰它）
   photo InsightPhoto?
+
+  /// 【2026-10-01 第三轮】这条被印进过哪些卷（软链接，用来从纸上跳回这里）。
+  /// 卷里那一行存的是**快照**，所以删掉这条不影响已经印出去的纸（定盘星）。
+  volumeItems ReviewVolumeItem[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

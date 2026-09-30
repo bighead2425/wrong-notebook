@@ -13,7 +13,12 @@ import {
     type VolumeKind,
 } from "@/lib/volume-code";
 import { normalizeBlankLines, VOLUME_VARIANTS } from "@/lib/review-card";
-import { parseVolumeItems, resolvePageCount, normalizeVolumeTitle } from "@/lib/volume-input";
+import {
+    attachInsightFigures,
+    parseVolumeItems,
+    resolvePageCount,
+    normalizeVolumeTitle,
+} from "@/lib/volume-input";
 import { codeToSubjectKey } from "@/lib/question-no";
 
 const logger = createLogger("api:review-volumes");
@@ -87,6 +92,14 @@ export async function POST(request: Request) {
 
         // 条目规范化 + 总页数都走 lib/volume-input（与"更新组卷"共用同一处，避免两边分叉）
         const items = parseVolumeItems(rawItems, defaultBlankLines);
+        // 【积累纸】挂了积累条目的行：图由服务端按 insightId 补进快照（前端手上没有图本体）
+        await attachInsightFigures(items, async (insightId) => {
+            const row = await prisma.insightPhoto.findUnique({
+                where: { insightId },
+                select: { data: true },
+            });
+            return row?.data ?? null;
+        });
         const pageCount = resolvePageCount(raw.pageCount, items);
 
         const created = await prisma.reviewVolume.create({

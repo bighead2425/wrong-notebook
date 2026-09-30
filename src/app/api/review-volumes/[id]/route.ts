@@ -5,7 +5,12 @@ import { getServerSession } from "next-auth";
 import { unauthorized, badRequest, notFound, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { normalizeBlankLines, VOLUME_VARIANTS } from "@/lib/review-card";
-import { parseVolumeItems, resolvePageCount, normalizeVolumeTitle } from "@/lib/volume-input";
+import {
+    attachInsightFigures,
+    parseVolumeItems,
+    resolvePageCount,
+    normalizeVolumeTitle,
+} from "@/lib/volume-input";
 import { VOLUME_KINDS, type VolumeKind } from "@/lib/volume-code";
 
 const logger = createLogger("api:review-volumes/[id]");
@@ -128,6 +133,14 @@ export async function PATCH(request: Request, ctx: Ctx) {
         );
 
         const items = parseVolumeItems(rawItems, defaultBlankLines);
+        // 【积累纸】与建卷同一处补图（共用 `attachInsightFigures`，不写第二份）
+        await attachInsightFigures(items, async (insightId) => {
+            const row = await prisma.insightPhoto.findUnique({
+                where: { insightId },
+                select: { data: true },
+            });
+            return row?.data ?? null;
+        });
         const pageCount = resolvePageCount(raw.pageCount, items);
 
         /**

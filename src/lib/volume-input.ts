@@ -11,6 +11,12 @@ import { normalizeBlankLines, normalizeFigureScale } from "./review-card";
 
 export interface VolumeItemInput {
     errorItemId: string | null;
+    /**
+     * 【2026-10-01 第三轮：积累纸】这一行印的是哪条**日积月累**。
+     * 与 errorItemId **互斥**：复练卷的行挂题，积累卷的行挂积累条目。
+     * ⚠️ 两者都允许为空（"这一行只留快照"也是合法的 —— 卷是印出去的凭证，快照才是主角）。
+     */
+    insightId: string | null;
     seqInVolume: number;
     pageIndex: number;
     columnIndex: number;
@@ -37,6 +43,7 @@ export function parseVolumeItems(rawItems: unknown, defaultBlankLines: number): 
         const mt = typeof e.manageType === "string" && isManageType(e.manageType) ? e.manageType : null;
         return {
             errorItemId: typeof e.errorItemId === "string" && e.errorItemId ? e.errorItemId : null,
+            insightId: typeof e.insightId === "string" && e.insightId ? e.insightId : null,
             seqInVolume: Number.isFinite(Number(e.seqInVolume)) ? Number(e.seqInVolume) : index + 1,
             pageIndex: Number.isFinite(Number(e.pageIndex)) ? Number(e.pageIndex) : 1,
             columnIndex: Number.isFinite(Number(e.columnIndex)) ? Number(e.columnIndex) : 0,
@@ -49,6 +56,30 @@ export function parseVolumeItems(rawItems: unknown, defaultBlankLines: number): 
             figureScale: normalizeFigureScale(e.figureScale as number | null | undefined),
         };
     });
+}
+
+/**
+ * 【2026-10-01 第三轮：积累纸】给"挂了积累条目"的行**自动补上配图**。
+ *
+ * 前端建卷时只给了 insightId + JL 编号 + 正文 —— **图不给**。
+ * 为什么不让前端传：列表接口刻意不返回图片本体（图片在独立表，列表查询不碰它，
+ * 见 20261001220000 那条迁移的注释），前端手上根本没有图。
+ *
+ * 所以由服务端补：按 insightId 一次查回配图，填进 `figureUrls`（快照列）。
+ * 判据仍是定盘星 —— **印出去的凭证必须存快照**，图也得落进卷里，
+ * 否则原条目一改图，已经印出去的卷就"变了"。
+ *
+ * @param items 已规范化的卷内行（会被**原地**补 figureUrls）
+ */
+export async function attachInsightFigures(
+    items: VolumeItemInput[],
+    loadPhoto: (insightId: string) => Promise<string | null>,
+): Promise<void> {
+    const need = items.filter((i) => i.insightId && !i.figureUrls);
+    for (const it of need) {
+        const url = await loadPhoto(it.insightId!);
+        if (url) it.figureUrls = JSON.stringify([url]);
+    }
 }
 
 /** 总页数：优先用调用方算好的；没有就从题目的 pageIndex 里取最大（至少 1 页） */

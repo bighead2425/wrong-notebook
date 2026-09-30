@@ -40,7 +40,7 @@ import { cleanMarkdown } from '@/lib/markdown-utils';
 import { dayKey } from '@/lib/calendar-grid';
 import { ErrorItemCard } from '@/components/error-item-card';
 import type { ErrorItem } from '@/types/api';
-import { Camera, House, Plus, Save, Search, Trash2, X } from 'lucide-react';
+import { Camera, House, Plus, Printer, Save, Search, Trash2, X } from 'lucide-react';
 
 interface InsightRow {
     id: string;
@@ -262,6 +262,15 @@ export default function InsightsPage() {
                         <Plus className="mr-1.5 h-4 w-4" />
                         {L('新建一条', 'New')}
                     </Button>
+                    {/* 【2026-10-01 第三轮】**打印另开一屏**（他担心的对）：
+                        编辑与打印是两种状态（未保存的改动、量高、分页、页码），
+                        硬塞进同一个右栏久了必然互相打架。 */}
+                    <Link href="/insights/print">
+                        <Button variant="outline" size="sm" title={L('把挑出来的条目排成积累纸印出来', 'Print picked entries on takeaway sheets')}>
+                            <Printer className="mr-1.5 h-4 w-4" />
+                            {L('打印', 'Print')}
+                        </Button>
+                    </Link>
                     <Link href="/">
                         <Button variant="ghost" size="icon" title={L('返回主页', 'Home')}>
                             <House className="h-5 w-5" />
