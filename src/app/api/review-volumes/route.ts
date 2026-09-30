@@ -14,6 +14,7 @@ import {
 } from "@/lib/volume-code";
 import { normalizeBlankLines, VOLUME_VARIANTS } from "@/lib/review-card";
 import { parseVolumeItems, resolvePageCount, normalizeVolumeTitle } from "@/lib/volume-input";
+import { codeToSubjectKey } from "@/lib/question-no";
 
 const logger = createLogger("api:review-volumes");
 
@@ -149,6 +150,12 @@ export async function GET(request: Request) {
                 defaultBlankLines: true,
                 createdAt: true,
                 _count: { select: { items: true } },
+                /**
+                 * 【2026-09-30】复练卷页要按**学科**筛卷，而卷里只存了题号（如 `SX20260928013`）
+                 * ⇒ 取题号前 2 位反推学科。只取题号、限量 20 条：一份卷里学科基本是一致的，
+                 * 拿前几条足够定学科，不必把整卷条目读出来。
+                 */
+                items: { select: { itemNo: true }, orderBy: { seqInVolume: "asc" }, take: 20 },
             },
         });
 
@@ -157,7 +164,14 @@ export async function GET(request: Request) {
             volumes: volumes.map((v) => ({
                 ...v,
                 itemCount: v._count.items,
+                /**
+                 * 学科：从题号前缀反推（`SX…` → math）。
+                 * 一份卷可能跨学科（跨本组卷），所以回的是**去重后的数组**，
+                 * 前端"按学科筛"时命中任一即算。
+                 */
+                subjectKeys: [...new Set((v.items || []).map((it) => codeToSubjectKey(it.itemNo?.slice(0, 2))))],
                 parsed: parseVolumeNo(v.volumeNo),
+                items: undefined,
                 _count: undefined,
             })),
         });

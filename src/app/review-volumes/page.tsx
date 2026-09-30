@@ -56,6 +56,8 @@ import {
     type SnapshotRow,
 } from "@/lib/review-card";
 import { VOLUME_KINDS, VOLUME_KIND_LABEL, VOLUME_KIND_LABEL_EN, type VolumeKind } from "@/lib/volume-code";
+import { GRADE_TERMS, normalizeTerm, volumeMatchesTerm } from "@/lib/grade-term";
+import { SUBJECT_OPTIONS, subjectLabel } from "@/lib/notebook-fields";
 
 /** 卷列表里一条（GET /api/review-volumes 的返回） */
 interface VolumeSummary {
@@ -69,6 +71,8 @@ interface VolumeSummary {
     defaultBlankLines: number;
     createdAt: string;
     itemCount: number;
+    /** 【2026-09-30】卷的学科（从题号前缀反推，跨学科组卷会给多个） */
+    subjectKeys?: string[];
 }
 
 interface VolumeItemRow {
@@ -103,8 +107,15 @@ export default function ReviewVolumesPage() {
     const [listError, setListError] = useState("");
     const [query, setQuery] = useState("");
     const [kindFilter, setKindFilter] = useState<"all" | VolumeKind>("all");
-    /** 【2026-09-30 他拍的板】按学期筛 —— 数据里本来就存了学期标签，加个下拉就行 */
-    const [semesterFilter, setSemesterFilter] = useState<string>("all");
+    /**
+     * 【2026-09-30 他拍的板：换成两个筛选】
+     *   ① 年级/学期（小一上 … 高三下，18 个）—— 卷快照里有 gradeSemester
+     *   ② 学科（9 科 + 其他）—— 卷没存学科，从题号前缀反推（`SX…` → 数学）
+     * 原来那个"全部学期"（2026-秋 这种）对管理没用，去掉。
+     * 两者可叠加；都能通过 URL 带进来（从错题本页的「复练卷」按钮跳过来时）。
+     */
+    const [gradeTermFilter, setGradeTermFilter] = useState<string>("");
+    const [subjectFilter, setSubjectFilter] = useState<string>("");
     const [leftHidden, setLeftHidden] = useState(false);
 
     // ---------- 右栏：选中的那一卷 ----------
@@ -160,6 +171,21 @@ export default function ReviewVolumesPage() {
     useEffect(() => {
         fetchList();
     }, [fetchList]);
+
+    /**
+     * 【2026-09-30】从错题本页的「复练卷」按钮跳过来时带了 `?grade=…&subject=…`：
+     * 直接把这本对应的卷筛出来（他要的"从错题本中可以直接进入复练卷页，
+     * 并已经筛选出关于这个错题本的所有复练卷"）。
+     * 用 `window.location` 而不是 `useSearchParams`（后者会把页面拖进 Suspense 边界）。
+     * 年级/学期走 `normalizeTerm` 归一：`六年级上` / `小六上` 两种写法都认。
+     */
+    useEffect(() => {
+        const qs = new URLSearchParams(window.location.search);
+        const grade = qs.get("grade");
+        const subject = qs.get("subject");
+        if (grade) setGradeTermFilter(normalizeTerm(grade) || grade);
+        if (subject) setSubjectFilter(subject);
+    }, []);
 
     /**
      * 打开一份卷：读快照（页归属 / 顺序 / 留白 / 图大小）+ 按 id 拉现库里的题。
@@ -467,6 +493,26 @@ export default function ReviewVolumesPage() {
         fetchList,
     ]);
 
+    /**
+     * 打印这一卷：先把"复练纸印刷次数"记上（卷内**所有**还找得到的题各 +1），再调浏览器打印。
+     * 口径与打印预览页一致（`kind: "review"`）。
+     * ⚠️ 不记那些原题已删的（它们只在快照里，没有可加的题）；也不动 `lastPrintedAt`
+     *    —— 那个字段是「本册未打印」那条筛选用的一，别被印卷捎带改了。
+     */
+    const printVolume = useCallback(async () => {
+        if (items.length > 0) {
+            try {
+                await apiClient.post("/api/error-items/mark-printed", {
+                    ids: items.map((i) => i.id),
+                    kind: "review",
+                });
+            } catch (error) {
+                console.error("Failed to record review print count:", error);
+            }
+        }
+        window.print();
+    }, [items]);
+
     /** 改名（只存库里、不上纸）：走 PATCH 的"只带 title"那条路 */
     const saveTitle = useCallback(async () => {
         if (!detail) return;
@@ -515,17 +561,14 @@ export default function ReviewVolumesPage() {
 
     // ================= 左栏：搜索 / 类型 / 学期 =================
 
-    /** 学期下拉的选项：从已有卷里现取（不硬编码"2026-秋"这种） */
-    const semesters = useMemo(
-        () => [...new Set(volumes.map((v) => v.semester).filter(Boolean))].sort().reverse(),
-        [volumes],
-    );
-
     const visibleVolumes = useMemo(() => {
         const q = query.trim().toLowerCase();
         return volumes.filter((v) => {
             if (kindFilter !== "all" && v.kind !== kindFilter) return false;
-            if (semesterFilter !== "all" && v.semester !== semesterFilter) return false;
+            // 年级/学期：卷页眉可能是"六年级上·五年级上"（跨本组卷），**任一部分**命中就算
+            if (gradeTermFilter && !volumeMatchesTerm(v.gradeSemester, gradeTermFilter)) return false;
+            // 学科：卷可能跨学科，命中任一即可
+            if (subjectFilter && !(v.subjectKeys || []).includes(subjectFilter)) return false;
             if (!q) return true;
             return (
                 v.volumeNo.toLowerCase().includes(q) ||
@@ -533,7 +576,7 @@ export default function ReviewVolumesPage() {
                 (v.gradeSemester || "").toLowerCase().includes(q)
             );
         });
-    }, [volumes, kindFilter, semesterFilter, query]);
+    }, [volumes, kindFilter, gradeTermFilter, subjectFilter, query]);
 
     const formatTime = (iso: string) => {
         const d = new Date(iso);
@@ -563,9 +606,9 @@ export default function ReviewVolumesPage() {
                 <Button
                     variant="outline"
                     size="icon"
-                    title={L("打印这一卷", "Print this volume")}
+                    title={L("打印这一卷（会把卷内每道题的复练纸次数 +1）", "Print this volume")}
                     disabled={!layout}
-                    onClick={() => window.print()}
+                    onClick={printVolume}
                 >
                     <Printer className="h-4 w-4" />
                 </Button>
@@ -621,17 +664,30 @@ export default function ReviewVolumesPage() {
                                             </button>
                                         ))}
                                     </div>
-                                    {/* 学期筛选（他 2026-09-30 拍板要的） */}
+                                    {/* 年级/学期（小一上 … 高三下）+ 学科（9 科 + 其他）两个筛选，可叠加 */}
                                     <select
-                                        className="rounded-md border bg-background px-2 py-1 text-xs"
-                                        value={semesterFilter}
-                                        onChange={(e) => setSemesterFilter(e.target.value)}
-                                        title={L("按学期筛", "Filter by term")}
+                                        className="rounded-md border bg-background px-2 py-1 text-xs max-w-[110px]"
+                                        value={gradeTermFilter}
+                                        onChange={(e) => setGradeTermFilter(e.target.value)}
+                                        title={L("按年级/学期筛", "Filter by term")}
                                     >
-                                        <option value="all">{L("全部学期", "All terms")}</option>
-                                        {semesters.map((s) => (
-                                            <option key={s} value={s}>
-                                                {s}
+                                        <option value="">{L("全部年级", "All terms")}</option>
+                                        {GRADE_TERMS.map((t) => (
+                                            <option key={t.key} value={t.key}>
+                                                {t.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <select
+                                        className="rounded-md border bg-background px-2 py-1 text-xs max-w-[100px]"
+                                        value={subjectFilter}
+                                        onChange={(e) => setSubjectFilter(e.target.value)}
+                                        title={L("按学科筛", "Filter by subject")}
+                                    >
+                                        <option value="">{L("全部学科", "All subjects")}</option>
+                                        {SUBJECT_OPTIONS.map((o) => (
+                                            <option key={o.key} value={o.key}>
+                                                {o.label}
                                             </option>
                                         ))}
                                     </select>
@@ -695,8 +751,8 @@ export default function ReviewVolumesPage() {
                                                     </>
                                                 )}
                                                 <div className="text-[11px] text-muted-foreground">
-                                                    {v.semester}
-                                                    {v.gradeSemester ? ` · ${v.gradeSemester}` : ""}
+                                                    {v.gradeSemester ? `${v.gradeSemester} · ` : ""}
+                                                    {(v.subjectKeys || []).map((k) => subjectLabel(k)).join("、")}
                                                 </div>
                                                 <div className="text-[11px] text-muted-foreground">
                                                     {formatTime(v.createdAt)}

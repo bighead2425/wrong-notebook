@@ -19,6 +19,8 @@ import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { NotebookSelector } from "@/components/notebook-selector";
 import { CorrectionEditor, ParsedQuestionWithSubject } from "@/components/correction-editor";
 import { ParsedQuestion } from "@/lib/ai";
+import { PrintCounts } from "@/components/print-counts";
+import { attentionLabel, attentionLevelOf } from "@/lib/attention-level";
 
 interface KnowledgeTag {
     id: string;
@@ -55,6 +57,8 @@ interface ErrorItemDetail {
     source?: string | null;
     /** #10 / T4：打印次数，只显不改 */
     printCount?: number | null;
+    /** 【2026-09-30】复练纸印刷次数（印一次复练卷，卷内每道题 +1） */
+    reviewPrintCount?: number | null;
     /** G8 / T5：关注档（难度）1-5 */
     attention?: number | null;
 }
@@ -754,11 +758,21 @@ export default function ErrorDetailPage() {
                                         </div>
                                         <div className="flex justify-between">
                                             <span className="text-muted-foreground">{t.detail.printCount}:</span>
-                                            <span className="font-medium tabular-nums">{item.printCount ?? 0}</span>
+                                            {/* 【2026-09-30】他要求两个次数并排：深挖（暗红）｜复练（深绿） */}
+                                            <span className="font-medium">
+                                                <PrintCounts deep={item.printCount} review={item.reviewPrintCount} />
+                                            </span>
                                         </div>
                                         <div className="flex justify-between">
                                             <span className="text-muted-foreground">{t.detail.attention}:</span>
-                                            <span className="font-medium tabular-nums">{item.attention ?? 1}</span>
+                                            {/* 【2026-09-30】关注档改叫**等级**，显示成奖牌：🥉🥈🥇💎👑
+                                                （他只要求先改显示；分级规则以后再定） */}
+                                            <span
+                                                className="font-medium"
+                                                title={`${attentionLevelOf(item.attention).zh}（等级 ${item.attention ?? 1}/5）`}
+                                            >
+                                                {attentionLabel(item.attention, language === "zh")}
+                                            </span>
                                         </div>
                                     </div>
                                 </div>

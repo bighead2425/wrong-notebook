@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Search, Filter, CheckCircle, Clock, ChevronDown, Printer, ListChecks, Trash2, X, Combine, Flame } from "lucide-react";
+import { Search, Filter, CheckCircle, Clock, ChevronDown, Printer, ListChecks, Trash2, X, Combine, Flame, Layers } from "lucide-react";
 import Link from "next/link";
 import { format } from "date-fns";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -32,10 +32,34 @@ import { cleanMarkdown } from "@/lib/markdown-utils";
 import { Pagination } from "@/components/ui/pagination";
 import { DEFAULT_PAGE_SIZE } from "@/lib/constants/pagination";
 import { getMistakeStatusLabel } from "@/lib/mistake-status";
+import { PrintCounts } from "@/components/print-counts";
+import { DatePickerCalendar } from "@/components/date-picker-calendar";
+import { countByDay, dayBoundsISO, rangeBoundsISO } from "@/lib/calendar-grid";
+
+/**
+ * 【2026-09-30】时间筛选扩到 7 档 + 「其他日期」。
+ * `other` 不在下拉里直接生效 —— 点它**打开日历**，选完（若干天 / 一段）才落到筛选上。
+ */
+type TimeFilter = "all" | "week" | "2weeks" | "3weeks" | "month" | "2months" | "3months" | "other";
+
+/** 时间范围下拉的档位（`all` 单列在最上面，"其他日期…" 在最后开日历） */
+const TIME_RANGE_OPTIONS: readonly [Exclude<TimeFilter, "all" | "other">, string, string][] = [
+    ["week", "近一周", "Last week"],
+    ["2weeks", "近两周", "Last 2 weeks"],
+    ["3weeks", "近三周", "Last 3 weeks"],
+    ["month", "近一个月", "Last month"],
+    ["2months", "近两个月", "Last 2 months"],
+    ["3months", "近三个月", "Last 3 months"],
+];
 
 interface ErrorListProps {
     notebookId?: string;
     subjectName?: string;
+    /**
+     * 【2026-09-30】本子的"年级学期 + 学科"，只为**跳复练卷页时带上筛选**用
+     * （复练卷页的筛选就是这两项）。不给也不影响本页任何功能。
+     */
+    notebookInfo?: { gradeTerm?: string; subject?: string };
 }
 
 type KnowledgeFilterChange = {
@@ -44,12 +68,19 @@ type KnowledgeFilterChange = {
     tag?: string | null;
 };
 
-export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
+export function ErrorList({ notebookId, subjectName, notebookInfo }: ErrorListProps = {}) {
     const [items, setItems] = useState<ErrorItem[]>([]);
     const [, setLoading] = useState(true);
     const [search, setSearch] = useState("");
     const [masteryFilter, setMasteryFilter] = useState<"all" | "mastered" | "unmastered">("all");
-    const [timeFilter, setTimeFilter] = useState<"all" | "week" | "month">("all");
+    const [timeFilter, setTimeFilter] = useState<TimeFilter>("all");
+    /** 日历选的结果：绿点（若干天）或蓝色区间（一段）—— 二者不会同时存在 */
+    const [datePoints, setDatePoints] = useState<string[]>([]);
+    const [dateRange, setDateRange] = useState<{ from: string; to: string } | null>(null);
+    const [calendarOpen, setCalendarOpen] = useState(false);
+    /** 日历上要标"浅粉"的日子 → 当天录了几道（打开日历时现拉） */
+    const [dateCounts, setDateCounts] = useState<Record<string, number>>({});
+    const [dateSpan, setDateSpan] = useState<{ min: string; max: string }>({ min: "", max: "" });
     const [gradeFilter, setGradeFilter] = useState("");
     const [chapterFilter, setChapterFilter] = useState("");
     /** 【2026-09-28】原「所属卷等级」(A/B/其他) 改为**错题等级**：全部 / 深挖 / 复练 / 未定 */
@@ -72,23 +103,9 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
     const router = useRouter();
 
     const handleExportPrint = () => {
-        const params = new URLSearchParams();
-        if (notebookId) params.append("notebookId", notebookId);
-        if (search) params.append("query", search);
-        if (masteryFilter !== "all") {
-            params.append("mastery", masteryFilter === "mastered" ? "1" : "0");
-        }
-        if (timeFilter !== "all") {
-            params.append("timeRange", timeFilter);
-        }
-        if (selectedTag) {
-            params.append("tag", selectedTag);
-        }
-        if (gradeFilter) params.append("gradeSemester", gradeFilter);
-        if (chapterFilter) params.append("chapter", chapterFilter); // 章节筛选
-        if (manageTypeFilter !== "all") params.append("manageType", manageTypeFilter);
-        // 关注档下限（导出打印要跟列表同口径）
-        if (attentionFilter >= 1) params.append("attention", String(attentionFilter));
+        // 【2026-09-30】筛选参数**只在一处生成**（`buildFilterParams`）——
+        // 列表 / 导出打印 / 跨页全选三处共用，免得某个条件在一处改了、另一处没改。
+        const params = buildFilterParams();
 
         /**
          * 【2026-09-28】多选模式下**只导出勾中的那几道**。
@@ -151,14 +168,17 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
      * 【2026-09-29】他要求：点「多选」时**当前页筛选出的题全部默认选中**（"眼前的题都是选中状态"），
      * 而不是像以前那样空着一道道勾。进多选时用当前列表（`filteredItems`）的 id 铺满选中集。
      */
-    const toggleSelectMode = () => {
+    const toggleSelectMode = async () => {
         if (isSelectMode) {
             setIsSelectMode(false);
             setSelectedIds(new Set());
             return;
         }
         setIsSelectMode(true);
-        setSelectedIds(new Set(filteredItems.map((item) => item.id)));
+        // 先铺上"本页可见"的（立刻有反馈），再把**当前筛选下的全部 id** 合进来（跨页全选）
+        setSelectedIds(new Set(items.map((i) => i.id)));
+        const ids = await fetchAllFilteredIds();
+        setSelectedIds(new Set(ids));
     };
 
     /** 清除：一键把所有选中状态抹掉（他要求在「取消」左边，蓝色字） */
@@ -260,7 +280,7 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
     };
 
     // 追踪筛选条件是否变化（用于判断是否需要重置页码）
-    const prevFiltersRef = useRef({ search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionFilter });
+    const prevFiltersRef = useRef({ search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionFilter, datePoints, dateRange });
 
     useEffect(() => {
         const prevFilters = prevFiltersRef.current;
@@ -273,10 +293,13 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
             prevFilters.gradeFilter !== gradeFilter ||
             prevFilters.chapterFilter !== chapterFilter ||
             prevFilters.manageTypeFilter !== manageTypeFilter ||
-            prevFilters.attentionFilter !== attentionFilter;
+            prevFilters.attentionFilter !== attentionFilter ||
+            // 日历里改选的日子/区段也算"筛选变了"
+            JSON.stringify(prevFilters.datePoints) !== JSON.stringify(datePoints) ||
+            JSON.stringify(prevFilters.dateRange) !== JSON.stringify(dateRange);
 
         // 更新 ref
-        prevFiltersRef.current = { search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionFilter };
+        prevFiltersRef.current = { search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionFilter, datePoints, dateRange };
 
         if (filtersChanged && page !== 1) {
             // 筛选条件变化且不在第一页，重置到第一页（会再次触发此 effect）
@@ -286,28 +309,50 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
 
         // 正常请求数据
         fetchItems();
-    }, [page, search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionFilter]);
+    }, [page, search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionFilter, datePoints, dateRange]);
+
+    /**
+     * 当前筛选条件 → 查询参数（**一处实现，三处共用**：列表 / 导出打印 / 多选全选）。
+     * 各写一份的话，迟早在某个条件上分叉 —— 那就会出现
+     * "列表里筛出 20 道、全选却只选中 18 道"这种最难查的不一致。
+     */
+    function buildFilterParams(): URLSearchParams {
+        const params = new URLSearchParams();
+        if (notebookId) params.append("notebookId", notebookId);
+        if (search) params.append("query", search);
+        if (masteryFilter !== "all") {
+            params.append("mastery", masteryFilter === "mastered" ? "1" : "0");
+        }
+        if (timeFilter !== "all") {
+            params.append("timeRange", timeFilter);
+            /**
+             * 【2026-09-30】「其他日期」：**传绝对时刻，不传"日子"**。
+             * 容器跑在 UTC，服务端自己算"这一天"会偏 8 小时；
+             * 客户端用本地时区把日界换算成 ISO 再传，服务端只做 gte/lt 比较。
+             */
+            if (timeFilter === "other") {
+                if (datePoints.length > 0) {
+                    params.append("points", datePoints.map((k) => dayBoundsISO(k).start).join(","));
+                } else if (dateRange) {
+                    const b = rangeBoundsISO(dateRange.from, dateRange.to);
+                    params.append("from", b.start);
+                    params.append("to", b.end);
+                }
+            }
+        }
+        if (selectedTag) params.append("tag", selectedTag);
+        if (gradeFilter) params.append("gradeSemester", gradeFilter);
+        if (chapterFilter) params.append("chapter", chapterFilter); // 章节筛选
+        if (manageTypeFilter !== "all") params.append("manageType", manageTypeFilter);
+        // 关注档下限（导出打印要跟列表同口径）
+        if (attentionFilter >= 1) params.append("attention", String(attentionFilter));
+        return params;
+    }
 
     const fetchItems = async () => {
         setLoading(true);
         try {
-            const params = new URLSearchParams();
-            if (notebookId) params.append("notebookId", notebookId);
-            if (search) params.append("query", search);
-            if (masteryFilter !== "all") {
-                params.append("mastery", masteryFilter === "mastered" ? "1" : "0");
-            }
-            if (timeFilter !== "all") {
-                params.append("timeRange", timeFilter);
-            }
-            if (selectedTag) {
-                params.append("tag", selectedTag);
-            }
-            if (gradeFilter) params.append("gradeSemester", gradeFilter);
-            if (chapterFilter) params.append("chapter", chapterFilter); // 章节筛选
-            if (manageTypeFilter !== "all") params.append("manageType", manageTypeFilter);
-            // 关注档下限（G8 难度档）
-            if (attentionFilter >= 1) params.append("attention", String(attentionFilter));
+            const params = buildFilterParams();
             // 分页参数
             params.append("page", page.toString());
             params.append("pageSize", pageSize.toString());
@@ -323,9 +368,60 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
         }
     };
 
+    /**
+     * 【2026-09-30】**跨页全选**：拉"当前筛选下的全部 id"（`mode=ids`，不走分页）。
+     *
+     * 他实测报的：筛出 20 道、第一页 18 道，点「多选」只勾中了 18 道 —— 剩下 2 道漏了。
+     * 全选当然要按**筛选结果**算，不是按"这一页看得见的"。
+     */
+    const fetchAllFilteredIds = async (): Promise<string[]> => {
+        try {
+            const params = buildFilterParams();
+            params.set("mode", "ids");
+            const res = await apiClient.get<{ ids: string[] }>(`/api/error-items/list?${params.toString()}`);
+            return res.ids || [];
+        } catch (error) {
+            console.error("Failed to load all filtered ids:", error);
+            // 拿不到就退回"本页可见"，至少不把用户晾在原地
+            return items.map((i) => i.id);
+        }
+    };
+
+    /** 打开日历：现拉"哪些天录过错题"（按当前筛选口径）+ 数据跨度（决定画几个月） */
+    const openCalendar = async () => {
+        setCalendarOpen(true);
+        try {
+            const params = buildFilterParams();
+            params.set("mode", "dates");
+            const res = await apiClient.get<{ stamps: string[] }>(`/api/error-items/list?${params.toString()}`);
+            const stamps = res.stamps || [];
+            const counts = countByDay(stamps);
+            setDateCounts(counts);
+            const keys = Object.keys(counts).sort();
+            setDateSpan({ min: keys[0] ?? "", max: keys[keys.length - 1] ?? "" });
+        } catch (error) {
+            console.error("Failed to load record dates:", error);
+            setDateCounts({});
+            setDateSpan({ min: "", max: "" });
+        }
+    };
+
+    /**
+     * 【2026-09-30】有没有"正在生效的筛选" —— 决定筛选按钮是不是「已筛」+银灰底。
+     * 只算**筛选下拉里的那些条件**（掌握度/时间/标签/年级/章节/等级/关注档）；
+     * 搜索框不算（它就在旁边、看得见，而且不属于"下拉里设过的条件"）。
+     */
+    const hasActiveFilter =
+        masteryFilter !== "all" ||
+        timeFilter !== "all" ||
+        !!selectedTag ||
+        !!gradeFilter ||
+        !!chapterFilter ||
+        manageTypeFilter !== "all" ||
+        attentionFilter >= 1;
+
     return (
-        <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row gap-4">
+        <div className="space-y-6">            <div className="flex flex-col sm:flex-row gap-4">
                 <div className="relative w-full sm:flex-1">
                     <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                     <Input
@@ -337,9 +433,15 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
                 </div>
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                        <Button variant="outline">
+                        {/* 【2026-09-30】有任何筛选条件 ⇒ 按钮变「已筛」+ **银灰底**。
+                            他实测的原话："有的时候我会忘了我已经进行了筛选"。
+                            ⚠️ 搜索框**不算**在里头（它自己就看得见，且就在旁边）。 */}
+                        <Button
+                            variant={hasActiveFilter ? "secondary" : "outline"}
+                            className={hasActiveFilter ? "bg-zinc-300 text-zinc-900 hover:bg-zinc-300/90" : ""}
+                        >
                             <Filter className="mr-2 h-4 w-4" />
-                            {t.notebook.filter}
+                            {hasActiveFilter ? (language === "zh" ? "已筛" : "Filtered") : t.notebook.filter}
                             <ChevronDown className="ml-2 h-4 w-4" />
                         </Button>
                     </DropdownMenuTrigger>
@@ -357,15 +459,20 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
 
                         <DropdownMenuSeparator />
 
+                        {/* 【2026-09-30】时间范围扩到 7 档 + 「其他日期」（点它开日历） */}
                         <DropdownMenuLabel>{t.filter.timeRange || "Time Range"}</DropdownMenuLabel>
                         <DropdownMenuItem onClick={() => setTimeFilter("all")}>
                             {timeFilter === "all" && "✓ "}{t.filter.allTime || "All Time"}
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => setTimeFilter("week")}>
-                            {timeFilter === "week" && "✓ "}{t.filter.lastWeek || "Last Week"}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => setTimeFilter("month")}>
-                            {timeFilter === "month" && "✓ "}{t.filter.lastMonth || "Last Month"}
+                        {TIME_RANGE_OPTIONS.map(([key, zh, en]) => (
+                            <DropdownMenuItem key={key} onClick={() => setTimeFilter(key)}>
+                                {timeFilter === key && "✓ "}
+                                {language === "zh" ? zh : en}
+                            </DropdownMenuItem>
+                        ))}
+                        <DropdownMenuItem onClick={openCalendar}>
+                            {timeFilter === "other" && "✓ "}
+                            {language === "zh" ? "其他日期…" : "Custom dates…"}
                         </DropdownMenuItem>
                     </DropdownMenuContent>
                 </DropdownMenu>
@@ -423,6 +530,24 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
                         onClick={() => setManageTypeFilter("undecided")}
                     >
                         {MANAGE_TYPE_UNDECIDED}
+                    </Button>
+
+                    {/* 【2026-09-30】他要求：等级按钮后加一条灰色短竖线，再接一个「复练卷」入口 ——
+                        从错题本直接跳到复练卷页，并**带上这本的年级学期 + 学科**作为筛选。 */}
+                    <span className="mx-1 h-5 w-px shrink-0 self-center bg-zinc-400/70" aria-hidden="true" />
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                            const qs = new URLSearchParams();
+                            if (notebookInfo?.gradeTerm) qs.set("grade", notebookInfo.gradeTerm);
+                            if (notebookInfo?.subject) qs.set("subject", notebookInfo.subject);
+                            router.push(`/review-volumes${qs.toString() ? `?${qs.toString()}` : ""}`);
+                        }}
+                        title={language === "zh" ? "看这本的复练卷" : "Review volumes of this notebook"}
+                    >
+                        <Layers className="mr-1.5 h-3.5 w-3.5" />
+                        {language === "zh" ? "复练卷" : "Volumes"}
                     </Button>
                 </div>
             </div>
@@ -574,6 +699,14 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
                             >
                                 {getManageTypeLabel(item.manageType)}
                             </span>
+                            {/* 【2026-09-30】左下角：两个打印次数（暗红 | 深绿）。
+                                卡片上一行放不下全称，用简称；详情页写全称。 */}
+                            <span
+                                className="absolute bottom-2 left-3 text-[11px] pointer-events-none"
+                                title={`深挖纸打印次数 ${item.printCount ?? 0} ｜ 复练纸印刷次数 ${item.reviewPrintCount ?? 0}`}
+                            >
+                                <PrintCounts deep={item.printCount} review={item.reviewPrintCount} compact />
+                            </span>
                         </div>
                     );
                 })}
@@ -623,6 +756,29 @@ export function ErrorList({ notebookId, subjectName }: ErrorListProps = {}) {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* 【2026-09-30】录入日期日历（「其他日期」）。
+                确认后：**日历消失但记住选择**（绿点/蓝区间留在 state 里），
+                下拉里的「其他日期」前面会出现 ✓，筛选按钮也变成「已筛」银灰底。
+                取消后：本次选择作废（`initialPoints`/`initialRange` 用的还是确认过的旧值）。 */}
+            {calendarOpen && (
+                <DatePickerCalendar
+                    counts={dateCounts}
+                    initialPoints={datePoints}
+                    initialRange={dateRange}
+                    minKey={dateSpan.min}
+                    maxKey={dateSpan.max}
+                    L={(zh, en) => (language === "zh" ? zh : en)}
+                    onCancel={() => setCalendarOpen(false)}
+                    onConfirm={(sel) => {
+                        setDatePoints(sel.points);
+                        setDateRange(sel.range);
+                        // 绿点或蓝区间任一有货 ⇒ 这个筛选生效；都空 ⇒ 等于没筛（按钮也退回原样）
+                        setTimeFilter(sel.points.length > 0 || sel.range ? "other" : "all");
+                        setCalendarOpen(false);
+                    }}
+                />
             )}
         </div>
     );

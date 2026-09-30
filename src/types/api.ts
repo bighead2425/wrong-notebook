@@ -94,6 +94,8 @@ export interface ErrorItem {
 
     // 状态字段（5.3 单一事实来源）
     printCount?: number;
+    /** 【2026-09-30】复练纸印刷次数（印一次卷，卷内每道题 +1）—— 与 printCount 分开记 */
+    reviewPrintCount?: number;
     attention?: number;
     redoCount?: number;
     mergeSource?: string | null;

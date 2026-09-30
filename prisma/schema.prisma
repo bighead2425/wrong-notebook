@@ -154,7 +154,11 @@ model ErrorItem {
 
 
   // ===== 状态字段（5.3 单一事实来源，禁止再造冗余态）=====
-  printCount       Int       @default(0)  // 打印次数，只显不改（#10 / T4）
+  printCount       Int       @default(0)  // 打印次数（深挖纸），只显不改（#10 / T4）
+  /// 【2026-09-30】复练纸印刷次数。与 `printCount` **分开记**：
+  /// 两种纸用途不同（深挖=反思、复练=熟练），混成一个数就看不出这题是深挖过还是复练过。
+  /// 记法：印一次复练卷 ⇒ 卷内所有题各 +1（见 mark-printed 的 kind=review）。
+  reviewPrintCount Int       @default(0)
   attention        Int       @default(1)  // 关注档 1-5，语义=难度档（G8 / T5）
   redoCount        Int       @default(0)  // 复做计次，扫码复做 +1（H1 不闭环 / T7）
   mergeSource      String?               // 合并来源原题号组（#14 / T6）

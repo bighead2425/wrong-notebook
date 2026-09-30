@@ -159,7 +159,16 @@ export default function NotebookDetailPage() {
                     </div>
                 )}
 
-                <ErrorList notebookId={notebook.id} subjectName={notebook.displayName} />
+                <ErrorList
+                    notebookId={notebook.id}
+                    subjectName={notebook.displayName}
+                    /* 【2026-09-30】给"复练卷"入口用：跳过去时把本子的年级学期 + 学科带上当筛选。
+                       年级学期存的是 `六年级` + `上` 这种两段，拼起来 `六年级上`（复练卷页会归一）。 */
+                    notebookInfo={{
+                        gradeTerm: notebook.grade ? `${notebook.grade}${notebook.semester || "上"}` : undefined,
+                        subject: notebook.subject || undefined,
+                    }}
+                />
 
                 <RenameNotebookDialog
                     open={renameDialogOpen}

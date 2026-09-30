@@ -417,6 +417,9 @@ function PrintPreviewContent() {
         try {
             await apiClient.post("/api/error-items/mark-printed", {
                 ids: selectedItems.map((i) => i.id),
+                // 【2026-09-30】印的是**卷**（复练/积累）就记"复练纸印刷次数"；
+                // 其余（深挖纸/错题卡/练习卷）沿用深挖口径的 printCount。
+                kind: isVolume ? "review" : "deep",
             });
         } catch (error) {
             console.error("Failed to record print count:", error);

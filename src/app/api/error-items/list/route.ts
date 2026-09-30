@@ -131,19 +131,50 @@ export async function GET(req: Request) {
         }
 
         // Time range filter
+        // 【2026-09-30 扩档】近一周 / 近两周 / 近三周 / 近一个月 / 近两个月 / 近三个月 / 其他日期
         if (timeRange && timeRange !== "all") {
             const now = new Date();
-            const startDate = new Date();
+            const DAY_RANGES: Record<string, number> = { week: 7, "2weeks": 14, "3weeks": 21 };
+            const MONTH_RANGES: Record<string, number> = { month: 1, "2months": 2, "3months": 3 };
 
-            if (timeRange === "week") {
-                startDate.setDate(now.getDate() - 7);
-            } else if (timeRange === "month") {
-                startDate.setMonth(now.getMonth() - 1);
+            if (timeRange === "other") {
+                /**
+                 * 日历选的"某几天"或"某一段"。
+                 * ⚠️ 客户端传的是**绝对时刻**（它按浏览器本地时区把日界换算好），不是 "2026-09-30"
+                 *    这种"日子"—— 容器跑在 UTC，服务端自己算"这一天"会偏 8 小时。
+                 *    这里只做 gte/lt 比较，时区在链路上不参与任何判断。
+                 */
+                const points = (searchParams.get("points") || "")
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter((s) => s && !Number.isNaN(new Date(s).getTime()));
+                const fromParam = searchParams.get("from");
+                const toParam = searchParams.get("to");
+                const fromOk = fromParam && !Number.isNaN(new Date(fromParam).getTime());
+                const toOk = toParam && !Number.isNaN(new Date(toParam).getTime());
+
+                if (points.length > 0) {
+                    // 多个整天：每个点查 [当天, 次日)
+                    andConditions.push({
+                        OR: points.map((p) => {
+                            const start = new Date(p);
+                            const end = new Date(start.getTime() + 24 * 3600 * 1000);
+                            return { createdAt: { gte: start, lt: end } };
+                        }),
+                    });
+                } else if (fromOk && toOk) {
+                    whereClause.createdAt = { gte: new Date(fromParam as string), lt: new Date(toParam as string) };
+                }
+                // 选了"其他日期"却什么都没给 ⇒ **不筛**（而不是筛出空集，让人以为题没了）
+            } else if (DAY_RANGES[timeRange]) {
+                const startDate = new Date(now);
+                startDate.setDate(now.getDate() - DAY_RANGES[timeRange]);
+                whereClause.createdAt = { gte: startDate };
+            } else if (MONTH_RANGES[timeRange]) {
+                const startDate = new Date(now);
+                startDate.setMonth(now.getMonth() - MONTH_RANGES[timeRange]);
+                whereClause.createdAt = { gte: startDate };
             }
-
-            whereClause.createdAt = {
-                gte: startDate,
-            };
         }
 
         // Chapter filter (第二级筛选：章节)
@@ -215,6 +246,34 @@ export async function GET(req: Request) {
         // 将所有 AND 条件合并到 whereClause
         if (andConditions.length > 0) {
             whereClause.AND = andConditions;
+        }
+
+        /**
+         * 【2026-09-30】两个**轻量模式**（复用同一套 where，不另写一份筛选逻辑 ——
+         * 本项目规矩：同一件事只允许一处实现）：
+         *   mode=ids   → 只回 id 列表：多选「全选」要选中**当前筛选下的全部题**（跨页）
+         *   mode=dates → 只回录入时刻：日历要按天标出"哪几天有错题"
+         *                  ⚠️ 回的是**原始时刻**，由浏览器按本地时区分"天"——
+         *                     容器是 UTC，服务端分天会偏 8 小时。
+         */
+        const mode = searchParams.get("mode");
+        if (mode === "ids") {
+            const idRows = await prisma.errorItem.findMany({
+                where: whereClause,
+                orderBy: { createdAt: "desc" },
+                select: { id: true },
+            });
+            return NextResponse.json({ ids: idRows.map((r) => r.id), total: idRows.length });
+        }
+        if (mode === "dates") {
+            const dateRows = await prisma.errorItem.findMany({
+                where: whereClause,
+                select: { createdAt: true },
+            });
+            return NextResponse.json({
+                stamps: dateRows.map((r) => r.createdAt.toISOString()),
+                total: dateRows.length,
+            });
         }
 
         // 获取总数
