@@ -125,6 +125,11 @@ export interface ReviewSheetProps {
      *    这样纸滚动/缩放时框天然跟着走，**不可能漂移**（他专门点过这条）。
      */
     onQuestionPlusClick?: (item: ErrorItem) => void;
+    /**
+     * 【2026-10-01】**每题正确答案**（扫码浏览时给；见 `ReviewQuestionBlock` 的 `answerLabel`）。
+     * 不传 ⇒ 纸上/卷页上完全没有这个标签，行为与之前一字不差。
+     */
+    answerOf?: (item: ErrorItem) => string | null;
     /** 加号的悬停提示（可选） */
     plusTitle?: string;
     /** 按住两题之间的虚线（调上面那道题的留白行数） */
@@ -304,6 +309,7 @@ export function ReviewQuestionBlock({
     figureScale = 100,
     onFigureScaleStart,
     onDividerDragStart,
+    answerLabel,
     L,
 }: {
     item: ErrorItem;
@@ -331,6 +337,19 @@ export function ReviewQuestionBlock({
      * 打印页已经把"上面是哪道题、现在几行"包好了，这里只管把事件交出去。
      */
     onDividerDragStart?: (e: ReactPointerEvent) => void;
+    /**
+     * 【2026-10-01 新增 · 扫码「对答案」】这道题的**正确答案**（纯文本，多行已由调用方用 `§` 并成一行）。
+     *
+     * 画成**升降框左边一个灰底灰字的小标签** —— 他 2026-10-01 的原话拆解：
+     *   · 底色灰、文字灰白，**两者差异小一些** ⇒ "如果扫描二维码不是来查答案的，也不耽误，
+     *     因为答案不容易辨别出来；如果有心想看答案也无妨，仔细分辨也能看见"。
+     *   · 宽度**随答案长短变**，右侧抵住升降框、由左侧伸缩 ⇒ 靠右对齐。
+     *   · 太长放不下（左边界顶到题号位置）⇒ 末尾用省略号；她真想看长答案就点中间的加号进详情。
+     *
+     * ⚠️ **只有扫码浏览那一屏会传**（其它地方不传 ⇒ 完全没有这个标签）。
+     * ⚠️ 必须带 `no-print`：**纸上零 AI 内容**是铁律，答案绝不能落在纸上。
+     */
+    answerLabel?: string | null;
     L: (zh: string, en: string) => string;
 }) {
     const figures = useFigureImages(item);
@@ -465,8 +484,14 @@ export function ReviewQuestionBlock({
                     style={{
                         flex: 1,
                         minWidth: 0,
+                        /**
+                         * 【2026-10-01】这层原先是 `column`（只为把升降框推到右下角）。
+                         * 现在改成**横排**，好让"答案标签"能贴在升降框**左边** ——
+                         * 升降框自己 `flexShrink: 0`，所以标签只会往左伸、绝不挤到它。
+                         * 留白调节器是绝对定位（`top/right`），不受排列方向影响。
+                         */
                         display: 'flex',
-                        flexDirection: 'column',
+                        flexDirection: 'row',
                         justifyContent: 'flex-end',
                         alignItems: 'flex-end',
                         gap: '1mm',
@@ -489,6 +514,32 @@ export function ReviewQuestionBlock({
                             </button>
                         </span>
                     )}
+                    {/* 【2026-10-01 · 扫码对答案】答案标签：贴在升降框**左边**。
+                        ⚠️ `no-print` —— 只活在屏幕上（纸上零 AI 内容是铁律）。
+                        `textOverflow` 用了**自定义字符串** `"……"`（中文省略号两个点），
+                        CSS Overflow 3 支持，浏览器实测可用；不支持时退化成裁切，不影响功能。 */}
+                    {answerLabel ? (
+                        <span
+                            className="no-print"
+                            title={L('这道题的正确答案（点中间的加号看完整解答）', 'Answer (tap + for the full solution)')}
+                            style={{
+                                flex: '0 1 auto',
+                                minWidth: 0,
+                                background: '#bdbdbd',
+                                color: '#e6e6e6',
+                                fontSize: '6.5pt',
+                                lineHeight: 1.6,
+                                padding: '0.2mm 1.2mm',
+                                borderRadius: '0.8mm',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: '"……"',
+                                textAlign: 'right',
+                            }}
+                        >
+                            {answerLabel}
+                        </span>
+                    ) : null}
                     {/* 升降级小框：**每道题都有**（未定按复练处理） */}
                     <PromoteBox manageType={item.manageType} L={L} />
                 </div>
@@ -515,6 +566,7 @@ export function ReviewSheet({
     missing,
     onQuestionPlusClick,
     plusTitle,
+    answerOf,
     L,
 }: ReviewSheetProps) {
     /**
@@ -613,6 +665,7 @@ export function ReviewSheet({
                                             blankLines={blank}
                                             showDivider={bi > 0}
                                             figureScale={figureScaleOf ? figureScaleOf(item.id) : 100}
+                                            answerLabel={answerOf ? answerOf(item) : undefined}
                                             L={L}
                                         />
                                         <span

@@ -36,9 +36,35 @@ import { layoutFromSnapshot, type SnapshotRow } from "@/lib/review-card";
 import type { VolumeKind } from "@/lib/volume-code";
 import { SheetZoom } from "@/components/print/sheet-zoom";
 import { makeQrDataUrl } from "@/lib/qr";
+import { cleanMarkdown } from "@/lib/markdown-utils";
 
 /** 与复练卷页同一条约定：原题已被删的行，用快照行自己的 id 当 key */
 const missingKeyOf = (rowId: string) => `missing:${rowId}`;
+
+/**
+ * 【2026-10-01 他定的规则】扫复练卷**对答案**：把这道题的正确答案做成一个灰底灰字的小标签。
+ *
+ * 两条处理规则（**他原话照做**）：
+ *  ① 答案分了几行写 ⇒ **先并成一行**，行与行之间用 `§` 连接
+ *     （`§` 的含义就是"后面的内容是下一行"），然后再塞进标签；
+ *  ② 合并后还是太长、标签放不下 ⇒ 交给 CSS 末尾省略（她也真看不全的那种长答案，
+ *     点题目中间的加号进详情页看完整解答 —— 这正是那个加号存在的理由）。
+ *
+ * 顺带过一遍 `cleanMarkdown`：答案是 md（可能带 `$…$` 公式、`**粗体**`），
+ * 而这个标签是**一行纯文本**、渲染不了 md ⇒ 把标记转成对应符号（`\times`⇒×、`\frac{a}{b}`⇒a/b…）。
+ * 复用既有工具，不新写一套（免得"标签里的答案"和别处显示的对不上）。
+ */
+function answerLabelOf(item: ErrorItem): string | null {
+    const raw = item.answerText;
+    if (!raw || !raw.trim()) return null;
+    const merged = raw
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join(' § ');
+    const text = cleanMarkdown(merged).replace(/\s+/g, ' ').trim();
+    return text || null;
+}
 
 interface VolumeItemRow {
     id: string;
@@ -166,6 +192,20 @@ export function ScanVolumeView({
         }
         return (id: string) => map[id] ?? 100;
     }, [volume]);
+
+    /**
+     * 【2026-10-01】**每题答案文本**（多行已用 `§` 并成一行、md 已清成纯文本）。
+     * 先算成一张表：`cleanMarkdown` 内部要跑 remark，放在渲染里每题每帧算一次太亏
+     * （一页 5 道题就是 5 次解析，且每次滚动重渲都会重算）。
+     */
+    const answerOf = useMemo(() => {
+        const map: Record<string, string> = {};
+        for (const it of items) {
+            const label = answerLabelOf(it);
+            if (label) map[it.id] = label;
+        }
+        return (it: ErrorItem) => map[it.id] ?? null;
+    }, [items]);
 
     const missingMap = useMemo(() => {
         const map: Record<string, string | null> = {};
@@ -323,6 +363,10 @@ export function ScanVolumeView({
                                    不传就一律按 100（原大小）—— 他实测："题图大小和复练卷
                                    设计好的大小似乎不同…在这里看到的总觉得是原大小"。 */
                                 figureScaleOf={figureScaleOf}
+                                /* 【2026-10-01 新加】**扫复练卷也能对答案** ——
+                                   每题右下角升降框左边一个小灰标签，灰底灰白字、刻意难辨
+                                   （他："不是来查答案的也不耽误，想看的话仔细分辨也能看见"）。 */
+                                answerOf={answerOf}
                                 onQuestionPlusClick={onPickItem}
                                 plusTitle={L("点这里 → 打开这道题的错题卡", "Open this question's card")}
                                 L={L}
