@@ -1,8 +1,10 @@
 import type { CSSProperties } from 'react';
 import { Fragment } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
 import {
     COLUMN_GAP_MM,
+    REVIEW_FIGURE_BOX_RATIO,
     REVIEW_LAYOUT_MM,
     REVIEW_PAGE_HEIGHT_MM,
     REVIEW_PUNCH_GUTTER_MM,
@@ -55,6 +57,10 @@ export function InsightBlock({
     row,
     blankLines,
     showDivider,
+    figureScale = 100,
+    onMoveUp,
+    onMoveDown,
+    onFigureScale,
     L,
 }: {
     row: InsightPrintRow;
@@ -62,6 +68,15 @@ export function InsightBlock({
     blankLines: number;
     /** 本栏内不是第一条时才画那条浅虚线 */
     showDivider: boolean;
+    /**
+     * 【2026-10-01 排版】这条配图的缩放百分比（100 = 默认）。
+     * 与复练纸的题图缩放同一个含义 —— 他把"图要不要小一点"当作印刷手感的一部分。
+     */
+    figureScale?: number;
+    /** 排版用（只在打印页给；不给就不出现那些小按钮） */
+    onMoveUp?: () => void;
+    onMoveDown?: () => void;
+    onFigureScale?: (next: number) => void;
     L: (zh: string, en: string) => string;
 }) {
     const body = stripMarkdownImages(row.content || '');
@@ -81,17 +96,45 @@ export function InsightBlock({
         >
             {/* 编号一行：JL 编号是这条内容的身份证，印在最上面，
                 扫页二维码定位到页之后，靠它认出"说的是哪一条"。 */}
-            <div
-                style={{
-                    fontSize: '7.5pt',
-                    fontWeight: 700,
-                    color: '#555',
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                    flex: '0 0 auto',
-                    whiteSpace: 'nowrap',
-                }}
-            >
-                {row.code}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1mm', flex: '0 0 auto' }}>
+                <span
+                    style={{
+                        fontSize: '7.5pt',
+                        fontWeight: 700,
+                        color: '#555',
+                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                        whiteSpace: 'nowrap',
+                    }}
+                >
+                    {row.code}
+                </span>
+                <span style={{ flex: 1 }} />
+                {/* 【2026-10-01 排版】上移 / 下移（只在屏幕上）。
+                    ⚠️ 做成了**按钮而不是拖动**：手机上没有原生拖放，自己做拖拽手势
+                    既容易误触、又和整页滚动打架 —— 两个按钮在两头都稳。
+                    改完点工具栏的【保存版面】才落库（与复练卷页的"更新组卷"同一套手感）。 */}
+                {(onMoveUp || onMoveDown) && (
+                    <span className="no-print" style={{ display: 'flex', gap: '0.8mm', flexShrink: 0 }}>
+                        <button
+                            type="button"
+                            title={L('上移一位', 'Move up')}
+                            disabled={!onMoveUp}
+                            onClick={onMoveUp}
+                            style={{ cursor: onMoveUp ? 'pointer' : 'default', opacity: onMoveUp ? 1 : 0.25 }}
+                        >
+                            <ChevronUp style={{ width: '3.4mm', height: '3.4mm' }} />
+                        </button>
+                        <button
+                            type="button"
+                            title={L('下移一位', 'Move down')}
+                            disabled={!onMoveDown}
+                            onClick={onMoveDown}
+                            style={{ cursor: onMoveDown ? 'pointer' : 'default', opacity: onMoveDown ? 1 : 0.25 }}
+                        >
+                            <ChevronDown style={{ width: '3.4mm', height: '3.4mm' }} />
+                        </button>
+                    </span>
+                )}
             </div>
 
             {/* 正文：没有内容时留一句提示，别留一片空白让人以为漏印了 */}
@@ -104,18 +147,60 @@ export function InsightBlock({
             </div>
 
             {row.photoUrl ? (
-                <div style={{ flex: '0 0 auto', marginTop: '1mm' }}>
+                <div style={{ flex: '0 0 auto', marginTop: '1mm', position: 'relative' }}>
                     {/* eslint-disable-next-line @next/next/no-img-element -- 打印页必须用原生 img：src 是 dataURL，要交给浏览器打印快照；next/image 会插一层优化/懒加载，反而可能打不出来 */}
                     <img
                         src={row.photoUrl}
                         alt=""
                         style={{
-                            width: '100%',
-                            maxHeight: `${REVIEW_LAYOUT_MM.figureMaxHeightMM}mm`,
+                            /**
+                             * 【2026-10-01 排版】缩放作用在**宽度**上，高度按比例跟 ——
+                             * 与复练纸题图**同一条思路**（那边也是 55% × 百分比，上限占满整栏）。
+                             * 默认 100% 时占栏宽 55%，调到 180% 才铺满，不会一上来就顶格。
+                             */
+                            width: `${Math.min(100, REVIEW_FIGURE_BOX_RATIO * figureScale)}%`,
+                            maxHeight: `${REVIEW_LAYOUT_MM.figureMaxHeightMM * (figureScale / 100)}mm`,
                             objectFit: 'contain',
                             display: 'block',
                         }}
                     />
+                    {/* 图大小的加减（只在屏幕上；打印页给了 onFigureScale 才出现） */}
+                    {onFigureScale && (
+                        <span
+                            className="no-print"
+                            style={{
+                                position: 'absolute',
+                                right: 0,
+                                bottom: 0,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.6mm',
+                                background: 'rgba(255,255,255,0.92)',
+                                border: '0.2mm solid #c9c9c9',
+                                borderRadius: '0.8mm',
+                                padding: '0 1mm',
+                                fontSize: '7pt',
+                            }}
+                        >
+                            <button
+                                type="button"
+                                title={L('图小一点', 'Smaller')}
+                                onClick={() => onFigureScale(Math.max(30, figureScale - 10))}
+                                style={{ cursor: 'pointer' }}
+                            >
+                                −
+                            </button>
+                            <span>{figureScale}%</span>
+                            <button
+                                type="button"
+                                title={L('图大一点', 'Bigger')}
+                                onClick={() => onFigureScale(Math.min(180, figureScale + 10))}
+                                style={{ cursor: 'pointer' }}
+                            >
+                                ＋
+                            </button>
+                        </span>
+                    )}
                 </div>
             ) : null}
 
@@ -140,6 +225,10 @@ export function InsightSheet({
     printDate,
     rowByKey,
     blankLines,
+    figureScaleOf,
+    onMoveItem,
+    onFigureScale,
+    totalCount,
     L,
 }: {
     page: MeasuredPageLayout;
@@ -157,6 +246,16 @@ export function InsightSheet({
     rowByKey: Record<string, InsightPrintRow>;
     /** 每条的留白行数（整卷一个值，积累纸默认 1） */
     blankLines: number;
+    /**
+     * 排版三件套（**只在打印页给**；组卷预览/其他屏不传 ⇒ 纸上干干净净没有按钮）：
+     *  · `figureScaleOf` 某条配图的缩放百分比
+     *  · `onMoveItem` 某条上移/下移一位（改动先落本地，点【保存版面】才写库）
+     */
+    figureScaleOf?: (id: string) => number;
+    onMoveItem?: (id: string, dir: -1 | 1) => void;
+    onFigureScale?: (id: string, next: number) => void;
+    /** 整卷共几条 —— 用来判断"这条是不是最后一条"（最后一条的"下移"要灰掉） */
+    totalCount?: number;
     L: (zh: string, en: string) => string;
 }) {
     /** 打孔位：奇数页留左、偶数页留右（与复练纸同一个规矩，家里活页夹按一个物理边打孔） */
@@ -217,6 +316,22 @@ export function InsightSheet({
                                         row={row}
                                         blankLines={blankLines}
                                         showDivider={bi > 0}
+                                        figureScale={figureScaleOf ? figureScaleOf(row.id) : 100}
+                                        onMoveUp={
+                                            onMoveItem && b.seq > 1
+                                                ? () => onMoveItem(row.id, -1)
+                                                : undefined
+                                        }
+                                        onMoveDown={
+                                            onMoveItem && (totalCount === undefined || b.seq < totalCount)
+                                                ? () => onMoveItem(row.id, 1)
+                                                : undefined
+                                        }
+                                        onFigureScale={
+                                            onFigureScale
+                                                ? (next) => onFigureScale(row.id, next)
+                                                : undefined
+                                        }
                                         L={L}
                                     />
                                 );

@@ -18,6 +18,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,6 +45,7 @@ import type { ErrorItem } from '@/types/api';
 import {
     Camera,
     House,
+    Layers,
     PanelLeftClose,
     PanelLeftOpen,
     Plus,
@@ -91,6 +93,34 @@ export default function InsightsPage() {
      * ⇒ 手机上是单列堆叠，隐藏左栏就直接落在编辑区；宽屏时右栏自动占满。
      */
     const [leftOpen, setLeftOpen] = useState(true);
+
+    /**
+     * 【2026-10-01 按他定的分工加】**勾选若干条 → 送入积累纸打印**。
+     *
+     * 他原话："让哪些日积月累组成积累纸就在**这个页面**决定；
+     * 送到积累纸打印后，用那个页面管理生成过哪些积累纸。"
+     * ⇒ 挑的活在这儿，"排成纸"的活在那边，两边不再互相越界。
+     *
+     * ⚠️ 这里**只发 id 过去**，不在这儿建卷 —— 建卷必须先量出每条的真实高度再分栏分页，
+     *    而那套能力在打印页（要靠真正的 DOM 渲染）。详见打印页 `NewVolume` 的说明。
+     */
+    const [picked, setPicked] = useState<Set<string>>(new Set());
+    const router = useRouter();
+
+    const togglePick = (id: string) =>
+        setPicked((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+
+    const sendToPrint = () => {
+        if (picked.size === 0) return;
+        // 按**左栏当前顺序**送过去（他挑的时候看到的就是这个顺序）
+        const ordered = visible.map((r) => r.id).filter((id) => picked.has(id));
+        router.push(`/insights/print?new=${ordered.join(',')}`);
+    };
     const [query, setQuery] = useState('');
 
     const [currentId, setCurrentId] = useState<string | null>(null);
@@ -382,6 +412,43 @@ export default function InsightsPage() {
                             />
                         </div>
 
+                        {/* 【2026-10-01】勾选工具条：**勾完了才出现**（平时不占地方）。
+                            "哪几条印在一张纸上"在这儿决定；点【送入】就去打印页排纸。 */}
+                        {picked.size > 0 && (
+                            <div className="flex items-center gap-2 rounded-md border border-primary/40 bg-accent/50 px-2 py-1.5 text-xs">
+                                <span className="font-medium">
+                                    {L(`已勾 ${picked.size} 条`, `${picked.size} picked`)}
+                                </span>
+                                <span className="flex-1" />
+                                <button
+                                    type="button"
+                                    className="underline"
+                                    onClick={() =>
+                                        setPicked((prev) =>
+                                            prev.size === visible.length
+                                                ? new Set()
+                                                : new Set(visible.map((r) => r.id)),
+                                        )
+                                    }
+                                >
+                                    {picked.size === visible.length
+                                        ? L('全不选', 'None')
+                                        : L('全选', 'All')}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="underline"
+                                    onClick={() => setPicked(new Set())}
+                                >
+                                    {L('清空', 'Clear')}
+                                </button>
+                                <Button size="sm" className="h-7" onClick={sendToPrint}>
+                                    <Layers className="mr-1 h-3.5 w-3.5" />
+                                    {L('送入积累纸打印', 'Send to print')}
+                                </Button>
+                            </div>
+                        )}
+
                         <div className="max-h-[62vh] space-y-1.5 overflow-y-auto rounded-md border p-2">
                             {loading && (
                                 <p className="px-2 py-6 text-center text-sm text-muted-foreground">
@@ -396,34 +463,49 @@ export default function InsightsPage() {
                             {visible.map((r) => {
                                 const active = r.id === currentId;
                                 const preview = cleanMarkdown((r.content || '').split('\n')[0] || '');
+                                const checked = picked.has(r.id);
                                 return (
-                                    <button
+                                    <div
                                         key={r.id}
-                                        type="button"
-                                        onClick={() => selectRow(r.id)}
-                                        className={`w-full rounded-md border px-2.5 py-2 text-left transition-colors ${
+                                        className={`flex w-full items-start gap-2 rounded-md border px-2.5 py-2 transition-colors ${
                                             active ? 'border-primary bg-accent/60' : 'hover:bg-accent/30'
                                         }`}
                                     >
-                                        <div className="flex items-center gap-2">
-                                            <span className="font-mono text-xs font-semibold">{r.code}</span>
-                                            {r.errorItemNo && (
-                                                <Badge variant="outline" className="px-1 py-0 text-[10px]">
-                                                    {L('题', 'Q')} {r.errorItemNo}
-                                                </Badge>
-                                            )}
-                                        </div>
-                                        <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                                            <span>{r.gradeSemester || L('未设年级', 'no grade')}</span>
-                                            <span>·</span>
-                                            <span>{subjectLabel(r.subject)}</span>
-                                        </div>
-                                        {preview && (
-                                            <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                                                {preview}
+                                        {/* 【2026-10-01】勾选（送去排积累纸用）。
+                                            ⚠️ checkbox 放在 button **外面** —— "勾选"和"点开编辑"
+                                            是两个互不相干的动作，嵌套在一起会互相打架。 */}
+                                        <input
+                                            type="checkbox"
+                                            className="mt-0.5 shrink-0"
+                                            checked={checked}
+                                            onChange={() => togglePick(r.id)}
+                                            title={L('勾上，之后可以送去排积累纸', 'Pick to print later')}
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => selectRow(r.id)}
+                                            className="min-w-0 flex-1 text-left"
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-mono text-xs font-semibold">{r.code}</span>
+                                                {r.errorItemNo && (
+                                                    <Badge variant="outline" className="px-1 py-0 text-[10px]">
+                                                        {L('题', 'Q')} {r.errorItemNo}
+                                                    </Badge>
+                                                )}
                                             </div>
-                                        )}
-                                    </button>
+                                            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                                                <span>{r.gradeSemester || L('未设年级', 'no grade')}</span>
+                                                <span>·</span>
+                                                <span>{subjectLabel(r.subject)}</span>
+                                            </div>
+                                            {preview && (
+                                                <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                                                    {preview}
+                                                </div>
+                                            )}
+                                        </button>
+                                    </div>
                                 );
                             })}
                         </div>
