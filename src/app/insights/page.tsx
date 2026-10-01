@@ -36,11 +36,23 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { processImageFile } from '@/lib/image-utils';
 import { GRADE_SEMESTER_OPTIONS } from '@/lib/grade-semester-options';
 import { SUBJECT_OPTIONS, subjectLabel } from '@/lib/notebook-fields';
+import { getSubjectHex } from '@/lib/subject-colors';
 import { cleanMarkdown } from '@/lib/markdown-utils';
 import { dayKey } from '@/lib/calendar-grid';
 import { ErrorItemCard } from '@/components/error-item-card';
 import type { ErrorItem } from '@/types/api';
-import { Camera, House, Plus, Printer, Save, Search, Trash2, X } from 'lucide-react';
+import {
+    Camera,
+    House,
+    PanelLeftClose,
+    PanelLeftOpen,
+    Plus,
+    Printer,
+    Save,
+    Search,
+    Trash2,
+    X,
+} from 'lucide-react';
 
 interface InsightRow {
     id: string;
@@ -72,6 +84,13 @@ export default function InsightsPage() {
     // 筛选（他 2026-10-01 定的：年级学期 + 学科多选 + 检索；日期只排先后不筛）
     const [grade, setGrade] = useState('');
     const [subjectSet, setSubjectSet] = useState<Set<string>>(new Set());
+    /**
+     * 【2026-10-01 加】左栏（清单 + 筛选）**可隐藏**。
+     * 他原话："对电脑端没有什么意义，但对手机这个功能是很有价值的 ——
+     * 在手机里左右两栏会变成上下关系，左边内容多了以后……翻半天也翻不到后面。"
+     * ⇒ 手机上是单列堆叠，隐藏左栏就直接落在编辑区；宽屏时右栏自动占满。
+     */
+    const [leftOpen, setLeftOpen] = useState(true);
     const [query, setQuery] = useState('');
 
     const [currentId, setCurrentId] = useState<string | null>(null);
@@ -170,6 +189,26 @@ export default function InsightsPage() {
         setCurrentId(id);
     };
 
+    /**
+     * 【2026-10-01 加】从**错题详情页**的「去日积月累页看全文 / 配图」跳过来时会带 `?pick=JL…`
+     * ⇒ 到了这里要**直接选中那一条**（他原话："并没有显示出这道题关联的日积月累内容。
+     * 这个关联还不紧密"）。清单加载完再比对编号，选中后也只选一次（`pickedRef`）。
+     *
+     * ⚠️ 用 `window.location.search` 而**不是** `useSearchParams`：后者会把页面拖进
+     *    Suspense 边界（本项目 2026-10-01 正因漏包 Suspense 炸过构建，
+     *    见 `next-build-conventions.test.ts`）。这里只需"挂载后读一次"，
+     *    不需要响应 URL 变化 —— 正是 `window.location` 的适用场景（`/scan`、`/review-volumes` 同）。
+     */
+    const pickedRef = useRef(false);
+    useEffect(() => {
+        if (pickedRef.current || rows.length === 0) return;
+        pickedRef.current = true;
+        const pick = new URLSearchParams(window.location.search).get('pick');
+        if (!pick) return;
+        const hit = rows.find((r) => r.code === pick || r.id === pick);
+        if (hit) setCurrentId(hit.id);
+    }, [rows]);
+
     const save = async () => {
         if (!current) return;
         setSaving(true);
@@ -258,6 +297,23 @@ export default function InsightsPage() {
                         {L('从错题里攒下来的一句话，一条一个编号', 'One line per takeaway, one code each')}
                     </span>
                     <span className="flex-1" />
+                    {/* 【2026-10-01 加】隐藏 / 显示左栏（手机上价值最大 —— 见 leftOpen 的说明） */}
+                    <Button
+                        variant="outline"
+                        size="icon"
+                        title={
+                            leftOpen
+                                ? L('隐藏左栏（手机上看编辑区更省事）', 'Hide the list')
+                                : L('显示左栏', 'Show the list')
+                        }
+                        onClick={() => setLeftOpen((v) => !v)}
+                    >
+                        {leftOpen ? (
+                            <PanelLeftClose className="h-4 w-4" />
+                        ) : (
+                            <PanelLeftOpen className="h-4 w-4" />
+                        )}
+                    </Button>
                     <Button size="sm" onClick={createOne}>
                         <Plus className="mr-1.5 h-4 w-4" />
                         {L('新建一条', 'New')}
@@ -280,8 +336,10 @@ export default function InsightsPage() {
             </div>
 
             <div className="mx-auto w-full max-w-[1400px] px-4 py-4 md:px-8">
-                <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
-                    {/* ===== 左栏：筛选 + 条目清单 ===== */}
+                {/* 藏起左栏时**不留空列**（`lg:grid-cols-[1fr]`）⇒ 右栏自然占满 */}
+                <div className={`grid gap-4 ${leftOpen ? 'lg:grid-cols-[360px_1fr]' : 'lg:grid-cols-[1fr]'}`}>
+                    {/* ===== 左栏：筛选 + 条目清单（**可隐藏**，见 leftOpen） ===== */}
+                    {leftOpen && (
                     <aside className="space-y-2">
                         {/* 【2026-10-01 他定的】筛选：年级/学期 + 学科**多选**；日期只排先后不筛 */}
                         <Select value={grade || '__all__'} onValueChange={(v) => setGrade(v === '__all__' ? '' : v)}>
@@ -370,6 +428,7 @@ export default function InsightsPage() {
                             })}
                         </div>
                     </aside>
+                    )}
 
                     {/* ===== 右栏：编辑区 ===== */}
                     <section className="min-w-0">
@@ -408,33 +467,102 @@ export default function InsightsPage() {
                                         </Select>
                                     </div>
 
-                                    <div className="flex flex-wrap gap-1.5">
-                                        {SUBJECT_OPTIONS.map((s) => (
-                                            <Button
-                                                key={s.key}
-                                                type="button"
-                                                size="sm"
-                                                variant={subjectDraft === s.key ? 'secondary' : 'outline'}
-                                                className={`h-7 px-2 text-xs ${subjectDraft === s.key ? 'bg-zinc-300 text-zinc-900 hover:bg-zinc-300/90' : ''}`}
-                                                onClick={() => setSubjectDraft(subjectDraft === s.key ? '' : s.key)}
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-sm text-muted-foreground">
+                                            {L('学科', 'Subject')}:
+                                        </span>
+                                        {/*
+                                         * 【2026-10-01 他要求】10 个按钮 ⇒ **收进一个下拉菜单**：
+                                         *   · 菜单里的科目**各自用本科目的颜色**（取自
+                                         *     `lib/subject-colors.ts` —— 与深挖纸/复练纸左上角那个
+                                         *     科目标识同一份，5.4/5.6 定稿"勿擅自调色"）；
+                                         *   · **选中后菜单收起来，触发器上直接显示那个科目名**，同色；
+                                         *   · 好处正是他说的："不同科目用不同科目的颜色标识出来"。
+                                         */}
+                                        <Select
+                                            value={subjectDraft || '__none__'}
+                                            onValueChange={(v) => setSubjectDraft(v === '__none__' ? '' : v)}
+                                        >
+                                            <SelectTrigger
+                                                className="h-8 w-[120px] font-medium"
+                                                style={
+                                                    subjectDraft
+                                                        ? { color: getSubjectHex(subjectDraft) }
+                                                        : undefined
+                                                }
                                             >
-                                                {s.label}
-                                            </Button>
-                                        ))}
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="__none__">
+                                                    {t.common?.notSet || 'Not set'}
+                                                </SelectItem>
+                                                {SUBJECT_OPTIONS.map((s) => (
+                                                    <SelectItem key={s.key} value={s.key}>
+                                                        <span style={{ color: getSubjectHex(s.key) }}>
+                                                            {s.label}
+                                                        </span>
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
                                     </div>
                                 </div>
 
-                                {/* ② md 编辑框（比错题详情页那个再大一点） */}
+                                {/* ② 保存 / 取消 —— 【2026-10-01 上移】。
+                                    他原话："这个保存和取消的按钮实在是太靠下面了，建议调整到上面去。"
+                                    放在编辑框**上方**：改完内容一抬眼就在手边，不用滚到最底下。 */}
+                                {dirty && (
+                                    <div className="flex gap-2">
+                                        <Button size="sm" onClick={save} disabled={saving}>
+                                            <Save className="mr-1 h-4 w-4" />
+                                            {t.common?.save || 'Save'}
+                                        </Button>
+                                        <Button size="sm" variant="outline" onClick={discard}>
+                                            <X className="mr-1 h-4 w-4" />
+                                            {t.common?.cancel || 'Cancel'}
+                                        </Button>
+                                    </div>
+                                )}
+
+                                {/* ③ md 编辑框 —— 【2026-10-01 改小】只留 **3 行**起步，写长了它自己变高。
+                                    他原话："目前太宽了，预留三行就行了；如果内容多了起来，
+                                    则结合行数调整框的宽度。日积月累每一条都不应该有太长的内容。" */}
                                 <MdEditor
                                     value={content}
                                     onChange={setContent}
                                     placeholder={L('这条积累写在这里…', 'Write the takeaway here…')}
-                                    minHeightPx={320}
+                                    minHeightPx={110}
                                     dirty={dirty}
                                 />
 
-                                {/* ③ 拍照 + 删除 */}
+                                {/* ④ 图片（左）+ 拍照 / 删除（右）—— 【2026-10-01 重排】。
+                                    他原话："拍照按钮往右放，靠近右边的删除，这样能空余出一部分空间，
+                                    下面放图片，然后再接相关错题卡，如果没有图片的话就直接连错题卡，
+                                    这样会比较紧凑。"
+                                    ⇒ 图片占左边（原来是拍照按钮占着的位置），拍照与删除一起靠右；
+                                      没图时这一行只有右边两个按钮，错题卡就紧跟着顶上来。 */}
                                 <div className="flex flex-wrap items-center gap-3">
+                                    {photo && (
+                                        <span className="flex items-center gap-2">
+                                            {/* eslint-disable-next-line @next/next/no-img-element -- 存的是 dataURL，next/image 用不上 */}
+                                            <img
+                                                src={photo}
+                                                alt=""
+                                                className="h-20 w-20 rounded border object-cover"
+                                            />
+                                            <button
+                                                type="button"
+                                                className="text-xs text-muted-foreground hover:text-destructive"
+                                                onClick={() => setPhoto(null)}
+                                            >
+                                                {L('去掉这张图', 'Remove photo')}
+                                            </button>
+                                        </span>
+                                    )}
+
+                                    <span className="flex-1" />
+
                                     <input
                                         ref={fileRef}
                                         type="file"
@@ -450,23 +578,6 @@ export default function InsightsPage() {
                                         <Camera className="mr-1.5 h-4 w-4" />
                                         {L('拍照', 'Photo')}
                                     </Button>
-
-                                    {photo && (
-                                        <span className="flex items-center gap-2">
-                                            {/* eslint-disable-next-line @next/next/no-img-element -- 存的是 dataURL，next/image 用不上 */}
-                                            <img src={photo} alt="" className="h-14 w-14 rounded border object-cover" />
-                                            <button
-                                                type="button"
-                                                className="text-xs text-muted-foreground hover:text-destructive"
-                                                onClick={() => setPhoto(null)}
-                                            >
-                                                {L('去掉这张图', 'Remove photo')}
-                                            </button>
-                                        </span>
-                                    )}
-
-                                    <span className="flex-1" />
-
                                     <Button
                                         variant="ghost"
                                         size="sm"
@@ -492,7 +603,17 @@ export default function InsightsPage() {
                                     </div>
                                     {linkedQuestion ? (
                                         <div className="max-w-[520px]">
-                                            <ErrorItemCard item={linkedQuestion} />
+                                            {/* 【2026-10-01 他反馈后补】点卡进错题详情页时带上"从哪来"
+                                                ⇒ 详情页左上角那个返回键会**回到日积月累页**，
+                                                并且直接选中当前这条（而不是落到错题本页去找不着北）。
+                                                他原话："我在想要不要在这种情况下，返回的是这个日积月累的
+                                                页面呢" —— 要，而且回来还得是**这一条**。 */}
+                                            <ErrorItemCard
+                                                item={linkedQuestion}
+                                                href={`/error-items/${linkedQuestion.id}?back=${encodeURIComponent(
+                                                    `/insights?pick=${current.code}`,
+                                                )}`}
+                                            />
                                         </div>
                                     ) : (
                                         <div className="rounded-md border border-dashed px-4 py-5 text-sm text-muted-foreground">
@@ -506,19 +627,6 @@ export default function InsightsPage() {
                                     )}
                                 </div>
 
-                                {/* 保存 / 取消（有改动才出现 —— 全项目统一手感） */}
-                                {dirty && (
-                                    <div className="flex gap-2">
-                                        <Button size="sm" onClick={save} disabled={saving}>
-                                            <Save className="mr-1 h-4 w-4" />
-                                            {t.common?.save || 'Save'}
-                                        </Button>
-                                        <Button size="sm" variant="outline" onClick={discard}>
-                                            <X className="mr-1 h-4 w-4" />
-                                            {t.common?.cancel || 'Cancel'}
-                                        </Button>
-                                    </div>
-                                )}
                             </div>
                         )}
                     </section>

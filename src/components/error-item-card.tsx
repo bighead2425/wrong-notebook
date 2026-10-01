@@ -46,8 +46,11 @@ import { ReviewDots } from "@/components/review-dots";
  */
 export interface ErrorItemCardProps {
     item: ErrorItem;
-    /** 点卡片去哪；默认进这道题的详情页 */
-    href?: string;
+    /**
+     * 点卡片去哪；默认进这道题的详情页。
+     * **传 `null` = 整卡不可点**（显式关掉跳转）—— 扫码结果页用它，理由见下面 `linkDisabled`。
+     */
+    href?: string | null;
     /** 多选模式（错题本页专有）：左上出现勾选框、点卡片任意处 = 切换选中、标签不再响应点击 */
     selectMode?: boolean;
     selected?: boolean;
@@ -101,6 +104,9 @@ export function ErrorItemCard({
         }
     }
 
+    /** `href={null}` ⇒ 整卡不可点（扫码结果页用；理由见 Link 的 onClick） */
+    const linkDisabled = href === null && !selectMode;
+
     const rawText = (item.questionText || "").split("\n\n")[0];
     const cleanText = cleanMarkdown(rawText);
     const preview = cleanText.length > 80 ? `${cleanText.substring(0, 80)}...` : cleanText;
@@ -115,14 +121,27 @@ export function ErrorItemCard({
             )}
 
             <Link
-                href={selectMode ? "#" : (href ?? `/error-items/${item.id}`)}
+                href={linkDisabled || selectMode ? "#" : (href ?? `/error-items/${item.id}`)}
+                aria-disabled={linkDisabled || undefined}
                 onClick={(e) => {
+                    // 【2026-10-01】`href={null}` ⇒ 整卡不可点。他扫码后反馈：
+                    //   "手机上点击这些内容时容错率就特别低" —— 想点左上角掌握度/右上角等级，
+                    //   一偏就整卡跳走；而那一屏右上角本来就有「打开详情页」按钮。
+                    //   所以这里拦掉默认行为；**内部那些小控件照常各自工作**。
+                    if (linkDisabled) {
+                        e.preventDefault();
+                        return;
+                    }
                     if (!selectMode) return;
                     e.preventDefault();
                     onToggleSelect?.(e);
                 }}
             >
-                <Card className="h-full hover:border-primary/50 transition-colors cursor-pointer gap-2 pt-4">
+                <Card
+                    className={`h-full gap-2 pt-4 ${
+                        linkDisabled ? "" : "hover:border-primary/50 transition-colors cursor-pointer"
+                    }`}
+                >
                     <CardHeader className="pb-0">
                         <div className="flex justify-between items-start">
                             {/* 左上角：「待复习 / 已掌握」点一下互转并保存。

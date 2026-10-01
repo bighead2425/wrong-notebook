@@ -56,7 +56,6 @@ import {
     type SnapshotRow,
 } from "@/lib/review-card";
 import { VOLUME_KINDS, VOLUME_KIND_LABEL, VOLUME_KIND_LABEL_EN, type VolumeKind } from "@/lib/volume-code";
-import { InsightSheet } from "@/components/print/insight-sheet";
 import { GRADE_TERMS, normalizeTerm, volumeMatchesTerm } from "@/lib/grade-term";
 import { SUBJECT_OPTIONS, subjectLabel } from "@/lib/notebook-fields";
 
@@ -287,40 +286,6 @@ export default function ReviewVolumesPage() {
         for (const it of items) map[it.id] = it;
         return map;
     }, [items]);
-
-    /**
-     * 【2026-10-01】积累卷（build）打开时要用**快照**拼出每一条。
-     *
-     * ⚠️ 刻意**不回查** Insight 表：印出去的凭证只认快照（定盘星）。
-     *    原条目后来被改了、甚至删了，这一卷该长什么样还长什么样。
-     *
-     * ⚠️ 已知取舍：本页的"这一页撑爆了没有"安全阀靠量尺里的 `[data-review-block]` 量高，
-     *    而积累块的钩子是 `[data-insight-block]` ⇒ **在这里看积累卷时安全阀不工作**。
-     *    可接受：本页对积累卷是**只读查看**（不能调留白、也不会重排），
-     *    真正"挑条目 → 出纸 → 防撑爆"的主入口是 `/insights/print`，那里量的是积累块。
-     */
-    const insightRowByKey = useMemo(() => {
-        const map: Record<string, { id: string; code: string; content: string; photoUrl: string | null }> = {};
-        for (const row of detail?.items || []) {
-            const key = row.insightId || row.id;
-            let photoUrl: string | null = null;
-            if (row.figureUrls) {
-                try {
-                    const arr = JSON.parse(row.figureUrls);
-                    if (Array.isArray(arr) && typeof arr[0] === "string") photoUrl = arr[0];
-                } catch {
-                    photoUrl = null;
-                }
-            }
-            map[key] = {
-                id: key,
-                code: row.itemNo || "",
-                content: row.questionText || "",
-                photoUrl,
-            };
-        }
-        return map;
-    }, [detail?.items]);
 
     // ================= 量高度（只为"这一页被撑爆了没有"这个安全阀） =================
 
@@ -603,6 +568,12 @@ export default function ReviewVolumesPage() {
     const visibleVolumes = useMemo(() => {
         const q = query.trim().toLowerCase();
         return volumes.filter((v) => {
+            /**
+             * 【2026-10-01 他定】积累纸（build）**不出现在这一页**。
+             * 原话："复练卷页就是复练卷的内容，不和积累交互这么深。复练卷页管理复练卷，
+             * 那么积累纸·打印就管理积累纸。" ⇒ 各管各的，这一页只看复练卷。
+             */
+            if (v.kind === "build") return false;
             if (kindFilter !== "all" && v.kind !== kindFilter) return false;
             // 年级/学期：卷页眉可能是"六年级上·五年级上"（跨本组卷），**任一部分**命中就算
             if (gradeTermFilter && !volumeMatchesTerm(v.gradeSemester, gradeTermFilter)) return false;
@@ -691,9 +662,12 @@ export default function ReviewVolumesPage() {
                                 </div>
 
                                 <div className="flex flex-wrap items-center gap-2">
-                                    {/* 类型筛选：复练 / 积累 / 全部 */}
+                                    {/* 类型筛选：这里**只剩复练**（积累纸已拆去它自己的打印页，
+                                        2026-10-01 他定："各管各的"）。
+                                        保留"全部/复练"两个按钮而不是直接删掉：留个位置，
+                                        将来若再有第三种卷也不用重排工具栏。 */}
                                     <div className="flex items-center gap-1 bg-muted/50 rounded-md p-0.5 w-fit">
-                                        {(["all", "review", "build"] as const).map((k) => (
+                                        {(["all", "review"] as const).map((k) => (
                                             <button
                                                 key={k}
                                                 type="button"
@@ -954,33 +928,13 @@ export default function ReviewVolumesPage() {
 
                                 {/* 隐藏量尺**已移到右栏顶部**（缩放外面）—— 见那里的说明 */}
 
-                                {layout?.pages.map((page, i) =>
-                                    /**
-                                     * 【2026-10-01】**积累卷（build）用积累纸渲染**。
-                                     *
-                                     * 为什么必须分：这个页面原来的 `ReviewSheet` 是按"题"画的
-                                     * （`itemByKey` 里找原题），而积累卷的一行挂的是 `insightId`、
-                                     * 原题为 null ⇒ 打开就是一片空白。
-                                     * 而且卷是**统一管理**的（列表里 kind 筛选本来就含 build），
-                                     * 所以"能在列表里看到、点开却是白纸"是个不能留的 bug。
-                                     *
-                                     * ⚠️ 这里**只用快照**（itemNo/questionText/figureUrls），不回查原条目 ——
-                                     *    印出去的凭证只认快照，原条目改了不该让纸变。
-                                     */
-                                    detail?.kind === "build" ? (
-                                        <InsightSheet
-                                            key={i}
-                                            page={page}
-                                            pageNo={i + 1}
-                                            pageCount={layout.pages.length}
-                                            volumeNo={detail?.volumeNo ?? ""}
-                                            gradeText={detail?.gradeSemester ?? undefined}
-                                            printDate={printDate?.toISOString()}
-                                            rowByKey={insightRowByKey}
-                                            blankLines={detail?.defaultBlankLines ?? 1}
-                                            L={L}
-                                        />
-                                    ) : (
+                                {/*
+                                 * 【2026-10-01 收敛】这里**只画复练纸**。
+                                 * 加过一版"build 卷用积累纸渲染"的分支，但既然积累纸已经拆去
+                                 * 它自己的打印页（`/insights/print`）、且本页列表已不再列出 build 卷
+                                 * （他："各管各的"），那个分支就成了死路 —— 删掉，别留在代码里误导人。
+                                 */}
+                                {layout?.pages.map((page, i) => (
                                     <ReviewSheet
                                         key={i}
                                         page={page}
@@ -1000,8 +954,7 @@ export default function ReviewVolumesPage() {
                                         missing={missingMap}
                                         L={L}
                                     />
-                                    ),
-                                )}
+                                ))}
                             </div>
                         </SheetZoom>
                     </main>

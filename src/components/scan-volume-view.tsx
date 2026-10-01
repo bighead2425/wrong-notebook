@@ -153,6 +153,20 @@ export function ScanVolumeView({
         return map;
     }, [items]);
 
+    /**
+     * 【2026-10-01 补】每题在**这一卷里**的题图缩放（卷内快照的 `figureScale`）。
+     *
+     * 复练卷页能用是因为它整卷可选可存；扫码这屏是**只读看印出去的那张纸** ——
+     * 更要按卷里的值渲染，否则"手上纸的图小、屏上图的图大"，就对不上了。
+     */
+    const figureScaleOf = useMemo(() => {
+        const map: Record<string, number> = {};
+        for (const r of volume?.items || []) {
+            if (r.errorItemId) map[r.errorItemId] = r.figureScale ?? 100;
+        }
+        return (id: string) => map[id] ?? 100;
+    }, [volume]);
+
     const missingMap = useMemo(() => {
         const map: Record<string, string | null> = {};
         for (const r of volume?.items || []) {
@@ -273,7 +287,20 @@ export function ScanVolumeView({
                 onPointerUp={endDrag}
                 onPointerLeave={endDrag}
             >
-                <SheetZoom className="mx-auto max-w-[900px]" defaultFit L={L}>
+                {/*
+                 * ⚠️【2026-10-01 修】**`print-sheet` 这层不能少**。
+                 *   它负责把纸定成 **152mm 宽**。少了它，纸就被拉成整个容器的宽度 ——
+                 *   他实测的原话正是"渲染的纸张似乎不像是 B5 纸张版面"。
+                 *   这与复练卷页当初那个坑是同一个（见 globals.css 的 `.print-sheet`），
+                 *   也是同一条规矩：**新页面要照抄老页面的整条包裹链**，只抄顶层不够。
+                 *   （`mx-auto max-w-6xl` 也没有意义了 —— 定宽交给 print-sheet。）
+                 */}
+                <SheetZoom
+                    className="mx-auto max-w-6xl px-4 py-6 print:max-w-none print:px-0 print:py-0"
+                    defaultFit
+                    L={L}
+                >
+                    <div className="print-sheet">
                     {layout.pages.map((page, i) => (
                         <div
                             key={i}
@@ -292,12 +319,17 @@ export function ScanVolumeView({
                                 pageQr={pageQr[i + 1]}
                                 itemByKey={itemByKey}
                                 missing={missingMap}
+                                /* 【2026-10-01 修】题图必须用**卷里调过的那个缩放**。
+                                   不传就一律按 100（原大小）—— 他实测："题图大小和复练卷
+                                   设计好的大小似乎不同…在这里看到的总觉得是原大小"。 */
+                                figureScaleOf={figureScaleOf}
                                 onQuestionPlusClick={onPickItem}
                                 plusTitle={L("点这里 → 打开这道题的错题卡", "Open this question's card")}
                                 L={L}
                             />
                         </div>
                     ))}
+                    </div>
                 </SheetZoom>
             </div>
         </div>

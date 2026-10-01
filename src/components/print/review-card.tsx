@@ -412,8 +412,16 @@ export function ReviewQuestionBlock({
                             flexDirection: 'column',
                             gap: '2mm',
                             position: 'relative',
-                            // 手机上"按住图左右拖 = 缩放"：不让浏览器把手势抢去当滚动
-                            touchAction: 'none',
+                            /**
+                             * 手机上"按住图左右拖 = 缩放"：不让浏览器把手势抢去当滚动。
+                             *
+                             * ⚠️【2026-10-01 修】必须**只在能缩放时**才吃手势。
+                             *   原来写死 `'none'` ⇒ 扫码浏览那屏（**只读**，不传 `onFigureScaleStart`）
+                             *   也继承了它：手指落在题图范围内上下划，页面纹丝不动
+                             *   （他实测："在题的蓝框内时似乎没有反应" —— 蓝框罩的正是题干+题图区）。
+                             *   判据就用 `onFigureScaleStart` 有没有传 —— 谁能缩，谁才吃手势。
+                             */
+                            touchAction: onFigureScaleStart ? 'none' : undefined,
                         }}
                         // 手指/笔直接按在图上就能拖（电脑用右下角小把手，免得误拖）
                         onPointerDown={(e) => {

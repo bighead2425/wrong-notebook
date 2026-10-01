@@ -34,6 +34,7 @@ import {
     type SnapshotRow,
 } from '@/lib/review-card';
 import { InsightBlock, InsightSheet, type InsightPrintRow } from '@/components/print/insight-sheet';
+import { SheetZoom } from '@/components/print/sheet-zoom';
 
 /** 列表里的一条（与 /insights 页同一份接口） */
 interface InsightRow {
@@ -341,7 +342,10 @@ function InsightsPrintContent() {
                 </div>
             )}
 
-            <div className="flex flex-col lg:flex-row gap-3 p-3">
+            {/* 【2026-10-01 他反馈后补】整屏内容**居中限宽**（原来只有 `p-3` ⇒ 大屏上左右顶到边，
+                他原话"左边右边都太满了，要像日积月累页一样稍微往中间放一放"）。
+                与日积月累页同一个包裹写法。 */}
+            <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-3 px-4 py-3 md:px-8 lg:flex-row">
                 {/* ===== 左栏：挑条目 ===== */}
                 <aside className="no-print w-full lg:w-[320px] shrink-0 space-y-2">
                     <div className="rounded-lg border bg-background p-3 space-y-2">
@@ -436,21 +440,33 @@ function InsightsPrintContent() {
                                 : L('在左边勾几条，这里就会出纸', 'Pick some entries on the left')}
                         </div>
                     ) : (
-                        <div className="space-y-3">
-                            {layout?.pages.map((page, i) => (
-                                <InsightSheet
-                                    key={i}
-                                    page={page}
-                                    pageNo={i + 1}
-                                    pageCount={pageCount}
-                                    volumeNo={volumeNo}
-                                    gradeText={detail?.gradeSemester ?? grade ?? null}
-                                    rowByKey={rowByKey}
-                                    blankLines={blankLines}
-                                    L={L}
-                                />
-                            ))}
-                        </div>
+                        /*
+                         * ⚠️【2026-10-01 修】**`print-sheet` 这层不能少** —— 它把纸定成 **152mm 宽**。
+                         *   我第一版直接渲染 `InsightSheet`（它自己只有高度、没有宽度），
+                         *   纸就被撑成整个右栏那么宽 ⇒ 他看到的"横版页面、左右太满"。
+                         *   与扫码页那次是**同一个坑**：新页面要照抄老页面的整条包裹链。
+                         *   奇偶孔位、中间那条灰竖线本来就在 `InsightSheet`/`VolumeHeader` 里，纸一定宽就对了。
+                         */
+                        <SheetZoom
+                            className="mx-auto max-w-6xl px-4 py-6 print:max-w-none print:px-0 print:py-0"
+                            L={L}
+                        >
+                            <div className="print-sheet">
+                                {layout?.pages.map((page, i) => (
+                                    <InsightSheet
+                                        key={i}
+                                        page={page}
+                                        pageNo={i + 1}
+                                        pageCount={pageCount}
+                                        volumeNo={volumeNo}
+                                        gradeText={detail?.gradeSemester ?? grade ?? null}
+                                        rowByKey={rowByKey}
+                                        blankLines={blankLines}
+                                        L={L}
+                                    />
+                                ))}
+                            </div>
+                        </SheetZoom>
                     )}
                 </main>
             </div>

@@ -159,13 +159,21 @@ export function ScanItemPanel({
                 </Link>
             </div>
 
-            {/* 错题卡：与错题本页**同一份组件**（点了卡片 = 进详情页） */}
+            {/* 错题卡：与错题本页**同一份组件**。
+                【2026-10-01 他反馈后改】两点：
+                  ① `href={null}` ⇒ **整卡不再当跳转热区**（手机上点等级/掌握度容易误触跳走；
+                     进详情页走右上角那个按钮，一次意图一个动作）。
+                  ② **卡片撑满底色框**：外层去掉 `p-3` —— 他原话"下面的背景框都比它大，
+                     没有必要，把错题卡大小放到底色框大小"。底色框只保留"这道题在回收箱里"
+                     的红/绿提示语义，`overflow-hidden` 保证圆角不溢出。 */}
             <div
-                className={`rounded-lg p-3 ${source === "trash" ? "bg-rose-500/10" : "bg-emerald-500/10"}`}
+                className={`overflow-hidden rounded-lg ${
+                    source === "trash" ? "bg-rose-500/10" : "bg-emerald-500/10"
+                }`}
             >
                 <ErrorItemCard
                     item={item}
-                    href={detailHref}
+                    href={null}
                     onToggleMastery={() =>
                         patch(
                             { masteryLevel: item.masteryLevel > 0 ? 0 : 2 },

@@ -1106,7 +1106,18 @@ export default function ErrorDetailPage() {
                                               "Not in the library yet — press 直送 or AI 送 to create it.",
                                           )}
                                 </p>
-                                <Link href="/insights" className="inline-block text-xs text-primary hover:underline">
+                                {/* 【2026-10-01 他反馈后改】带上**这条积累的编号**（`?pick=JL…`）：
+                                    他原话"点击后去的是日积月累页，并没有显示出这道题关联的
+                                    日积月累内容。这个关联还不紧密" ⇒ 到了那边要**直接选中那一条**，
+                                    而不是丢在一长串清单里让人自己找。 */}
+                                <Link
+                                    href={
+                                        insight
+                                            ? `/insights?pick=${encodeURIComponent(insight.code)}`
+                                            : "/insights"
+                                    }
+                                    className="inline-block text-xs text-primary hover:underline"
+                                >
                                     {L("去日积月累页看全文 / 配图 →", "Open the takeaways page →")}
                                 </Link>
                             </CardContent>
