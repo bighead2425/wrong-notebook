@@ -48,6 +48,18 @@ import 'katex/dist/katex.min.css';
 // `==高亮==` 的编辑器侧 remark 插件（严格版：独立节点，不借用 emphasis —— 见其文件头）
 import { remarkHighlightStrict } from '@/lib/markdown-plugins';
 import type { RemarkPluginRaw } from '@milkdown/kit/transformer';
+// 中文 emoji 选择器：【2026-10-01】`；；眼镜：：` ⇒ 候选浮层
+// ⚠️ 这两个模块**不**静态 import 那份 404KB 的 emoji 数据（见 emoji-search.ts），
+//    数据只在真正用到时才 `await import()` ⇒ 不进任何一屏的初始包。
+import { parseEmojiTrigger } from '@/lib/emoji-trigger';
+import { loadEmojiIndex, searchEmojis, type EmojiIndexItem } from '@/lib/emoji-search';
+import {
+    EmojiPicker,
+    EMOJI_PICKER_COLS,
+    type EmojiPickerViewState,
+} from '@/components/emoji-picker';
+// 只用到类型（编译期擦除，不会把 ProseMirror 拖进 SSR）
+import type { EditorView } from '@milkdown/kit/prose/view';
 
 /** 触发"初始化时把纯文本公式转成数学节点"的事务标记（加载时没有改动，得靠它叫醒插件） */
 const NORMALIZE_MATH_META = 'mdEditor:normalizeMathFromText';
@@ -74,6 +86,14 @@ export interface MdEditorInstance {
     setMarkdown: (next: string) => void;
     /** 取当前 md 源（保存的就是它；单测与排查也用） */
     getMarkdown: () => string;
+    /**
+     * 【2026-10-01】把文档里 [from, to) 这段（原文 `expected`）整体换成 emoji 字符。
+     * 只在用户**真正选中候选**时被调用 —— 走一次编辑器事务（红线见本文件头）。
+     * 若文档已变、`expected` 对不上，则**放弃**（宁可没反应，绝不吞错字）。
+     */
+    replaceEmojiRange: (from: number, to: number, expected: string, ch: string) => void;
+    /** 关闭 emoji 浮层（点面板外时用）：只清状态，**不动文档** */
+    closeEmojiPicker: () => void;
     destroy: () => Promise<void>;
 }
 
@@ -87,8 +107,14 @@ export async function createMdEditorInstance(opts: {
     root: HTMLElement;
     value: string;
     onChange: (md: string) => void;
+    /**
+     * 【2026-10-01】emoji 候选浮层的状态回调：插件检测到 `；；…：：` 就回调这里，
+     * 由 React 决定怎么把面板画出来（插件本身不碰 React 生命周期）。
+     * 传 null 表示"该关"。
+     */
+    onPickerChange?: (state: EmojiPickerViewState | null) => void;
 }): Promise<MdEditorInstance> {
-    const { root, value, onChange } = opts;
+    const { root, value, onChange, onPickerChange } = opts;
 
     const [
         { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx, parserCtx, editorViewCtx },
@@ -98,7 +124,7 @@ export async function createMdEditorInstance(opts: {
         { history },
         { $markAttr, $markSchema, $remark, $inputRule, $prose, $nodeSchema, getMarkdown },
         { markRule },
-        { Plugin: ProsePlugin },
+        { Plugin: ProsePlugin, TextSelection },
         { Fragment },
         { remarkMathPlugin, mathInlineInputRule, mathBlockInputRule },
         katexModule,
@@ -391,6 +417,265 @@ export async function createMdEditorInstance(opts: {
         });
     });
 
+    // ================= 中文 emoji 选择器：`；；眼镜：：` ⇒ 候选浮层 =================
+    /**
+     * 【2026-10-01】用户拍板的触发方式：
+     *   输入 `；；眼镜：：` —— **最后敲的 `：：` 唤醒功能**，往回找最近的 `；；`，
+     *   两者之间的中文（"眼镜"）就是搜索词。半角 `;;` / `::` 也认。
+     *
+     * 为什么"读文档"而不是"读按键"（评估报告 2.2 的做法 C，也正是本触发方式的最佳用法）：
+     *   `：` 是中文输入法常管的标点，keydown 拿不到最终字符、还要赌合成态的时序；
+     *   而**只看事务提交后的文档**，"这个字是怎么进来的"（软硬键盘 / 输入法 / 语音）全都不用管，
+     *   天然绕开合成态。合成期间 `view.composing` 为真时我们也不抢键盘。
+     *
+     * ⚠️ 红线（见本文件头 3 条 + 评估报告 2.4）：本插件**从不改文档**。
+     *    检测到触发只是把状态回调给 React 去弹浮层；只有用户真正**选中某一项**时，
+     *    才由 `replaceEmojiRange` 走一次事务把 `；；…：：` 整段换成 emoji。
+     *    因此 Esc / 点别处 / 搜不到 ⇒ **原文一个字都不动**（`；；眼镜：：` 原样留着）。
+     */
+    const pickerCtl: { close: (() => void) | null } = { close: null };
+
+    /** 命中的触发点（文档位置 + 原文），插入时要用它 */
+    type PickerHit = { from: number; to: number; query: string; raw: string };
+
+    /**
+     * 唯一的"插入 emoji"通路：一次事务把 [from, to) 换成字符，光标落到字符之后。**绝不碰 DOM**。
+     * `expected` 是这段的原文，对不上就放弃 —— 防的是"浮层还开着，但文档已被别处改过"。
+     */
+    const replaceEmojiRange = (
+        view: EditorView,
+        from: number,
+        to: number,
+        expected: string,
+        ch: string,
+    ) => {
+        const size = view.state.doc.content.size;
+        if (from < 0 || to > size || from >= to) return;
+        if (view.state.doc.textBetween(from, to, '', '\n') !== expected) return;
+        const tr = view.state.tr.insertText(ch, from, to);
+        tr.setSelection(TextSelection.create(tr.doc, from + ch.length));
+        tr.scrollIntoView();
+        view.dispatch(tr);
+        view.focus(); // 对应 Obsidian 版那句"插完把焦点还给编辑器"（点面板会让编辑区失焦）
+    };
+
+    const emojiPicker = $prose(() => {
+        /** 当前编辑器视图（销毁后为 null） */
+        let editorView: EditorView | null = null;
+        /** emoji 索引（懒加载；没到位前先空着，加载完再刷新一遍） */
+        let index: EmojiIndexItem[] | null = null;
+        let items: EmojiIndexItem[] = [];
+        let active = 0;
+        let hit: PickerHit | null = null;
+        /** 已回调出去的状态签名（去重：文档一变就重算是很便宜的，但没必要每次都重渲染 React） */
+        let sig: string | null = null;
+        /** 上一个事务是否属于"外部写入"（粘贴 / 拖拽 / 程序化换值）——这类一律不触发 */
+        let skipNext = false;
+
+        const close = () => {
+            if (sig === null) return; // 本来就关着 ⇒ 别惊动 React
+            sig = null;
+            hit = null;
+            items = [];
+            active = 0;
+            onPickerChange?.(null);
+        };
+        pickerCtl.close = close; // 供"点面板外关闭"时把插件内部状态一起复位
+
+        const emit = () => {
+            if (!editorView || !hit) return;
+            const nextSig = `${hit.from}:${hit.to}:${hit.query}:${active}`;
+            if (nextSig === sig) return;
+            sig = nextSig;
+            // 坐标只用来定位浮层：拿不到（极端环境 / 视图像 jsdom）就退回 0，不影响功能
+            let rect = { left: 0, top: 0, bottom: 0 };
+            try {
+                const r = editorView.coordsAtPos(hit.to);
+                rect = { left: r.left, top: r.top, bottom: r.bottom };
+            } catch {
+                /* 定位失败不影响"弹/不弹"与"插/不插" */
+            }
+            onPickerChange?.({
+                from: hit.from,
+                to: hit.to,
+                query: hit.query,
+                raw: hit.raw,
+                items,
+                activeIndex: active,
+                anchor: rect,
+            });
+        };
+
+        /**
+         * 取"光标前"的文本，并记下**每个字符对应的文档位置**。
+         * 为什么要位置映射：父节点里可能有 hard_break 这类叶子节点（一个节点的 nodeSize=1，
+         * 却不对应一个普通字符），直接拿 parentOffset 当坐标会错位 ⇒ 那就会替换错地方、吞错字。
+         */
+        const collectBeforeCursor = (view: EditorView) => {
+            const parent = view.state.selection.$from.parent;
+            const limit = view.state.selection.$from.parentOffset;
+            let text = '';
+            const map: number[] = [];
+            let pos = view.state.selection.$from.start();
+            for (let i = 0; i < parent.childCount && text.length < limit; i++) {
+                const child = parent.child(i);
+                const childText = child.text;
+                if (child.isText && childText) {
+                    const take = Math.min(childText.length, limit - text.length);
+                    for (let j = 0; j < take; j++) {
+                        text += childText[j];
+                        map.push(pos + j);
+                    }
+                    pos += childText.length;
+                } else if (child.isLeaf) {
+                    text += '\n'; // 叶子（如 Shift+Enter 的软换行）当换行看
+                    map.push(pos);
+                    pos += child.nodeSize;
+                } else {
+                    pos += child.nodeSize;
+                }
+            }
+            return text.length === limit ? { text, map } : null;
+        };
+
+        /** 检测当前光标位置是不是正好在一个"完整的 `；；…：：`"之后 */
+        const detect = (view: EditorView): PickerHit | null => {
+            const { state } = view;
+            if (!state.selection.empty) return null;
+            const parent = state.selection.$from.parent;
+            // 守卫：代码块 / 行内公式里不触发（`:：` 会把 TeX 或代码污染成垃圾）
+            if (parent.type.spec.code) return null;
+            if (parent.type.name === 'math_inline') return null;
+
+            const collected = collectBeforeCursor(view);
+            if (!collected) return null;
+
+            const parsed = parseEmojiTrigger(collected.text); // ← 判定核心，纯函数、单测覆盖
+            if (!parsed) return null;
+
+            const from = collected.map[parsed.start];
+            const to = collected.map[parsed.end - 1] + 1;
+            if (typeof from !== 'number' || typeof to !== 'number' || from >= to) return null;
+            // 双保险：文档里这段原文必须与解析结果逐字一致（防内联节点导致的错位）
+            if (state.doc.textBetween(from, to, '', '\n') !== parsed.raw) return null;
+            return { from, to, query: parsed.query, raw: parsed.raw };
+        };
+
+        /** 用文档现状刷新"该不该弹、弹什么、弹在哪" */
+        const refresh = () => {
+            const view = editorView;
+            if (!view) return close();
+            const found = detect(view);
+            if (!found) return close();
+            if (!index) {
+                // 数据还没到位：先拉（动态 import，不进首屏包），拉完再刷一次
+                void loadEmojiIndex()
+                    .then((loaded) => {
+                        index = loaded;
+                        refresh();
+                    })
+                    .catch(() => undefined);
+                return;
+            }
+            items = searchEmojis(index, found.query);
+            if (items.length === 0) return close(); // 搜不到 ⇒ 不弹、也不动文档
+            if (!hit || hit.query !== found.query || hit.from !== found.from) active = 0;
+            hit = found;
+            emit();
+        };
+
+        /** 把当前高亮项插进去（唯一的"落字"动作，走事务） */
+        const insertActive = () => {
+            const view = editorView;
+            if (!view || !hit || items.length === 0) return;
+            const item = items[Math.min(active, items.length - 1)];
+            replaceEmojiRange(view, hit.from, hit.to, hit.raw, item.c);
+            close();
+        };
+
+        /** 网格里挪高亮（不环绕，到边就停） */
+        const move = (delta: number) => {
+            if (items.length === 0) return;
+            const next = active + delta;
+            if (next < 0 || next >= items.length) return;
+            active = next;
+            emit();
+        };
+
+        return new ProsePlugin({
+            props: {
+                handleKeyDown(view, event) {
+                    if (!hit || items.length === 0) return false;
+                    if (view.composing) return false; // 合成态：方向键在选输入法候选词，绝不抢
+                    editorView = view;
+                    switch (event.key) {
+                        case 'Escape':
+                            close();
+                            return true; // 吃掉：别让它再被别处处理
+                        case 'Enter':
+                            insertActive();
+                            return true;
+                        case 'ArrowRight':
+                            move(1);
+                            return true;
+                        case 'ArrowLeft':
+                            move(-1);
+                            return true;
+                        case 'ArrowDown':
+                            move(EMOJI_PICKER_COLS);
+                            return true;
+                        case 'ArrowUp':
+                            move(-EMOJI_PICKER_COLS);
+                            return true;
+                        default:
+                            return false; // 其余键放行 ⇒ 字正常落进文档，成为新的搜索词
+                    }
+                },
+            },
+            /**
+             * 守卫来源（评估报告 2.3 / 5）：ProseMirror 粘贴时会打 `paste` meta
+             * （`prosemirror-view` 的 `readDOMChange`/`handlePaste` 路径），拖拽是 `uiEvent: 'drop'`，
+             * 程序化换值（我们的 setMarkdown / 初始化归一化）用 `addToHistory: false`。
+             * 这三类都**不许**触发 —— 否则会去吃掉人家粘贴进来的内容（数据丢失）。
+             */
+            appendTransaction(trs) {
+                if (!trs.some((tr) => tr.docChanged)) return null;
+                const external = trs.some(
+                    (tr) =>
+                        tr.getMeta('paste') ||
+                        tr.getMeta('uiEvent') === 'drop' ||
+                        tr.getMeta('addToHistory') === false,
+                );
+                if (external) skipNext = true;
+                return null; // 本插件不产生任何补充事务（不改文档）
+            },
+            view(viewInstance) {
+                editorView = viewInstance;
+                return {
+                    update: (_view, prevState) => {
+                        const skip = skipNext;
+                        skipNext = false;
+                        if (!prevState || !editorView) return;
+                        // 文档没变（只是移光标等）⇒ 没必要重算
+                        if (prevState.doc.eq(editorView.state.doc)) return;
+                        if (skip) {
+                            close();
+                            return;
+                        }
+                        // 合成态先不动：等 compositionend 那次更新再看文档（同官方斜杠菜单的做法，
+                        // 避免用户还在选输入法候选词时面板就闪出来）
+                        if (editorView.composing) return;
+                        refresh();
+                    },
+                    destroy: () => {
+                        editorView = null;
+                        close(); // 源码模式切换会销毁重建编辑器 ⇒ 别把浮层留成孤儿
+                    },
+                };
+            },
+        });
+    });
+
     const created = await Editor.make()
         .config((ctx) => {
             ctx.set(rootCtx, root);
@@ -418,6 +703,7 @@ export async function createMdEditorInstance(opts: {
         .use(ownMathInline)
         .use(ownMathBlock)
         .use(mathFromText)
+        .use(emojiPicker)
         .use(highlightAttr)
         .use(highlightSchema)
         .use(highlightRemark)
@@ -451,6 +737,10 @@ export async function createMdEditorInstance(opts: {
         editor: created,
         setMarkdown,
         getMarkdown: () => created.action(getMarkdown()),
+        replaceEmojiRange: (from, to, expected, ch) => {
+            created.action((ctx) => replaceEmojiRange(ctx.get(editorViewCtx), from, to, expected, ch));
+        },
+        closeEmojiPicker: () => pickerCtl.close?.(),
         destroy: () => created.destroy().then(() => undefined),
     };
 }
@@ -505,6 +795,10 @@ export function MdEditor({
     const valueRef = useRef(value);
     /** 源码模式：显示原始 md 文本域（不是"编辑态"，只是一个查看/微调的口子） */
     const [sourceMode, setSourceMode] = useState(false);
+    /** 【2026-10-01】emoji 候选浮层的状态（由编辑器插件回调，见 createMdEditorInstance） */
+    const [picker, setPicker] = useState<EmojiPickerViewState | null>(null);
+    /** 浮层状态的**同步副本**：点选是在事件回调里读的，state 可能还是上一帧的 */
+    const pickerRef = useRef<EmojiPickerViewState | null>(null);
 
     // ⚠️ 这两个 ref 的同步必须放在 effect 里：在渲染期写 ref 会被
     //    react-hooks/refs 规则拦下（渲染期有副作用本来也不对）。
@@ -525,6 +819,10 @@ export function MdEditor({
             onChange: (md) => {
                 emittedRef.current = md;
                 onChangeRef.current(md);
+            },
+            onPickerChange: (next) => {
+                pickerRef.current = next;
+                setPicker(next);
             },
         })
             .then((instance) => {
@@ -586,6 +884,26 @@ export function MdEditor({
         return () => window.removeEventListener('resize', grow);
     }, [sourceMode, value]);
 
+    /**
+     * 【2026-10-01】选中 emoji 候选：把 `；；…：：` **整段**换成 emoji 字符。
+     * 插入走编辑器事务（`instance.replaceEmojiRange`，见其注释）—— **绝不手改 DOM**。
+     */
+    const handleEmojiSelect = (item: EmojiIndexItem) => {
+        const current = pickerRef.current;
+        pickerRef.current = null;
+        setPicker(null);
+        const instance = instanceRef.current;
+        if (!current || !instance) return;
+        instance.replaceEmojiRange(current.from, current.to, current.raw, item.c);
+    };
+
+    /** 关闭浮层（点面板外 / Esc）：只关面板，**文档一个字都不动** */
+    const handleEmojiClose = () => {
+        pickerRef.current = null;
+        setPicker(null);
+        instanceRef.current?.closeEmojiPicker();
+    };
+
     return (
         // `data-dirty` 而不是给框加类：两种模式（所见即所得 / 源码 textarea）的边框
         // 在两个不同元素上，用父级属性选择器一句话就能同时管住，见 globals.css。
@@ -621,6 +939,13 @@ export function MdEditor({
                     data-placeholder={placeholder}
                 />
             )}
+
+            {/* emoji 候选浮层：portal 到 body（避开编辑区 overflow 裁剪），源码模式下不显示 */}
+            <EmojiPicker
+                state={sourceMode ? null : picker}
+                onSelect={handleEmojiSelect}
+                onClose={handleEmojiClose}
+            />
         </div>
     );
 }
