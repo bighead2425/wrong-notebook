@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { Fragment } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
@@ -60,7 +60,7 @@ export function InsightBlock({
     figureScale = 100,
     onMoveUp,
     onMoveDown,
-    onFigureScale,
+    onFigureScaleStart,
     L,
 }: {
     row: InsightPrintRow;
@@ -76,7 +76,12 @@ export function InsightBlock({
     /** 排版用（只在打印页给；不给就不出现那些小按钮） */
     onMoveUp?: () => void;
     onMoveDown?: () => void;
-    onFigureScale?: (next: number) => void;
+    /**
+     * 【2026-10-02 他要求】改回**拖把手**调图大小（与复练纸一模一样）：
+     * "图片左上角是锁定的，用户通过拖拉把手调整图片大小" ——
+     * 原来那两个 −/+ 百分比按钮"略显复杂了"。签名与复练纸的 `onFigureScaleStart` 一致。
+     */
+    onFigureScaleStart?: (e: ReactPointerEvent) => void;
     L: (zh: string, en: string) => string;
 }) {
     const body = stripMarkdownImages(row.content || '');
@@ -151,59 +156,51 @@ export function InsightBlock({
             </div>
 
             {row.photoUrl ? (
-                <div style={{ flex: '0 0 auto', marginTop: '1mm', position: 'relative' }}>
+                <div
+                    style={{
+                        flex: '0 0 auto',
+                        marginTop: '1mm',
+                        position: 'relative',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        /**
+                         * 【2026-10-02 他要求】改回**拖把手**（与复练纸完全一样）：
+                         * "图片左上角是锁定的，用户通过拖拉把手调整图片大小"。
+                         * 手指/笔直接在图上左右拖也能缩（鼠标只认右下角那个把手，免得误拖）——
+                         * 复用复练纸那套 `.print-fig-handle`，不另起炉灶。
+                         */
+                        touchAction: onFigureScaleStart ? 'none' : undefined,
+                    }}
+                    onPointerDown={(e) => {
+                        if (e.pointerType === 'mouse') return; // 鼠标走把手
+                        onFigureScaleStart?.(e);
+                    }}
+                >
                     {/* eslint-disable-next-line @next/next/no-img-element -- 打印页必须用原生 img：src 是 dataURL，要交给浏览器打印快照；next/image 会插一层优化/懒加载，反而可能打不出来 */}
                     <img
                         src={row.photoUrl}
                         alt=""
                         style={{
                             /**
-                             * 【2026-10-01 排版】缩放作用在**宽度**上，高度按比例跟 ——
-                             * 与复练纸题图**同一条思路**（那边也是 55% × 百分比，上限占满整栏）。
-                             * 默认 100% 时占栏宽 55%，调到 180% 才铺满，不会一上来就顶格。
+                             * 缩放作用在**宽度**上，高度按比例跟 —— 与复练纸题图**同一条思路**
+                             * （那个也是 55% × 百分比，上限占满整栏）。默认 100% 占栏宽 55%。
                              */
                             width: `${Math.min(100, REVIEW_FIGURE_BOX_RATIO * figureScale)}%`,
                             maxHeight: `${REVIEW_LAYOUT_MM.figureMaxHeightMM * (figureScale / 100)}mm`,
                             objectFit: 'contain',
+                            objectPosition: 'left top', // 左上角固定
                             display: 'block',
                         }}
                     />
-                    {/* 图大小的加减（只在屏幕上；打印页给了 onFigureScale 才出现） */}
-                    {onFigureScale && (
+                    {onFigureScaleStart && (
                         <span
-                            className="no-print"
-                            style={{
-                                position: 'absolute',
-                                right: 0,
-                                bottom: 0,
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.6mm',
-                                background: 'rgba(255,255,255,0.92)',
-                                border: '0.2mm solid #c9c9c9',
-                                borderRadius: '0.8mm',
-                                padding: '0 1mm',
-                                fontSize: '7pt',
+                            className="print-fig-handle no-print"
+                            title={L('拖动调整图片大小（左上角固定）', 'Drag to resize (top-left pinned)')}
+                            onPointerDown={(e) => {
+                                if (e.pointerType !== 'mouse') return;
+                                onFigureScaleStart(e);
                             }}
-                        >
-                            <button
-                                type="button"
-                                title={L('图小一点', 'Smaller')}
-                                onClick={() => onFigureScale(Math.max(30, figureScale - 10))}
-                                style={{ cursor: 'pointer' }}
-                            >
-                                −
-                            </button>
-                            <span>{figureScale}%</span>
-                            <button
-                                type="button"
-                                title={L('图大一点', 'Bigger')}
-                                onClick={() => onFigureScale(Math.min(180, figureScale + 10))}
-                                style={{ cursor: 'pointer' }}
-                            >
-                                ＋
-                            </button>
-                        </span>
+                        />
                     )}
                 </div>
             ) : null}
@@ -231,7 +228,7 @@ export function InsightSheet({
     blankLines,
     figureScaleOf,
     onMoveItem,
-    onFigureScale,
+    onFigureScaleStart,
     totalCount,
     pageQr,
     L,
@@ -258,7 +255,8 @@ export function InsightSheet({
      */
     figureScaleOf?: (id: string) => number;
     onMoveItem?: (id: string, dir: -1 | 1) => void;
-    onFigureScale?: (id: string, next: number) => void;
+    /** 按下某条的图/把手 ⇒ 开始拖拽缩放（签名与复练纸一致） */
+    onFigureScaleStart?: (id: string) => (e: ReactPointerEvent) => void;
     /** 整卷共几条 —— 用来判断"这条是不是最后一条"（最后一条的"下移"要灰掉） */
     totalCount?: number;
     /**
@@ -341,9 +339,9 @@ export function InsightSheet({
                                                 ? () => onMoveItem(row.id, 1)
                                                 : undefined
                                         }
-                                        onFigureScale={
-                                            onFigureScale
-                                                ? (next) => onFigureScale(row.id, next)
+                                        onFigureScaleStart={
+                                            onFigureScaleStart
+                                                ? onFigureScaleStart(row.id)
                                                 : undefined
                                         }
                                         L={L}

@@ -34,6 +34,15 @@ import {
 } from "@/components/print/review-card";
 import { layoutFromSnapshot, type SnapshotRow } from "@/lib/review-card";
 import type { VolumeKind } from "@/lib/volume-code";
+import type { ManageType, PromoteDirection } from "@/lib/manage-type";
+import {
+    nextReviewMark,
+    nextReviewOutcomes,
+    promoteToggleFor,
+    reviewMarkFromOutcomes,
+    type ReviewMark,
+} from "@/lib/scan-marking";
+import { normalizeReviewOutcomes, serializeReviewOutcomes, type ReviewOutcomes } from "@/lib/review-outcomes";
 import { SheetZoom } from "@/components/print/sheet-zoom";
 import { makeQrDataUrl } from "@/lib/qr";
 import { cleanMarkdown } from "@/lib/markdown-utils";
@@ -99,7 +108,11 @@ export function ScanVolumeView({
     onBack: () => void;
 }) {
     const { language } = useLanguage();
-    const L = (zh: string, en: string) => (language === "zh" ? zh : en);
+    // 稳定引用：下面几个录入回调把它放进依赖，若每次渲染都换新函数会让回调反复重建
+    const L = useCallback(
+        (zh: string, en: string) => (language === "zh" ? zh : en),
+        [language],
+    );
 
     const [volume, setVolume] = useState<VolumeDetail | null>(null);
     const [pageNo, setPageNo] = useState(1);
@@ -178,6 +191,172 @@ export function ScanVolumeView({
         for (const it of items) map[it.id] = it;
         return map;
     }, [items]);
+
+    /* ══════════════════════════════════════════════════════════════════
+     * 【2026-10-02 他要求】扫到的卷页上**直接录入**：
+     *   一、点升降框 ⇒ 改类型；再点 ⇒ 改回来；
+     *   二、点右侧灰圆 ⇒ 灰数字 → 绿对号 → 粉错号 → 灰数字，同步写复习结果。
+     *
+     * 现在这屏是**扫码只读页**，所以一律**乐观更新**：界面先变、后台再写，
+     * 写失败就回滚并把原状态摆回去 + 提示（他明确要求"点了界面要立刻反映状态"）。
+     * ══════════════════════════════════════════════════════════════════ */
+
+    /** 乐观改一道题的字段（写库失败时用它回滚） */
+    const patchItem = useCallback((id: string, patch: Partial<ErrorItem>) => {
+        setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+    }, []);
+
+    /**
+     * 升降框的勾选态：记住"点之前是什么"以便**原样还原** ——
+     * 原来的类型可能是**未定（null）**，还原时就得写回 null，不能猜成复练。
+     */
+    const [promoteState, setPromoteState] = useState<
+        Record<string, { direction: PromoteDirection; originalType: ManageType | null }>
+    >({});
+
+    /**
+     * 灰圆的**当前态**（本屏的一条会话状态）。
+     *
+     * 为什么不直接拿库里的 `last` 当显示：他定的三态循环最后一步是"回到灰底白数字"，
+     * 而这一步按"不删历史、只撤销这次标记"落库（库里 `last` 会退回**这次标记之前**那个值）。
+     * 若直接看 `last`，点回灰色之后圆会仍显示上一轮的对号 —— 与他要的循环不符。
+     * 所以圆画什么由这里决定：**这道题这次抽到之后我把它标成了什么**；没标过才回落到库里。
+     * ⚠️ 重新进这一屏（marks 清空）时回落到库里 `last`：那时灰圆可能显示成绿/粉
+     *    （因为"最近一次"记录仍在）—— 这是"清空不删历史"的必然结果，已在交付说明里标明。
+     */
+    const [marks, setMarks] = useState<Record<string, ReviewMark>>({});
+
+    /** 这道题此刻的灰圆态：本地优先、回落库里 `last` */
+    const markOfItem = useCallback(
+        (item: ErrorItem): ReviewMark =>
+            item.id in marks ? marks[item.id] : reviewMarkFromOutcomes(item.reviewOutcomes),
+        [marks],
+    );
+
+    /**
+     * 灰圆写入前的**快照**（同时也是"这一轮标记还活着"的凭据）：
+     *   · 有它 ⇒ 还在同一轮里，绿⇄粉是**修正同一格**（不新增记录）；
+     *   · 点回灰数字 ⇒ 用它**撤销这一轮**（更早的历史记录一个字不动），然后删掉它。
+     */
+    const markUndoRef = useRef<Record<string, string | null>>({});
+    /** 同一道题正在写库时不重复受理（乐观更新下避免连点把顺序打乱） */
+    const busyRef = useRef<Set<string>>(new Set());
+    const [saveError, setSaveError] = useState<string | null>(null);
+
+    /** 把一份复习结果写库（乐观更新 → 失败回滚 + 提示） */
+    const saveReviewOutcomes = useCallback(
+        async (item: ErrorItem, next: ReviewOutcomes, prevRaw: string | null) => {
+            patchItem(item.id, { reviewOutcomes: serializeReviewOutcomes(next) });
+            setSaveError(null);
+            try {
+                await apiClient.put(`/api/error-items/${item.id}`, { reviewOutcomes: next });
+            } catch (err) {
+                console.error(err);
+                patchItem(item.id, { reviewOutcomes: prevRaw });
+                setSaveError(
+                    L("这道题的复习结果没存上，已还原，请再试一次", "Failed to save the result; reverted"),
+                );
+            }
+        },
+        [L, patchItem],
+    );
+
+    /** 点右侧灰圆：灰数字 → 绿对号 → 粉错号 → 灰数字 */
+    const onReviewMarkTap = useCallback(
+        (item: ErrorItem) => {
+            if (busyRef.current.has(item.id)) return;
+            const next = nextReviewMark(markOfItem(item));
+            const prevRaw = item.reviewOutcomes ?? null;
+            setMarks((prev) => ({ ...prev, [item.id]: next }));
+
+            if (next === "none") {
+                // 清空 = 撤销这一轮标记：把写入前的快照摆回库里；这轮没写过就不动库
+                if (!(item.id in markUndoRef.current)) return;
+                const undoRaw = markUndoRef.current[item.id];
+                delete markUndoRef.current[item.id];
+                if (undoRaw === null || undoRaw === undefined) return;
+                busyRef.current.add(item.id);
+                void saveReviewOutcomes(item, normalizeReviewOutcomes(undoRaw), prevRaw).finally(() =>
+                    busyRef.current.delete(item.id),
+                );
+                return;
+            }
+
+            /**
+             * 关键：绿⇄粉是**修正同一格**，不是又占一个新格。
+             * 起手那一下把"写入前的快照"记下来；之后每次改对错都从**同一份快照**重算
+             * ⇒ `nextReviewOutcomes` 每次都填到**同一个空位**（它找的是快照里第一个空格），
+             * 与"按顺序填第一个空位"完全一致，又不会把一轮标记记成两条。
+             */
+            const hasActiveMark = item.id in markUndoRef.current;
+            const baseRaw = hasActiveMark ? markUndoRef.current[item.id] : prevRaw;
+            if (!hasActiveMark) markUndoRef.current[item.id] = prevRaw;
+
+            const { outcomes } = nextReviewOutcomes(baseRaw, next);
+            busyRef.current.add(item.id);
+            void saveReviewOutcomes(item, outcomes, prevRaw).finally(() => busyRef.current.delete(item.id));
+        },
+        [markOfItem, saveReviewOutcomes],
+    );
+
+    /** 点升降框：第一次改类型、第二次改回来（都乐观 + 失败回滚） */
+    const onPromoteToggle = useCallback(
+        (item: ErrorItem) => {
+            if (busyRef.current.has(item.id)) return;
+            const existing = promoteState[item.id];
+            busyRef.current.add(item.id);
+
+            if (!existing) {
+                const { direction, nextType, originalType } = promoteToggleFor(item.manageType);
+                setSaveError(null);
+                setPromoteState((prev) => ({ ...prev, [item.id]: { direction, originalType } }));
+                patchItem(item.id, { manageType: nextType });
+                void apiClient
+                    .put(`/api/error-items/${item.id}`, { manageType: nextType })
+                    .catch((err) => {
+                        console.error(err);
+                        patchItem(item.id, { manageType: originalType });
+                        setPromoteState((prev) => {
+                            const n = { ...prev };
+                            delete n[item.id];
+                            return n;
+                        });
+                        setSaveError(L("类型没改上，已还原，请再试一次", "Failed to change the type; reverted"));
+                    })
+                    .finally(() => busyRef.current.delete(item.id));
+                return;
+            }
+
+            // 再点一次 ⇒ 还原成点之前的样子
+            const revertType = existing.originalType;
+            const redoType: ManageType = existing.direction === "demote" ? "review" : "deep";
+            setSaveError(null);
+            setPromoteState((prev) => {
+                const n = { ...prev };
+                delete n[item.id];
+                return n;
+            });
+            patchItem(item.id, { manageType: revertType });
+            void apiClient
+                .put(`/api/error-items/${item.id}`, { manageType: revertType })
+                .catch((err) => {
+                    console.error(err);
+                    patchItem(item.id, { manageType: redoType });
+                    setPromoteState((prev) => ({ ...prev, [item.id]: existing }));
+                    setSaveError(L("类型没改回来，已还原，请再试一次", "Failed to revert the type"));
+                })
+                .finally(() => busyRef.current.delete(item.id));
+        },
+        [L, patchItem, promoteState],
+    );
+
+    const promoteOverrideOf = useCallback(
+        (item: ErrorItem) => {
+            const p = promoteState[item.id];
+            return p ? { direction: p.direction, checked: true as const } : undefined;
+        },
+        [promoteState],
+    );
 
     /**
      * 【2026-10-01 补】每题在**这一卷里**的题图缩放（卷内快照的 `figureScale`）。
@@ -315,9 +494,19 @@ export function ScanVolumeView({
                 </span>
                 <span className="flex-1" />
                 <span className="text-xs text-muted-foreground">
-                    {L("点题目中间的蓝色加号 → 进这道题", "Tap the blue + on a question")}
+                    {L(
+                        "点加号进这道题；点框里的升降、点右侧圆记对错",
+                        "Tap + for the card; tap the box / circle to record",
+                    )}
                 </span>
             </div>
+
+            {/* 写库失败提示：乐观更新已回滚，这里只告诉他一声音（下次操作会自动清掉） */}
+            {saveError ? (
+                <div className="rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-300">
+                    {saveError}
+                </div>
+            ) : null}
 
             <div
                 ref={scrollRef}
@@ -369,6 +558,12 @@ export function ScanVolumeView({
                                 answerOf={answerOf}
                                 onQuestionPlusClick={onPickItem}
                                 plusTitle={L("点这里 → 打开这道题的错题卡", "Open this question's card")}
+                                /* 【2026-10-02 他要求】纸面上**直接录入**：
+                                   点左下的升降框改类型、点右侧灰圆记对错 —— 都是屏幕控件，not printed。 */
+                                onPromoteToggle={onPromoteToggle}
+                                promoteOverrideOf={promoteOverrideOf}
+                                onReviewMarkTap={onReviewMarkTap}
+                                reviewMarkOf={markOfItem}
                                 L={L}
                             />
                         </div>

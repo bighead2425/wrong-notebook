@@ -22,7 +22,15 @@
  *   · `/insights/print?vol=<id>` 看这一卷的纸 + 排版三件套
  */
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+    Suspense,
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+    type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -692,9 +700,55 @@ function VolumePaper({ id }: { id: string }) {
         });
     };
 
-    /** ③ 图大小 */
-    const setFigure = (itemId: string, next: number) =>
-        setFigures((prev) => ({ ...prev, [itemId]: Math.max(30, Math.min(180, next)) }));
+    /**
+     * ③ 图大小 —— 【2026-10-02 他要求】改回**拖把手**（复练卷页那套），
+     * 不再用 −/+ 百分比按钮。左上角固定、拖右下角把手等比缩放。
+     * 拖动过程与收尾都在**全局 pointermove/pointerup** 里（监听一次，见下面的 effect）——
+     * 与复练卷页完全同一套做法，免得两个页面手感不一样。
+     */
+    const figureDragRef = useRef<{ id: string; startX: number; startPx: number } | null>(null);
+
+    const handleFigureDown = useCallback(
+        (itemId: string) => (e: ReactPointerEvent) => {
+            const box = (e.currentTarget as HTMLElement).parentElement;
+            figureDragRef.current = {
+                id: itemId,
+                startX: e.clientX,
+                startPx: box ? box.getBoundingClientRect().width : 1,
+            };
+            document.body.style.cursor = 'nwse-resize';
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+        },
+        [],
+    );
+
+    useEffect(() => {
+        const onMove = (e: PointerEvent) => {
+            const fig = figureDragRef.current;
+            if (!fig) return;
+            // 横向位移换算成百分比（把手往右拖 = 变大），与复练卷页同一个算式
+            const ratio = (fig.startPx + (e.clientX - fig.startX)) / fig.startPx;
+            setFigures((prev) => ({
+                ...prev,
+                [fig.id]: Math.max(30, Math.min(180, Math.round(ratio * 100))),
+            }));
+        };
+        const onUp = () => {
+            if (!figureDragRef.current) return;
+            figureDragRef.current = null;
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onUp);
+        return () => {
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            window.removeEventListener('pointercancel', onUp);
+        };
+    }, []);
 
     /* ── 保存 / 打印 / 改名 / 删除 ── */
 
@@ -920,7 +974,7 @@ function VolumePaper({ id }: { id: string }) {
                                     blankLines={blankLines}
                                     figureScaleOf={(rid) => figures[rid] ?? 100}
                                     onMoveItem={moveItem}
-                                    onFigureScale={setFigure}
+                                    onFigureScaleStart={handleFigureDown}
                                     totalCount={printRows.length}
                                     pageQr={pageQrMap[i + 1]}
                                     L={L}

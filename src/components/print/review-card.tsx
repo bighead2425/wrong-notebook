@@ -21,6 +21,14 @@ import {
 } from '@/lib/volume-code';
 import { useFigureImages } from './use-print-images';
 import { PromoteBox } from './promote-box';
+import { PROMOTE_BOX, promoteDirectionFor, type PromoteDirection } from '@/lib/manage-type';
+import {
+    PROMOTE_APPLIED_BG,
+    PROMOTE_APPLIED_LABEL_EN,
+    PROMOTE_APPLIED_LABEL_ZH,
+    REVIEW_MARK_COLORS,
+    type ReviewMark,
+} from '@/lib/scan-marking';
 
 /**
  * T2 复练纸 / T3 积累纸 —— **卷**（不是"一题一张纸"）。
@@ -130,6 +138,22 @@ export interface ReviewSheetProps {
      * 不传 ⇒ 纸上/卷页上完全没有这个标签，行为与之前一字不差。
      */
     answerOf?: (item: ErrorItem) => string | null;
+    /**
+     * 【2026-10-02 扫码录入】**纸面上直接改类型 / 记对错**这两组控件的出入口。
+     *
+     *   · `onPromoteToggle` 有值 ⇒ 每题的升降框画成**能点**的版本（点一下改类型）；
+     *   · `onReviewMarkTap` + `reviewMarkOf` 有值 ⇒ 每题右侧画一颗**灰圆**并显示它当前态；
+     *   · 都不传 ⇒ 与从前**一字不差**（打印预览/纸面那一路）。
+     *
+     * ⚠️ 两组都在屏幕上、都带 `no-print`，绝不落纸；且都挡住双击缩放。
+     */
+    onPromoteToggle?: (item: ErrorItem) => void;
+    /** 升降框的"已应用（勾选）"态；返回 undefined = 未勾选 */
+    promoteOverrideOf?: (item: ErrorItem) => { direction: PromoteDirection; checked: boolean } | undefined;
+    /** 点右侧灰圆 ⇒ 交给调用方记录（对/错/清空） */
+    onReviewMarkTap?: (item: ErrorItem) => void;
+    /** 灰圆当前态（none/right/wrong） */
+    reviewMarkOf?: (item: ErrorItem) => ReviewMark;
     /** 加号的悬停提示（可选） */
     plusTitle?: string;
     /** 按住两题之间的虚线（调上面那道题的留白行数） */
@@ -348,6 +372,114 @@ function AnswerLabel({ label, L }: { label: string; L: (zh: string, en: string) 
     );
 }
 
+/**
+ * 【2026-10-02 他要求】**能点的升降级小框**（扫码浏览那屏专用）。
+ *
+ * 为什么不在 `promote-box.tsx` 里加开关：那个框是**纸面印出来的样子**（给深挖纸/复练纸
+ * 打印用），而这里是**屏幕上的录入控件** —— 两件事，套在一起会让打印的那份也跟着变形。
+ * 所以复用它的**取值逻辑与配色 token**（`promoteDirectionFor` / `PROMOTE_BOX`），
+ * 只在屏幕上另画一个可点版本。
+ *
+ * 交互（他定的）：
+ *   · 未勾选 = 原样：空方框 + 箭头 + "升级/降级"；
+ *   · 点一下 = 勾选：方框里出现**对号**，文字底色**降级浅绿 / 升级粉红**，
+ *     箭头不变、文字改"已降/已升"；
+ *   · 再点一下 = 取消：全部还原，后台把类型改回去。
+ *
+ * ⚠️ `no-print` —— 屏幕上才有的东西，绝不落纸（"纸上零 AI 内容"是铁律）。
+ * ⚠️ 双击缩放要在这里**失效**（他专门点过）：`onDoubleClick` 拦住，不让它冒泡到
+ *    `SheetZoom`；`touchAction: manipulation` 再挡掉手机浏览器的双击缩放。
+ *    拖动平移**不受影响**（那只认 `pointerType === 'mouse'`，且本就跳过 `button`）。
+ */
+function InteractivePromoteBox({
+    manageType,
+    override,
+    onToggle,
+    L,
+}: {
+    manageType?: string | null;
+    /** 已应用态（勾选）；不传 = 未勾选，方向按当前类型推 */
+    override?: { direction: PromoteDirection; checked: boolean };
+    onToggle: () => void;
+    L: (zh: string, en: string) => string;
+}) {
+    const direction = override?.direction ?? promoteDirectionFor(manageType);
+    const box = PROMOTE_BOX[direction];
+    const checked = !!override?.checked;
+    const label = checked
+        ? L(PROMOTE_APPLIED_LABEL_ZH[direction], PROMOTE_APPLIED_LABEL_EN[direction])
+        : L(box.label, box.labelEn);
+
+    return (
+        <button
+            type="button"
+            className="print-promote-box no-print"
+            title={L('点一下：把这道题换成另一种（再点一下还原）', 'Tap to switch the type (tap again to undo)')}
+            onClick={onToggle}
+            // 双击缩放失效：别让它冒泡到 SheetZoom（拖动平移不受影响）
+            onDoubleClick={(e) => e.stopPropagation()}
+            style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '1.5mm',
+                flexShrink: 0,
+                // 触控目标撑到 ≥8mm：内边距扩大热区、负外边距抵消，布局（含题干）一动不动
+                padding: '1mm',
+                margin: '-1mm',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                touchAction: 'manipulation',
+            }}
+        >
+            {/* 空方框：勾选后里面出现对号 */}
+            <span
+                style={{
+                    position: 'relative',
+                    display: 'inline-block',
+                    width: '6mm',
+                    height: '6mm',
+                    border: '0.3mm solid #444',
+                    background: '#ffffff',
+                    boxSizing: 'border-box',
+                    flexShrink: 0,
+                }}
+            >
+                {checked && (
+                    <svg
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+                    >
+                        <path
+                            d="M5 13l4 4L19 7"
+                            stroke="#1f7a3f"
+                            strokeWidth={3.2}
+                            fill="none"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                        />
+                    </svg>
+                )}
+            </span>
+            {/* 文字：箭头不变；勾选后改"已降/已升"、加浅绿/粉底 */}
+            <span
+                style={{
+                    fontSize: '9pt',
+                    fontWeight: 600,
+                    color: box.color,
+                    whiteSpace: 'nowrap',
+                    borderRadius: '0.8mm',
+                    padding: checked ? '0.2mm 1mm' : 0,
+                    background: checked ? PROMOTE_APPLIED_BG[direction] : 'transparent',
+                }}
+            >
+                {box.arrow} {label}
+            </span>
+        </button>
+    );
+}
+
 export function ReviewQuestionBlock({
     item,
     seq,
@@ -359,6 +491,10 @@ export function ReviewQuestionBlock({
     onFigureScaleStart,
     onDividerDragStart,
     answerLabel,
+    onPromoteToggle,
+    promoteOverride,
+    onReviewMarkTap,
+    reviewMark,
     L,
 }: {
     item: ErrorItem;
@@ -399,6 +535,20 @@ export function ReviewQuestionBlock({
      * ⚠️ 必须带 `no-print`：**纸上零 AI 内容**是铁律，答案绝不能落在纸上。
      */
     answerLabel?: string | null;
+    /**
+     * 【2026-10-02 扫码录入】**点升降框 ⇒ 直接改这道题的类型**。
+     * 不传 ⇒ 走只读的 `PromoteBox`（纸面/打印那一路，行为一字不变）。
+     */
+    onPromoteToggle?: () => void;
+    /** 升降框的"已应用（勾选）"态：方向 + 是否勾上；不传 = 未勾选，方向按当前类型推 */
+    promoteOverride?: { direction: PromoteDirection; checked: boolean };
+    /**
+     * 【2026-10-02 扫码录入】**点右侧灰圆 ⇒ 循环记录对/错**。
+     * 不传 ⇒ 这颗圆根本不画（打印那一路完全没有它）。
+     */
+    onReviewMarkTap?: () => void;
+    /** 这颗圆当前该是什么态（none/right/wrong）；由调用方按复习结果推 */
+    reviewMark?: ReviewMark;
     L: (zh: string, en: string) => string;
 }) {
     const figures = useFigureImages(item);
@@ -572,10 +722,66 @@ export function ReviewQuestionBlock({
                     {answerLabel ? (
                         <AnswerLabel label={answerLabel} L={L} />
                     ) : null}
-                    {/* 升降级小框：**每道题都有**（未定按复练处理） */}
-                    <PromoteBox manageType={item.manageType} L={L} />
+                    {/* 升降级小框：**每道题都有**（未定按复练处理）。
+                        扫码那屏（传了 onPromoteToggle）换成**能点**的版本 —— 点一下直接改类型；
+                        其余场合（纸面/打印）仍是原来的只读框，一字不变。 */}
+                    {onPromoteToggle ? (
+                        <InteractivePromoteBox
+                            manageType={item.manageType}
+                            override={promoteOverride}
+                            onToggle={onPromoteToggle}
+                            L={L}
+                        />
+                    ) : (
+                        <PromoteBox manageType={item.manageType} L={L} />
+                    )}
                 </div>
             </div>
+
+            {/* 【2026-10-02 扫码录入】**右侧灰圆**：点它循环"灰数字 → 绿对号 → 粉错号 → 灰数字"。
+                · 位置：**天蓝框右侧、纸面右边距里**（他说的"靠近纸张边缘那一侧"），
+                  **与中间蓝加号圆心在同一竖直中线**；这样它不会压在题块内的升降框/答案上；
+                · 直径 11mm，比加号那个蓝圆（10mm）略大 —— 手指按得住；
+                · ⚠️ `no-print`：屏幕控件，绝不落纸；
+                · ⚠️ 双击缩放失效（onDoubleClick 拦截；touchAction 再挡手机双击缩放）；
+                  拖动平移不受影响（它只认鼠标，且本就跳过 button）。 */}
+            {onReviewMarkTap ? (
+                <button
+                    type="button"
+                    className="no-print"
+                    title={L(
+                        '点一下记"做对"，再点记"做错"，再点清空',
+                        'Tap: correct → wrong → clear',
+                    )}
+                    onClick={onReviewMarkTap}
+                    onDoubleClick={(e) => e.stopPropagation()}
+                    style={{
+                        position: 'absolute',
+                        // 落在纸面右边距里（正好贴着题块右缘往外一格），不与块内控件重叠
+                        right: '-11mm',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        width: '11mm',
+                        height: '11mm',
+                        borderRadius: '9999px',
+                        border: 'none',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        zIndex: 7,
+                        boxShadow: '0 0.4mm 1.2mm rgba(0,0,0,0.25)',
+                        background: REVIEW_MARK_COLORS[reviewMark ?? 'none'].bg,
+                        color: REVIEW_MARK_COLORS[reviewMark ?? 'none'].fg,
+                        fontSize: '11pt',
+                        fontWeight: 700,
+                        lineHeight: 1,
+                        touchAction: 'manipulation',
+                    }}
+                >
+                    {reviewMark === 'right' ? '✓' : reviewMark === 'wrong' ? '✗' : seq}
+                </button>
+            ) : null}
         </div>
     );
 }
@@ -599,6 +805,10 @@ export function ReviewSheet({
     onQuestionPlusClick,
     plusTitle,
     answerOf,
+    onPromoteToggle,
+    promoteOverrideOf,
+    onReviewMarkTap,
+    reviewMarkOf,
     L,
 }: ReviewSheetProps) {
     /**
@@ -698,6 +908,14 @@ export function ReviewSheet({
                                             showDivider={bi > 0}
                                             figureScale={figureScaleOf ? figureScaleOf(item.id) : 100}
                                             answerLabel={answerOf ? answerOf(item) : undefined}
+                                            onPromoteToggle={
+                                                onPromoteToggle ? () => onPromoteToggle(item) : undefined
+                                            }
+                                            promoteOverride={promoteOverrideOf ? promoteOverrideOf(item) : undefined}
+                                            onReviewMarkTap={
+                                                onReviewMarkTap ? () => onReviewMarkTap(item) : undefined
+                                            }
+                                            reviewMark={reviewMarkOf ? reviewMarkOf(item) : undefined}
                                             L={L}
                                         />
                                         <span

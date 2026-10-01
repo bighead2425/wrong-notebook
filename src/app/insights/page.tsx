@@ -15,6 +15,14 @@
  *     在积累页点"删错题"人会发懵 —— 删除回错题本页做。
  *
  * 其余（编号由服务端发、data URL 存图、改动即存）见第一版的文件头。
+ *
+ * ── 【2026-10-02 他提的两件事】───────────────────────────────────────
+ *  ① 「拍照」按钮 ⇒ 「图片」：接**主页那套**拍照/选图链路（DocScanner 拍摄/相册 →
+ *     四角景深 + 原色/漂白/黑白 + 重拍/用原图 ⇒ ImageCropper 剪裁/橡皮擦/旋转/拉伸/
+ *     平移/原图/取消/确认），成品只交给**当前这一条**（不送 AI、不送预处理）。
+ *  ② 错题卡与**扫码页对齐**：`href={null}` 整卡不可点（防手机误触）、左上掌握度互换、
+ *     右上等级循环、右下类型循环、左下打印深挖页（都即点即存）；卡下加「打开详情页」；
+ *     卡上无删除按钮、卡下无复习结果栏（日积月累是积累，不是复习）。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -41,10 +49,15 @@ import { getSubjectHex } from '@/lib/subject-colors';
 import { cleanMarkdown } from '@/lib/markdown-utils';
 import { dayKey } from '@/lib/calendar-grid';
 import { ErrorItemCard } from '@/components/error-item-card';
+import { DocScanner, type DocScannerHandle } from '@/components/doc-scanner';
+import { ImageCropper } from '@/components/image-cropper';
+import { cycleAttentionLevel } from '@/lib/attention-level';
+import { cycleManageType } from '@/lib/manage-type';
 import type { ErrorItem } from '@/types/api';
 import {
-    Camera,
+    ExternalLink,
     House,
+    Image as ImageIcon,
     Layers,
     PanelLeftClose,
     PanelLeftOpen,
@@ -134,7 +147,27 @@ export default function InsightsPage() {
     /** 打开这条时**库里的**图片长什么样（脏判断的基准；改了图没保存 ⇒ photo !== loadedPhoto） */
     const [loadedPhoto, setLoadedPhoto] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
-    const fileRef = useRef<HTMLInputElement | null>(null);
+
+    /**
+     * 【2026-10-02 他要求】「拍照」⇒「图片」：接入**主页那套**拍照/选图链路。
+     *
+     * 原来这里是 `<input type="file" capture="environment">`，点到就拿原图 —— 没有四角景深、
+     * 没有原色/漂白/黑白、没有剪裁。他要的是"我们有比较成熟的一套拍照、美化功能了，
+     * 在这里可以直接调用功能，无非是加工完成后的图片送到哪里去的问题罢了"。
+     * 于是**复用两个既有组件**串成一条链，不另写一套：
+     *   ① DocScanner（`src/components/doc-scanner.tsx`，主页"拍照扫描"用的同一个）：
+     *      拍摄 / 相册 → 四角景深、原色/漂白/黑白、重拍、用原图；
+     *   ② ImageCropper（`src/components/image-cropper.tsx`，主页与错题本"添加"用的同一个）：
+     *      剪裁 / 橡皮擦 / 旋转 / 拉伸 / 平移 / 原图 / 取消 / 确认；
+     *   ③ 剪裁页点「确认」⇒ 成品图**只交给当前这一条日积月累**（`onPickPhoto`：
+     *      压缩成 data URL 存草稿，保存时才进图片表）。
+     *
+     * ⚠️ 全程不送 AI、不进「预处理」栏 —— 这正是他说的"无非是加工完成后的图片送到哪里去"。
+     */
+    const scannerRef = useRef<DocScannerHandle | null>(null);
+    /** DocScanner 交出的成品（object URL），交给 ImageCropper 继续加工 */
+    const [croppingImage, setCroppingImage] = useState<string | null>(null);
+    const [isCropperOpen, setIsCropperOpen] = useState(false);
 
     const dirty =
         !!current &&
@@ -280,16 +313,38 @@ export default function InsightsPage() {
         }
     };
 
-    /** 拍照：就地压缩成 data URL（本次会话先存草稿，保存时才进图片表） */
-    const onPickPhoto = async (file: File | undefined) => {
-        if (!file) return;
+    /**
+     * 成品图落地：就地压缩成 data URL（本次会话先存草稿，保存时才进图片表）。
+     * 返回是否成功 —— 剪裁页据此决定**关不关**（失败要留在原地让人重试，不静默丢编辑成果）。
+     */
+    const onPickPhoto = async (file: File | undefined): Promise<boolean> => {
+        if (!file) return false;
         try {
             const dataUrl = await processImageFile(file);
             setPhoto(dataUrl);
+            return true;
         } catch (error) {
             console.error(error);
             alert(L('这张图读不出来，换一张试试', 'Could not read that image'));
+            return false;
         }
+    };
+
+    /** DocScanner 拍摄/选图完成 ⇒ 把成品交给剪裁页（而不是像主页那样送 AI） */
+    const handleScanComplete = (blob: Blob) => {
+        const url = URL.createObjectURL(blob);
+        setCroppingImage(url);
+        setIsCropperOpen(true);
+    };
+
+    /**
+     * 剪裁页「确认」⇒ 成品进**当前这一条**。
+     * 只有真正读进 `photo` 才关剪裁页 —— 失败时画布与编辑状态原地保留，可直接再点一次「确认」。
+     */
+    const handleCropComplete = async (blob: Blob) => {
+        const file = new File([blob], 'insight.jpg', { type: 'image/jpeg' });
+        const ok = await onPickPhoto(file);
+        if (ok) setIsCropperOpen(false);
     };
 
     /** 学科多选：点一下选中（可组合），再点取消 */
@@ -315,6 +370,48 @@ export default function InsightsPage() {
         current?.errorItemNo && questions[current.errorItemNo]
             ? (questions[current.errorItemNo] as ErrorItem)
             : null;
+
+    /**
+     * 错题卡上的"即点即存"：乐观更新 → 发请求 → 失败弹提示并**拉回真实数据**。
+     * 与扫码页 `ScanItemPanel`（`src/components/scan-item-panel.tsx`）同一条规矩 ——
+     * 失败绝不静默。
+     *
+     * ⚠️ 这里改的是**那道错题**（ErrorItem：掌握度 / 等级 / 类型），不是日积月累条目本身。
+     *    他原话："点击错题卡左上角的待复习或已掌握，两者可以互换并保存到数据库"。
+     *    条目自己的字段（年级 / 学科 / 正文 / 图）仍走上面的 `save()`。
+     */
+    const patchQuestion = async (
+        body: Record<string, unknown>,
+        optimistic: Partial<ErrorItem>,
+    ) => {
+        const no = current?.errorItemNo;
+        const prev = no ? questions[no] : undefined;
+        if (!no || !prev) return;
+        setQuestions((q) => ({ ...q, [no]: { ...prev, ...optimistic } }));
+        try {
+            await apiClient.put(`/api/error-items/${prev.id}`, body);
+        } catch (error) {
+            console.error(error);
+            alert(t.common?.messages?.updateFailed || 'Update failed');
+            // 回滚：点之前那一份原样放回去，画面不留假象
+            setQuestions((q) => ({ ...q, [no]: prev }));
+        }
+    };
+
+    /** 进错题详情页时带上"从哪来" ⇒ 详情页返回键回到**这一条**（与原卡片那条链接等义） */
+    const questionDetailHref =
+        current && linkedQuestion
+            ? `/error-items/${linkedQuestion.id}?back=${encodeURIComponent(
+                  `/insights?pick=${current.code}`,
+              )}`
+            : null;
+
+    /** 拍照链路的 object URL 用完即回收（换一张 / 卸载时）—— 与主页同一处理 */
+    useEffect(() => {
+        return () => {
+            if (croppingImage) URL.revokeObjectURL(croppingImage);
+        };
+    }, [croppingImage]);
 
     return (
         <main className="min-h-screen bg-background">
@@ -621,12 +718,16 @@ export default function InsightsPage() {
                                     dirty={dirty}
                                 />
 
-                                {/* ④ 图片（左）+ 拍照 / 删除（右）—— 【2026-10-01 重排】。
+                                {/* ④ 图片（左）+ 图片 / 删除（右）—— 【2026-10-01 重排】。
                                     他原话："拍照按钮往右放，靠近右边的删除，这样能空余出一部分空间，
                                     下面放图片，然后再接相关错题卡，如果没有图片的话就直接连错题卡，
                                     这样会比较紧凑。"
-                                    ⇒ 图片占左边（原来是拍照按钮占着的位置），拍照与删除一起靠右；
-                                      没图时这一行只有右边两个按钮，错题卡就紧跟着顶上来。 */}
+                                    ⇒ 图片占左边（原来是拍照按钮占着的位置），图片按钮与删除一起靠右；
+                                      没图时这一行只有右边两个按钮，错题卡就紧跟着顶上来。
+
+                                    【2026-10-02 他要求】原「拍照」按钮（直取原图）换成「图片」：
+                                    点它调起**主页那套**拍照/扫描链路（见 scannerRef 的说明），
+                                    加工完的成品仍回到这一条（不送 AI、不送预处理）。 */}
                                 <div className="flex flex-wrap items-center gap-3">
                                     {photo && (
                                         <span className="flex items-center gap-2">
@@ -648,20 +749,17 @@ export default function InsightsPage() {
 
                                     <span className="flex-1" />
 
-                                    <input
-                                        ref={fileRef}
-                                        type="file"
-                                        accept="image/*"
-                                        capture="environment"
-                                        className="hidden"
-                                        onChange={(e) => {
-                                            onPickPhoto(e.target.files?.[0]);
-                                            e.target.value = '';
-                                        }}
-                                    />
-                                    <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
-                                        <Camera className="mr-1.5 h-4 w-4" />
-                                        {L('拍照', 'Photo')}
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => scannerRef.current?.openCamera()}
+                                        title={L(
+                                            '拍摄或从相册选图，可调四角、选原色/漂白/黑白，再进剪裁页',
+                                            'Shoot or pick from album, adjust corners & enhance, then crop',
+                                        )}
+                                    >
+                                        <ImageIcon className="mr-1.5 h-4 w-4" />
+                                        {L('图片', 'Image')}
                                     </Button>
                                     <Button
                                         variant="ghost"
@@ -688,17 +786,71 @@ export default function InsightsPage() {
                                     </div>
                                     {linkedQuestion ? (
                                         <div className="max-w-[520px]">
-                                            {/* 【2026-10-01 他反馈后补】点卡进错题详情页时带上"从哪来"
-                                                ⇒ 详情页左上角那个返回键会**回到日积月累页**，
-                                                并且直接选中当前这条（而不是落到错题本页去找不着北）。
-                                                他原话："我在想要不要在这种情况下，返回的是这个日积月累的
-                                                页面呢" —— 要，而且回来还得是**这一条**。 */}
+                                            {/*
+                                             * 【2026-10-02 他要求】错题卡与**扫码页对齐**（照
+                                             * `src/components/scan-item-panel.tsx` 的做法），四点：
+                                             *  ① `href={null}` ⇒ **整卡不再当跳转热区**：他原话
+                                             *     "点击错题卡不转到这道题详情页，为手机防止误操作提供空间"，
+                                             *     进详情页改走下面那个按钮（一次意图一个动作）。
+                                             *  ② 左上掌握度互换、右上等级循环、右下类型循环、左下打印深挖页，
+                                             *     全部"即点即存"（`patchQuestion` 乐观更新 + 失败回滚）。
+                                             *  ③ **不给 onTrash** —— 日积月累不删题（他原话"不同在于错题卡上
+                                             *     没有删除按钮"），共享卡片因此不出垃圾桶。
+                                             *  ④ **卡下不加复习结果栏** —— 日积月累是积累不是复习
+                                             *     （他原话"错题卡下面没有复习结果栏"）。
+                                             */}
                                             <ErrorItemCard
                                                 item={linkedQuestion}
-                                                href={`/error-items/${linkedQuestion.id}?back=${encodeURIComponent(
-                                                    `/insights?pick=${current.code}`,
-                                                )}`}
+                                                href={null}
+                                                onToggleMastery={() =>
+                                                    patchQuestion(
+                                                        {
+                                                            masteryLevel:
+                                                                linkedQuestion.masteryLevel > 0 ? 0 : 2,
+                                                        },
+                                                        {
+                                                            masteryLevel:
+                                                                linkedQuestion.masteryLevel > 0 ? 0 : 2,
+                                                        },
+                                                    )
+                                                }
+                                                onCycleAttention={() => {
+                                                    const next = cycleAttentionLevel(
+                                                        linkedQuestion.attention,
+                                                    );
+                                                    patchQuestion(
+                                                        { attention: next },
+                                                        { attention: next },
+                                                    );
+                                                }}
+                                                onCycleManageType={() => {
+                                                    const next = cycleManageType(
+                                                        linkedQuestion.manageType,
+                                                    );
+                                                    patchQuestion(
+                                                        { manageType: next },
+                                                        { manageType: next },
+                                                    );
+                                                }}
+                                                onDeepDivePrint={() => {
+                                                    router.push(
+                                                        `/print-preview?ids=${linkedQuestion.id}&mode=deep`,
+                                                    );
+                                                }}
                                             />
+                                            {/* 整卡不可点了 ⇒ 进详情页只留这一个明确的按钮（与扫码页同款）。
+                                                带上"从哪来" ⇒ 详情页返回键回到**这一条**
+                                                （他原话："返回的是这个日积月累的页面…回来还得是这一条"）。 */}
+                                            {questionDetailHref && (
+                                                <div className="mt-2">
+                                                    <Link href={questionDetailHref}>
+                                                        <Button variant="outline" size="sm">
+                                                            <ExternalLink className="mr-1.5 h-4 w-4" />
+                                                            {L('打开详情页', 'Open details')}
+                                                        </Button>
+                                                    </Link>
+                                                </div>
+                                            )}
                                         </div>
                                     ) : (
                                         <div className="rounded-md border border-dashed px-4 py-5 text-sm text-muted-foreground">
@@ -717,6 +869,27 @@ export default function InsightsPage() {
                     </section>
                 </div>
             </div>
+
+            {/*
+             * 【2026-10-02 他要求】拍照/选图链路 —— **主页那套既有组件**，这里只是换个"图的下一站"：
+             *   ① DocScanner：拍摄 / 相册 → 四角景深、原色/漂白/黑白、重拍、用原图；
+             *   ② ImageCropper：剪裁 / 橡皮擦 / 旋转 / 拉伸 / 平移 / 原图 / 取消 / 确认。
+             * 两个都是 fixed 全屏浮层（z 高、盖在最上层），挂在这儿即可，不占页面布局。
+             * ⚠️ 与主页唯一的差别：成品**不送 AI**，`handleCropComplete` 直接交给当前这一条。
+             */}
+            <DocScanner
+                ref={scannerRef}
+                onScanComplete={handleScanComplete}
+                onClose={() => {}}
+            />
+            {croppingImage && (
+                <ImageCropper
+                    imageSrc={croppingImage}
+                    open={isCropperOpen}
+                    onClose={() => setIsCropperOpen(false)}
+                    onCropComplete={handleCropComplete}
+                />
+            )}
         </main>
     );
 }
