@@ -39,8 +39,14 @@ export const EMOJI_START_MARKERS = ['：：', '::'] as const;
 /** 结束（触发）标记（`；；` 全角 / `;;` 半角）—— **后输这个，敲下去就唤起** */
 export const EMOJI_END_MARKERS = ['；；', ';;'] as const;
 
-/** 搜索词长度上限（以 UTF-16 码元计）。超过就当用户不是在用这个功能。 */
-export const EMOJI_QUERY_MAX = 40;
+/**
+ * 搜索词长度上限（以 UTF-16 码元计）。超过就当用户不是在用这个功能。
+ *
+ * 📌【2026-10-02 他定的规矩】从 `；；` 往前**倒查 30 个字符**还没遇到 `：：`，
+ * 就当他真的只是想打 `：：xxx；；` 这几个字（不是在用 emoji 功能）——
+ * 他说"日常应该不会输入这种奇怪的东西"，所以超限一律不触发、原文不动。
+ */
+export const EMOJI_QUERY_MAX = 30;
 
 export interface EmojiTrigger {
     /** 在输入串中，开始标记的起始下标 */

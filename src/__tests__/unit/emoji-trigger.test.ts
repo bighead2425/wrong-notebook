@@ -94,6 +94,15 @@ describe('parseEmojiTrigger · 从光标前文本解析 `：：…；；`', () =
         expect(parseEmojiTrigger(`：：${justRight}；；`)?.query).toBe(justRight);
     });
 
+    it('★ 上限就是 30（他 2026-10-02 定的规矩，钉死不让人随手改大）', () => {
+        // 原话："如果输入 ；； 后，往前倒查 30 个字符，还没有遇到 ：： 的话，
+        // 那么就是我真的只是想打 ：：xxx；； 了" ⇒ 日常没人会打这么长的搜索词，
+        // 超过就当他在正常写字，**一个字都不许动**。
+        expect(EMOJI_QUERY_MAX).toBe(30);
+        expect(parseEmojiTrigger(`：：${'字'.repeat(30)}；；`)?.query).toHaveLength(30);
+        expect(parseEmojiTrigger(`：：${'字'.repeat(31)}；；`)).toBeNull();
+    });
+
     it('空串 / 无关文本 ⇒ 不触发', () => {
         expect(parseEmojiTrigger('')).toBeNull();
         expect(parseEmojiTrigger('什么都没有')).toBeNull();

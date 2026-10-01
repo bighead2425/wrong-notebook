@@ -10,7 +10,7 @@ import {
     REVIEW_PUNCH_GUTTER_MM,
     type MeasuredPageLayout,
 } from '@/lib/review-card';
-import { pageQrPayload, VolumeHeader, stripMarkdownImages } from './review-card';
+import { VolumeHeader, stripMarkdownImages } from './review-card';
 
 /**
  * **积累纸**（`kind='build'`）—— 把日积月累的条目排成卷印出来。
@@ -91,7 +91,8 @@ export function InsightBlock({
                 flexDirection: 'column',
                 flex: '0 0 auto',
                 position: 'relative',
-                borderTop: showDivider ? '0.3mm dashed #cfcfcf' : undefined,
+                // 【2026-10-02 他要求】分隔虚线改**蓝色** —— 原来灰色"不容易看出一个是一个来"
+                borderTop: showDivider ? '0.3mm dashed #5b9bd5' : undefined,
             }}
         >
             {/* 编号一行：JL 编号是这条内容的身份证，印在最上面，
@@ -138,7 +139,10 @@ export function InsightBlock({
             </div>
 
             {/* 正文：没有内容时留一句提示，别留一片空白让人以为漏印了 */}
-            <div style={{ fontSize: '9.5pt', flex: '0 0 auto', marginTop: '0.5mm' }}>
+            {/* 【2026-10-02 他要求】正文**10pt**，与复练纸题干看齐 —— 原来 9.5pt
+                在两栏密排里"实在惨不忍睹，时间长了容易近视眼"。
+                （JL 编号保持小字不变 —— 他说"上面的积累号我觉得不用放大了"。） */}
+            <div style={{ fontSize: '10pt', lineHeight: 1.55, flex: '0 0 auto', marginTop: '0.5mm' }}>
                 {body.trim() ? (
                     <MarkdownRenderer content={body} />
                 ) : (
@@ -229,6 +233,7 @@ export function InsightSheet({
     onMoveItem,
     onFigureScale,
     totalCount,
+    pageQr,
     L,
 }: {
     page: MeasuredPageLayout;
@@ -256,6 +261,14 @@ export function InsightSheet({
     onFigureScale?: (id: string, next: number) => void;
     /** 整卷共几条 —— 用来判断"这条是不是最后一条"（最后一条的"下移"要灰掉） */
     totalCount?: number;
+    /**
+     * 【2026-10-02 修】页眉二维码的**图片 dataURL**。
+     * ⚠️ 我第一版在这里传的是 `pageQrPayload(...)` —— 那是二维码的**文本内容**
+     * （`BU…-01`），不是图片地址，直接塞给 `<img src>` 就是一个裂图
+     * （他实测"二维码不知道是显示不出来还是没有生成"）。复练卷页那边一直是
+     * 用 `makeQrDataUrl` 先把文本**画成图**再传进来的，这里照做。
+     */
+    pageQr?: string;
     L: (zh: string, en: string) => string;
 }) {
     /** 打孔位：奇数页留左、偶数页留右（与复练纸同一个规矩，家里活页夹按一个物理边打孔） */
@@ -284,11 +297,12 @@ export function InsightSheet({
                 pageCount={pageCount}
                 gradeText={gradeText ?? undefined}
                 printDate={printDate ? new Date(printDate) : new Date()}
-                pageQr={pageQrPayload(volumeNo, pageNo)}
+                pageQr={pageQr}
                 L={L}
             />
 
-            <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+            {/* 底部留一点**页脚空隙**（他要求"原则上也应该给下面留一点页脚"） */}
+            <div style={{ display: 'flex', flex: 1, minHeight: 0, paddingBottom: '6mm' }}>
                 {page.columns.map((col, ci) => (
                     <Fragment key={ci}>
                         {ci > 0 && (

@@ -1,5 +1,5 @@
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
-import { Fragment } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { ErrorItem } from '@/types/api';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
 import {
@@ -299,6 +299,55 @@ export function VolumeHeader({
  * 只受 `max-height` 限制，再叠 `object-fit: contain` ——
  * **小的会放大、大的会缩小、竖长的不会被拉变形、永远不会被裁切**。
  */
+/**
+ * 【2026-10-02 他定】扫码页的**答案小标签**（灰底灰白字，刻意低对比）。
+ *
+ * 截断提示这次放在**开头**：答案在框里显示不全时，一上来就是 `＞…`，
+ * "一开始看答案就知道答案不全了"（他原话）。原先末尾省略号的问题是 ——
+ * 长答案被裁到连省略号都看不见，等于没有提示。
+ *
+ * 实现：渲染后量一次 `scrollWidth > clientWidth` ⇒ 溢出就加上 `＞…` 前缀、
+ * 尾部直接裁掉（不用 text-overflow，它只能截尾）。
+ */
+function AnswerLabel({ label, L }: { label: string; L: (zh: string, en: string) => string }) {
+    const boxRef = useRef<HTMLSpanElement | null>(null);
+    const [truncated, setTruncated] = useState(false);
+
+    useEffect(() => {
+        const el = boxRef.current;
+        if (!el) return;
+        // 首次渲染（无前缀）时量；加了前缀只会更溢出，状态稳定不会抖
+        setTruncated(el.scrollWidth > el.clientWidth + 1);
+    }, [label]);
+
+    return (
+        <span
+            ref={boxRef}
+            className="no-print"
+            title={L('这道题的正确答案（点中间的加号看完整解答）', 'Answer (tap + for the full solution)')}
+            style={{
+                display: 'flex',
+                alignItems: 'center',
+                flex: '0 1 auto',
+                minWidth: 0,
+                maxWidth: '100%',
+                background: '#bdbdbd',
+                color: '#e6e6e6',
+                fontSize: '6.5pt',
+                lineHeight: 1.6,
+                padding: '0.2mm 1.2mm',
+                borderRadius: '0.8mm',
+                overflow: 'hidden',
+            }}
+        >
+            {truncated && (
+                <span style={{ flexShrink: 0, fontWeight: 700, paddingRight: '0.4mm' }}>＞…</span>
+            )}
+            <span style={{ overflow: 'hidden', whiteSpace: 'nowrap' }}>{label}</span>
+        </span>
+    );
+}
+
 export function ReviewQuestionBlock({
     item,
     seq,
@@ -493,7 +542,9 @@ export function ReviewQuestionBlock({
                         display: 'flex',
                         flexDirection: 'row',
                         justifyContent: 'flex-end',
-                        alignItems: 'flex-end',
+                        // 【2026-10-02 他要求】答案标签**上移**：顶边与升降框顶边差不多齐 ——
+                        // 原来底部对齐，标签下边沿超出了题的天蓝框，"有点低了"。
+                        alignItems: 'flex-start',
                         gap: '1mm',
                     }}
                 >
@@ -519,26 +570,7 @@ export function ReviewQuestionBlock({
                         `textOverflow` 用了**自定义字符串** `"……"`（中文省略号两个点），
                         CSS Overflow 3 支持，浏览器实测可用；不支持时退化成裁切，不影响功能。 */}
                     {answerLabel ? (
-                        <span
-                            className="no-print"
-                            title={L('这道题的正确答案（点中间的加号看完整解答）', 'Answer (tap + for the full solution)')}
-                            style={{
-                                flex: '0 1 auto',
-                                minWidth: 0,
-                                background: '#bdbdbd',
-                                color: '#e6e6e6',
-                                fontSize: '6.5pt',
-                                lineHeight: 1.6,
-                                padding: '0.2mm 1.2mm',
-                                borderRadius: '0.8mm',
-                                whiteSpace: 'nowrap',
-                                overflow: 'hidden',
-                                textOverflow: '"……"',
-                                textAlign: 'right',
-                            }}
-                        >
-                            {answerLabel}
-                        </span>
+                        <AnswerLabel label={answerLabel} L={L} />
                     ) : null}
                     {/* 升降级小框：**每道题都有**（未定按复练处理） */}
                     <PromoteBox manageType={item.manageType} L={L} />

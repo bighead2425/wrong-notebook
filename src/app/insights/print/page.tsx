@@ -25,7 +25,17 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, House, Layers, Loader2, Pencil, Printer, Save, Trash2 } from 'lucide-react';
+import {
+    House,
+    Layers,
+    Loader2,
+    PanelLeftClose,
+    PanelLeftOpen,
+    Pencil,
+    Printer,
+    Save,
+    Trash2,
+} from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { apiClient } from '@/lib/api-client';
@@ -34,9 +44,12 @@ import { whenImagesDecoded, whenImagesSettled } from '@/lib/print-image-readines
 import {
     paginateMeasured,
     layoutFromSnapshot,
+    VOLUME_VARIANTS,
     type MeasuredSheetLayout,
     type SnapshotRow,
 } from '@/lib/review-card';
+import { makeQrDataUrl } from '@/lib/qr';
+import { pageQrPayload } from '@/components/print/review-card';
 import { InsightBlock, InsightSheet, type InsightPrintRow } from '@/components/print/insight-sheet';
 import { SheetZoom } from '@/components/print/sheet-zoom';
 
@@ -110,10 +123,189 @@ function PrintContent() {
     const params = useSearchParams();
     const volId = params.get('vol') || '';
     const newIds = params.get('new') || '';
-    if (volId) return <VolumePaper id={volId} />;
     // 【2026-10-01】日积月累页勾完点【送入积累纸打印】⇒ 跳这里带上 `?new=id,id,…`
     if (newIds) return <NewVolume ids={newIds.split(',').filter(Boolean)} />;
-    return <VolumeList />;
+    return <PrintWorkspace volId={volId} />;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+ * 工作台：**左右两栏**（他 2026-10-02 要求把"卷列表页"和"看纸页"合并）
+ *
+ * 他原话："积累纸·打印页面，和点击其中某一卷后打开的那份具体版面页，进行合并，
+ * 做成左右两栏格式，标题名还叫'积累纸·打印'；左边栏是每次生成的积累纸名称，
+ * 点击某个内容后，右边栏生成这份积累纸的版面预览，形式和日积月累页版面一样，
+ * 上面也配备一个左边栏隐藏的按钮。"
+ * ⇒ 与复练卷页、日积月累页**同一个版式语言**：左栏列表 + 右栏内容 + 可藏左栏。
+ * ══════════════════════════════════════════════════════════════════ */
+
+function PrintWorkspace({ volId }: { volId: string }) {
+    const router = useRouter();
+    const { language } = useLanguage();
+    const zh = language === 'zh';
+    const L = (a: string, b: string) => (zh ? a : b);
+
+    const [listOpen, setListOpen] = useState(true);
+    const [volumes, setVolumes] = useState<VolumeSummary[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [notice, setNotice] = useState('');
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        try {
+            const res = await apiClient.get<{ volumes: VolumeSummary[] }>(
+                '/api/review-volumes?kind=build&limit=100',
+            );
+            setVolumes(res.volumes || []);
+        } catch {
+            setNotice(L('卷列表读不出来', 'Failed to load volumes'));
+        } finally {
+            setLoading(false);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    useEffect(() => {
+        load();
+    }, [load]);
+
+    const removeVolume = async (v: VolumeSummary) => {
+        if (
+            !confirm(
+                L(
+                    `删掉积累纸 ${v.volumeNo}？（纸没了，积累条目本身不受影响）`,
+                    `Delete ${v.volumeNo}? (the entries themselves are untouched)`,
+                ),
+            )
+        ) {
+            return;
+        }
+        try {
+            await apiClient.delete(`/api/review-volumes/${v.id}`);
+            setVolumes((prev) => prev.filter((x) => x.id !== v.id));
+            if (v.id === volId) router.replace('/insights/print');
+        } catch {
+            setNotice(L('删除失败', 'Delete failed'));
+        }
+    };
+
+    return (
+        <div className="min-h-screen bg-muted/30">
+            {/* 顶栏：标题 + 藏左栏 + 去日积月累挑 + 回主页。
+                【2026-10-02】他嫌原来那句说明太长 ⇒ 已删（原话："不要了，太长了"）。 */}
+            <div className="no-print flex items-center gap-2 border-b bg-background px-3 py-2">
+                <h1 className="text-base font-semibold sm:text-lg">
+                    {L('积累纸 · 打印', 'Takeaways · print')}
+                </h1>
+                <span className="flex-1" />
+                <Button
+                    variant="outline"
+                    size="icon"
+                    title={listOpen ? L('隐藏左栏', 'Hide list') : L('显示左栏', 'Show list')}
+                    onClick={() => setListOpen((v) => !v)}
+                >
+                    {listOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+                </Button>
+                <Link href="/insights">
+                    <Button variant="outline" size="sm" title={L('去日积月累页勾选条目', 'Pick entries')}>
+                        <Layers className="mr-1.5 h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">{L('去勾选条目', 'Pick entries')}</span>
+                    </Button>
+                </Link>
+                <Link href="/">
+                    <Button variant="ghost" size="icon" title={L('回主页', 'Home')}>
+                        <House className="h-5 w-5" />
+                    </Button>
+                </Link>
+            </div>
+
+            {notice && (
+                <div className="no-print px-3 pt-2 md:px-8">
+                    <div className="mx-auto max-w-[1600px] rounded-md border bg-background px-3 py-1.5 text-sm">
+                        {notice}
+                    </div>
+                </div>
+            )}
+
+            {/* ⚠️ 内容**居中限宽**（他："日积月累页面的上面就比较合适，
+                现在积累纸·打印页面左右又顶在左右边上了"）——与日积月累页同一个包裹。 */}
+            <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-3 px-4 py-3 md:px-8 lg:flex-row">
+                {listOpen && (
+                    <aside className="w-full shrink-0 lg:w-[300px]">
+                        <div className="flex max-h-[76vh] flex-col gap-2 overflow-y-auto rounded-md border bg-background p-2">
+                            {loading ? (
+                                <div className="flex items-center justify-center py-10 text-muted-foreground">
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    {L('正在读…', 'Loading…')}
+                                </div>
+                            ) : volumes.length === 0 ? (
+                                <div className="px-3 py-8 text-center text-xs text-muted-foreground">
+                                    {L(
+                                        '还没有印过积累纸。到日积月累页勾几条，点【送入积累纸打印】。',
+                                        'No sheets yet. Pick entries on the takeaways page.',
+                                    )}
+                                </div>
+                            ) : (
+                                volumes.map((v) => {
+                                    const active = v.id === volId;
+                                    return (
+                                        <div
+                                            key={v.id}
+                                            className={`flex cursor-pointer items-start gap-2 rounded-md border px-2.5 py-2 transition-colors ${
+                                                active ? 'border-primary bg-accent/60' : 'hover:bg-accent/30'
+                                            }`}
+                                            onClick={() => router.push(`/insights/print?vol=${v.id}`)}
+                                        >
+                                            <div className="min-w-0 flex-1">
+                                                <div className="font-mono text-xs font-semibold">{v.volumeNo}</div>
+                                                {v.title && (
+                                                    <div className="truncate text-[11px] text-muted-foreground">
+                                                        {v.title}
+                                                    </div>
+                                                )}
+                                                <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted-foreground">
+                                                    <span>{L(`${v.itemCount} 条`, `${v.itemCount}`)}</span>
+                                                    <span>·</span>
+                                                    <span>{L(`${v.pageCount} 页`, `${v.pageCount}p`)}</span>
+                                                    <span>·</span>
+                                                    <span>
+                                                        {new Date(v.createdAt).toLocaleDateString(
+                                                            zh ? 'zh-CN' : 'en-US',
+                                                        )}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon-sm"
+                                                className="text-muted-foreground hover:text-destructive"
+                                                title={L('删掉这一卷', 'Delete')}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    removeVolume(v);
+                                                }}
+                                            >
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                            </Button>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+                    </aside>
+                )}
+
+                <section className="min-w-0 flex-1">
+                    {volId ? (
+                        <VolumePaper id={volId} />
+                    ) : (
+                        <div className="rounded-lg border border-dashed bg-background px-6 py-16 text-center text-sm text-muted-foreground">
+                            {L('左边点一份积累纸，这里就能看到它的纸面。', 'Pick a sheet on the left.')}
+                        </div>
+                    )}
+                </section>
+            </div>
+        </div>
+    );
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -293,167 +485,24 @@ function NewVolume({ ids }: { ids: string[] }) {
                 ref={measureRef}
                 aria-hidden="true"
                 className="print-review-measure no-print"
-                style={{ position: 'absolute', left: '-10000px', top: 0, width: '182mm' }}
+                style={{
+                        position: 'absolute',
+                        left: '-10000px',
+                        top: 0,
+                        /**
+                         * 【2026-10-02 修·分页 bug 根因】量尺宽度必须是**单栏宽**
+         * （积累纸两栏，每栏约 83mm），不能是整纸 182mm！
+         * 我第一版用 182mm ⇒ 文字在量尺里铺得很开、量出来的高度**远小于**
+         * 真实两栏里的高度 ⇒ 分页算法以为全塞得下 ⇒ **一页堆死、内容溢出**
+         * （他截图里"纸面上左右两栏都有打印出去的情况"正是这个）。
+         * 复练纸没踩这个坑是因为它是**单栏**，量尺宽度恰好等于栏宽。
+         */
+                        width: `${VOLUME_VARIANTS.build.columnWidthMM}mm`,
+                    }}
             >
                 {rows.map((r) => (
                     <InsightBlock key={r.id} row={r} blankLines={blankLines} showDivider={false} L={L} />
                 ))}
-            </div>
-        </div>
-    );
-}
-
-/* ══════════════════════════════════════════════════════════════════
- * 一、卷列表 —— "我印过哪些积累纸"
- * ══════════════════════════════════════════════════════════════════ */
-
-function VolumeList() {
-    const router = useRouter();
-    const { language } = useLanguage();
-    const zh = language === 'zh';
-    const L = (a: string, b: string) => (zh ? a : b);
-
-    const [volumes, setVolumes] = useState<VolumeSummary[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [notice, setNotice] = useState('');
-
-    const load = useCallback(async () => {
-        setLoading(true);
-        try {
-            const res = await apiClient.get<{ volumes: VolumeSummary[] }>(
-                '/api/review-volumes?kind=build&limit=100',
-            );
-            setVolumes(res.volumes || []);
-        } catch {
-            setNotice(L('卷列表读不出来', 'Failed to load volumes'));
-        } finally {
-            setLoading(false);
-        }
-        // L 每次渲染都是新函数，进依赖会死循环 —— 与项目其它页面同一处写法
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
-    useEffect(() => {
-        load();
-    }, [load]);
-
-    const removeVolume = async (v: VolumeSummary) => {
-        if (
-            !confirm(
-                L(
-                    `删掉积累纸 ${v.volumeNo}？（纸没了，积累条目本身不受影响）`,
-                    `Delete ${v.volumeNo}? (the entries themselves are untouched)`,
-                ),
-            )
-        ) {
-            return;
-        }
-        try {
-            await apiClient.delete(`/api/review-volumes/${v.id}`);
-            setVolumes((prev) => prev.filter((x) => x.id !== v.id));
-        } catch {
-            setNotice(L('删除失败', 'Delete failed'));
-        }
-    };
-
-    return (
-        <div className="min-h-screen bg-muted/30">
-            <div className="no-print flex items-center gap-2 border-b bg-background px-3 py-2">
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    title={L('返回日积月累', 'Back to takeaways')}
-                    onClick={() => router.push('/insights')}
-                >
-                    <ArrowLeft className="h-4 w-4" />
-                </Button>
-                <h1 className="text-base font-semibold sm:text-lg">
-                    {L('积累纸 · 打印', 'Takeaways · print')}
-                </h1>
-                <span className="hidden text-xs text-muted-foreground sm:inline">
-                    {L(
-                        '这里管"印过哪些积累纸"；哪几条组成一卷，在日积月累页勾选决定',
-                        'Manage printed sheets here; pick entries on the takeaways page',
-                    )}
-                </span>
-                <span className="flex-1" />
-                <Link href="/insights">
-                    <Button variant="outline" size="sm">
-                        <Layers className="mr-1.5 h-3.5 w-3.5" />
-                        {L('去日积月累页挑', 'Pick entries')}
-                    </Button>
-                </Link>
-                <Link href="/">
-                    <Button variant="ghost" size="icon" title={L('回主页', 'Home')}>
-                        <House className="h-5 w-5" />
-                    </Button>
-                </Link>
-            </div>
-
-            <div className="mx-auto w-full max-w-[900px] px-4 py-4 md:px-8">
-                {notice && (
-                    <div className="mb-3 rounded-md border bg-background px-3 py-1.5 text-sm">{notice}</div>
-                )}
-
-                {loading ? (
-                    <div className="flex items-center justify-center py-16 text-muted-foreground">
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        {L('正在读…', 'Loading…')}
-                    </div>
-                ) : volumes.length === 0 ? (
-                    <div className="rounded-lg border border-dashed bg-background px-6 py-14 text-center text-sm text-muted-foreground">
-                        {L(
-                            '还没有印过积累纸。到日积月累页勾几条，点【送入积累纸打印】就来这里了。',
-                            'No sheets yet. Pick some entries on the takeaways page.',
-                        )}
-                    </div>
-                ) : (
-                    <div className="space-y-2">
-                        {volumes.map((v) => (
-                            <div
-                                key={v.id}
-                                className="flex cursor-pointer items-center gap-3 rounded-lg border bg-background px-3 py-2 hover:border-primary/50"
-                                onClick={() => router.push(`/insights/print?vol=${v.id}`)}
-                            >
-                                <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2">
-                                        <span className="font-mono text-sm font-semibold">{v.volumeNo}</span>
-                                        {v.title && (
-                                            <span className="truncate text-xs text-muted-foreground">{v.title}</span>
-                                        )}
-                                    </div>
-                                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
-                                        <span>{L(`${v.itemCount} 条`, `${v.itemCount} entries`)}</span>
-                                        <span>·</span>
-                                        <span>{L(`${v.pageCount} 页`, `${v.pageCount} pages`)}</span>
-                                        {v.gradeSemester && (
-                                            <>
-                                                <span>·</span>
-                                                <span>{v.gradeSemester}</span>
-                                            </>
-                                        )}
-                                        <span>·</span>
-                                        <span>
-                                            {new Date(v.createdAt).toLocaleDateString(zh ? 'zh-CN' : 'en-US')}
-                                        </span>
-                                    </div>
-                                </div>
-                                <Button
-                                    variant="ghost"
-                                    size="icon-sm"
-                                    className="text-muted-foreground hover:text-destructive"
-                                    title={L('删掉这一卷', 'Delete')}
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        removeVolume(v);
-                                    }}
-                                >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                            </div>
-                        ))}
-                    </div>
-                )}
             </div>
         </div>
     );
@@ -490,6 +539,8 @@ function VolumePaper({ id }: { id: string }) {
     /** 量出来的每条高度（改过版面才需要重排，那时只能现量） */
     const [measured, setMeasured] = useState<Record<string, number>>({});
     const measureRef = useRef<HTMLDivElement | null>(null);
+    /** 页眉二维码（dataURL，按页号）—— 见下面那个 effect 的说明 */
+    const [pageQrMap, setPageQrMap] = useState<Record<number, string>>({});
 
     useEffect(() => {
         let alive = true;
@@ -703,27 +754,40 @@ function VolumePaper({ id }: { id: string }) {
         }
     };
 
-    const removeVolume = async () => {
-        if (!detail) return;
-        if (
-            !confirm(
-                L(
-                    `删掉积累纸 ${detail.volumeNo}？（纸没了，积累条目本身不受影响）`,
-                    'Delete this sheet? (the entries themselves are untouched)',
-                ),
-            )
-        ) {
-            return;
-        }
-        try {
-            await apiClient.delete(`/api/review-volumes/${id}`);
-            router.replace('/insights/print');
-        } catch {
-            setNotice(L('删除失败', 'Delete failed'));
-        }
-    };
+    /* 【2026-10-02】删除按钮已搬到**左栏那条**上（清单里每条自带垃圾桶），
+       这里不再留一份 —— 同一件事两个入口，久了必然两套行为。 */
 
     const pageCount = layout?.pages.length ?? 0;
+
+    /**
+     * 【2026-10-02 修】页眉二维码：先把文本**画成图**（dataURL）再传进纸面。
+     * 我第一版把二维码的**文本内容**直接塞给了 `<img src>` ⇒ 全是裂图。
+     * 二维码内容 `BU…-01` 本身就带页码（复练卷同一条 payload 规则），不用另做。
+     */
+    useEffect(() => {
+        if (!detail) return;
+        let alive = true;
+        (async () => {
+            const entries: Record<number, string> = {};
+            await Promise.all(
+                Array.from({ length: Math.max(pageCount, 1) }, async (_, i) => {
+                    try {
+                        entries[i + 1] = await makeQrDataUrl(pageQrPayload(detail.volumeNo, i + 1), {
+                            width: 120,
+                            margin: 1,
+                        });
+                    } catch {
+                        entries[i + 1] = '';
+                    }
+                }),
+            );
+            if (alive) setPageQrMap(entries);
+        })();
+        return () => {
+            alive = false;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [detail?.volumeNo, pageCount]);
 
     if (loading) {
         return (
@@ -736,16 +800,10 @@ function VolumePaper({ id }: { id: string }) {
     if (!detail) return null;
 
     return (
-        <div className="min-h-screen bg-muted/30">
-            <div className="no-print flex flex-wrap items-center gap-2 border-b bg-background px-3 py-2">
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    title={L('返回卷列表', 'Back to list')}
-                    onClick={() => router.replace('/insights/print')}
-                >
-                    <ArrowLeft className="h-4 w-4" />
-                </Button>
+        /* 【2026-10-02】这里是**右栏内容**（左栏是卷列表，见 PrintWorkspace）——
+           所以不再有自己的整页外壳、也没有"返回列表"按钮（左栏点一下就换卷）。 */
+        <div className="rounded-lg border bg-background">
+            <div className="no-print flex flex-wrap items-center gap-2 border-b px-3 py-2">
                 <span className="font-mono text-sm font-semibold">{detail.volumeNo}</span>
                 {editingTitle ? (
                     <span className="flex items-center gap-1">
@@ -809,20 +867,7 @@ function VolumePaper({ id }: { id: string }) {
                     <Printer className="mr-1.5 h-3.5 w-3.5" />
                     {L('打印', 'Print')}
                 </Button>
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    className="text-muted-foreground hover:text-destructive"
-                    title={L('删掉这一卷', 'Delete')}
-                    onClick={removeVolume}
-                >
-                    <Trash2 className="h-4 w-4" />
-                </Button>
-                <Link href="/">
-                    <Button variant="ghost" size="icon" title={L('回主页', 'Home')}>
-                        <House className="h-5 w-5" />
-                    </Button>
-                </Link>
+                {/* 删除在**左栏那条**上（这里是右栏，不再重复放一遍按钮） */}
             </div>
 
             {notice && (
@@ -877,6 +922,7 @@ function VolumePaper({ id }: { id: string }) {
                                     onMoveItem={moveItem}
                                     onFigureScale={setFigure}
                                     totalCount={printRows.length}
+                                    pageQr={pageQrMap[i + 1]}
                                     L={L}
                                 />
                             ))}
@@ -892,7 +938,20 @@ function VolumePaper({ id }: { id: string }) {
                     ref={measureRef}
                     aria-hidden="true"
                     className="print-review-measure no-print"
-                    style={{ position: 'absolute', left: '-10000px', top: 0, width: '182mm' }}
+                    style={{
+                        position: 'absolute',
+                        left: '-10000px',
+                        top: 0,
+                        /**
+                         * 【2026-10-02 修·分页 bug 根因】量尺宽度必须是**单栏宽**
+         * （积累纸两栏，每栏约 83mm），不能是整纸 182mm！
+         * 我第一版用 182mm ⇒ 文字在量尺里铺得很开、量出来的高度**远小于**
+         * 真实两栏里的高度 ⇒ 分页算法以为全塞得下 ⇒ **一页堆死、内容溢出**
+         * （他截图里"纸面上左右两栏都有打印出去的情况"正是这个）。
+         * 复练纸没踩这个坑是因为它是**单栏**，量尺宽度恰好等于栏宽。
+         */
+                        width: `${VOLUME_VARIANTS.build.columnWidthMM}mm`,
+                    }}
                 >
                     {printRows.map((r) => (
                         <InsightBlock

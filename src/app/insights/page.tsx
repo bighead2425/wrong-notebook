@@ -344,17 +344,20 @@ export default function InsightsPage() {
                             <PanelLeftOpen className="h-4 w-4" />
                         )}
                     </Button>
-                    <Button size="sm" onClick={createOne}>
-                        <Plus className="mr-1.5 h-4 w-4" />
-                        {L('新建一条', 'New')}
+                    {/* 【2026-10-02 他要求】窄屏/手机上**只留图标**（文字藏起来）——
+                        "当浏览器变窄，或者在手机端屏幕比较窄的时候，右上角的新建一条按钮，
+                        文字隐藏，只留前面的加号既可"。打印按钮同样处理。 */}
+                    <Button size="sm" onClick={createOne} title={L('新建一条', 'New')}>
+                        <Plus className="h-4 w-4 sm:mr-1.5" />
+                        <span className="hidden sm:inline">{L('新建一条', 'New')}</span>
                     </Button>
                     {/* 【2026-10-01 第三轮】**打印另开一屏**（他担心的对）：
                         编辑与打印是两种状态（未保存的改动、量高、分页、页码），
                         硬塞进同一个右栏久了必然互相打架。 */}
                     <Link href="/insights/print">
                         <Button variant="outline" size="sm" title={L('把挑出来的条目排成积累纸印出来', 'Print picked entries on takeaway sheets')}>
-                            <Printer className="mr-1.5 h-4 w-4" />
-                            {L('打印', 'Print')}
+                            <Printer className="h-4 w-4 sm:mr-1.5" />
+                            <span className="hidden sm:inline">{L('打印', 'Print')}</span>
                         </Button>
                     </Link>
                     <Link href="/">

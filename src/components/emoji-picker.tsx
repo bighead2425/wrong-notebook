@@ -124,6 +124,17 @@ export function EmojiPicker({ state, onSelect, onClose }: EmojiPickerProps) {
                 className="grid"
                 style={{ gridTemplateColumns: `repeat(${EMOJI_PICKER_COLS}, 1fr)`, gap: '2px' }}
             >
+                {/* 【2026-10-02 他定】搜不到要**有反应**：面板照弹，这里给一句"没找到"，
+                    他就知道该按 Esc 或退格了（而不是以为功能坏了）。 */}
+                {items.length === 0 && (
+                    <div
+                        className="col-span-full px-1 py-2 text-center text-xs text-muted-foreground"
+                        // 面板自身不吃键盘（Esc/退格都归编辑器）
+                        style={{ gridColumn: `1 / -1` }}
+                    >
+                        没找到 — 换个词，或按 Esc 关闭
+                    </div>
+                )}
                 {items.map((item, index) => (
                     <button
                         key={`${item.c}-${index}`}

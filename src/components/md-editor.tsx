@@ -578,7 +578,9 @@ export async function createMdEditorInstance(opts: {
                 return;
             }
             items = searchEmojis(index, found.query);
-            if (items.length === 0) return close(); // 搜不到 ⇒ 不弹、也不动文档
+            // 【2026-10-02 他定】搜不到也要有反应：**照样弹面板**，面板里显示"没找到"空态
+            // （他原话："比如就反馈'没找到'就行了，我就会按 Esc 或 backspace 了"）。
+            // 文档仍然一个字不动 —— 关面板/重选词都由他决定。
             if (!hit || hit.query !== found.query || hit.from !== found.from) active = 0;
             hit = found;
             emit();
@@ -651,6 +653,23 @@ export async function createMdEditorInstance(opts: {
             },
             view(viewInstance) {
                 editorView = viewInstance;
+                /**
+                 * 【2026-10-02 修】合成结束**必须补一次检测**。
+                 *
+                 * 他实测的 bug：全角 `：：蘑菇；；` 不弹候选，随便再敲个字再退格才弹；
+                 * 而半角 `;;` 一直正常。根因：中文输入法敲全角 `；` 时，文本是在**合成期间**
+                 * 进的文档，update 跑时 `composing` 仍为 true ⇒ 被下面的守卫跳过；
+                 * 而 compositionend 之后**往往没有新的文档事务** ⇒ update 不会再跑 ⇒
+                 * 这次触发就永远丢了。他"敲个字再退格"恰好补上了那两次文档变化。
+                 * 半角 `;;` 直接键入、不走合成 ⇒ 每次键入都有事务 ⇒ 一直正常，完全对上。
+                 *
+                 * 修法：合成期间照旧跳过（不抢输入法候选词的导航），但**监听
+                 * `compositionend` 补跑一次检测**（setTimeout(0) 等 ProseMirror 落定）。
+                 */
+                const onCompositionEnd = () => {
+                    setTimeout(() => refresh(), 0);
+                };
+                viewInstance.dom.addEventListener('compositionend', onCompositionEnd);
                 return {
                     update: (_view, prevState) => {
                         const skip = skipNext;
@@ -662,12 +681,12 @@ export async function createMdEditorInstance(opts: {
                             close();
                             return;
                         }
-                        // 合成态先不动：等 compositionend 那次更新再看文档（同官方斜杠菜单的做法，
-                        // 避免用户还在选输入法候选词时面板就闪出来）
+                        // 合成态先不动：compositionend 的监听会补跑（见上）
                         if (editorView.composing) return;
                         refresh();
                     },
                     destroy: () => {
+                        viewInstance.dom.removeEventListener('compositionend', onCompositionEnd);
                         editorView = null;
                         close(); // 源码模式切换会销毁重建编辑器 ⇒ 别把浮层留成孤儿
                     },
