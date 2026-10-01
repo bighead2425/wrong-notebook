@@ -15,7 +15,7 @@
  *   · `/insights/print?vol=<id>` 已成卷：右栏按**快照**还原（不重量、不重排），可打印
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, House, Layers, Printer, RefreshCw } from 'lucide-react';
@@ -29,10 +29,10 @@ import { GRADE_SEMESTER_OPTIONS } from '@/lib/grade-semester-options';
 import {
     paginateMeasured,
     layoutFromSnapshot,
+    VOLUME_VARIANTS,
     type MeasuredSheetLayout,
     type SnapshotRow,
 } from '@/lib/review-card';
-import { VOLUME_VARIANTS } from '@/lib/review-card';
 import { InsightBlock, InsightSheet, type InsightPrintRow } from '@/components/print/insight-sheet';
 
 /** 列表里的一条（与 /insights 页同一份接口） */
@@ -68,7 +68,23 @@ interface VolumeDetail {
     }[];
 }
 
-export default function InsightsPrintPage() {
+/**
+ * ⚠️【2026-10-01 构建失败后补的】**用了 `useSearchParams` 的页面必须包 `<Suspense>`**。
+ *
+ * 这个文件第一版漏了，`custom-v61` 的镜像在 `RUN npm run build` 直接退出码 1 ——
+ * 因为 Next.js 给页面做**静态预渲染**时，遇到没有 Suspense 边界的 `useSearchParams`
+ * 会直接报 `missing-suspense-with-csr-bailout` 并中断构建。
+ * `tsc --noEmit` 和 eslint **都查不出来**（它们只看类型和风格，不看构建期约束），
+ * 本机又因为内存小跑不了 `next build` —— 所以这一条只能靠"照着老页面写"来守。
+ *
+ * 项目里对这个问题的两条正确路线（**新页面二选一，别走第三条**）：
+ *   ① 用 `useSearchParams` ⇒ **必须**像本文件这样包 Suspense
+ *      （同样的写法见 `app/print-preview/page.tsx`、`app/page.tsx`、`app/practice/page.tsx`）
+ *   ② 只在挂载时读一次 query ⇒ 干脆用 `window.location.search`，**不需要** Suspense
+ *      （见 `app/scan/page.tsx`、`app/review-volumes/page.tsx`）
+ * 这里有 `router.replace(?vol=…)` 的来回切换，需要 query 变化能驱动重渲染，所以选 ①。
+ */
+function InsightsPrintContent() {
     const router = useRouter();
     const params = useSearchParams();
     const volId = params.get('vol') || '';
@@ -451,6 +467,19 @@ export default function InsightsPrintPage() {
                 ))}
             </div>
         </div>
+    );
+}
+
+export default function InsightsPrintPage() {
+    const { t } = useLanguage();
+    return (
+        <Suspense
+            fallback={
+                <div className="min-h-screen flex items-center justify-center">{t.common.loading}</div>
+            }
+        >
+            <InsightsPrintContent />
+        </Suspense>
     );
 }
 
