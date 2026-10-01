@@ -48,7 +48,7 @@ import 'katex/dist/katex.min.css';
 // `==高亮==` 的编辑器侧 remark 插件（严格版：独立节点，不借用 emphasis —— 见其文件头）
 import { remarkHighlightStrict } from '@/lib/markdown-plugins';
 import type { RemarkPluginRaw } from '@milkdown/kit/transformer';
-// 中文 emoji 选择器：【2026-10-01】`；；眼镜：：` ⇒ 候选浮层
+// 中文 emoji 选择器：【2026-10-01】`：：眼镜；；` ⇒ 候选浮层
 // ⚠️ 这两个模块**不**静态 import 那份 404KB 的 emoji 数据（见 emoji-search.ts），
 //    数据只在真正用到时才 `await import()` ⇒ 不进任何一屏的初始包。
 import { parseEmojiTrigger } from '@/lib/emoji-trigger';
@@ -108,7 +108,7 @@ export async function createMdEditorInstance(opts: {
     value: string;
     onChange: (md: string) => void;
     /**
-     * 【2026-10-01】emoji 候选浮层的状态回调：插件检测到 `；；…：：` 就回调这里，
+     * 【2026-10-01】emoji 候选浮层的状态回调：插件检测到 `：：…；；` 就回调这里，
      * 由 React 决定怎么把面板画出来（插件本身不碰 React 生命周期）。
      * 传 null 表示"该关"。
      */
@@ -417,11 +417,11 @@ export async function createMdEditorInstance(opts: {
         });
     });
 
-    // ================= 中文 emoji 选择器：`；；眼镜：：` ⇒ 候选浮层 =================
+    // ================= 中文 emoji 选择器：`：：眼镜；；` ⇒ 候选浮层 =================
     /**
      * 【2026-10-01】用户拍板的触发方式：
-     *   输入 `；；眼镜：：` —— **最后敲的 `：：` 唤醒功能**，往回找最近的 `；；`，
-     *   两者之间的中文（"眼镜"）就是搜索词。半角 `;;` / `::` 也认。
+     *   输入 `：：眼镜；；` —— **最后敲的 `；；` 唤醒功能**，往回找最近的 `：：`，
+     *   两者之间的中文（"眼镜"）就是搜索词。半角 `::` / `;;` 也认。
      *
      * 为什么"读文档"而不是"读按键"（评估报告 2.2 的做法 C，也正是本触发方式的最佳用法）：
      *   `：` 是中文输入法常管的标点，keydown 拿不到最终字符、还要赌合成态的时序；
@@ -430,8 +430,8 @@ export async function createMdEditorInstance(opts: {
      *
      * ⚠️ 红线（见本文件头 3 条 + 评估报告 2.4）：本插件**从不改文档**。
      *    检测到触发只是把状态回调给 React 去弹浮层；只有用户真正**选中某一项**时，
-     *    才由 `replaceEmojiRange` 走一次事务把 `；；…：：` 整段换成 emoji。
-     *    因此 Esc / 点别处 / 搜不到 ⇒ **原文一个字都不动**（`；；眼镜：：` 原样留着）。
+     *    才由 `replaceEmojiRange` 走一次事务把 `：：…；；` 整段换成 emoji。
+     *    因此 Esc / 点别处 / 搜不到 ⇒ **原文一个字都不动**（`：：眼镜；；` 原样留着）。
      */
     const pickerCtl: { close: (() => void) | null } = { close: null };
 
@@ -538,7 +538,7 @@ export async function createMdEditorInstance(opts: {
             return text.length === limit ? { text, map } : null;
         };
 
-        /** 检测当前光标位置是不是正好在一个"完整的 `；；…：：`"之后 */
+        /** 检测当前光标位置是不是正好在一个"完整的 `：：…；；`"之后 */
         const detect = (view: EditorView): PickerHit | null => {
             const { state } = view;
             if (!state.selection.empty) return null;
@@ -885,7 +885,7 @@ export function MdEditor({
     }, [sourceMode, value]);
 
     /**
-     * 【2026-10-01】选中 emoji 候选：把 `；；…：：` **整段**换成 emoji 字符。
+     * 【2026-10-01】选中 emoji 候选：把 `：：…；；` **整段**换成 emoji 字符。
      * 插入走编辑器事务（`instance.replaceEmojiRange`，见其注释）—— **绝不手改 DOM**。
      */
     const handleEmojiSelect = (item: EmojiIndexItem) => {

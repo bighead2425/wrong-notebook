@@ -38,13 +38,13 @@ export interface EmojiPickerAnchor {
 }
 
 export interface EmojiPickerViewState {
-    /** `；；` 起点在文档中的位置 */
+    /** `：：` 起点在文档中的位置 */
     from: number;
-    /** `：：` 终点（即光标）在文档中的位置 */
+    /** `；；` 终点（即光标）在文档中的位置 */
     to: number;
     /** 搜索词 */
     query: string;
-    /** `；；…：：` 的原文（插入时用它校验"这段还是原来那段"，防止错位吞字） */
+    /** `：：…；；` 的原文（插入时用它校验"这段还是原来那段"，防止错位吞字） */
     raw: string;
     /** 命中的候选（已按搜索词过滤） */
     items: EmojiIndexItem[];

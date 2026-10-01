@@ -12,86 +12,86 @@ import {
 /**
  * 【2026-10-01】中文 emoji 选择器的**判定核心**单测。
  *
- * 这一段是"从光标前的文本里找出 `；；…：：`"的纯逻辑，边界最多、最容易出错，
+ * 这一段是"从光标前的文本里找出 `：：…；；`"的纯逻辑，边界最多、最容易出错，
  * 而且它一出错就是"吃掉用户打的字"这种不可接受的事故 —— 所以它被单独抽成
  * 纯函数（src/lib/emoji-trigger.ts），在这里把口径钉死，不跟 ProseMirror 混在一起测。
  *
- * 口径（用户拍板）：`；；` 是开始标记、`：：` 是结束/触发标记，中间是搜索词；
- * 半角 `;;` / `::` 也认；**找不到就返回 null，调用方什么都不做**（原文一个字不动）。
+ * 口径（用户拍板）：`：：` 是开始标记、`；；` 是结束/触发标记，中间是搜索词；
+ * 半角 `::` / `;;` 也认；**找不到就返回 null，调用方什么都不做**（原文一个字不动）。
  */
-describe('parseEmojiTrigger · 从光标前文本解析 `；；…：：`', () => {
-    it('命中：`；；眼镜：：` ⇒ 取到范围与搜索词', () => {
-        expect(parseEmojiTrigger('；；眼镜：：')).toEqual({
+describe('parseEmojiTrigger · 从光标前文本解析 `：：…；；`', () => {
+    it('命中：`：：眼镜；；` ⇒ 取到范围与搜索词', () => {
+        expect(parseEmojiTrigger('：：眼镜；；')).toEqual({
             start: 0,
             end: 6,
             query: '眼镜',
-            raw: '；；眼镜：：',
+            raw: '：：眼镜；；',
         });
     });
 
     it('命中：前面还有正文时，只取最近那一段', () => {
-        const hit = parseEmojiTrigger('今天天气不错，；；开心：：');
+        const hit = parseEmojiTrigger('今天天气不错，：：开心；；');
         expect(hit).not.toBeNull();
         expect(hit!.query).toBe('开心');
-        expect(hit!.raw).toBe('；；开心：：');
-        expect(hit!.end).toBe('今天天气不错，；；开心：：'.length);
+        expect(hit!.raw).toBe('：：开心；；');
+        expect(hit!.end).toBe('今天天气不错，：：开心；；'.length);
     });
 
-    it('只有 `；；` 没有 `：：` ⇒ 不触发', () => {
-        expect(parseEmojiTrigger('；；眼镜')).toBeNull();
+    it('只有 `：：` 没有 `；；` ⇒ 不触发', () => {
+        expect(parseEmojiTrigger('：：眼镜')).toBeNull();
     });
 
-    it('只有 `：：` 没有 `；；` ⇒ 不触发（结束标记单独出现没有意义）', () => {
-        expect(parseEmojiTrigger('眼镜：：')).toBeNull();
-        expect(parseEmojiTrigger('：：')).toBeNull();
+    it('只有 `；；` 没有 `：：` ⇒ 不触发（结束标记单独出现没有意义）', () => {
+        expect(parseEmojiTrigger('眼镜；；')).toBeNull();
+        expect(parseEmojiTrigger('；；')).toBeNull();
     });
 
     it('单冒号 / 单分号都不算标记', () => {
-        expect(parseEmojiTrigger('；；眼镜：')).toBeNull();
-        expect(parseEmojiTrigger('；眼镜：：')).toBeNull();
-        expect(parseEmojiTrigger(';;眼镜:')).toBeNull();
+        expect(parseEmojiTrigger('：：眼镜：')).toBeNull();
+        expect(parseEmojiTrigger('；眼镜；；')).toBeNull();
+        expect(parseEmojiTrigger('::眼镜:')).toBeNull();
     });
 
     it('中间为空 ⇒ 不触发', () => {
-        expect(parseEmojiTrigger('；；：：')).toBeNull();
-        expect(parseEmojiTrigger('；；  ：：')).toBeNull();
-        expect(parseEmojiTrigger(';;::')).toBeNull();
+        expect(parseEmojiTrigger('：：；；')).toBeNull();
+        expect(parseEmojiTrigger('：：  ；；')).toBeNull();
+        expect(parseEmojiTrigger('::;;')).toBeNull();
     });
 
-    it('半角 `;;` / `::` 都认，且允许半全角混用', () => {
-        expect(parseEmojiTrigger(';;眼镜::')?.query).toBe('眼镜');
-        expect(parseEmojiTrigger('；；眼镜::')?.query).toBe('眼镜');
-        expect(parseEmojiTrigger(';;眼镜：：')?.query).toBe('眼镜');
+    it('半角 `::` / `;;` 都认，且允许半全角混用', () => {
+        expect(parseEmojiTrigger('::眼镜;;')?.query).toBe('眼镜');
+        expect(parseEmojiTrigger('：：眼镜;;')?.query).toBe('眼镜');
+        expect(parseEmojiTrigger('::眼镜；；')?.query).toBe('眼镜');
     });
 
     it('跨行：标记之间夹换行时，搜索词按 trim 后的结果算', () => {
-        const hit = parseEmojiTrigger('；；\n眼镜：：');
+        const hit = parseEmojiTrigger('：：\n眼镜；；');
         expect(hit?.query).toBe('眼镜');
-        expect(hit?.raw).toBe('；；\n眼镜：：'); // raw 保留原样（含换行），插入时用它做原文校验
+        expect(hit?.raw).toBe('：：\n眼镜；；'); // raw 保留原样（含换行），插入时用它做原文校验
     });
 
     it('跨行：开始标记在上一行、结束标记在本行', () => {
-        const hit = parseEmojiTrigger('第一行\n；；梯子：：');
+        const hit = parseEmojiTrigger('第一行\n：：梯子；；');
         expect(hit?.query).toBe('梯子');
         expect(hit?.start).toBe('第一行\n'.length);
     });
 
     it('嵌套 / 连续两个标记：取**最近**的那个开始标记', () => {
-        expect(parseEmojiTrigger('；；甲；；乙：：')?.query).toBe('乙');
-        expect(parseEmojiTrigger('；；；；眼镜：：')?.query).toBe('眼镜');
-        expect(parseEmojiTrigger('；；甲；；乙：：')?.start).toBe('；；甲'.length);
+        expect(parseEmojiTrigger('：：甲：：乙；；')?.query).toBe('乙');
+        expect(parseEmojiTrigger('：：：：眼镜；；')?.query).toBe('眼镜');
+        expect(parseEmojiTrigger('：：甲：：乙；；')?.start).toBe('：：甲'.length);
     });
 
     it('结束标记后面还有字（光标不在末尾）⇒ 不触发', () => {
-        expect(parseEmojiTrigger('；；眼镜：：后续')).toBeNull();
-        expect(parseEmojiTrigger('；；眼镜：： ')).toBeNull(); // 多一个空格都不算
+        expect(parseEmojiTrigger('：：眼镜；；后续')).toBeNull();
+        expect(parseEmojiTrigger('：：眼镜；； ')).toBeNull(); // 多一个空格都不算
     });
 
     it('搜索词过长（超过上限）⇒ 不触发，避免把一大段正文当查询', () => {
         const tooLong = 'a'.repeat(EMOJI_QUERY_MAX + 1);
-        expect(parseEmojiTrigger(`；；${tooLong}：：`)).toBeNull();
+        expect(parseEmojiTrigger(`：：${tooLong}；；`)).toBeNull();
         const justRight = 'a'.repeat(EMOJI_QUERY_MAX);
-        expect(parseEmojiTrigger(`；；${justRight}：：`)?.query).toBe(justRight);
+        expect(parseEmojiTrigger(`：：${justRight}；；`)?.query).toBe(justRight);
     });
 
     it('空串 / 无关文本 ⇒ 不触发', () => {
