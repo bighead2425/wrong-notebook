@@ -337,11 +337,23 @@ function AnswerLabel({ label, L }: { label: string; L: (zh: string, en: string) 
     const boxRef = useRef<HTMLSpanElement | null>(null);
     const [truncated, setTruncated] = useState(false);
 
+    /**
+     * 量"放得下没有"。
+     *
+     * ⚠️【2026-10-02 审计时补】**必须用 ResizeObserver，不能只在 label 变化时量一次**：
+     * 这一屏支持"双击纸面放大/缩小"（`SheetZoom` 改的是 CSS `zoom`），
+     * 一缩放，标签的可视宽度就变了 —— 只量一次的话，
+     * 放大后明明放得下却还挂着 `>…`（或反过来：缩小后放不下却不提示）。
+     */
     useEffect(() => {
         const el = boxRef.current;
         if (!el) return;
-        // 首次渲染（无前缀）时量；加了前缀只会更溢出，状态稳定不会抖
-        setTruncated(el.scrollWidth > el.clientWidth + 1);
+        const measure = () => setTruncated(el.scrollWidth > el.clientWidth + 1);
+        measure();
+        if (typeof ResizeObserver === 'undefined') return; // jsdom / 老浏览器兜底
+        const ro = new ResizeObserver(measure);
+        ro.observe(el);
+        return () => ro.disconnect();
     }, [label]);
 
     return (
@@ -365,7 +377,9 @@ function AnswerLabel({ label, L }: { label: string; L: (zh: string, en: string) 
             }}
         >
             {truncated && (
-                <span style={{ flexShrink: 0, fontWeight: 700, paddingRight: '0.4mm' }}>＞…</span>
+                // 【2026-10-02】用**半角** `>…`（他原话写的就是半角）——
+                // 意思是"这个框里的答案不全"，一上来就能看见。
+                <span style={{ flexShrink: 0, fontWeight: 700, paddingRight: '0.4mm' }}>&gt;…</span>
             )}
             <span style={{ overflow: 'hidden', whiteSpace: 'nowrap' }}>{label}</span>
         </span>

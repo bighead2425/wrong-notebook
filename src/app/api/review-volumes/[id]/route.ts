@@ -106,11 +106,33 @@ export async function PATCH(request: Request, ctx: Ctx) {
      */
     const hasItems = rawItems.length > 0;
     const hasTitle = Object.prototype.hasOwnProperty.call(raw, "title");
-    if (!hasItems && !hasTitle) return badRequest("items must not be empty");
+    /**
+     * 【2026-10-02 第三条路】只改**卷里某一行的标记**（扫码页那颗三态圆）。
+     * 刻意不复用"整卷覆盖"：那条路要客户端把整卷条目再传一遍，
+     * 而这里只想动一个字段 —— 传整卷既慢、又容易把别处刚改的东西冲掉。
+     */
+    const markItemId = typeof raw.markItemId === "string" ? raw.markItemId : null;
+    if (!hasItems && !hasTitle && !markItemId) return badRequest("items must not be empty");
 
     try {
         const existing = await loadVolume(id);
         if (!existing) return notFound("Review volume not found");
+
+        if (markItemId) {
+            // 只认 'right' / 'wrong'，其余（含显式 null）一律当"撤销标记"
+            const markState =
+                raw.markState === "right" || raw.markState === "wrong" ? raw.markState : null;
+            /**
+             * ⚠️ where 里**必须带 volumeId**：卷 id 来自 URL、行 id 来自 body，
+             *    不校验的话，"改这一卷的某行"就变成了"改任意一卷的任意行"（越权）。
+             */
+            const res = await prisma.reviewVolumeItem.updateMany({
+                where: { id: markItemId, volumeId: id },
+                data: { markState },
+            });
+            if (res.count === 0) return notFound("Volume item not found");
+            return NextResponse.json({ item: { id: markItemId, markState } });
+        }
 
         if (!hasItems) {
             const renamed = await prisma.reviewVolume.update({

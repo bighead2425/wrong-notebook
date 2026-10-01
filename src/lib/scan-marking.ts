@@ -90,17 +90,39 @@ export function nextReviewMark(mark: ReviewMark): ReviewMark {
 }
 
 /**
- * 这个圆现在该画成哪一态。
+ * 从**题目的复习历史**推圆态（看 `last`）。
  *
- * 判据取 `ReviewOutcomes.last`（"最近一次复习的结果 —— 计划内、计划外都算"）。
- * 理由：刷新/重进之后要靠**库里已有的事实**还原，而"最近一次"正是那道题最新的一次结果；
- * 它为空就画灰底白数字（还没记过）。
+ * ⚠️【2026-10-02】**生产代码当前不再用它** —— 圆态改成"按卷"判断了（见 `markForItem`）。
+ * 保留它的原因：它表达的是另一件真实存在的事 ——"这道题最近一次复习结果是什么"，
+ * 与"这张纸上我标了什么"是**两个不同的问题**。将来若要画"与复习历史联动"的圆，还会用到。
+ * 别把它当成"旧的、删了也没关系"的代码；但也**别再用它来还原扫码页的圆**。
  */
 export function reviewMarkFromOutcomes(current: unknown): ReviewMark {
     const o = normalizeReviewOutcomes(current);
     if (o.last === 'right') return 'right';
     if (o.last === 'wrong') return 'wrong';
     return 'none';
+}
+
+/**
+ * 【2026-10-02 他定的】这道题**在某一卷上**该画成哪一态。
+ *
+ * 取值顺序：**本次会话的本地覆盖** → **卷里那一行记的** `markState` → 灰（`none`）。
+ *
+ * ⚠️ 兜底判据必须是**卷的行**，不是题目的 `last`。他原话：
+ *   "如果扫的是另外一个**没有扫描过**的新卷，即使有这道题**还是应该给灰圈**。"
+ *   —— "标过没标过"是**这张纸上**发生过的事，不跟着题跑到别的卷里。
+ *
+ * 抽成纯函数是为了能被单测钉住（组件里那段是 `useCallback`，测不到）。
+ */
+export function markForItem(
+    itemId: string,
+    localMarks: Readonly<Record<string, ReviewMark>>,
+    rows: ReadonlyArray<{ errorItemId: string | null; markState?: string | null }>,
+): ReviewMark {
+    if (itemId in localMarks) return localMarks[itemId];
+    const row = rows.find((r) => r.errorItemId === itemId);
+    return row?.markState === 'right' || row?.markState === 'wrong' ? row.markState : 'none';
 }
 
 /** 三态的配色 —— 绿/粉与错题卡四圆点（`review-dots.tsx`）**刻意一致**，避免同一屏两套红绿 */

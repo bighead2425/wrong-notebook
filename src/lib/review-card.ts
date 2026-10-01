@@ -225,8 +225,20 @@ export interface MeasuredSheetLayout {
 export function paginateMeasured(
     blocks: readonly MeasuredBlock[],
     kind: VolumeKind = 'review',
+    /**
+     * 【2026-10-02 审计时补】给**页脚**预留的高度（mm）—— 从每栏可用高度里**扣掉**。
+     *
+     * 起因（真 bug）：积累纸按他的要求"给下面留一点页脚"，我在栏容器上加了 6mm 空隙；
+     * 但分页算法**不知道**这 6mm，于是每栏还是按原来的高度塞内容 ⇒
+     * **最后一屏会溢出**（比"没有页脚"更糟：看起来像排版又坏了）。
+     *
+     * 复练纸不传（= 0）⇒ 行为一字不变。
+     */
+    reservedMM = 0,
 ): MeasuredSheetLayout {
     const variant = VOLUME_VARIANTS[kind];
+    /** 本栏**真正**可用的高度（扣掉页脚预留） */
+    const usableMM = Math.max(10, VOLUME_COLUMN_MM - reservedMM);
     const pages: MeasuredPageLayout[] = [];
     const overflow: { key: string; heightMM: number }[] = [];
 
@@ -256,10 +268,10 @@ export function paginateMeasured(
         // 量出来的高度 + 一点余量（吸收"量完再渲染"的取整差，见 REVIEW_BLOCK_SLACK_MM）
         const h = b.heightMM + REVIEW_BLOCK_SLACK_MM;
         // 一栏都装不下 —— 记下来提示换纸，但仍给它单独一栏（**不静默丢题**）
-        if (h > VOLUME_COLUMN_MM + EPS) overflow.push({ key: b.key, heightMM: b.heightMM });
+        if (h > usableMM + EPS) overflow.push({ key: b.key, heightMM: b.heightMM });
 
         // 本栏排不下 ⇒ 整块推到下一栏（**不拆题**）
-        if (current.length > 0 && used + h > VOLUME_COLUMN_MM + EPS) closeColumn();
+        if (current.length > 0 && used + h > usableMM + EPS) closeColumn();
 
         current.push({ key: b.key, heightMM: b.heightMM, seq: i + 1 });
         used += h;

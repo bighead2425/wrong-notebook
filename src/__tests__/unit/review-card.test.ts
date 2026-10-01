@@ -318,3 +318,32 @@ describe('页用量与安全阀 pageUsageMM / pageFits', () => {
         expect(pageUsageMM(['big'], () => VOLUME_COLUMN_MM)).toBeGreaterThan(VOLUME_COLUMN_MM);
     });
 });
+
+/**
+ * 【2026-10-02 审计时补】`paginateMeasured` 的**页脚预留**参数。
+ *
+ * 为什么值得单测：积累纸要在每栏底部留 6mm 页脚（他的要求），而分页算法必须**知道**这件事，
+ * 否则它会按原来的高度继续塞 ⇒ 最后一屏溢出（看起来像排版坏了）。
+ * 这条测试钉住"传了预留就会少装"这个方向 —— 哪天有人把参数接丢了，这里立刻红。
+ */
+describe('卷 · 页脚预留（积累纸专用）', () => {
+    const one = (key: string, h: number) => ({ key, heightMM: h });
+
+    it('不传预留 = 0：行为与从前一字不差', () => {
+        const blocks = [one('a', 100), one('b', 100), one('c', 100)];
+        const noArg = paginateMeasured(blocks, 'build');
+        const zero = paginateMeasured(blocks, 'build', 0);
+        expect(zero.pages.length).toBe(noArg.pages.length);
+    });
+
+    it('★ 传了预留 ⇒ 每栏少装，页数只多不少（这正是"留了页脚"该有的代价）', () => {
+        // 每块 100mm、栏高约 240mm ⇒ 不预留时每栏 2 块
+        const blocks = [one('a', 100), one('b', 100), one('c', 100), one('d', 100)];
+        const without = paginateMeasured(blocks, 'build');
+        const withFooter = paginateMeasured(blocks, 'build', 60); // 预留 60mm
+        expect(withFooter.pages.length).toBeGreaterThanOrEqual(without.pages.length);
+        // 预留 60mm 后一栏只剩约 180mm ⇒ 100+100 放不下（含 slack），每栏 1 块
+        const firstCol = withFooter.pages[0].columns[0];
+        expect(firstCol.blocks.length).toBe(1);
+    });
+});

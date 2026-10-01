@@ -53,6 +53,13 @@ export interface InsightPrintRow {
  * ⚠️ `data-insight-block` 是量尺容器的钩子（与题块的 `data-review-block` 同一个用法）：
  *    让"量到的高度"就是"印出来的高度"。
  */
+/**
+ * 【2026-10-02】积累纸张底部留的**页脚空隙**（mm）。
+ * ⚠️ 一处定义、两处使用：纸面上用它当 `paddingBottom`，分页算法用它当"每栏少算这么多"
+ *    （见 `paginateMeasured` 的 `reservedMM`）—— 两边必须同源，否则最后一屏会溢出。
+ */
+export const INSIGHT_FOOTER_MM = 6;
+
 export function InsightBlock({
     row,
     blankLines,
@@ -299,8 +306,17 @@ export function InsightSheet({
                 L={L}
             />
 
-            {/* 底部留一点**页脚空隙**（他要求"原则上也应该给下面留一点页脚"） */}
-            <div style={{ display: 'flex', flex: 1, minHeight: 0, paddingBottom: '6mm' }}>
+            {/* 底部留一点**页脚空隙**（他要求"原则上也应该给下面留一点页脚"）。
+                ⚠️ 这个高度**必须**同时传给分页算法（`paginateMeasured(..., INSIGHT_FOOTER_MM)`），
+                   否则算法以为还能多塞 6mm 的东西 ⇒ 最后一屏溢出。两边共用本常量。 */}
+            <div
+                style={{
+                    display: 'flex',
+                    flex: 1,
+                    minHeight: 0,
+                    paddingBottom: `${INSIGHT_FOOTER_MM}mm`,
+                }}
+            >
                 {page.columns.map((col, ci) => (
                     <Fragment key={ci}>
                         {ci > 0 && (

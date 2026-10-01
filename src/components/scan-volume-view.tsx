@@ -36,10 +36,10 @@ import { layoutFromSnapshot, type SnapshotRow } from "@/lib/review-card";
 import type { VolumeKind } from "@/lib/volume-code";
 import type { ManageType, PromoteDirection } from "@/lib/manage-type";
 import {
+    markForItem,
     nextReviewMark,
     nextReviewOutcomes,
     promoteToggleFor,
-    reviewMarkFromOutcomes,
     type ReviewMark,
 } from "@/lib/scan-marking";
 import { normalizeReviewOutcomes, serializeReviewOutcomes, type ReviewOutcomes } from "@/lib/review-outcomes";
@@ -85,6 +85,8 @@ interface VolumeItemRow {
     seqInColumn: number;
     blankLines: number;
     figureScale: number;
+    /** 【2026-10-02】**这份卷上**这道题的标记（`right`/`wrong`/null）—— 见 `markOfItem` */
+    markState?: string | null;
 }
 
 interface VolumeDetail {
@@ -226,11 +228,18 @@ export function ScanVolumeView({
      */
     const [marks, setMarks] = useState<Record<string, ReviewMark>>({});
 
-    /** 这道题此刻的灰圆态：本地优先、回落库里 `last` */
+    /**
+     * 这道题此刻的灰圆态：**本地这一会儿的覆盖** → **这一卷的行上记的** → 灰。
+     *
+     * ⚠️【2026-10-02 他定的】兜底**不能**再回落到题目的 `last`（那是跨卷的复习历史）。
+     * 他原话："如果扫的是另外一个**没有扫描过**的新卷，即使有这道题**还是应该给灰圈**。"
+     * 所以判据是"**这张纸上**我标过没有"（`ReviewVolumeItem.markState`），
+     * 而不是"这道题历史上复习过什么"。
+     * （同一份卷重扫时两者一致 —— 因为标的时候两边是同时写的。）
+     */
     const markOfItem = useCallback(
-        (item: ErrorItem): ReviewMark =>
-            item.id in marks ? marks[item.id] : reviewMarkFromOutcomes(item.reviewOutcomes),
-        [marks],
+        (item: ErrorItem): ReviewMark => markForItem(item.id, marks, volume?.items || []),
+        [marks, volume],
     );
 
     /**
@@ -261,6 +270,52 @@ export function ScanVolumeView({
         [L, patchItem],
     );
 
+    /**
+     * 【2026-10-02】把"**这一卷某行**的标记"写库（决定圆画成哪一态）。
+     *
+     * 与 `saveReviewOutcomes` 是**两件事、都要写**：
+     *   · 这里 ⇒ "**这张纸上**我标了什么"（按卷，`ReviewVolumeItem.markState`）；
+     *   · 那里 ⇒ "**这道题**复习过几次、结果如何"（跨卷的复习历史，`ErrorItem.reviewOutcomes`）。
+     * 他既要"同步到复习结果"、又要"换新卷时给灰圈"，所以两个存储各司其职、同时写。
+     *
+     * 失败只提示、不把界面弹回去：圆态有本地的 `marks` 顶着，下次点击还会重写一次 ——
+     * 这是"标记"不是"录入"，容错空间比弹回去让人重来更划算。
+     */
+    const saveItemMark = useCallback(
+        async (item: ErrorItem, next: ReviewMark) => {
+            if (!volume) return;
+            const row = (volume.items || []).find((r) => r.errorItemId === item.id);
+            if (!row) return;
+            try {
+                await apiClient.patch(`/api/review-volumes/${volume.id}`, {
+                    markItemId: row.id,
+                    markState: next === 'none' ? null : next,
+                });
+                setVolume((prev) =>
+                    prev
+                        ? {
+                              ...prev,
+                              items: prev.items.map((r) =>
+                                  r.id === row.id
+                                      ? { ...r, markState: next === 'none' ? null : next }
+                                      : r,
+                              ),
+                          }
+                        : prev,
+                );
+            } catch (err) {
+                console.error(err);
+                setSaveError(
+                    L(
+                        '这一笔标记没存上（题目的复习结果照常记了），再点一次就行',
+                        'The on-paper mark did not save; tap it again',
+                    ),
+                );
+            }
+        },
+        [volume, L],
+    );
+
     /** 点右侧灰圆：灰数字 → 绿对号 → 粉错号 → 灰数字 */
     const onReviewMarkTap = useCallback(
         (item: ErrorItem) => {
@@ -268,6 +323,8 @@ export function ScanVolumeView({
             const next = nextReviewMark(markOfItem(item));
             const prevRaw = item.reviewOutcomes ?? null;
             setMarks((prev) => ({ ...prev, [item.id]: next }));
+            // 卷上的那一笔标记（按卷记）——无论哪种态都要落一次
+            void saveItemMark(item, next);
 
             if (next === "none") {
                 // 清空 = 撤销这一轮标记：把写入前的快照摆回库里；这轮没写过就不动库
@@ -296,7 +353,7 @@ export function ScanVolumeView({
             busyRef.current.add(item.id);
             void saveReviewOutcomes(item, outcomes, prevRaw).finally(() => busyRef.current.delete(item.id));
         },
-        [markOfItem, saveReviewOutcomes],
+        [markOfItem, saveReviewOutcomes, saveItemMark],
     );
 
     /** 点升降框：第一次改类型、第二次改回来（都乐观 + 失败回滚） */

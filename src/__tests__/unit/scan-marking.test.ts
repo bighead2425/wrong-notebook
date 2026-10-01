@@ -9,6 +9,7 @@ import {
     PROMOTE_APPLIED_LABEL_ZH,
     promoteToggleFor,
     REVIEW_MARK_COLORS,
+    markForItem,
     reviewMarkFromOutcomes,
 } from '@/lib/scan-marking';
 
@@ -153,5 +154,39 @@ describe('扫卷录入 · 升降级框改类型', () => {
         expect(PROMOTE_APPLIED_BG.upgrade).toBe('#fbd7e0');
         expect(PROMOTE_APPLIED_LABEL_EN.demote).toBeTruthy();
         expect(PROMOTE_APPLIED_LABEL_EN.upgrade).toBeTruthy();
+    });
+});
+
+/**
+ * 【2026-10-02 他定的】圆态**按卷**判断 —— 这一组是那条要求的看门测试。
+ *
+ * 场景（他原话）："如果扫的是另外一个**没有扫描过**的新卷，
+ * 即使有这道题**还是应该给灰圈**。"
+ * ⇒ 同一道题在 A 卷标了"对"，换到没扫过的 B 卷打开，B 卷里那道题必须是灰的。
+ */
+describe('扫卷录入 · 圆态按卷记（换新卷要给灰圈）', () => {
+    it('★ 同一道题：A 卷标过 ⇒ 在 A 卷显示绿；在没标过的 B 卷显示灰', () => {
+        const rowA = { errorItemId: 'e1', markState: 'right' };
+        expect(markForItem('e1', {}, [rowA])).toBe('right');
+        // B 卷里也有这道题，但那一行没标过（markState = null）⇒ 灰
+        const rowB = { errorItemId: 'e1', markState: null };
+        expect(markForItem('e1', {}, [rowB])).toBe('none');
+    });
+
+    it('卷行上是 wrong 就画粉；值不认识（含脏数据）一律当灰', () => {
+        expect(markForItem('e1', {}, [{ errorItemId: 'e1', markState: 'wrong' }])).toBe('wrong');
+        expect(markForItem('e1', {}, [{ errorItemId: 'e1', markState: 'WHAT' }])).toBe('none');
+        expect(markForItem('e1', {}, [{ errorItemId: 'e1' }])).toBe('none');
+    });
+
+    it('本次会话的本地覆盖最优先（刚点完还没刷新时立刻反映）', () => {
+        const rows = [{ errorItemId: 'e1', markState: null }];
+        expect(markForItem('e1', { e1: 'wrong' }, rows)).toBe('wrong');
+        // 本地是 none（刚点回灰数字）⇒ 即便库里还写着 right 也要显示灰
+        expect(markForItem('e1', { e1: 'none' }, [{ errorItemId: 'e1', markState: 'right' }])).toBe('none');
+    });
+
+    it('卷里根本没有这道题（题被删/换了卷）⇒ 灰，不是绿也不是粉', () => {
+        expect(markForItem('e9', {}, [{ errorItemId: 'e1', markState: 'right' }])).toBe('none');
     });
 });

@@ -58,7 +58,12 @@ import {
 } from '@/lib/review-card';
 import { makeQrDataUrl } from '@/lib/qr';
 import { pageQrPayload } from '@/components/print/review-card';
-import { InsightBlock, InsightSheet, type InsightPrintRow } from '@/components/print/insight-sheet';
+import {
+    INSIGHT_FOOTER_MM,
+    InsightBlock,
+    InsightSheet,
+    type InsightPrintRow,
+} from '@/components/print/insight-sheet';
 import { SheetZoom } from '@/components/print/sheet-zoom';
 
 /** 卷列表里的一项 */
@@ -411,9 +416,12 @@ function NewVolume({ ids }: { ids: string[] }) {
 
     const layout = useMemo<MeasuredSheetLayout | null>(() => {
         if (rows.length === 0 || Object.keys(measured).length === 0) return null;
+        // ⚠️ 第三个参数 = 纸面下边留的页脚空隙（与 InsightSheet 的 paddingBottom 同源）——
+        //    不传的话算法会以为还能多塞 6mm ⇒ 最后一屏溢出。
         return paginateMeasured(
             rows.map((r) => ({ key: r.id, heightMM: measured[r.id] ?? 0 })),
             'build',
+            INSIGHT_FOOTER_MM,
         );
     }, [rows, measured]);
 
@@ -680,7 +688,7 @@ function VolumePaper({ id }: { id: string }) {
         }
         if (printRows.length === 0 || Object.keys(measured).length === 0) return null;
         const blocks = printRows.map((r) => ({ key: r.id, heightMM: measured[r.id] ?? 0 }));
-        return paginateMeasured(blocks, 'build');
+        return paginateMeasured(blocks, 'build', INSIGHT_FOOTER_MM);
     }, [detail, dirty, printRows, measured]);
 
     /* ── 三件套的操作 ── */
