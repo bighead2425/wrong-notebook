@@ -14,7 +14,8 @@ import { loadEmojiIndex } from '@/lib/emoji-search';
  *   ① 敲完 `：：眼镜；；` 真的会回调出面板状态（且搜索词对）；
  *   ② **选中后整段 `：：…；；` 被替换成 emoji**，且走的是编辑器事务
  *      （证明文档真变了、能导出；红线：绝不手改 DOM）；
- *   ③ 搜不到 / 主动关闭 ⇒ **文档一个字都不动**（用户最在意的那条）；
+ *   ③ 搜不到 ⇒ **面板照弹**（候选空、显示"没找到"，他 2026-10-02 定的）/ 主动关闭
+ *      ⇒ **文档一个字都不动**（用户最在意的那条，两条互不冲突）；
  *   ④ 粘贴进来的 `：：…；；` **不触发**（否则会吞掉用户粘贴的内容）。
  *
  * ⚠️ 输入法合成态（IME）在 jsdom 里没有，只能真机验（见评估报告第 6 节）。
@@ -69,13 +70,18 @@ describe('MdEditor · 中文 emoji（`：：眼镜；；` ⇒ 候选浮层）', 
         expect(latest()!.items.some((i) => i.c === '👓')).toBe(true);
     });
 
-    it('★ 搜不到 ⇒ 不弹面板，且文档一个字都不动', async () => {
+    it('★ 搜不到 ⇒ **照样弹面板**（候选是空的，面板显示"没找到"），文档仍然一个字都不动', async () => {
         await loadEmojiIndex();
         const { instance, type, latest } = await build('');
         type('：：这个词肯定搜不到xyz；；');
-        await new Promise((r) => setTimeout(r, 30));
-        expect(latest()).toBeNull();
-        // 宁可"没反应"，绝不吞掉用户打的字
+        /**
+         * 【2026-10-02 他定的】搜不到要**有反应** —— 面板照弹、里面写"没找到"，
+         * 他原话："我就知道该按 Esc 或 backspace 了"。
+         * ⚠️ 但**文档一个字都不能动**这条红线没变：宁可没结果，绝不吞掉他打的字。
+         * （我改实现时漏改了这条断言，是 CI 的单测先红才发现的 —— 记一笔。）
+         */
+        await vi.waitFor(() => expect(latest()).not.toBeNull());
+        expect(latest()!.items).toHaveLength(0);
         expect(instance.getMarkdown()).toContain('：：这个词肯定搜不到xyz；；');
     });
 
