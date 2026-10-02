@@ -188,6 +188,39 @@ export function normalizeFigureScale(value: number | null | undefined): number {
     return Math.min(FIGURE_SCALE_MAX, Math.max(FIGURE_SCALE_MIN, Math.round(base)));
 }
 
+/**
+ * 拖把手/整张图 ⇒ 算出新的题图百分比（**横竖都能拖**）。
+ *
+ * 他 2026-10-03 的原话（照抄）：
+ *   *"拖动把手的时候，真正发挥作用的是鼠标指针（或手指）在横向上：向左则图片缩小，
+ *    向右则图片放大……但对于手机屏幕而言，左右比较窄，拖拉小把手很难实现自己想要的
+ *    缩放，所以在计算横向位置的同时，还应该计算纵向位置：向上则图片缩小，向下则图片放大。
+ *    那么拖拽小把手时，以当前指针位置为原点：向第二象限移动则缩小，向第四象限移动则放大；
+ *    如果移动到了第一或第三象限，则按照是在纵向上移动大还是在横向上移动大为准判断。"*
+ *
+ * 落到算式上（屏幕坐标：右正、**下正**；视觉第二象限 = 左上、第四象限 = 右下）：
+ *
+ *   d = |dx| >= |dy| ? dx : dy   ——「哪个方向移动得多，就听哪个」
+ *     左上 ⇒ dx<0 且 dy<0 ⇒ d<0 ⇒ 缩小；
+ *     右下 ⇒ dx>0 且 dy>0 ⇒ d>0 ⇒ 放大；
+ *     右上/左下（一、三象限）⇒ 交给绝对值大（移得多）的那个轴。
+ *
+ *   新百分比 = clamp(round((startPx + d) / startPx * 100), MIN, MAX)
+ *
+ * ⚠️ **纵横共用同一个 `startPx`**（起手时那块图的宽度）当基准 —— 这不是随手写的：
+ *    他要求"纵向拖动也用它当基准，保持手感一致"，否则上下拖会忽然变灵敏。
+ *
+ * @param startPx 起手时那块图的**屏幕宽度**（px）
+ * @param dx      相对起点的**横向**位移（右为正）
+ * @param dy      相对起点的**纵向**位移（屏幕坐标，下为正）
+ */
+export function figureScaleFromDrag(startPx: number, dx: number, dy: number): number {
+    // 起手宽度拿不到/为 0 时（理论上不会：按下时兜底成 1）退回默认，绝不做除以 0
+    if (!Number.isFinite(startPx) || startPx <= 0) return FIGURE_SCALE_DEFAULT;
+    const d = Math.abs(dx) >= Math.abs(dy) ? dx : dy;
+    return normalizeFigureScale(((startPx + d) / startPx) * 100);
+}
+
 /* ============================ 分栏分页 ============================ */
 
 /** 量好高度的一道题（`heightMM` 来自隐藏量尺容器的真实测量） */

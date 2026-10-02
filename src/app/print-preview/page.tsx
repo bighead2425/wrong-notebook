@@ -33,6 +33,7 @@ import {
     VOLUME_VARIANTS,
     applyGlobalBlankLines,
     effectiveBlankLines,
+    figureScaleFromDrag,
     normalizeBlankLines,
     normalizeFigureScale,
     paginateMeasured,
@@ -135,7 +136,7 @@ function PrintPreviewContent() {
         [figureScales],
     );
     /** 拖拽题图：记住"起点鼠标 x / 起点宽度px"，移动时按比例换算成新的百分比 */
-    const figureDragRef = useRef<{ id: string; startX: number; startPx: number } | null>(null);
+    const figureDragRef = useRef<{ id: string; startX: number; startY: number; startPx: number } | null>(null);
 
     /**
      * 【2026-09-29】深挖纸**正面原题照片**的缩放 —— 与反面题图**各算各的**
@@ -147,7 +148,7 @@ function PrintPreviewContent() {
         (id: string) => normalizeFigureScale(photoScales?.[id]),
         [photoScales],
     );
-    const photoDragRef = useRef<{ id: string; startX: number; startPx: number } | null>(null);
+    const photoDragRef = useRef<{ id: string; startX: number; startY: number; startPx: number } | null>(null);
 
     // 手动双面：家里打印机不支持自动双面，靠爹手动翻
     const [manualDuplex, setManualDuplex] = useState(false);
@@ -611,7 +612,7 @@ function PrintPreviewContent() {
         const onMove = (e: PointerEvent) => {
             const drag = figureDragRef.current;
             if (!drag) return;
-            const next = normalizeFigureScale((drag.startPx + (e.clientX - drag.startX)) / drag.startPx * 100);
+            const next = figureScaleFromDrag(drag.startPx, e.clientX - drag.startX, e.clientY - drag.startY);
             setFigureScales((prev) => ({ ...prev, [drag.id]: next }));
         };
         const onUp = () => {
@@ -637,7 +638,7 @@ function PrintPreviewContent() {
         const onMove = (e: PointerEvent) => {
             const drag = photoDragRef.current;
             if (!drag) return;
-            const next = normalizeFigureScale((drag.startPx + (e.clientX - drag.startX)) / drag.startPx * 100);
+            const next = figureScaleFromDrag(drag.startPx, e.clientX - drag.startX, e.clientY - drag.startY);
             setPhotoScales((prev) => ({ ...prev, [drag.id]: next }));
         };
         const onUp = () => {
@@ -698,6 +699,7 @@ function PrintPreviewContent() {
             figureDragRef.current = {
                 id,
                 startX: e.clientX,
+                startY: e.clientY,
                 startPx: box ? box.getBoundingClientRect().width : 1,
             };
             document.body.style.cursor = "nwse-resize";
@@ -714,6 +716,7 @@ function PrintPreviewContent() {
             photoDragRef.current = {
                 id,
                 startX: e.clientX,
+                startY: e.clientY,
                 startPx: box ? box.getBoundingClientRect().width : 1,
             };
             document.body.style.cursor = "nwse-resize";

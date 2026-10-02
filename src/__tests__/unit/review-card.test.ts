@@ -19,6 +19,7 @@ import {
     applyGlobalBlankLines,
     blankLinesFromDrag,
     countSheets,
+    figureScaleFromDrag,
     effectiveBlankLines,
     layoutFromSnapshot,
     normalizeBlankLines,
@@ -133,6 +134,68 @@ describe('卷 · 题图缩放（他在预览区拖右下角调的）', () => {
         expect(REVIEW_FIGURE_BOX_RATIO * FIGURE_SCALE_MAX).toBeLessThanOrEqual(100);
         // 再往上放就真的把写字的地方吃掉了（所以必须拦住）
         expect(REVIEW_FIGURE_BOX_RATIO * 200).toBeGreaterThan(100);
+    });
+});
+
+/**
+ * 【2026-10-03 他要求】**横竖都能拖**的题图缩放。
+ *
+ * 他的原话：手机上左右太窄，拖把手很难调到自己想要的缩放，
+ * 所以纵向也要算：向上缩小、向下放大；斜着拖时「哪个方向移得多就听哪个」。
+ *
+ * ⚠️ 测试**只 import 真函数**，不照抄实现 —— 抄一遍的话方向做反了测试照样绿
+ *    （上一版 `blankLinesFromDrag` 就栽在这上面，见本文件留白那条注释）。
+ */
+describe('卷 · 拖把手缩放（横竖都能拖）', () => {
+    // startPx = 100 时：新百分比 = round((100 + d) / 100 × 100) = 100 + d，数值干净
+    const S = 100;
+
+    it('纯横向：向右放大、向左缩小（他认可的老手感，必须不变）', () => {
+        expect(figureScaleFromDrag(S, 50, 0)).toBe(150);
+        expect(figureScaleFromDrag(S, -50, 0)).toBe(50);
+    });
+
+    it('纯纵向：向下放大、向上缩小（这次新加的）', () => {
+        expect(figureScaleFromDrag(S, 0, 50)).toBe(150); // 下 = 放大
+        expect(figureScaleFromDrag(S, 0, -50)).toBe(50); // 上 = 缩小
+    });
+
+    it('第二象限（左上 45°）⇒ 缩小；第四象限（右下 45°）⇒ 放大', () => {
+        expect(figureScaleFromDrag(S, -50, -50)).toBe(50); // 左上 ⇒ 缩
+        expect(figureScaleFromDrag(S, 50, 50)).toBe(150); // 右下 ⇒ 放
+    });
+
+    it('右上（第一象限）：横向移得多 ⇒ 听横向（放大）；纵向移得多 ⇒ 听纵向（缩小）', () => {
+        // 右上 dx>0、dy<0 本是"矛盾的"，按位移绝对值大的那个轴定夺
+        expect(figureScaleFromDrag(S, 60, -40)).toBe(160); // 横向大 ⇒ 放大
+        expect(figureScaleFromDrag(S, 40, -60)).toBe(40); // 纵向大 ⇒ 缩小
+    });
+
+    it('左下（第三象限）同理：谁移得多听谁', () => {
+        expect(figureScaleFromDrag(S, -60, 40)).toBe(40); // 横向大 ⇒ 缩小
+        expect(figureScaleFromDrag(S, -40, 60)).toBe(160); // 纵向大 ⇒ 放大
+    });
+
+    it('到边界被 clamp：再拖也不越过 30 / 180', () => {
+        expect(figureScaleFromDrag(S, 500, 0)).toBe(FIGURE_SCALE_MAX);
+        expect(figureScaleFromDrag(S, -500, 0)).toBe(FIGURE_SCALE_MIN);
+        expect(figureScaleFromDrag(S, 0, 500)).toBe(FIGURE_SCALE_MAX);
+        expect(figureScaleFromDrag(S, 0, -500)).toBe(FIGURE_SCALE_MIN);
+    });
+
+    it('位移为 0 ⇒ 不动（原样 100%）', () => {
+        expect(figureScaleFromDrag(S, 0, 0)).toBe(100);
+    });
+
+    it('纵向也用同一个 startPx 当基准（保证纵横向手感一致）', () => {
+        // 起手图宽 200，向下拖 100 ⇒ (200+100)/200 = 150%
+        expect(figureScaleFromDrag(200, 0, 100)).toBe(150);
+        expect(figureScaleFromDrag(50, 0, 25)).toBe(150);
+    });
+
+    it('起手宽度拿不到（0/NaN）⇒ 退回默认 100%，绝不除以 0', () => {
+        expect(figureScaleFromDrag(0, 50, 0)).toBe(100);
+        expect(figureScaleFromDrag(Number.NaN, 50, 0)).toBe(100);
     });
 });
 

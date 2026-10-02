@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X, Sparkles, Loader2, Printer } from "lucide-react";
+import { ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X, Sparkles, Loader2, Printer, ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { MdEditor } from "@/components/md-editor";
@@ -116,6 +116,40 @@ export default function ErrorDetailPage() {
         if (b && b.startsWith("/") && !b.startsWith("//")) setBackTo(b);
     }, []);
     const [item, setItem] = useState<ErrorItemDetail | null>(null);
+
+    /**
+     * 【2026-10-03 他要求】在详情页直接跳**上一题 / 下一题**，不用退回列表再点一次。
+     * 顺序取"这道题所在错题本的**默认列表顺序**"（走列表接口的 `mode=ids`，口径与列表页一致）。
+     * ⚠️ 没关联错题本、或列表拿不到 ⇒ 整组按钮不显示（导航是锦上添花，不能挡路）。
+     * ⚠️ 这段**必须放在 `item` 声明之后** —— 渲染期要用 `item?.notebookId`，提前会踩 TDZ。
+     */
+    const [siblingItemIds, setSiblingItemIds] = useState<string[]>([]);
+    const notebookIdForNav = item?.notebookId ?? null;
+    useEffect(() => {
+        if (!notebookIdForNav) {
+            setSiblingItemIds([]);
+            return;
+        }
+        let alive = true;
+        (async () => {
+            try {
+                const res = await apiClient.get<{ ids: string[] }>(
+                    `/api/error-items/list?notebookId=${notebookIdForNav}&mode=ids`,
+                );
+                if (alive) setSiblingItemIds(res.ids || []);
+            } catch {
+                if (alive) setSiblingItemIds([]);
+            }
+        })();
+        return () => {
+            alive = false;
+        };
+    }, [notebookIdForNav]);
+
+    const myIdx = siblingItemIds.indexOf(String(params.id));
+    const prevItemId = myIdx > 0 ? siblingItemIds[myIdx - 1] : null;
+    const nextItemId =
+        myIdx >= 0 && myIdx < siblingItemIds.length - 1 ? siblingItemIds[myIdx + 1] : null;
     const [loading, setLoading] = useState(true);
     const [notesInput, setNotesInput] = useState("");
     const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
@@ -616,6 +650,29 @@ export default function ErrorDetailPage() {
                             </Button>
                         </Link>
                         <h1 className="text-2xl font-bold">{t.detail.title}</h1>
+                        {/* 【2026-10-03 他要求】"错题详情"后面两颗三角：跳上一题 / 下一题 */}
+                        {siblingItemIds.length > 1 && (
+                            <div className="flex items-center gap-1">
+                                <Button
+                                    variant="outline"
+                                    size="icon-sm"
+                                    disabled={!prevItemId}
+                                    title={L('上一题', 'Previous question')}
+                                    onClick={() => prevItemId && router.push(`/error-items/${prevItemId}`)}
+                                >
+                                    <ChevronLeft className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="icon-sm"
+                                    disabled={!nextItemId}
+                                    title={L('下一题', 'Next question')}
+                                    onClick={() => nextItemId && router.push(`/error-items/${nextItemId}`)}
+                                >
+                                    <ChevronRight className="h-3.5 w-3.5" />
+                                </Button>
+                            </div>
+                        )}
                     </div>
 
                     <div className="flex flex-wrap gap-2 justify-end">

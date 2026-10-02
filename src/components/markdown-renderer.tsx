@@ -34,6 +34,18 @@ export function MarkdownRenderer({ content, className = '' }: MarkdownRendererPr
                     h1: ({ node, ...props }) => <h1 className="text-2xl font-bold mt-6 mb-4" {...props} />,
                     h2: ({ node, ...props }) => <h2 className="text-xl font-bold mt-5 mb-3" {...props} />,
                     h3: ({ node, ...props }) => <h3 className="text-lg font-bold mt-4 mb-2" {...props} />,
+                    /**
+                     * 【2026-10-03 他要求】补四、五、六级的渲染。
+                     * 原话："之前我们对 md 文件编辑的一、二、三级标题的渲染已经进行了规范，
+                     * 我那时说只要三级标签就够了，现在我后悔了，请继续开发出四、五、六级的标题渲染。"
+                     * 档差顺着 h1(text-2xl) → h2(text-xl) → h3(text-lg) 继续往下走；
+                     * h5/h6 再小就与正文无异，用**字号 + 颜色**一起拉开层次。
+                     */
+                    h4: ({ node, ...props }) => <h4 className="text-base font-bold mt-3 mb-2" {...props} />,
+                    h5: ({ node, ...props }) => <h5 className="text-sm font-bold mt-3 mb-1" {...props} />,
+                    h6: ({ node, ...props }) => (
+                        <h6 className="text-xs font-bold mt-3 mb-1 text-muted-foreground" {...props} />
+                    ),
                     p: ({ node, ...props }) => <p className="mb-3 leading-relaxed" {...props} />,
                     // list-outside：序号在内容块外侧，即使列表项被 <p> 包裹（loose list）
                     // 也不会出现「序号独占一行、正文另起一行」的错位

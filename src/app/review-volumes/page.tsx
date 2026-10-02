@@ -48,6 +48,7 @@ import { SheetZoom } from "@/components/print/sheet-zoom";
 import {
     VOLUME_VARIANTS,
     blankLinesFromDrag,
+    figureScaleFromDrag,
     layoutFromSnapshot,
     normalizeBlankLines,
     normalizeFigureScale,
@@ -140,7 +141,7 @@ export default function ReviewVolumesPage() {
     const [figureScales, setFigureScales] = useState<Record<string, number | null | undefined>>({});
     const [measuredByKey, setMeasuredByKey] = useState<Record<string, number>>({});
     const measureRef = useRef<HTMLDivElement | null>(null);
-    const figureDragRef = useRef<{ id: string; startX: number; startPx: number } | null>(null);
+    const figureDragRef = useRef<{ id: string; startX: number; startY: number; startPx: number } | null>(null);
     const dividerDragRef = useRef<{ id: string; startY: number; startLines: number } | null>(null);
     const [pageQr, setPageQr] = useState<Record<number, string>>({});
     const [printDate] = useState(() => new Date());
@@ -375,7 +376,7 @@ export default function ReviewVolumesPage() {
         const onMove = (e: PointerEvent) => {
             const fig = figureDragRef.current;
             if (fig) {
-                const next = normalizeFigureScale(((fig.startPx + (e.clientX - fig.startX)) / fig.startPx) * 100);
+                const next = figureScaleFromDrag(fig.startPx, e.clientX - fig.startX, e.clientY - fig.startY);
                 setFigureScales((prev) => ({ ...prev, [fig.id]: next }));
                 return;
             }
@@ -408,7 +409,12 @@ export default function ReviewVolumesPage() {
     const handleFigureDown = useCallback(
         (id: string) => (e: React.PointerEvent) => {
             const box = (e.currentTarget as HTMLElement).parentElement;
-            figureDragRef.current = { id, startX: e.clientX, startPx: box ? box.getBoundingClientRect().width : 1 };
+            figureDragRef.current = {
+                id,
+                startX: e.clientX,
+                startY: e.clientY,
+                startPx: box ? box.getBoundingClientRect().width : 1,
+            };
             document.body.style.cursor = "nwse-resize";
             document.body.style.userSelect = "none";
             e.preventDefault();

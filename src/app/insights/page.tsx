@@ -51,6 +51,7 @@ import { dayKey } from '@/lib/calendar-grid';
 import { ErrorItemCard } from '@/components/error-item-card';
 import { DocScanner, type DocScannerHandle } from '@/components/doc-scanner';
 import { ImageCropper } from '@/components/image-cropper';
+import { ImageZoomViewer } from '@/components/image-zoom-viewer';
 import { cycleAttentionLevel } from '@/lib/attention-level';
 import { cycleManageType } from '@/lib/manage-type';
 import type { ErrorItem } from '@/types/api';
@@ -195,6 +196,14 @@ export default function InsightsPage() {
     /** DocScanner 交出的成品（object URL），交给 ImageCropper 继续加工 */
     const [croppingImage, setCroppingImage] = useState<string | null>(null);
     const [isCropperOpen, setIsCropperOpen] = useState(false);
+
+    /**
+     * 【2026-10-03 他要求】右栏那张配图**点开可放大阅览**（滚轮/双指缩放、拖动平移）。
+     * 只是开一个覆盖全屏的浮层，**不动任何草稿状态** —— 他可能正改着这条，
+     * 关掉浮层后编辑框里的内容、光标、未保存改动都还在原地。
+     * 阅览组件复用"图片录入"那条链路上的看图手感，详见 `ImageZoomViewer` 的文件头。
+     */
+    const [isViewerOpen, setIsViewerOpen] = useState(false);
 
     const dirty =
         !!current &&
@@ -764,12 +773,23 @@ export default function InsightsPage() {
                                 <div className="flex flex-wrap items-center gap-3">
                                     {photo && (
                                         <span className="flex items-center gap-2">
-                                            {/* eslint-disable-next-line @next/next/no-img-element -- 存的是 dataURL，next/image 用不上 */}
-                                            <img
-                                                src={photo}
-                                                alt=""
-                                                className="h-20 w-20 rounded border object-cover"
-                                            />
+                                            {/* 【2026-10-03 他要求】点这张缩略图 ⇒ 打开放大阅览
+                                                （滚轮/双指缩放、拖动平移；见 ImageZoomViewer）。
+                                                缩略图本身 `cursor-zoom-in` 明示"能点开"。 */}
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsViewerOpen(true)}
+                                                className="shrink-0 cursor-zoom-in"
+                                                title={L('点开放大阅览', 'Click to enlarge')}
+                                                aria-label={L('放大阅览这张图', 'Enlarge this photo')}
+                                            >
+                                                {/* eslint-disable-next-line @next/next/no-img-element -- 存的是 dataURL，next/image 用不上 */}
+                                                <img
+                                                    src={photo}
+                                                    alt=""
+                                                    className="h-20 w-20 rounded border object-cover"
+                                                />
+                                            </button>
                                             <button
                                                 type="button"
                                                 className="text-xs text-muted-foreground hover:text-destructive"
@@ -923,6 +943,16 @@ export default function InsightsPage() {
                     onCropComplete={handleCropComplete}
                 />
             )}
+
+            {/*
+             * 【2026-10-03 他要求】右栏配图的**放大阅览**层（`fixed inset-0` + portal 到 body，
+             * 盖住整屏；`no-print` 保证纸面不出现）。只动"开/关"，草稿状态一概不受影响。
+             */}
+            <ImageZoomViewer
+                open={isViewerOpen}
+                src={photo}
+                onClose={() => setIsViewerOpen(false)}
+            />
         </main>
     );
 }

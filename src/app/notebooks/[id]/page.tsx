@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
-import { Plus, House, Pencil, Printer, Sparkles, ArchiveRestore } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, House, Pencil, Printer, Sparkles, ArchiveRestore } from "lucide-react";
 import Link from "next/link";
 import { ErrorList } from "@/components/error-list";
 import { RenameNotebookDialog } from "@/components/rename-notebook-dialog";
@@ -20,8 +20,37 @@ import { useLanguage } from "@/contexts/LanguageContext";
 export default function NotebookDetailPage() {
     const params = useParams();
     const router = useRouter();
-    const { t } = useLanguage();
+    const { t, language } = useLanguage();
+    const L = (a: string, b: string) => (language === "zh" ? a : b);
     const [notebook, setNotebook] = useState<Notebook | null>(null);
+
+    /**
+     * 【2026-10-03 他要求】"上一个 / 下一个错题本"要按**我的错题本页**里的顺序来，
+     * 所以这里拉同一份列表，按它在数组里的位置取前后。
+     * 拿不到（接口失败/没权限）就整组按钮不显示 —— 导航是锦上添花，不能挡路。
+     */
+    const [siblingIds, setSiblingIds] = useState<string[]>([]);
+    useEffect(() => {
+        let alive = true;
+        (async () => {
+            try {
+                const res = await apiClient.get<{ notebooks?: Notebook[] } | Notebook[]>("/api/notebooks");
+                const list = Array.isArray(res) ? res : res.notebooks || [];
+                if (alive) setSiblingIds(list.map((n) => n.id));
+            } catch {
+                if (alive) setSiblingIds([]);
+            }
+        })();
+        return () => {
+            alive = false;
+        };
+    }, []);
+
+    /** 我在列表里的位置 ⇒ 前后各是谁（找不到位置或到头了就是 null ⇒ 按钮置灰） */
+    const myIndex = siblingIds.indexOf(String(params.id));
+    const prevNotebookId = myIndex > 0 ? siblingIds[myIndex - 1] : null;
+    const nextNotebookId =
+        myIndex >= 0 && myIndex < siblingIds.length - 1 ? siblingIds[myIndex + 1] : null;
     const [loading, setLoading] = useState(true);
     const [renameDialogOpen, setRenameDialogOpen] = useState(false);
     const [analyzeOpen, setAnalyzeOpen] = useState(false);
@@ -155,13 +184,41 @@ export default function NotebookDetailPage() {
                     文案也缩短成「共 XX 道，选中 YY 道」。
                     XX = 整个错题本的总量（不带筛选，服务端算）；YY = 当前筛选后还剩几道。
                     数据还没回来时退回原来的样子，不闪空。 */}
-                <p className="text-muted-foreground text-sm">
-                    {counts && counts.notebookTotal !== null
-                        ? (t.notebooks?.totalErrorsSelected || "Total {total} · {selected} shown")
-                            .replace("{total}", counts.notebookTotal.toString())
-                            .replace("{selected}", counts.total.toString())
-                        : (t.notebooks?.totalErrors || "Total {count} errors").replace("{count}", (notebook._count?.errorItems || 0).toString())}
-                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-muted-foreground text-sm">
+                        {counts && counts.notebookTotal !== null
+                            ? (t.notebooks?.totalErrorsSelected || "Total {total} · {selected} shown")
+                                .replace("{total}", counts.notebookTotal.toString())
+                                .replace("{selected}", counts.total.toString())
+                            : (t.notebooks?.totalErrors || "Total {count} errors").replace("{count}", (notebook._count?.errorItems || 0).toString())}
+                    </p>
+                    {/* 【2026-10-03 他要求】在这一本里直接跳到**上一本 / 下一本**。
+                        原话："点击后进入我的错题本页中这个错题本所在位置的上一个/下一个错题本"。
+                        ⇒ 顺序必须与"我的错题本页"看到的一致 ⇒ 拉**同一份列表**、按数组位置取前后。
+                        拿不到列表（接口失败）就整组不显示，不挡路。 */}
+                    {siblingIds.length > 1 && (
+                        <div className="flex items-center gap-1">
+                            <Button
+                                variant="outline"
+                                size="icon-sm"
+                                disabled={!prevNotebookId}
+                                title={L('上一个错题本', 'Previous notebook')}
+                                onClick={() => prevNotebookId && router.push(`/notebooks/${prevNotebookId}`)}
+                            >
+                                <ChevronLeft className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="icon-sm"
+                                disabled={!nextNotebookId}
+                                title={L('下一个错题本', 'Next notebook')}
+                                onClick={() => nextNotebookId && router.push(`/notebooks/${nextNotebookId}`)}
+                            >
+                                <ChevronRight className="h-3.5 w-3.5" />
+                            </Button>
+                        </div>
+                    )}
+                </div>
 
                 {notebook.archiveStatus === "archived" && (
                     <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">

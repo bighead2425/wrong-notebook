@@ -53,6 +53,7 @@ import {
     paginateMeasured,
     layoutFromSnapshot,
     VOLUME_VARIANTS,
+    figureScaleFromDrag,
     type MeasuredSheetLayout,
     type SnapshotRow,
 } from '@/lib/review-card';
@@ -722,7 +723,7 @@ function VolumePaper({ id }: { id: string }) {
      * 拖动过程与收尾都在**全局 pointermove/pointerup** 里（监听一次，见下面的 effect）——
      * 与复练卷页完全同一套做法，免得两个页面手感不一样。
      */
-    const figureDragRef = useRef<{ id: string; startX: number; startPx: number } | null>(null);
+    const figureDragRef = useRef<{ id: string; startX: number; startY: number; startPx: number } | null>(null);
 
     const handleFigureDown = useCallback(
         (itemId: string) => (e: ReactPointerEvent) => {
@@ -730,6 +731,7 @@ function VolumePaper({ id }: { id: string }) {
             figureDragRef.current = {
                 id: itemId,
                 startX: e.clientX,
+                startY: e.clientY,
                 startPx: box ? box.getBoundingClientRect().width : 1,
             };
             document.body.style.cursor = 'nwse-resize';
@@ -743,12 +745,10 @@ function VolumePaper({ id }: { id: string }) {
         const onMove = (e: PointerEvent) => {
             const fig = figureDragRef.current;
             if (!fig) return;
-            // 横向位移换算成百分比（把手往右拖 = 变大），与复练卷页同一个算式
-            const ratio = (fig.startPx + (e.clientX - fig.startX)) / fig.startPx;
-            setFigures((prev) => ({
-                ...prev,
-                [fig.id]: Math.max(30, Math.min(180, Math.round(ratio * 100))),
-            }));
+            // 横竖位移都算，「哪个方向移得多听哪个」：向右/向下变大，向左/向上变小
+            // （与复练卷页、打印预览共用一个纯函数，免得三处手感各写各的）
+            const next = figureScaleFromDrag(fig.startPx, e.clientX - fig.startX, e.clientY - fig.startY);
+            setFigures((prev) => ({ ...prev, [fig.id]: next }));
         };
         const onUp = () => {
             if (!figureDragRef.current) return;
