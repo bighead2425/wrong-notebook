@@ -135,6 +135,11 @@ export interface DeepDiveCardProps {
     qrMap: Record<string, string>;
     /** 打印那一刻 —— 三个日期格以它为基准，一次打印的所有题共用同一个 */
     printDate: Date;
+    /**
+     * 【2026-10-03 需求第 10 条】这张深挖纸的**随机 emoji 标识**（一题一张纸，给一个）。
+     * 画在身份条「印于 …」**左边**、与那行同字号。不传 ⇒ 不画，行为一字不变。
+     */
+    emojiMark?: string | null;
     /** 手动双面：家里打印机不支持自动双面，插一张翻面提示 */
     manualDuplex: boolean;
     /**
@@ -157,6 +162,7 @@ export function DeepDiveCard({
     index,
     qrMap,
     printDate,
+    emojiMark,
     manualDuplex,
     figureScaleOf,
     onFigureScaleStart,
@@ -210,6 +216,11 @@ export function DeepDiveCard({
                 <span style={{ fontSize: '9pt', fontWeight: 400, color: '#555' }}>{gradeText}</span>
             </span>
             <span style={{ flex: 1 }} />
+            {/* 【2026-10-03 需求第 10 条】随机 emoji 标识：画在「印于 …」**左边**、
+                与那行同字号（8pt）。深挖纸只有正面有印刷时间 ⇒ 只给一个。不传就没有。 */}
+            {emojiMark ? (
+                <span style={{ fontSize: '8pt', lineHeight: 1, whiteSpace: 'nowrap' }}>{emojiMark}</span>
+            ) : null}
             <span style={{ fontSize: '8pt', color: '#666', whiteSpace: 'nowrap' }}>
                 {L('印于', 'Printed')} {formatIsoDate(printDate)}
             </span>

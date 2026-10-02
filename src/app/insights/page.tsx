@@ -136,6 +136,26 @@ export default function InsightsPage() {
     const [leftOpen, setLeftOpen] = useState(true);
 
     /**
+     * 【2026-10-03 需求第 11 条】从**扫到的积累纸预览页**点圆圈跳过来时会带：
+     *   · `?noleft=1`  ⇒ 一进来就**隐藏左栏**（他原话："显示该条目的右边栏、并隐藏左边栏"）；
+     *   · `?back=<站内路径>` ⇒ 返回键**回到那张积累纸预览页**
+     *     （他原话：点日积月累页左上角返回 ⇒ 回到这个带框和圆圈加号的预览页）。
+     *
+     * ⚠️ 与 `pick` 同一条路线：用 `window.location.search` **只在挂载后读一次**，
+     *    不碰 `useSearchParams`（后者会把页面拖进 Suspense 边界，本项目正为此炸过构建，
+     *    见 `next-build-conventions.test.ts`）。
+     * ⚠️ `back` 来自地址栏，**必须校验是站内路径**（`/` 开头且不是 `//`）——
+     *    否则它就是一个"想跳哪跳哪"的开放重定向口子（写法照抄 `error-items/[id]/page.tsx`）。
+     */
+    const [backTo, setBackTo] = useState<string | null>(null);
+    useEffect(() => {
+        const qs = new URLSearchParams(window.location.search);
+        if (qs.get('noleft') === '1') setLeftOpen(false);
+        const b = qs.get('back');
+        if (b && b.startsWith('/') && !b.startsWith('//')) setBackTo(b);
+    }, []);
+
+    /**
      * 【2026-10-01 按他定的分工加】**勾选若干条 → 送入积累纸打印**。
      *
      * 他原话："让哪些日积月累组成积累纸就在**这个页面**决定；
@@ -460,7 +480,10 @@ export default function InsightsPage() {
             {/* 顶栏 */}
             <div className="border-b bg-background">
                 <div className="mx-auto flex w-full max-w-[1400px] items-center gap-2 px-4 py-3 md:px-8">
-                    <BackButton fallbackUrl="/" className="shrink-0" />
+                    {/* 【2026-10-03 需求第 11 条】返回键去哪看 `?back=`：
+                        从积累纸预览页跳来的要**退回那张纸**，平时还是回主页。
+                        （`backTo` 已在挂载时校验过是站内路径。） */}
+                    <BackButton fallbackUrl={backTo || "/"} className="shrink-0" />
                     <h1 className="text-lg font-semibold">{L('日积月累', 'Takeaways')}</h1>
                     <span className="hidden text-xs text-muted-foreground sm:inline">
                         {L('从错题里攒下来的一句话，一条一个编号', 'One line per takeaway, one code each')}

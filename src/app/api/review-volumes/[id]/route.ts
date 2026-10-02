@@ -12,6 +12,7 @@ import {
     normalizeVolumeTitle,
 } from "@/lib/volume-input";
 import { VOLUME_KINDS, type VolumeKind } from "@/lib/volume-code";
+import { ensureVolumeEmojiMark } from "@/lib/emoji-mark-store";
 
 const logger = createLogger("api:review-volumes/[id]");
 
@@ -43,6 +44,7 @@ async function loadVolume(id: string) {
             gradeSemester: true,
             pageCount: true,
             defaultBlankLines: true,
+            emojiMark: true,
             createdAt: true,
             updatedAt: true,
         },
@@ -73,7 +75,12 @@ export async function GET(_request: Request, ctx: Ctx) {
          *    这正是"改属性的接口不替调用方做主"的同一类教训：
          *    **先看模型里有没有这个字段，再决定闸怎么设**。
          */
-        return NextResponse.json({ volume });
+        /**
+         * 【2026-10-03 需求第 10 条】旧卷还没 emoji 标识的，**打开这张纸的这一刻**补一个
+         * 并写回库里（惰性生成，不做数据回填）。已有值直接原样返回。
+         */
+        const emojiMark = await ensureVolumeEmojiMark(volume);
+        return NextResponse.json({ volume: { ...volume, emojiMark } });
     } catch (error) {
         logger.error({ error, id }, "Failed to read review volume");
         return internalError();
@@ -138,7 +145,15 @@ export async function PATCH(request: Request, ctx: Ctx) {
             const renamed = await prisma.reviewVolume.update({
                 where: { id },
                 data: { title: normalizeVolumeTitle(raw.title) },
-                select: { id: true, volumeNo: true, title: true, kind: true, pageCount: true, semester: true },
+                select: {
+                    id: true,
+                    volumeNo: true,
+                    title: true,
+                    kind: true,
+                    pageCount: true,
+                    semester: true,
+                    emojiMark: true,
+                },
             });
             logger.info({ volumeNo: renamed.volumeNo, titled: !!renamed.title }, "Review volume renamed");
             return NextResponse.json({ volume: renamed });
@@ -182,7 +197,15 @@ export async function PATCH(request: Request, ctx: Ctx) {
                         typeof raw.gradeSemester === "string" ? raw.gradeSemester : existing.gradeSemester,
                     items: { create: items },
                 },
-                select: { id: true, volumeNo: true, title: true, kind: true, pageCount: true, semester: true },
+                select: {
+                    id: true,
+                    volumeNo: true,
+                    title: true,
+                    kind: true,
+                    pageCount: true,
+                    semester: true,
+                    emojiMark: true,
+                },
             });
         });
 

@@ -112,6 +112,11 @@ export interface ReviewSheetProps {
     gradeText?: string;
     /** 印刷日期（页眉「印于 …」） */
     printDate: Date;
+    /**
+     * 【2026-10-03 需求第 10 条】这份卷的**随机 emoji 标识**（整卷所有页共用）。
+     * 不传 ⇒ 页眉不画它，行为一字不变（扫码页、卷预览等调用方无需改）。
+     */
+    emojiMark?: string | null;
     /** 本页二维码的 dataURL（内容 = 卷号-页码） */
     pageQr?: string;
     /** 按 key（题目 id）找回题目本体 */
@@ -205,6 +210,7 @@ export function VolumeHeader({
     gradeText,
     printDate,
     pageQr,
+    emojiMark,
     L,
 }: {
     kind: VolumeKind;
@@ -214,6 +220,11 @@ export function VolumeHeader({
     gradeText?: string;
     printDate: Date;
     pageQr?: string;
+    /**
+     * 【2026-10-03 需求第 10 条】这份纸的**随机 emoji 标识**（整卷共用一个）。
+     * 画在「印于 …」**左边**、与那行**同一档字号**。不传 ⇒ 什么都不画（其它调用方不变）。
+     */
+    emojiMark?: string | null;
     L: (zh: string, en: string) => string;
 }) {
     const color = VOLUME_KIND_COLOR[kind];
@@ -274,6 +285,11 @@ export function VolumeHeader({
                     {pageNo}/{pageCount}
                     {L('页', '')}
                 </span>
+                {/* 【2026-10-03 需求第 10 条】随机 emoji 标识：整卷共用一个，
+                    画在「印于 …」**左边**、与那行同字号（8pt）。不传就没有。 */}
+                {emojiMark ? (
+                    <span style={{ fontSize: '8pt', lineHeight: 1, whiteSpace: 'nowrap' }}>{emojiMark}</span>
+                ) : null}
                 <span style={{ fontSize: '8pt', color: '#555', whiteSpace: 'nowrap' }}>
                     {L('印于', 'printed')} {stampReadable(printDate)}
                 </span>
@@ -815,6 +831,7 @@ export function ReviewSheet({
     gradeText,
     printDate,
     pageQr,
+    emojiMark,
     itemByKey,
     blankValueOf,
     onBlankChange,
@@ -872,6 +889,7 @@ export function ReviewSheet({
                 gradeText={gradeText}
                 printDate={printDate}
                 pageQr={pageQr}
+                emojiMark={emojiMark}
                 L={L}
             />
 

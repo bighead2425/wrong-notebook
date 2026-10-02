@@ -101,6 +101,8 @@ interface VolumeDetail {
     defaultBlankLines: number;
     gradeSemester?: string | null;
     title?: string | null;
+    /** 【2026-10-03 需求第 10 条】这份积累纸的随机 emoji 标识（整份所有页共用） */
+    emojiMark?: string | null;
     createdAt: string;
     items: VolumeItemRow[];
 }
@@ -986,6 +988,7 @@ function VolumePaper({ id }: { id: string }) {
                                     pageCount={pageCount}
                                     volumeNo={detail.volumeNo}
                                     gradeText={detail.gradeSemester ?? null}
+                                    emojiMark={detail.emojiMark}
                                     rowByKey={rowByKey}
                                     blankLines={blankLines}
                                     figureScaleOf={(rid) => figures[rid] ?? 100}

@@ -20,6 +20,7 @@ import {
     normalizeVolumeTitle,
 } from "@/lib/volume-input";
 import { codeToSubjectKey } from "@/lib/question-no";
+import { pickRandomEmoji } from "@/lib/emoji-mark";
 
 const logger = createLogger("api:review-volumes");
 
@@ -112,9 +113,22 @@ export async function POST(request: Request) {
                 defaultBlankLines,
                 // 名字可选（管理页里还能改）；建卷时一般不给
                 title: normalizeVolumeTitle(raw.title),
+                /**
+                 * 【2026-10-03 需求第 10 条】建卷时就把这份纸的随机 emoji 定下来。
+                 * 建卷 = "生成这张纸"的那一刻，此后整卷所有页共用它、重印也不变。
+                 */
+                emojiMark: pickRandomEmoji(),
                 items: { create: items },
             },
-            select: { id: true, volumeNo: true, kind: true, pageCount: true, semester: true, title: true },
+            select: {
+                id: true,
+                volumeNo: true,
+                kind: true,
+                pageCount: true,
+                semester: true,
+                title: true,
+                emojiMark: true,
+            },
         });
 
         logger.info(

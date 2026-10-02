@@ -94,6 +94,11 @@ function PrintPreviewContent() {
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [soloIds, setSoloIds] = useState<Set<string>>(new Set());
     const [qrMap, setQrMap] = useState<Record<string, string>>({});
+    /**
+     * 【2026-10-03 需求第 10 条】深挖纸的随机 emoji 标识（题 id → 符号）。
+     * 打开深挖纸预览时向服务端要一次：老数据为空会**当场生成并写回**，之后重印不变。
+     */
+    const [emojiMarks, setEmojiMarks] = useState<Record<string, string>>({});
 
     /* ===== 【T2/T3 · 2026-09-28】卷的状态 =====
        · blankDefault  整卷的缺省留白行数（复练 5 行、积累 1 行）
@@ -103,7 +108,13 @@ function PrintPreviewContent() {
                           所以"组卷"是一次真实的写操作，不是预览的副作用。 */
     const [blankDefault, setBlankDefault] = useState<number>(REVIEW_DEFAULT_BLANK_LINES);
     const [blankOverrides, setBlankOverrides] = useState<Record<string, number | null | undefined>>({});
-    const [volume, setVolume] = useState<{ id: string; volumeNo: string; pageCount: number } | null>(null);
+    const [volume, setVolume] = useState<{
+        id: string;
+        volumeNo: string;
+        pageCount: number;
+        /** 【2026-10-03 需求第 10 条】这份卷的随机 emoji 标识（整卷共用一个） */
+        emojiMark?: string | null;
+    } | null>(null);
     const [volumeSignature, setVolumeSignature] = useState<string>("");
     const [volumeCreating, setVolumeCreating] = useState(false);
     const [volumeError, setVolumeError] = useState<string>("");
@@ -412,6 +423,29 @@ function PrintPreviewContent() {
     }, [selectedKey]);
 
     /**
+     * 【2026-10-03 需求第 10 条】深挖纸的**随机 emoji 标识**：选中题一变就去要一次。
+     * 服务端只在列空时随机一个并写回（已有值原样返回）⇒ 重印同一道题符号不变。
+     * ⚠️ 只有深挖纸用得上；切到别的纸型不必打这个接口。
+     */
+    useEffect(() => {
+        if (!isDeep || selectedItems.length === 0) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await apiClient.post<{ emojiMarks: Record<string, string> }>(
+                    "/api/error-items/emoji-marks",
+                    { ids: selectedItems.map((i) => i.id) },
+                );
+                if (!cancelled) setEmojiMarks(res.emojiMarks || {});
+            } catch (error) {
+                console.error("Failed to load print emoji marks:", error);
+            }
+        })();
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isDeep, selectedKey]);
+
+    /**
      * 打印触发：先落 printCount（#10 / T4），再调浏览器打印。
      *
      * 【custom-v25：为什么不改成"真打印了才计数"】
@@ -513,7 +547,7 @@ function PrintPreviewContent() {
         try {
             const items = buildVolumeItems();
             const res = await apiClient.post<{
-                volume: { id: string; volumeNo: string; pageCount: number };
+                volume: { id: string; volumeNo: string; pageCount: number; emojiMark?: string | null };
             }>("/api/review-volumes", {
                 kind: volumeKind,
                 gradeSemester: volumeGradeText || null,
@@ -546,7 +580,7 @@ function PrintPreviewContent() {
         try {
             const items = buildVolumeItems();
             const res = await apiClient.patch<{
-                volume: { id: string; volumeNo: string; pageCount: number };
+                volume: { id: string; volumeNo: string; pageCount: number; emojiMark?: string | null };
             }>(`/api/review-volumes/${volume.id}`, {
                 kind: volumeKind,
                 gradeSemester: volumeGradeText || null,
@@ -1147,6 +1181,7 @@ function PrintPreviewContent() {
                                     index={index}
                                     qrMap={qrMap}
                                     printDate={printDate}
+                                    emojiMark={emojiMarks[item.id]}
                                     manualDuplex={manualDuplex}
                                     // 题图缩放与复练纸同一套（电脑拖把手 / 手机按住图左右拖）
                                     figureScaleOf={figureScaleOf}
@@ -1215,6 +1250,7 @@ function PrintPreviewContent() {
                                     kind={volumeKind}
                                     gradeText={volumeGradeText || undefined}
                                     printDate={printDate}
+                                    emojiMark={volume?.emojiMark}
                                     pageQr={volumePageQr[i + 1]}
                                     itemByKey={reviewItemByKey}
                                     blankValueOf={blankValueOf}

@@ -5,6 +5,7 @@ import { getServerSession } from "next-auth";
 import { unauthorized, badRequest, notFound, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { parsePageCode } from "@/lib/volume-code";
+import { ensureVolumeEmojiMark } from "@/lib/emoji-mark-store";
 
 const logger = createLogger('api:review-volumes:lookup');
 
@@ -41,8 +42,14 @@ export async function GET(req: Request) {
         });
         if (!volume) return notFound("Review volume not found");
 
+        /**
+         * 【2026-10-03 需求第 10 条】扫纸上的页二维码打开卷时，若这份卷还没有 emoji 标识，
+         * 就**这一刻**补一个并写回（惰性生成，不做数据回填）。
+         */
+        const emojiMark = await ensureVolumeEmojiMark(volume);
+
         // pageNo 直接回给前端用（超出总页数时由前端夹一下，这里不拦 —— 纸可能比库新）
-        return NextResponse.json({ volume, pageNo: parsed.pageNo });
+        return NextResponse.json({ volume: { ...volume, emojiMark }, pageNo: parsed.pageNo });
     } catch (error) {
         logger.error({ error }, "Failed to look up review volume by page code");
         return internalError();

@@ -11,6 +11,7 @@ import {
     type MeasuredPageLayout,
 } from '@/lib/review-card';
 import { VolumeHeader, stripMarkdownImages } from './review-card';
+import { INSIGHT_PLUS_GLYPH_COLOR, insightPlusColor } from '@/lib/insight-plus';
 
 /**
  * **积累纸**（`kind='build'`）—— 把日积月累的条目排成卷印出来。
@@ -68,6 +69,8 @@ export function InsightBlock({
     onMoveUp,
     onMoveDown,
     onFigureScaleStart,
+    onPlusClick,
+    plusLinked = false,
     L,
 }: {
     row: InsightPrintRow;
@@ -89,10 +92,23 @@ export function InsightBlock({
      * 原来那两个 −/+ 百分比按钮"略显复杂了"。签名与复练纸的 `onFigureScaleStart` 一致。
      */
     onFigureScaleStart?: (e: ReactPointerEvent) => void;
+    /**
+     * 【2026-10-03 需求第 11 条】**扫码预览**专用：点这条中间的圆圈加号。
+     * ⚠️ **不传 ⇒ 行为一字不变**（打印页、积累纸打印页都不传）：
+     *    框和加号是纯屏幕控件，只在扫码预览那一屏才画。
+     */
+    onPlusClick?: () => void;
+    /**
+     * 这条**有没有关联错题**（决定框与圆圈的颜色：棕黄 / 紫）。
+     * 只在 `onPlusClick` 给了的时候才有意义；不传按"未关联"（棕黄）处理。
+     */
+    plusLinked?: boolean;
     L: (zh: string, en: string) => string;
 }) {
     const body = stripMarkdownImages(row.content || '');
     const blankMM = blankLines * REVIEW_LAYOUT_MM.blankLineMM;
+    /** 框与圆的颜色（棕黄 / 紫）——规则在 `lib/insight-plus.ts`，一处定义 */
+    const plusColor = insightPlusColor(plusLinked);
 
     return (
         <div
@@ -214,6 +230,66 @@ export function InsightBlock({
 
             {/* 留白：她看完想补一句就写在这儿。积累纸只留 1 行（他定的）。 */}
             <div style={{ flex: '0 0 auto', minHeight: `${blankMM}mm` }} />
+
+            {/*
+             * 【2026-10-03 需求第 11 条】扫码预览：给这条罩一层框 + 正中一个"圆圈加号"。
+             *
+             * 三条照抄复练卷那套（`review-card.tsx` 的扫码加号）：
+             *  ① **框与加号都画在本块的 DOM 里面**（本块已是 `position: relative`），
+             *     纸滚动/缩放时天然跟着走、**结构上不可能漂移**；
+             *  ② 一律 `no-print` —— 屏幕上才有，**纸上零装饰**是铁律；
+             *  ③ 圆点 10mm（≥ 他要求的 9mm），按钮够大好点、防误触。
+             * 颜色按"该条有没有关联错题"：棕黄（未关联）/ 紫（已关联），见 `lib/insight-plus.ts`。
+             */}
+            {onPlusClick && (
+                <>
+                    <span
+                        aria-hidden="true"
+                        className="no-print"
+                        style={{
+                            position: 'absolute',
+                            inset: '0.8mm 1mm',
+                            border: `0.45mm solid ${plusColor}`,
+                            borderRadius: '1.6mm',
+                            boxSizing: 'border-box',
+                            pointerEvents: 'none',
+                        }}
+                    />
+                    <button
+                        type="button"
+                        className="no-print"
+                        title={L('点这里 → 去日积月累页看这条', 'Open this takeaway')}
+                        onClick={onPlusClick}
+                        style={{
+                            position: 'absolute',
+                            left: '50%',
+                            top: '50%',
+                            transform: 'translate(-50%, -50%)',
+                            width: '10mm',
+                            height: '10mm',
+                            borderRadius: '9999px',
+                            background: plusColor,
+                            border: 'none',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: 'pointer',
+                            zIndex: 6,
+                            boxShadow: '0 0.4mm 1.2mm rgba(0,0,0,0.35)',
+                        }}
+                    >
+                        <svg viewBox="0 0 24 24" style={{ width: '5.5mm', height: '5.5mm' }} aria-hidden="true">
+                            <path
+                                d="M12 5v14M5 12h14"
+                                stroke={INSIGHT_PLUS_GLYPH_COLOR}
+                                strokeWidth={3.4}
+                                strokeLinecap="round"
+                                fill="none"
+                            />
+                        </svg>
+                    </button>
+                </>
+            )}
         </div>
     );
 }
@@ -231,6 +307,7 @@ export function InsightSheet({
     volumeNo,
     gradeText,
     printDate,
+    emojiMark,
     rowByKey,
     blankLines,
     figureScaleOf,
@@ -238,6 +315,8 @@ export function InsightSheet({
     onFigureScaleStart,
     totalCount,
     pageQr,
+    onItemPlusClick,
+    linkedOf,
     L,
 }: {
     page: MeasuredPageLayout;
@@ -251,6 +330,11 @@ export function InsightSheet({
     gradeText?: string | null;
     /** 印于（可读串） */
     printDate?: string;
+    /**
+     * 【2026-10-03 需求第 10 条】这份积累纸的**随机 emoji 标识**（整份所有页共用）。
+     * 不传 ⇒ 页眉不画它，行为一字不变。
+     */
+    emojiMark?: string | null;
     /** key(积累 id) → 内容 */
     rowByKey: Record<string, InsightPrintRow>;
     /** 每条的留白行数（整卷一个值，积累纸默认 1） */
@@ -274,6 +358,13 @@ export function InsightSheet({
      * 用 `makeQrDataUrl` 先把文本**画成图**再传进来的，这里照做。
      */
     pageQr?: string;
+    /**
+     * 【2026-10-03 需求第 11 条】**扫码预览**专用（打印页/积累纸打印页一律不传 ⇒ 行为一字不变）：
+     *   · `onItemPlusClick` 点了某条中间的圆圈加号 ⇒ 上层跳日积月累页看这一条；
+     *   · `linkedOf(code)` 这条**有没有关联错题** ⇒ 决定框与圆的颜色（棕黄 / 紫）。
+     */
+    onItemPlusClick?: (row: InsightPrintRow) => void;
+    linkedOf?: (code: string) => boolean;
     L: (zh: string, en: string) => string;
 }) {
     /** 打孔位：奇数页留左、偶数页留右（与复练纸同一个规矩，家里活页夹按一个物理边打孔） */
@@ -303,6 +394,7 @@ export function InsightSheet({
                 gradeText={gradeText ?? undefined}
                 printDate={printDate ? new Date(printDate) : new Date()}
                 pageQr={pageQr}
+                emojiMark={emojiMark}
                 L={L}
             />
 
@@ -360,6 +452,13 @@ export function InsightSheet({
                                                 ? onFigureScaleStart(row.id)
                                                 : undefined
                                         }
+                                        /* 【2026-10-03 需求第 11 条】扫码预览：圆圈加号（只在这屏画）。
+                                           颜色按这条有没有关联错题走 —— 判据是**快照里的 JL 编号**
+                                           （`row.code`），由上层传来。 */
+                                        onPlusClick={
+                                            onItemPlusClick ? () => onItemPlusClick(row) : undefined
+                                        }
+                                        plusLinked={linkedOf ? linkedOf(row.code) : false}
                                         L={L}
                                     />
                                 );

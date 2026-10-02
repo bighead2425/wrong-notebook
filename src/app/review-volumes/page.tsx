@@ -74,6 +74,8 @@ interface VolumeSummary {
     itemCount: number;
     /** 【2026-09-30】卷的学科（从题号前缀反推，跨学科组卷会给多个） */
     subjectKeys?: string[];
+    /** 【2026-10-03 需求第 10 条】这份卷的随机 emoji 标识（整卷所有页共用） */
+    emojiMark?: string | null;
 }
 
 interface VolumeItemRow {
@@ -950,6 +952,7 @@ export default function ReviewVolumesPage() {
                                         kind={kind}
                                         gradeText={detail?.gradeSemester ?? undefined}
                                         printDate={printDate}
+                                        emojiMark={detail?.emojiMark}
                                         pageQr={pageQr[i + 1]}
                                         itemByKey={reviewItemByKey}
                                         blankValueOf={blankValueOf}

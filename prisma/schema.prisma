@@ -153,6 +153,13 @@ model ErrorItem {
   /// 每次变更还要写 StateChangeLog。
   manageTypeSource String? // default | derived | ai | manual | upgrade
 
+  /// 【2026-10-03 需求第 10 条】**深挖纸的随机 emoji 标识**（印在页眉"印于"左边）。
+  ///
+  /// 与纸上的编号二维码同理：它是**这道题这张深挖纸的属性** —— 重新打印同一张纸，
+  /// 符号不变（NULL 时惰性生成一次并写回）。深挖纸**只有正面**有印刷时间，所以只给一个。
+  /// 取值只能来自 `src/lib/emoji-print-library.json`（等概率随机，见 `lib/emoji-mark.ts`）。
+  emojiMark String?
+
 
   // ===== 状态字段（5.3 单一事实来源，禁止再造冗余态）=====
   printCount       Int       @default(0)  // 打印次数（深挖纸），只显不改（#10 / T4）
@@ -429,6 +436,14 @@ model ReviewVolume {
   /// 页眉那一行已经排满（阳文框 / 卷号 / 年级学期 / 页码 / 印于 / 二维码），
   /// 再塞一个名字只会变挤。名字的用途是"他在管理页里找卷、认卷"。
   title         String?
+
+  /// 【2026-10-03 需求第 10 条】**这份卷的随机 emoji 标识**（印在页眉"印于"左边）。
+  ///
+  /// 复练卷 / 积累纸**每页都有印刷时间**，他要求这一份的**所有页共用同一个**符号
+  /// ⇒ 存在**卷**上（而不是每页各一个）。NULL 时惰性生成一次并写回；
+  /// 已有值就直接用 —— 这就是"同一份纸的符号相对不变"。
+  /// 取值只能来自 `src/lib/emoji-print-library.json`（等概率随机，见 `lib/emoji-mark.ts`）。
+  emojiMark     String?
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

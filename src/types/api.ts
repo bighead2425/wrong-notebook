@@ -113,6 +113,12 @@ export interface ErrorItem {
     reviewOutcomes?: string | null;
     redoCount?: number;
     mergeSource?: string | null;
+    /**
+     * 【2026-10-03 需求第 10 条】这道题**深挖纸**的随机 emoji 标识
+     * （印在页眉「印于 …」左边，一题一张纸给一个）。
+     * 拿不到时由 `/api/error-items/emoji-marks` 惰性生成写回；取值见 `lib/emoji-mark.ts`。
+     */
+    emojiMark?: string | null;
     deletedAt?: string | null;
     lastPrintedAt?: string | null;
     inputMethod?: string | null;

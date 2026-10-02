@@ -13,7 +13,11 @@
  *   ② 扫到**复练卷某一页的页码**（`RE20260930001-02`）
  *      ⇒ 打开这份卷的版面、**自动滚到扫到的那一页**，每道题罩天蓝框、中间蓝圆白加号；
  *        点加号 ⇒ 进 ① 那一屏（同一张错题卡 + 复习四行）。
- *      也就是说：扫深挖纸直达，扫复练卷**中间多一步"从卷上挑一道题"**（他原话）。
+ *   ③ 【2026-10-03 需求第 11 条】扫到**积累纸某一页的页码**（`BU20260930001-02`）
+ *      ⇒ 打开这份积累纸的版面（`InsightScanView`，与 ② 同一套做法），每条积累罩一个框、
+ *        中间一个"圆圈加号"（未关联错题 = 棕黄、关联了 = 紫；见 `lib/insight-plus.ts`）；
+ *        点加号 ⇒ 去**日积月累页**选中这一条、并隐藏左栏。
+ *      也就是说：扫深挖纸直达，扫复练卷/积累纸**中间多一步"从纸面上挑一条"**（他原话）。
  *
  * ── 三层返回是怎么做到的（这一条值得说清）─────────────────────────
  * 他要的是"从详情页退回错题卡、再从错题卡退回卷浏览"这种**层层后退**。
@@ -36,6 +40,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { parsePageCode } from "@/lib/volume-code";
 import { ScanItemPanel } from "@/components/scan-item-panel";
 import { ScanVolumeView } from "@/components/scan-volume-view";
+import { InsightScanView } from "@/components/insight-scan-view";
 import { Camera, CameraOff, Loader2, ScanLine, Search } from "lucide-react";
 
 interface ScanResponse {
@@ -293,18 +298,39 @@ export default function ScanPage() {
     }
 
     if (view === "volume" && volumeCode) {
+        /**
+         * 【2026-10-03 需求第 11 条】卷分两种：复练卷（`RE…`）与**积累纸**（`BU…`）。
+         * `parsePageCode` 两种代号都认，所以扫到积累纸的页二维码本来就会走到这一屏 ——
+         * 只是以前不管哪种卷都拿 `ReviewSheet`（题块）渲染，积累纸的条目就画错了。
+         * 这里按**卷号里的代号**分流：积累纸走 `InsightScanView`（画框 + 圆圈加号那套）。
+         */
+        const isBuild = parsePageCode(volumeCode)?.kind === "build";
         return (
             <main className="min-h-screen bg-background p-4 md:p-6">
                 <div className="mx-auto w-full max-w-6xl space-y-4">
                     <h1 className="flex items-center gap-2 text-xl font-bold">
                         <ScanLine className="h-5 w-5" />
-                        {L("扫到的复练卷", "Scanned volume")}
+                        {isBuild ? L("扫到的积累纸", "Scanned takeaway sheet") : L("扫到的复练卷", "Scanned volume")}
                     </h1>
-                    <ScanVolumeView
-                        code={volumeCode}
-                        onPickItem={(item) => openCard(item.id, "main", true)}
-                        onBack={backToScanner}
-                    />
+                    {isBuild ? (
+                        <InsightScanView
+                            code={volumeCode}
+                            /* 点圆圈 ⇒ 日积月累页、选中该条、隐藏左栏；返回键回到**这一屏**
+                               （`back=` 带的是当前这条 URL，日积月累页照抄 error-items 的站内校验）。 */
+                            onPickItem={(insightCode) =>
+                                router.push(
+                                    `/insights?pick=${encodeURIComponent(insightCode)}&noleft=1&back=${encodeURIComponent(currentUrl)}`,
+                                )
+                            }
+                            onBack={backToScanner}
+                        />
+                    ) : (
+                        <ScanVolumeView
+                            code={volumeCode}
+                            onPickItem={(item) => openCard(item.id, "main", true)}
+                            onBack={backToScanner}
+                        />
+                    )}
                 </div>
             </main>
         );
