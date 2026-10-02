@@ -34,8 +34,8 @@ import {
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
+    ArrowLeft,
     House,
-    Layers,
     Loader2,
     PanelLeftClose,
     PanelLeftOpen,
@@ -205,30 +205,38 @@ function PrintWorkspace({ volId }: { volId: string }) {
         <div className="min-h-screen bg-muted/30">
             {/* 顶栏：标题 + 藏左栏 + 去日积月累挑 + 回主页。
                 【2026-10-02】他嫌原来那句说明太长 ⇒ 已删（原话："不要了，太长了"）。 */}
-            <div className="no-print flex items-center gap-2 border-b bg-background px-3 py-2">
-                <h1 className="text-base font-semibold sm:text-lg">
-                    {L('积累纸 · 打印', 'Takeaways · print')}
-                </h1>
-                <span className="flex-1" />
-                <Button
-                    variant="outline"
-                    size="icon"
-                    title={listOpen ? L('隐藏左栏', 'Hide list') : L('显示左栏', 'Show list')}
-                    onClick={() => setListOpen((v) => !v)}
-                >
-                    {listOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
-                </Button>
-                <Link href="/insights">
-                    <Button variant="outline" size="sm" title={L('去日积月累页勾选条目', 'Pick entries')}>
-                        <Layers className="mr-1.5 h-3.5 w-3.5" />
-                        <span className="hidden sm:inline">{L('去勾选条目', 'Pick entries')}</span>
+            {/* 【2026-10-03 他要求】顶栏也**居中限宽**（原来标题顶左、按钮顶右），规格与
+                左右两栏、日积月累页、复练卷页一致。
+                另外他明确："右上角那个'去勾选条目'的按钮可以不要了，
+                在'积累纸·打印'标签前增加一个向左的箭头，点击回到日积月累页"。 */}
+            <div className="no-print border-b bg-background shadow-sm">
+                <div className="mx-auto flex w-full max-w-[1600px] items-center gap-2 px-4 py-3 md:px-8">
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        title={L('返回日积月累', 'Back to takeaways')}
+                        onClick={() => router.push('/insights')}
+                    >
+                        <ArrowLeft className="h-4 w-4" />
                     </Button>
-                </Link>
-                <Link href="/">
-                    <Button variant="ghost" size="icon" title={L('回主页', 'Home')}>
-                        <House className="h-5 w-5" />
+                    <h1 className="text-base font-semibold sm:text-lg">
+                        {L('积累纸 · 打印', 'Takeaways · print')}
+                    </h1>
+                    <span className="flex-1" />
+                    <Button
+                        variant="outline"
+                        size="icon"
+                        title={listOpen ? L('隐藏左栏', 'Hide list') : L('显示左栏', 'Show list')}
+                        onClick={() => setListOpen((v) => !v)}
+                    >
+                        {listOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
                     </Button>
-                </Link>
+                    <Link href="/">
+                        <Button variant="ghost" size="icon" title={L('回主页', 'Home')}>
+                            <House className="h-5 w-5" />
+                        </Button>
+                    </Link>
+                </div>
             </div>
 
             {notice && (

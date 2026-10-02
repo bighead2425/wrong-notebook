@@ -481,13 +481,29 @@ export function ScanVolumeView({
      * 用 `scrollIntoView` 而不是手算 offsetTop：纸里有 zoom，手算要把缩放考虑进去，
      * 容易算错；`scrollIntoView` 直接用浏览器的真实几何。
      */
+    /**
+     * ⚠️【2026-10-03 修他报的 bug】**只许滚一次**。
+     *
+     * 现象（他的原话）："无论我点击哪一题的灰色圆圈流水号……整个卷都跳回到进入扫到的
+     * 复练卷一开始那一页的页首处，就像刚刚又扫描了一次这一页的二维码一般"。
+     * 根因：这个 effect 的依赖里有 `layout`，而**点一下圆就会更新卷数据
+     * （写 `markState`）⇒ `layout` 重算 ⇒ effect 重跑 ⇒ 又 scrollIntoView 一次**。
+     * （之前没事，是因为点圆以前不写卷、只写题，`layout` 不会动。）
+     *
+     * 修法：记"已经为哪一份卷的哪一页跳过了"，同一个目标不跳第二次。
+     * 换卷（`volume.id` 变）或换页（`pageNo` 变）时才算新目标 —— 那时该跳。
+     */
+    const jumpedKeyRef = useRef<string | null>(null);
     useEffect(() => {
         if (!layout || loading) return;
+        const key = `${volume?.id ?? ""}#${pageNo}`;
+        if (jumpedKeyRef.current === key) return;
         const el = pageRefs.current[Math.min(pageNo, layout.pages.length)];
         if (!el) return;
+        jumpedKeyRef.current = key;
         const raf = requestAnimationFrame(() => el.scrollIntoView({ block: "start" }));
         return () => cancelAnimationFrame(raf);
-    }, [layout, loading, pageNo]);
+    }, [layout, loading, pageNo, volume?.id]);
 
     /**
      * 电脑端"按住空白处拖动 = 平移"。

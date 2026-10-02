@@ -88,6 +88,33 @@ interface InsightDetail extends InsightRow {
     question: ErrorItem | null;
 }
 
+/**
+ * 【2026-10-03 他要求】新建条目时**默认沿用上一次用的年级/学期**。
+ * 原话："新建一条积累条目，年级/学期默认选为上次新建时的年级学期，这样就减少一次输入了。"
+ *
+ * ⚠️ 为什么用 `localStorage` 而不是"参考右栏当前值"：右栏的值会**跟着你看的那条走** ——
+ *    你要是先翻了一条三年级的，再点新建，就会默认成三年级，那正是他要避免的。
+ *    这里只记"**上次新建/保存时**用的那个"，与你在看哪条无关。
+ * 取不到（隐私模式、清了缓存、第一次用）就当空，绝不报错。
+ */
+const LAST_GRADE_KEY = 'insight:lastGradeSemester';
+
+function readLastGrade(): string {
+    try {
+        return window.localStorage.getItem(LAST_GRADE_KEY) || '';
+    } catch {
+        return '';
+    }
+}
+
+function rememberGrade(value: string) {
+    try {
+        window.localStorage.setItem(LAST_GRADE_KEY, value);
+    } catch {
+        /* 隐私模式 / 禁用存储：忽略，不影响主流程 */
+    }
+}
+
 export default function InsightsPage() {
     const { t, language } = useLanguage();
     const L = (zh: string, en: string) => (language === 'zh' ? zh : en);
@@ -227,15 +254,19 @@ export default function InsightsPage() {
 
     /** 新建：编号由服务端发（日期段用**本地日期**） */
     const createOne = async () => {
+        // 默认沿用上次用的年级/学期（见 LAST_GRADE_KEY 的说明）；没有就空着
+        const inheritGrade = readLastGrade();
         try {
             const created = await apiClient.post<InsightRow>('/api/insights', {
                 dateKey: dayKey(new Date()),
-                gradeSemester: gradeDraft || null,
+                gradeSemester: inheritGrade || null,
                 subject: subjectDraft || null,
                 content: '',
                 source: 'page',
             });
             setRows((prev) => [created, ...prev]);
+            // 右栏也切到继承值：否则界面上显示空、库里却有值，他一看就以为没生效
+            setGradeDraft(inheritGrade);
             setCurrentId(created.id);
         } catch (error) {
             console.error(error);
@@ -284,6 +315,8 @@ export default function InsightsPage() {
             });
             setRows((prev) => prev.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
             setLoadedPhoto(photo);
+            // 记住这次用的年级/学期，供下一次"新建"默认（他要求的"减少一次输入"）
+            rememberGrade(gradeDraft);
         } catch (error) {
             console.error(error);
             alert(t.common?.messages?.saveFailed || 'Save failed');

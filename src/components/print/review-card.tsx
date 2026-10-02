@@ -358,7 +358,6 @@ function AnswerLabel({ label, L }: { label: string; L: (zh: string, en: string) 
 
     return (
         <span
-            ref={boxRef}
             className="no-print"
             title={L('这道题的正确答案（点中间的加号看完整解答）', 'Answer (tap + for the full solution)')}
             style={{
@@ -381,7 +380,14 @@ function AnswerLabel({ label, L }: { label: string; L: (zh: string, en: string) 
                 // 意思是"这个框里的答案不全"，一上来就能看见。
                 <span style={{ flexShrink: 0, fontWeight: 700, paddingRight: '0.4mm' }}>&gt;…</span>
             )}
-            <span style={{ overflow: 'hidden', whiteSpace: 'nowrap' }}>{label}</span>
+            {/* ⚠️【2026-10-03 修】`boxRef` **必须挂在这一层**（装着答案文字的那层）。
+                它挂在外层时量不出溢出：外层是 flex 容器，其 `scrollWidth` 只统计**子元素盒子**
+                的宽度，而子元素被 flex 收缩到与可用宽相等 ⇒ 恒有 `scrollWidth === clientWidth`
+                ⇒ `truncated` 永远是 false ⇒ 他实测"这个功能并没有实现"（截图里长答案被裁了却没有提示）。
+                挂到内容层：`clientWidth` = 分到的可视宽，`scrollWidth` = 文字真实宽 ⇒ 判断成立。 */}
+            <span ref={boxRef} style={{ overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                {label}
+            </span>
         </span>
     );
 }

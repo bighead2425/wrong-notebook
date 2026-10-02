@@ -167,12 +167,33 @@ function PrintPreviewContent() {
     // 此前 mode 硬编码为 "practice" 且从不读 URL，导致卡片模板
     // （题号色标 + 二维码 + 正反面/一题两页）在任何入口下都不会渲染。
     // 直接读 window.location 而非 useSearchParams，避免静态渲染下取值为空的时序问题。
+    /** 入口有没有**明确指定**过纸型（指定了就一切以它为准，不许被"按题数推断"覆盖） */
+    const modePinnedRef = useRef(false);
     useEffect(() => {
         const m = new URLSearchParams(window.location.search).get("mode");
         if (m === "deep" || m === "review" || m === "build" || m === "card" || m === "practice" || m === "explain") {
+            modePinnedRef.current = true;
             setMode(m);
         }
     }, []);
+
+    /**
+     * 【2026-10-03 他定的】**没指定纸型时的默认值**：
+     *   · 带进来的只有**一道题** ⇒ 默认【深挖纸】；
+     *   · 带进来**多于一道** ⇒ 默认【复练纸】。
+     *
+     * 原话："一进入打印预览页，目前缺省是打开'错题卡'页面，这个要改。"
+     * 这与他的实际用法一致：单题就是打深挖纸、成组就是打复练纸。
+     * ⚠️ 只在**第一次**题目加载完时定一次（`decidedRef`）——
+     *    之后他手动切过标签，不许再被这个规则拽回去。
+     */
+    const modeDecidedRef = useRef(false);
+    useEffect(() => {
+        if (loading || modeDecidedRef.current) return;
+        modeDecidedRef.current = true;
+        if (modePinnedRef.current) return; // 入口指定过，听入口的
+        setMode(items.length > 1 ? "review" : "deep");
+    }, [loading, items.length]);
 
     const fetchItems = async () => {
         try {
@@ -835,7 +856,11 @@ function PrintPreviewContent() {
         <div className="print-preview-shell">
             {/* ===== 顶栏（不打印）=====                他要求：这一排**不进左栏也不进右栏**，始终在最上面；
                 窄屏时标题放不下就出省略号（不折行），按钮整组折到下一行。 */}
-            <div className="no-print shrink-0 z-10 bg-background border-b p-3 sm:p-4 shadow-sm">
+            {/* 【2026-10-03 他要求】顶栏内容也**居中限宽** —— 原来它铺满整宽
+                （标题顶左、按钮顶右，"不好看"），而下面两栏是居中的 ⇒ 上下不齐。
+                现在与左右两栏（以及复练卷页、日积月累页）用**同一个**包裹规格。 */}
+            <div className="no-print shrink-0 z-10 bg-background border-b shadow-sm">
+                <div className="mx-auto w-full max-w-[1600px] px-4 py-3 sm:px-8 sm:py-4">
                 <div className="space-y-3">
                     <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                         <BackButton fallbackUrl="/notebooks" />
@@ -877,6 +902,7 @@ function PrintPreviewContent() {
                             </Link>
                         </div>
                     </div>
+                </div>
                 </div>
             </div>
 
