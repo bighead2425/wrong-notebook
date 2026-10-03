@@ -32,10 +32,12 @@ import {
     Pencil,
     Printer,
     RefreshCw,
+    ScanLine,
     Search,
     Trash2,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
 import { apiClient } from "@/lib/api-client";
@@ -45,6 +47,7 @@ import { whenImagesDecoded, whenImagesSettled } from "@/lib/print-image-readines
 import { makeQrDataUrl } from "@/lib/qr";
 import { ReviewSheet, ReviewQuestionBlock, pageQrPayload } from "@/components/print/review-card";
 import { SheetZoom } from "@/components/print/sheet-zoom";
+import { ScanVolumeView } from "@/components/scan-volume-view";
 import {
     VOLUME_VARIANTS,
     blankLinesFromDrag,
@@ -56,9 +59,21 @@ import {
     pageUsageMM,
     type SnapshotRow,
 } from "@/lib/review-card";
-import { VOLUME_KINDS, VOLUME_KIND_LABEL, VOLUME_KIND_LABEL_EN, type VolumeKind } from "@/lib/volume-code";
+import {
+    VOLUME_KINDS,
+    VOLUME_KIND_LABEL,
+    VOLUME_KIND_LABEL_EN,
+    buildPageCode,
+    type VolumeKind,
+} from "@/lib/volume-code";
 import { GRADE_TERMS, normalizeTerm, volumeMatchesTerm } from "@/lib/grade-term";
 import { SUBJECT_OPTIONS, subjectLabel } from "@/lib/notebook-fields";
+import {
+    reviewLayoutDirty,
+    shouldWarnBeforeLeaving,
+    unsavedLeaveMessage,
+    type ReviewLayoutBaseline,
+} from "@/lib/unsaved-guard";
 
 /** 卷列表里一条（GET /api/review-volumes 的返回） */
 interface VolumeSummary {
@@ -107,6 +122,7 @@ export default function ReviewVolumesPage() {
     const { language } = useLanguage();
     const zh = language === "zh";
     const L = useCallback((a: string, b: string) => (zh ? a : b), [zh]);
+    const router = useRouter();
 
     // ---------- 左栏：卷列表 ----------
     const [volumes, setVolumes] = useState<VolumeSummary[]>([]);
@@ -147,6 +163,20 @@ export default function ReviewVolumesPage() {
     const dividerDragRef = useRef<{ id: string; startY: number; startLines: number } | null>(null);
     const [pageQr, setPageQr] = useState<Record<number, string>>({});
     const [printDate] = useState(() => new Date());
+
+    /**
+     * 【2026-10-03 需求第 4 条】**已保存版面的基线** —— 脏检查拿它和当前草稿比。
+     * 打开卷时按快照记下；点【更新组卷】保存成功后，刷新成"刚存下去的那版"。
+     * （不复用 `detail.items`：`updateVolume` 的 PATCH 只回 `VolumeSummary`、不带 items，
+     *   拿旧快照当基线会让"刚保存完还是脏的" —— 按钮不消失、切卷还弹确认。）
+     */
+    const [savedBaseline, setSavedBaseline] = useState<ReviewLayoutBaseline | null>(null);
+
+    /**
+     * 【2026-10-03 需求第 5 条】【扫码图】：非空 ⇒ 整屏切成"扫到的复练卷"
+     * （复用 `ScanVolumeView`，参数是这份卷的**卷号 + 第 1 页**的页二维码内容）。
+     */
+    const [scanCode, setScanCode] = useState<string | null>(null);
 
     const kind: VolumeKind = detail?.kind && VOLUME_KINDS.includes(detail.kind) ? detail.kind : "review";
 
@@ -205,6 +235,9 @@ export default function ReviewVolumesPage() {
             setNotice("");
             setPageQr({});
             setEditingTitle(false);
+            // 换卷 ⇒ 退出【扫码图】那一屏，并把旧基线清掉（新数据到了再立）
+            setScanCode(null);
+            setSavedBaseline(null);
             try {
                 const { volume } = await apiClient.get<{ volume: VolumeDetail }>(`/api/review-volumes/${id}`);
                 setDetail(volume);
@@ -237,6 +270,12 @@ export default function ReviewVolumesPage() {
                 setBlankOverrides(blanks);
                 setFigureScales(figures);
                 setMeasuredByKey({});
+                // 基线 = 刚打开时这份卷的版面（脏检查的起跑线）
+                setSavedBaseline({
+                    defaultBlankLines: volume.defaultBlankLines,
+                    blankLines: blanks,
+                    figureScale: figures,
+                });
             } catch (error) {
                 console.error("Failed to open volume:", error);
                 setNotice(L("打开这份卷失败", "Failed to open this volume"));
@@ -342,8 +381,58 @@ export default function ReviewVolumesPage() {
         return out;
     }, [layout, measuredByKey]);
 
+    /**
+     * 【2026-10-03 需求第 4 条】复练卷页原来**没有脏检查**（只有积累纸页有）—— 这里补齐：
+     * 当前草稿（留白 / 题图）与已保存基线**逐项比**，改过才 `dirty`。
+     * 没改 ⇒ 不显示【更新组卷】；改了才显示。
+     */
+    const dirty = useMemo(() => {
+        if (!detail || !savedBaseline) return false;
+        return reviewLayoutDirty(savedBaseline, {
+            defaultBlankLines: blankDefault,
+            blankOverrides,
+            figureScales,
+        });
+    }, [detail, savedBaseline, blankDefault, blankOverrides, figureScales]);
+
+    /** 会丢改动的动作先问一句；点取消返回 false（停在原地、改动还在） */
+    const confirmDiscard = useCallback(
+        (actionZh: string, actionEn: string) => {
+            if (!shouldWarnBeforeLeaving(dirty)) return true;
+            return window.confirm(unsavedLeaveMessage(zh, actionZh, actionEn));
+        },
+        [dirty, zh],
+    );
+
+    /** 切换 / 打开另一卷（左栏列表点击）—— 他最常踩的那条，必须拦 */
+    const handleOpenVolume = useCallback(
+        (id: string) => {
+            // 点的是已经打开的这一卷：重载只会白丢草稿，直接不动
+            if (dirty && id === selectedId) return;
+            if (!confirmDiscard("切换卷", "Switch volume")) return;
+            setScanCode(null);
+            void openVolume(id);
+        },
+        [dirty, selectedId, confirmDiscard, openVolume],
+    );
+
+    /**
+     * 【2026-10-03 需求第 4 条】浏览器**关闭 / 刷新**标签页那一手也拦一下：
+     * 仅在 `dirty` 时挂监听（没改就正常关，别无故弹原生框）。
+     */
+    useEffect(() => {
+        if (!dirty) return;
+        const onBeforeUnload = (e: BeforeUnloadEvent) => {
+            e.preventDefault();
+            e.returnValue = "";
+        };
+        window.addEventListener("beforeunload", onBeforeUnload);
+        return () => window.removeEventListener("beforeunload", onBeforeUnload);
+    }, [dirty]);
+
     /** 页二维码：内容 = 卷号-页码（与打印预览页一模一样，扫回来才能定位到页） */
     const qrKey = detail ? `${detail.volumeNo}:${layout?.pages.length ?? 0}` : "";
+
     useEffect(() => {
         let cancelled = false;
         (async () => {
@@ -483,6 +572,19 @@ export default function ReviewVolumesPage() {
                 items: payload,
             });
             setDetail((prev) => (prev ? { ...prev, ...res.volume } : prev));
+            /**
+             * 保存成功 ⇒ 把脏检查基线刷成"刚存下去的那版"。
+             * ⚠️ 不能省：PATCH 的返回**不带 items**（只有 VolumeSummary），
+             *    不刷基线的话 `dirty` 会一直是 true —— 按钮不消失、切卷还弹确认。
+             */
+            const savedKeys = new Set<string>([...Object.keys(blankOverrides), ...Object.keys(figureScales)]);
+            const savedBlanks: Record<string, number> = {};
+            const savedFigures: Record<string, number> = {};
+            for (const k of savedKeys) {
+                savedBlanks[k] = blankValueOf(k);
+                savedFigures[k] = figureScaleOf(k);
+            }
+            setSavedBaseline({ defaultBlankLines: blankDefault, blankLines: savedBlanks, figureScale: savedFigures });
             setNotice(L("已更新组卷（卷号不变）", "Volume updated (same volume no.)"));
             fetchList();
         } catch (error) {
@@ -500,6 +602,8 @@ export default function ReviewVolumesPage() {
         blankValueOf,
         figureScaleOf,
         blankDefault,
+        blankOverrides,
+        figureScales,
         kind,
         L,
         fetchList,
@@ -524,6 +628,12 @@ export default function ReviewVolumesPage() {
         }
         window.print();
     }, [items]);
+
+    /** 【2026-10-03 需求第 4 条】打印前先拦一下：改了没保存就打印，印出来的是改动后的版面、库里却还是旧的 */
+    const handlePrint = useCallback(() => {
+        if (!confirmDiscard("打印", "Print")) return;
+        void printVolume();
+    }, [confirmDiscard, printVolume]);
 
     /** 改名（只存库里、不上纸）：走 PATCH 的"只带 title"那条路 */
     const saveTitle = useCallback(async () => {
@@ -613,7 +723,23 @@ export default function ReviewVolumesPage() {
                 分隔线仍走整屏（`border-b` 在外层），不然会断成一小截。 */}
             <div className="no-print border-b bg-background">
                 <div className="mx-auto flex w-full max-w-[1600px] items-center gap-2 px-4 py-2 md:px-8">
-                    <BackButton fallbackUrl="/" className="shrink-0" />
+                    {/*
+                     * 【2026-10-03 需求第 4 条】返回要拦：
+                     * `BackButton` 自己不收 onClick（它内部直接 router.push），外面套一层**捕获阶段**
+                     * 的点击监听 —— 取消确认时 `stopPropagation` 掉，点事件根本到不了那个按钮，
+                     * router.push 自然不会发生（没改时什么也不拦，行为与原样一致）。
+                     */}
+                    <span
+                        className="shrink-0 inline-flex"
+                        onClickCapture={(e) => {
+                            if (!confirmDiscard("返回", "Go back")) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                            }
+                        }}
+                    >
+                        <BackButton fallbackUrl="/" className="shrink-0" />
+                    </span>
                     <h1 className="text-base sm:text-lg font-semibold truncate">{L("复练卷页", "Review volumes")}</h1>
                     <span className="text-xs text-muted-foreground hidden lg:inline">
                         {L("已生成的卷都在这里（新卷请到打印预览页组）", "All built volumes live here")}
@@ -632,11 +758,16 @@ export default function ReviewVolumesPage() {
                         size="icon"
                         title={L("打印这一卷（会把卷内每道题的复练纸次数 +1）", "Print this volume")}
                         disabled={!layout}
-                        onClick={printVolume}
+                        onClick={handlePrint}
                     >
                         <Printer className="h-4 w-4" />
                     </Button>
-                    <Link href="/">
+                    <Link
+                        href="/"
+                        onClick={(e) => {
+                            if (!confirmDiscard("回主页", "Go home")) e.preventDefault();
+                        }}
+                    >
                         <Button variant="ghost" size="icon" title={L("返回主页", "Home")}>
                             <House className="h-5 w-5" />
                         </Button>
@@ -744,7 +875,7 @@ export default function ReviewVolumesPage() {
                                             <button
                                                 key={v.id}
                                                 type="button"
-                                                onClick={() => openVolume(v.id)}
+                                                onClick={() => handleOpenVolume(v.id)}
                                                 className="w-full text-left rounded-md border px-2 py-1.5 transition-colors"
                                                 style={{
                                                     borderColor: active ? "var(--primary)" : "var(--border)",
@@ -795,6 +926,32 @@ export default function ReviewVolumesPage() {
 
                     {/* ===== 右栏：选中卷的纸面 ===== */}
                     <main className="print-preview-right">
+                        {scanCode ? (
+                            /*
+                             * 【2026-10-03 需求第 5 条】【扫码图】那一屏：
+                             * 整屏切成"扫到的复练卷"——**复用扫码页用的 `ScanVolumeView`**
+                             * （只加了个 backLabel，不传时行为一字不变）。
+                             * 返回按钮文案改成"回到预览"，点了 `setScanCode(null)` 就回到本页、
+                             * 右栏仍是刚才那份卷（本页选中态没动过）。
+                             */
+                            <div className="mx-auto w-full max-w-6xl px-4 py-6">
+                                <h1 className="mb-3 flex items-center gap-2 text-lg font-bold">
+                                    <ScanLine className="h-5 w-5" />
+                                    {L("扫到的复练卷", "Scanned volume")}
+                                </h1>
+                                <ScanVolumeView
+                                    code={scanCode}
+                                    backLabel={L("回到预览", "Back to preview")}
+                                    onBack={() => setScanCode(null)}
+                                    onPickItem={(item) =>
+                                        router.push(
+                                            `/scan?vol=${encodeURIComponent(scanCode)}&item=${encodeURIComponent(item.id)}`,
+                                        )
+                                    }
+                                />
+                            </div>
+                        ) : (
+                            <>
                         {/* ⚠️ 量尺**必须留在缩放外面**（`SheetZoom` 的外面）：
                             `getBoundingClientRect()` 拿到的是**缩放后**的像素，
                             装进去量出来的 mm 会整体偏小 ⇒ 分页会以为"一页能装更多"，直接印错版面。 */}
@@ -836,19 +993,41 @@ export default function ReviewVolumesPage() {
 
                                 {selectedId && (
                                     <div className="mb-3 flex flex-wrap items-center gap-2 no-print">
+                                        {/* 【2026-10-03 需求第 4 条】没改 ⇒ 不显示【更新组卷】；改了才显示 */}
+                                        {dirty && (
+                                            <Button
+                                                size="sm"
+                                                onClick={updateVolume}
+                                                disabled={busy === "saving" || !layout || overfullPages.length > 0}
+                                                title={
+                                                    overfullPages.length > 0
+                                                        ? L("有页面装不下了，先把那几页调小", "Some page is overfull")
+                                                        : undefined
+                                                }
+                                            >
+                                                {busy === "saving"
+                                                    ? L("保存中…", "Saving…")
+                                                    : L("更新组卷", "Update volume")}
+                                            </Button>
+                                        )}
+                                        {/*
+                                         * 【2026-10-03 需求第 5 条】【扫码图】：
+                                         * 进"扫描这份卷第一页"的预览。**改过版面没保存时不可点** ——
+                                         * 不然扫出来的是库里那版、屏上是改过的这版，两边对不上。
+                                         */}
                                         <Button
                                             size="sm"
-                                            onClick={updateVolume}
-                                            disabled={busy === "saving" || !layout || overfullPages.length > 0}
+                                            variant="outline"
+                                            disabled={dirty || !layout}
                                             title={
-                                                overfullPages.length > 0
-                                                    ? L("有页面装不下了，先把那几页调小", "Some page is overfull")
-                                                    : undefined
+                                                dirty
+                                                    ? L("先保存版面（点【更新组卷】）才能进扫码图", "Save the layout first")
+                                                    : L("看这份卷第一页的扫码预览", "Scan preview of page 1")
                                             }
+                                            onClick={() => detail && setScanCode(buildPageCode(detail.volumeNo, 1))}
                                         >
-                                            {busy === "saving"
-                                                ? L("保存中…", "Saving…")
-                                                : L("更新组卷", "Update volume")}
+                                            <ScanLine className="mr-1.5 h-4 w-4" />
+                                            {L("扫码图", "Scan view")}
                                         </Button>
                                         <Button
                                             size="sm"
@@ -966,6 +1145,8 @@ export default function ReviewVolumesPage() {
                                 ))}
                             </div>
                         </SheetZoom>
+                            </>
+                        )}
                     </main>
                 </div>
             </div>

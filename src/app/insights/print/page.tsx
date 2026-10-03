@@ -42,6 +42,7 @@ import {
     Pencil,
     Printer,
     Save,
+    ScanLine,
     Trash2,
 } from 'lucide-react';
 
@@ -66,6 +67,9 @@ import {
     type InsightPrintRow,
 } from '@/components/print/insight-sheet';
 import { SheetZoom } from '@/components/print/sheet-zoom';
+import { InsightScanView } from '@/components/insight-scan-view';
+import { buildPageCode } from '@/lib/volume-code';
+import { shouldWarnBeforeLeaving, unsavedLeaveMessage } from '@/lib/unsaved-guard';
 
 /** 卷列表里的一项 */
 interface VolumeSummary {
@@ -164,6 +168,13 @@ function PrintWorkspace({ volId }: { volId: string }) {
     const [volumes, setVolumes] = useState<VolumeSummary[]>([]);
     const [loading, setLoading] = useState(true);
     const [notice, setNotice] = useState('');
+    /**
+     * 【2026-10-03 需求第 4 条】右栏那份纸"改过版面还没保存"没有 —— 由子组件 `VolumePaper`
+     * 报上来（脏状态本身在它那儿）。顶栏的返回/主页、左栏的切卷都据此拦截。
+     */
+    const [paperDirty, setPaperDirty] = useState(false);
+    /** 【2026-10-03 需求第 5 条】【扫码图】那一屏（非空即进入）；返回时清空、回到同一份纸 */
+    const [scanCode, setScanCode] = useState<string | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -204,6 +215,38 @@ function PrintWorkspace({ volId }: { volId: string }) {
         }
     };
 
+    /** 会丢改动的动作先问一句；点取消返回 false（停在原地、改动还在） */
+    const confirmDiscard = useCallback(
+        (actionZh: string, actionEn: string) => {
+            if (!shouldWarnBeforeLeaving(paperDirty)) return true;
+            return window.confirm(unsavedLeaveMessage(zh, actionZh, actionEn));
+        },
+        [paperDirty, zh],
+    );
+
+    /** 切换 / 打开另一份积累纸（左栏点击）—— 改过没保存时拦一下 */
+    const openSheet = (id: string) => {
+        if (id === volId) return; // 已经是这一份：不做无意义的导航
+        if (!confirmDiscard('切换积累纸', 'Switch sheet')) return;
+        setScanCode(null);
+        setPaperDirty(false);
+        router.push(`/insights/print?vol=${id}`);
+    };
+
+    /**
+     * 【2026-10-03 需求第 4 条】浏览器**关闭 / 刷新**标签页那一手也拦一下：
+     * 仅在 `paperDirty` 时挂监听（没改就正常关，别无故弹原生框）。
+     */
+    useEffect(() => {
+        if (!paperDirty) return;
+        const onBeforeUnload = (e: BeforeUnloadEvent) => {
+            e.preventDefault();
+            e.returnValue = '';
+        };
+        window.addEventListener('beforeunload', onBeforeUnload);
+        return () => window.removeEventListener('beforeunload', onBeforeUnload);
+    }, [paperDirty]);
+
     return (
         <div className="min-h-screen bg-muted/30">
             {/* 顶栏：标题 + 藏左栏 + 去日积月累挑 + 回主页。
@@ -218,7 +261,10 @@ function PrintWorkspace({ volId }: { volId: string }) {
                         variant="ghost"
                         size="icon"
                         title={L('返回日积月累', 'Back to takeaways')}
-                        onClick={() => router.push('/insights')}
+                        onClick={() => {
+                            if (!confirmDiscard('返回', 'Go back')) return;
+                            router.push('/insights');
+                        }}
                     >
                         <ArrowLeft className="h-4 w-4" />
                     </Button>
@@ -234,7 +280,12 @@ function PrintWorkspace({ volId }: { volId: string }) {
                     >
                         {listOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
                     </Button>
-                    <Link href="/">
+                    <Link
+                        href="/"
+                        onClick={(e) => {
+                            if (!confirmDiscard('回主页', 'Go home')) e.preventDefault();
+                        }}
+                    >
                         <Button variant="ghost" size="icon" title={L('回主页', 'Home')}>
                             <House className="h-5 w-5" />
                         </Button>
@@ -277,7 +328,7 @@ function PrintWorkspace({ volId }: { volId: string }) {
                                             className={`flex cursor-pointer items-start gap-2 rounded-md border px-2.5 py-2 transition-colors ${
                                                 active ? 'border-primary bg-accent/60' : 'hover:bg-accent/30'
                                             }`}
-                                            onClick={() => router.push(`/insights/print?vol=${v.id}`)}
+                                            onClick={() => openSheet(v.id)}
                                         >
                                             <div className="min-w-0 flex-1">
                                                 <div className="font-mono text-xs font-semibold">{v.volumeNo}</div>
@@ -319,8 +370,35 @@ function PrintWorkspace({ volId }: { volId: string }) {
                 )}
 
                 <section className="min-w-0 flex-1">
-                    {volId ? (
-                        <VolumePaper id={volId} />
+                    {scanCode ? (
+                        /* 【2026-10-03 需求第 5 条】【扫码图】那一屏：复用扫码页的 `InsightScanView`
+                           （只多传了个 backLabel）。返回按钮文案改成"回到预览"，
+                           点了清空 scanCode ⇒ 回到同一份纸的预览（volId 没动过）。 */
+                        <div className="space-y-3">
+                            <h1 className="flex items-center gap-2 text-lg font-bold">
+                                <ScanLine className="h-5 w-5" />
+                                {L('扫到的积累纸', 'Scanned takeaway sheet')}
+                            </h1>
+                            <InsightScanView
+                                code={scanCode}
+                                backLabel={L('回到预览', 'Back to preview')}
+                                onBack={() => setScanCode(null)}
+                                onPickItem={(insightCode) =>
+                                    router.push(
+                                        `/insights?pick=${encodeURIComponent(insightCode)}&noleft=1&back=${encodeURIComponent(`/insights/print?vol=${volId}`)}`,
+                                    )
+                                }
+                            />
+                        </div>
+                    ) : volId ? (
+                        <VolumePaper
+                            id={volId}
+                            onDirtyChange={setPaperDirty}
+                            onScan={(code) => {
+                                setPaperDirty(false);
+                                setScanCode(code);
+                            }}
+                        />
                     ) : (
                         <div className="rounded-lg border border-dashed bg-background px-6 py-16 text-center text-sm text-muted-foreground">
                             {L('左边点一份积累纸，这里就能看到它的纸面。', 'Pick a sheet on the left.')}
@@ -545,7 +623,17 @@ function NewVolume({ ids }: { ids: string[] }) {
  * 与复练卷页的"更新组卷"同一套手感（卷是印出去的凭证，不能一点就变）。
  * ══════════════════════════════════════════════════════════════════ */
 
-function VolumePaper({ id }: { id: string }) {
+function VolumePaper({
+    id,
+    onDirtyChange,
+    onScan,
+}: {
+    id: string;
+    /** 【2026-10-03 需求第 4 条】把"这份纸改过没保存"报给上层（顶栏/左栏据此拦截） */
+    onDirtyChange: (dirty: boolean) => void;
+    /** 【2026-10-03 需求第 5 条】点【扫码图】⇒ 上层切到扫码预览那一屏（传页二维码内容） */
+    onScan: (code: string) => void;
+}) {
     const router = useRouter();
     const { language } = useLanguage();
     const zh = language === 'zh';
@@ -647,6 +735,11 @@ function VolumePaper({ id }: { id: string }) {
         }
         return false;
     }, [detail, order, blankLines, figures]);
+
+    /** 【2026-10-03 需求第 4 条】把脏状态报给上层 —— 顶栏的返回/主页、左栏的切卷据此弹确认 */
+    useEffect(() => {
+        onDirtyChange(dirty);
+    }, [dirty, onDirtyChange]);
 
     /* ── 量高：只有"改过版面"时才需要（没改就按**快照**还原，一个字不重量） ── */
     const measureKey = useMemo(
@@ -811,7 +904,14 @@ function VolumePaper({ id }: { id: string }) {
         }
     };
 
-    const doPrint = () => window.print();
+    /**
+     * 打印：改过没保存时先确认 —— 否则印出来的是改动后的版面、库里还是旧的。
+     * （与顶栏/左栏那几处同一句文案，走同一个纯逻辑。）
+     */
+    const doPrint = () => {
+        if (shouldWarnBeforeLeaving(dirty) && !window.confirm(unsavedLeaveMessage(zh, '打印', 'Print'))) return;
+        window.print();
+    };
 
     const saveTitle = async () => {
         setBusy('renaming');
@@ -935,6 +1035,24 @@ function VolumePaper({ id }: { id: string }) {
                         {busy === 'saving' ? L('保存中…', 'Saving…') : L('保存版面', 'Save layout')}
                     </Button>
                 )}
+                {/*
+                 * 【2026-10-03 需求第 5 条】【扫码图】：进"扫描这张纸第一页"的预览。
+                 * **改过版面没保存时不可点** —— 不然扫出来的是库里那版、屏上是改过的这版。
+                 */}
+                <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={dirty}
+                    title={
+                        dirty
+                            ? L('先保存版面（点【保存版面】）才能进扫码图', 'Save the layout first')
+                            : L('看这张纸第一页的扫码预览', 'Scan preview of page 1')
+                    }
+                    onClick={() => onScan(buildPageCode(detail.volumeNo, 1))}
+                >
+                    <ScanLine className="mr-1.5 h-3.5 w-3.5" />
+                    {L('扫码图', 'Scan view')}
+                </Button>
                 <Button size="sm" onClick={doPrint}>
                     <Printer className="mr-1.5 h-3.5 w-3.5" />
                     {L('打印', 'Print')}
@@ -950,16 +1068,8 @@ function VolumePaper({ id }: { id: string }) {
                 </div>
             )}
 
-            {dirty && (
-                <div className="no-print px-3 pt-2 md:px-8">
-                    <div className="mx-auto max-w-[1600px] rounded-md border border-amber-400 bg-amber-50 px-3 py-1.5 text-sm text-amber-900">
-                        {L(
-                            '版面改过了但还没保存 —— 点右上角【保存版面】才会写进这一卷（印出去的凭证不该一点就变）。',
-                            'Unsaved layout — press Save layout to write it into this volume.',
-                        )}
-                    </div>
-                </div>
-            )}
+            {/* 【2026-10-03 需求第 4 条】原来那句琥珀色"版面改过了但还没保存…"提示**删掉** ——
+                他明确"有确认提示就够了"（切走时会拦，不必常驻一句）。 */}
 
             <div className="mx-auto w-full max-w-[1600px] px-4 py-3 md:px-8">
                 {printRows.length === 0 ? (

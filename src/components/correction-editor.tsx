@@ -18,13 +18,23 @@ import { apiClient } from "@/lib/api-client";
 import { UserProfile, Notebook } from "@/types/api";
 import { inferSubjectFromName } from "@/lib/knowledge-tags";
 import { normalizeMistakeStatusForSave, type MistakeStatus } from "@/lib/mistake-status";
+import {
+    MANAGE_TYPES,
+    MANAGE_TYPE_DEFAULT,
+    MANAGE_TYPE_LABEL,
+    MANAGE_TYPE_SCREEN_COLOR,
+    MANAGE_TYPE_UNDECIDED,
+    MANAGE_TYPE_UNDECIDED_COLOR,
+    type ManageType,
+} from "@/lib/manage-type";
 import type { ReanswerQuestionResult } from "@/lib/ai/types";
 import { buildReanswerRequestBody } from "@/lib/reanswer-request";
 
 export interface ParsedQuestionWithSubject extends ParsedQuestion {
     notebookId?: string;
     gradeSemester?: string;
-    paperLevel?: string;
+    /** 【2026-10-03】错题等级：deep 深挖 / review 复练 / null 未定（对应后端 manageType 字段） */
+    manageType?: ManageType | null;
     source?: string;
 }
 
@@ -52,12 +62,27 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
         mistakeStatus: initialData.mistakeStatus || "unknown",
         notebookId: initialSubjectId,
         gradeSemester: "",
-        paperLevel: "a",
+        /**
+         * 【2026-10-03】下拉默认显示 **复练**（项目里"录入默认 = 复练"这条 L0 规则）。
+         * ⚠️ 只是**显示**默认：用户没动过就不把这个字段提交出去，
+         *    让后端照旧走"录入默认（复练）/ 来源 = default"——这样以后在详情页打错因时，
+         *    等级还能按错因自动派生。用户一旦动过，才算"手动定级"提交。
+         *    （见下方 manageTypeTouchedRef）
+         */
+        manageType: MANAGE_TYPE_DEFAULT,
         source: ""
     });
     const { t, language } = useLanguage();
+    /** 本页新文案的双语助手（与列表页 / 详情页同一写法，不再往 translations 里塞碎键） */
+    const L = (zh: string, en: string) => (language === "zh" ? zh : en);
     const [isReanswering, setIsReanswering] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+    /**
+     * 【2026-10-03】用户是否**主动改过**错题等级。
+     * 没改 ⇒ 提交时不带 manageType（保持后端 default 语义，将来可被错因派生改写）；
+     * 改过 ⇒ 带上（含"未定"= null），后端记为手动落定。
+     */
+    const manageTypeTouchedRef = useRef(false);
 
     const [educationStage, setEducationStage] = useState<string | undefined>(undefined);
     const [notebooks, setNotebooks] = useState<Notebook[]>([]);
@@ -200,13 +225,19 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                                 if (typeof window !== 'undefined') {
                                     localStorage.setItem('wn_default_gradeSemester', data.gradeSemester || "");
                                 }
-                                await onSave({
+                                const payload: ParsedQuestionWithSubject = {
                                     ...data,
                                     mistakeStatus: normalizeMistakeStatusForSave(
                                         data.mistakeStatus,
                                         data.wrongAnswerText
                                     ),
-                                });
+                                };
+                                // 用户没动过等级 ⇒ 不带这个字段（保持后端"录入默认"的语义，
+                                // 而不是把它记成"手动定级"、让以后按错因自动派生失效）。
+                                if (!manageTypeTouchedRef.current) {
+                                    delete payload.manageType;
+                                }
+                                await onSave(payload);
                             } finally {
                                 setIsSaving(false);
                             }
@@ -252,18 +283,40 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                             />
                         </div>
                         <div className="space-y-2">
-                            <Label>{t.editor.paperLevel || "Paper Level"}</Label>
+                            {/* 【2026-10-03 他要求】原「所属卷等级」(A卷/B卷/其他) 改成**错题等级**：
+                                深挖 / 复练 / 未定，存到后端 manageType（deep / review / null）。
+                                选项色值复用 lib/manage-type.ts（与列表卡片小标签同一处取色）。 */}
+                            <Label>{L("错题等级", "Question level")}</Label>
                             <Select
-                                value={data.paperLevel || "a"}
-                                onValueChange={(val) => setData({ ...data, paperLevel: val })}
+                                value={data.manageType ?? "__undecided__"}
+                                onValueChange={(val) => {
+                                    manageTypeTouchedRef.current = true;
+                                    setData({
+                                        ...data,
+                                        manageType: val === "__undecided__" ? null : (val as ManageType),
+                                    });
+                                }}
                             >
                                 <SelectTrigger>
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="a">{t.editor.paperLevels?.a || "Paper A"}</SelectItem>
-                                    <SelectItem value="b">{t.editor.paperLevels?.b || "Paper B"}</SelectItem>
-                                    <SelectItem value="other">{t.editor.paperLevels?.other || "Other"}</SelectItem>
+                                    {MANAGE_TYPES.map((tp) => (
+                                        <SelectItem
+                                            key={tp}
+                                            value={tp}
+                                            style={{ color: MANAGE_TYPE_SCREEN_COLOR[tp] }}
+                                            className="font-medium"
+                                        >
+                                            {MANAGE_TYPE_LABEL[tp]}
+                                        </SelectItem>
+                                    ))}
+                                    <SelectItem
+                                        value="__undecided__"
+                                        style={{ color: MANAGE_TYPE_UNDECIDED_COLOR }}
+                                    >
+                                        {MANAGE_TYPE_UNDECIDED}
+                                    </SelectItem>
                                 </SelectContent>
                             </Select>
                     </div>

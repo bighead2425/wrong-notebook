@@ -228,10 +228,23 @@ export async function POST(req: Request) {
          * 见 `lib/manage-type.ts` 与二次设计《阅读入口》§6.2 / §6.3。
          */
         const category = normalizeMistakeCategory(mistakeCategory);
-        const explicitType = normalizeManageType(manageType);
+        /**
+         * 【2026-10-03 修】**"未定"是个明确的选择，不能和"没传"混为一谈。**
+         *
+         * 原来写的是 `explicitType ?? suggestion?.type ?? MANAGE_TYPE_DEFAULT`，
+         * 而 `normalizeManageType(null)` 的结果就是 `null` ⇒ 从校对页把下拉设成"未定"
+         * （传 `null`）会被 `??` 当成"没传"，掉进兜底变成**复练** ——
+         * 表现是"选了未定，存进去却是复练"。
+         * 判据改成"**这个键到底传没传**"：传了就以它为准（含 `null` = 未定），
+         * 没传才按"错因派生 → 录入默认"走（那是 L0/L1 的既有规则，不动）。
+         */
+        const hasExplicitType = Object.prototype.hasOwnProperty.call(body ?? {}, "manageType");
+        const explicitType = hasExplicitType ? normalizeManageType(manageType) : undefined;
         const suggestion = category ? suggestManageType(category) : null;
-        const finalManageType = explicitType ?? suggestion?.type ?? MANAGE_TYPE_DEFAULT;
-        const finalManageSource = explicitType
+        const finalManageType = hasExplicitType
+            ? (explicitType ?? null) // 明确选了"未定"⇒ 落 null
+            : (suggestion?.type ?? MANAGE_TYPE_DEFAULT);
+        const finalManageSource = hasExplicitType
             ? (normalizeManageTypeSource(manageTypeSource) === 'ai' ? 'ai' : 'manual')
             : suggestion?.type
                 ? 'derived'

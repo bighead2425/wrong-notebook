@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
-import { ChevronLeft, ChevronRight, Plus, House, Pencil, Printer, Sparkles, ArchiveRestore } from "lucide-react";
+import { ChevronLeft, ChevronRight, House, Pencil, Printer, Sparkles, ArchiveRestore, Layers } from "lucide-react";
 import Link from "next/link";
 import { ErrorList } from "@/components/error-list";
 import { RenameNotebookDialog } from "@/components/rename-notebook-dialog";
@@ -94,6 +94,17 @@ export default function NotebookDetailPage() {
         setNotebook({ ...notebook, archiveStatus: "active" });
     };
 
+    /**
+     * 【2026-10-03 他要求】「添加错题」与「复练」对调：「复练」挪到页头右上角。
+     * 带上本子的年级学期 + 学科当筛选（与列表里原来那个「复练」按钮同一套参数）。
+     */
+    const openReviewVolumes = () => {
+        const qs = new URLSearchParams();
+        if (notebook?.grade) qs.set("grade", `${notebook.grade}${notebook.semester || "上"}`);
+        if (notebook?.subject) qs.set("subject", notebook.subject);
+        router.push(`/review-volumes${qs.toString() ? `?${qs.toString()}` : ""}`);
+    };
+
     if (loading) {
         return (
             <div className="min-h-screen flex items-center justify-center">
@@ -163,15 +174,27 @@ export default function NotebookDetailPage() {
                             <Sparkles className="h-4 w-4" />
                         </Button>
 
-                        <Link href={`/notebooks/${notebook.id}/add`}>
-                            <Button size="sm" className="hidden sm:flex">
-                                <Plus className="mr-2 h-4 w-4" />
-                                {t.notebooks?.addError || "Add Error"}
-                            </Button>
-                            <Button size="icon" className="sm:hidden">
-                                <Plus className="h-4 w-4" />
-                            </Button>
-                        </Link>
+                        {/* 【2026-10-03 他要求】「添加错题」与「复练」对调后，
+                            右上角这里换成「复练」（原「添题」已挪到下面那一排）。 */}
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="hidden sm:flex"
+                            title={L("看这本的复练卷", "Review volumes of this notebook")}
+                            onClick={openReviewVolumes}
+                        >
+                            <Layers className="mr-2 h-4 w-4" />
+                            {L("复练", "Volumes")}
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="icon"
+                            className="sm:hidden"
+                            title={L("看这本的复练卷", "Review volumes of this notebook")}
+                            onClick={openReviewVolumes}
+                        >
+                            <Layers className="h-4 w-4" />
+                        </Button>
                         <Link href="/">
                             <Button variant="ghost" size="icon">
                                 <House className="h-5 w-5" />
@@ -235,12 +258,6 @@ export default function NotebookDetailPage() {
                 <ErrorList
                     notebookId={notebook.id}
                     subjectName={notebook.displayName}
-                    /* 【2026-09-30】给"复练卷"入口用：跳过去时把本子的年级学期 + 学科带上当筛选。
-                       年级学期存的是 `六年级` + `上` 这种两段，拼起来 `六年级上`（复练卷页会归一）。 */
-                    notebookInfo={{
-                        gradeTerm: notebook.grade ? `${notebook.grade}${notebook.semester || "上"}` : undefined,
-                        subject: notebook.subject || undefined,
-                    }}
                     /* 【2026-09-30】把"筛完还剩几道 / 这本一共几道"报上来，给页头那句话用 */
                     onCountChange={setCounts}
                 />

@@ -80,18 +80,27 @@ export function InsightScanView({
     code,
     onPickItem,
     onBack,
+    backLabel,
 }: {
     /** 扫到的页二维码内容（`BU20261003001-02` 这种） */
     code: string;
     /** 点了某条中间的圆圈加号 ⇒ 交给上层去日积月累页看这一条（传 JL 编号） */
     onPickItem: (insightCode: string) => void;
     onBack: () => void;
+    /**
+     * 【2026-10-03 需求第 5 条】左上角返回按钮的文案。
+     * 不传 ⇒ 维持原样（`回到扫码`）—— 扫码入口那一屏的行为**一字不变**；
+     * 从积累纸打印页的【扫码图】进来时传 `回到预览`（点了回预览那一屏）。
+     */
+    backLabel?: string;
 }) {
     const { language } = useLanguage();
     const L = useCallback(
         (zh: string, en: string) => (language === "zh" ? zh : en),
         [language],
     );
+    /** 返回按钮上那行字：默认"回到扫码"，【扫码图】那条路传 backLabel 覆盖 */
+    const backText = backLabel ?? L("回到扫码", "Back to scanner");
 
     const [volume, setVolume] = useState<VolumeDetail | null>(null);
     const [pageNo, setPageNo] = useState(1);
@@ -277,7 +286,7 @@ export function InsightScanView({
                 <p className="text-sm text-muted-foreground">{error || L("打开失败", "Failed to open")}</p>
                 <Button variant="outline" onClick={onBack}>
                     <ArrowLeft className="mr-1.5 h-4 w-4" />
-                    {L("回到扫码", "Back to scanner")}
+                    {backText}
                 </Button>
             </div>
         );
@@ -289,7 +298,7 @@ export function InsightScanView({
             <div className="flex flex-wrap items-center gap-3">
                 <Button variant="outline" size="sm" onClick={onBack}>
                     <ArrowLeft className="mr-1.5 h-4 w-4" />
-                    {L("回到扫码", "Back to scanner")}
+                    {backText}
                 </Button>
                 <span className="font-mono text-sm font-semibold">{volume.volumeNo}</span>
                 <span className="text-sm text-muted-foreground">

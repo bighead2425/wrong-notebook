@@ -4,9 +4,10 @@ import { useEffect, useState, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Filter, ChevronDown, Printer, ListChecks, Trash2, X, Layers } from "lucide-react";
+import { Search, Filter, ChevronDown, Printer, ListChecks, Trash2, X, Plus } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -51,11 +52,6 @@ interface ErrorListProps {
     notebookId?: string;
     subjectName?: string;
     /**
-     * 【2026-09-30】本子的"年级学期 + 学科"，只为**跳复练卷页时带上筛选**用
-     * （复练卷页的筛选就是这两项）。不给也不影响本页任何功能。
-     */
-    notebookInfo?: { gradeTerm?: string; subject?: string };
-    /**
      * 【2026-09-30】把两个数报上去，给页面头部那句
      * 「共 XX 道错题，当前选中 YY 道题」用（那句在错题本页的页头，不在这里）。
      *   total         = 当前筛选后剩多少道
@@ -70,7 +66,7 @@ type KnowledgeFilterChange = {
     tag?: string | null;
 };
 
-export function ErrorList({ notebookId, subjectName, notebookInfo, onCountChange }: ErrorListProps = {}) {
+export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListProps = {}) {
     const [items, setItems] = useState<ErrorItem[]>([]);
     const [, setLoading] = useState(true);
     const [search, setSearch] = useState("");
@@ -353,9 +349,9 @@ export function ErrorList({ notebookId, subjectName, notebookInfo, onCountChange
             setIsSelectMode(false);
             setSelectedIds(new Set());
             fetchItems();
-        } catch (error: any) {
+        } catch (error) {
             console.error(error);
-            alert(error?.data?.message || t.notebook?.mergeFailed || "Merge failed");
+            alert((error as { data?: { message?: string } })?.data?.message || t.notebook?.mergeFailed || "Merge failed");
         } finally {
             setIsMerging(false);
         }
@@ -530,21 +526,16 @@ export function ErrorList({ notebookId, subjectName, notebookInfo, onCountChange
                         onChange={(e) => setSearch(e.target.value)}
                     />
                 </div>
-                {/* 【2026-09-30 他要求换位】「复练卷」从第二行挪到第一行右上（原来"筛选"待的地方），
-                    「筛选」则挪到第二行、紧挨着「分类」。 */}
-                <Button
-                    variant="outline"
-                    onClick={() => {
-                        const qs = new URLSearchParams();
-                        if (notebookInfo?.gradeTerm) qs.set("grade", notebookInfo.gradeTerm);
-                        if (notebookInfo?.subject) qs.set("subject", notebookInfo.subject);
-                        router.push(`/review-volumes${qs.toString() ? `?${qs.toString()}` : ""}`);
-                    }}
-                    title={L("看这本的复练卷", "Review volumes of this notebook")}
-                >
-                    <Layers className="mr-2 h-4 w-4" />
-                    {L("复练", "Volumes")}
-                </Button>
+                {/* 【2026-10-03 他要求】「添加错题」与「复练」对调：
+                    这一排原来放「复练」（已挪到页头右上），现在放「添题」（原「添加错题」改名）。 */}
+                {notebookId && (
+                    <Link href={`/notebooks/${notebookId}/add`}>
+                        <Button>
+                            <Plus className="mr-2 h-4 w-4" />
+                            {L("添题", "Add question")}
+                        </Button>
+                    </Link>
+                )}
                 <Button variant="outline" onClick={handleExportPrint}>
                     <Printer className="mr-2 h-4 w-4" />
                     {t.notebook?.exportPrint || "导出打印"}

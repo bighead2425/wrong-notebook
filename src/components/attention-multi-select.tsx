@@ -17,10 +17,10 @@ import { ATTENTION_LEVELS, isAttentionUnfiltered, toggleAttentionLevel } from '@
  *
  * 他定的规矩（逐条对上）：
  *   · 点一次切换选中，前面有 ✓ / 无 ✓ 作标识；
- *   · **至少留一个**：只剩一个勾时，点那个没勾的不会把勾弄没
- *     （即"不允许取消到 0 个"—— 0 个等于没筛，不如干脆不让点空）；
- *   · 底部三个小按钮：**全选**（全勾上并立即生效）/ **取消**（本次改动作废，恢复打开前的样子）
- *     / **确认**（黑底白字，按当前勾选筛）；
+ *   · 【2026-10-03 改】底部两排按钮：
+ *       第一排 = **全选 / 清除**（同一个按钮，文字随草稿状态变）；
+ *       第二排 = **取消 / 确认**；
+ *   · **一个都没勾 ⇒ 确认置灰不可点**（他的核心诉求）：只有至少勾了一个等级，确认才可点；
  *   · 改动只在**确认**时才吐给外面 —— 边点边筛会让列表在菜单后面乱跳，也看不出"我改了什么"。
  *
  * ⚠️ 用 **draft 草稿**而不是直接改外部 state：`onOpenChange` 打开时把外部值拷进草稿，
@@ -96,41 +96,48 @@ export function AttentionMultiSelect({
 
                 <DropdownMenuSeparator />
 
-                {/* 三个小按钮：全选 / 取消 / 确认（黑底白字） */}
-                <div className="flex items-center gap-1 p-1">
+                {/* 【2026-10-03 他要求】底部改成**两排**：
+                    第一排 = 全选 / 清除（同一个按钮，文字随草稿变：一个没勾显示"全选"，有勾显示"清除"）；
+                    第二排 = 取消 / 确认。
+                    ⚠️ 硬约束：一个都没勾 ⇒ 确认**置灰不可点**（只有至少勾一个等级才可点）。 */}
+                <div className="space-y-1 p-1">
                     <Button
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="h-7 flex-1 px-1 text-xs"
-                        onClick={() => setDraft([...allValues])}
+                        className="h-7 w-full px-1 text-xs"
+                        onClick={() => setDraft(draft.length === 0 ? [...allValues] : [])}
                     >
-                        {zh ? '全选' : 'All'}
+                        {draft.length === 0 ? (zh ? '全选' : 'All') : (zh ? '清除' : 'Clear')}
                     </Button>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-7 flex-1 px-1 text-xs"
-                        onClick={() => {
-                            setDraft(value);
-                            setOpen(false);
-                        }}
-                    >
-                        {zh ? '取消' : 'Cancel'}
-                    </Button>
-                    <Button
-                        type="button"
-                        size="sm"
-                        className="h-7 flex-1 bg-black px-1 text-xs text-white hover:bg-black/90"
-                        onClick={() => {
-                            const next = draft.length > 0 ? draft : [...allValues];
-                            onConfirm(next);
-                            setOpen(false);
-                        }}
-                    >
-                        {zh ? '确认' : 'OK'}
-                    </Button>
+                    <div className="flex items-center gap-1">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 flex-1 px-1 text-xs"
+                            onClick={() => {
+                                setDraft(value);
+                                setOpen(false);
+                            }}
+                        >
+                            {zh ? '取消' : 'Cancel'}
+                        </Button>
+                        <Button
+                            type="button"
+                            size="sm"
+                            className="h-7 flex-1 bg-black px-1 text-xs text-white hover:bg-black/90"
+                            /* 一个都没勾 ⇒ 灰掉不可点（他明确要求的那条硬约束） */
+                            disabled={draft.length === 0}
+                            onClick={() => {
+                                if (draft.length === 0) return;
+                                onConfirm(draft);
+                                setOpen(false);
+                            }}
+                        >
+                            {zh ? '确认' : 'OK'}
+                        </Button>
+                    </div>
                 </div>
             </DropdownMenuContent>
         </DropdownMenu>
