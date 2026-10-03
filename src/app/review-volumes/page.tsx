@@ -1031,9 +1031,12 @@ export default function ReviewVolumesPage() {
                         {/* ⚠️ 这两层不能少：`mx-auto max-w-6xl px-4` 负责"不顶边、别太宽"，
                             `print-sheet` 负责把纸定成 **152mm 宽**（纸边靠它撑出来）。
                             少了这层，纸会被拉成整个右栏那么宽 —— 他看到的"横向、不是 B5"就是这个。
-                            `SheetZoom` 再包一层：双击纸面空白处切"实际大小 / 适应宽度"（手机不用左右拉）。 */}
+                            `SheetZoom` 再包一层：双击纸面空白处切"适应宽度 / 实际大小"。
+                            【2026-10-03 他要求】**点开就是"适应大小"**（原来默认实际大小，
+                            右栏一窄纸就横向溢出）。 */}
                         <SheetZoom
                             className="mx-auto max-w-6xl px-4 py-6 print:max-w-none print:px-0 print:py-0"
+                            defaultFit
                             L={L}
                         >
                             <div className="print-sheet">

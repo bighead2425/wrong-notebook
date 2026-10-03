@@ -1101,9 +1101,11 @@ function VolumePaper({
                 ) : (
                     /* ⚠️ `print-sheet` 这层不能少：它把纸定成 **152mm 宽**。
                        少了它纸会被撑成整个右栏那么宽（他看到的"横版、左右太满"就是这个）。
-                       同一条规矩：**新页面要照抄老页面的整条包裹链**。 */
+                       同一条规矩：**新页面要照抄老页面的整条包裹链**。
+                       【2026-10-03 他要求】`defaultFit` ⇒ **点开就是"适应大小"**。 */
                     <SheetZoom
                         className="mx-auto max-w-6xl px-4 py-6 print:max-w-none print:px-0 print:py-0"
+                        defaultFit
                         L={L}
                     >
                         <div className="print-sheet">

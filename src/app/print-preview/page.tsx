@@ -1165,10 +1165,12 @@ function PrintPreviewContent() {
 
                 <main className="print-preview-right">
                     {/* 跟主页一个口径：居中 + 最大宽 + 左右留白，别顶进浏览器边上。
-                        `SheetZoom` 再包一层：双击纸面空白处可在**实际大小 / 适应宽度**两档之间切
-                        （手机上不用左右拉就能看全一页宽）。 */}
+                        `SheetZoom` 再包一层：双击纸面空白处可在**适应宽度 / 实际大小**两档之间切。
+                        【2026-10-03 他要求】**打开就是"适应大小"** —— 原来默认实际大小，
+                        右栏一窄（左栏展开时）纸就横向溢出、"得左右拉着才看得全一行"。 */}
                     <SheetZoom
                         className="mx-auto max-w-6xl px-4 py-6 print:max-w-none print:px-0 print:py-0"
+                        defaultFit
                         L={L}
                     >
                         <div className="print-sheet">
