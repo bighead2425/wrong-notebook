@@ -189,6 +189,15 @@ export function normalizeMarkValue(value: string | null | undefined): RecoveredM
     };
     if (exact[s]) return exact[s];
     if (s.includes('看不清') || s.includes('不确定') || s.includes('模糊')) return 'unclear';
+    /**
+     * 【2026-10-04 审理补】**否定说法**先拦下来，当"看不清"交她复核。
+     * 原因是下面的 includes 兜底会把 `没做对` 判成 `right`（命中"对"）、
+     * `不对` 判成 `right`、`不是错` 判成 `wrong` —— 那就变成"猜对错"，
+     * 而本模块的红线正是**绝不猜对错**。
+     * ⚠️ 含"标"字的（`没有标`/`没标`/`未标注`）不受影响：那是"没标"的意思，
+     *    走下面 `includes('没'|'未') ⇒ none` 那条，语义正确。
+     */
+    if (/^(没|未|不|无)/.test(s) && !s.includes('标')) return 'unclear';
     if (s.includes('对') || s.includes('勾')) return 'right';
     if (s.includes('错') || s.includes('叉')) return 'wrong';
     if (s.includes('没') || s.includes('未') || s.includes('空')) return 'none';

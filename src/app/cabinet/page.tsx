@@ -510,7 +510,7 @@ function TaskCard({
 
                 {empty || !href ? (
                     <div className="text-xs text-muted-foreground">
-                        {empty ? "暂时没有这一项" : ""}
+                        {empty ? L("暂时没有这一项", "Nothing here right now") : ""}
                     </div>
                 ) : (
                     <Link href={href}>

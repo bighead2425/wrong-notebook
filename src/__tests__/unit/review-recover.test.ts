@@ -143,6 +143,21 @@ describe('parseReviewReading · AI 读数解析', () => {
         expect(normalizeMarkValue('')).toBe('unclear');
     });
 
+    /**
+     * ★ 2026-10-04 审理补：**否定说法不许被 includes 兜底猜成对错**。
+     * 没有这层拦截时，`没做对` 会命中 `includes('对')` 判成 right、`不对` 同样，
+     * `不是错` 会判成 wrong —— 那就违反了"绝不猜对错"的红线。
+     * ⚠️ 含"标"字的（没标 / 未标注）不受影响，那本来就是"没标"的意思。
+     */
+    it('★ 否定说法一律"看不清"（不猜对错）；但"没标"仍是没标', () => {
+        expect(normalizeMarkValue('没做对')).toBe('unclear');
+        expect(normalizeMarkValue('不对')).toBe('unclear');
+        expect(normalizeMarkValue('不是错')).toBe('unclear');
+        expect(normalizeMarkValue('无法判断')).toBe('unclear');
+        expect(normalizeMarkValue('没有标')).toBe('none');
+        expect(normalizeMarkValue('未标注')).toBe('none');
+    });
+
     it('AI 没按 XML 写、逐行 `L1: right` 时也能兜底读回', () => {
         const r = parseReviewReading('L1: right\nR1: wrong');
         expect(r.marksBySlot).toEqual({ L1: 'right', R1: 'wrong' });

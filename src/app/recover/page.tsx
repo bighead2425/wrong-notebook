@@ -114,11 +114,16 @@ type ReviewCardState =
     | { k: "ready" }
     | {
           k: "blocked";
-          reason: RecoveryBlockedReason | "ai-error" | "not-review";
+          /**
+           * ⚠️ 含 `build-page`：本页在分流时已经把积累纸的码挡在前面，
+           *    但 `/api/recover/review` 自己也回 `{reason:'build-page'}`（防御性第二道）——
+           *    类型里补上它，免得将来上游一改就掉进"AI 分析失败"这个错文案。
+           */
+          reason: RecoveryBlockedReason | "ai-error" | "not-review" | "build-page";
           detail: string | null;
           message: string | null;
       }
-    | { k: "saved"; written: number }
+    | { k: "saved"; written: number; /** 这一页里"没标 / 看不清"因而**没被写入**的格数 */ skipped: number }
     | { k: "skipped" };
 
 /** 校对表格里的一行 —— 就是这一页的一格（卷行）+ 她标的记号 */
@@ -248,18 +253,37 @@ export default function RecoverPage() {
         setReviewCards(reviewRef.current);
     }, []);
 
-    /** 把接口的 400 变成"具体原因 + 一句人话" */
-    const reviewBlockedOf = useCallback((err: unknown): { reason: RecoveryBlockedReason | "ai-error" | "not-review"; message: string } => {
-        if (err instanceof ApiError) {
-            const data = err.data as { message?: string; details?: { reason?: string } } | undefined;
-            const reason = data?.details?.reason;
-            if (reason === "volume-miss" || reason === "wrong-volume" || reason === "empty-page" || reason === "not-review") {
-                return { reason, message: "" };
+    /**
+     * 把接口的 400 变成"具体原因 + 一句人话"。
+     * ⚠️ 必须把服务端的 `details.detail`（volume-miss 时是**卷号**、empty-page 时是**页码**）
+     *    一起带出来 —— 界面文案里 `${...}` 插的就是它。
+     *    2026-10-04 审理前的写法只取了 `reason`，`detail` 被丢掉后由调用方拿 `card.pageCode`
+     *    （整串 `RE…-02`）顶替 ⇒ 提示变成"按卷号 RE20260926001-02 没找到这一卷"、"第 RE…-02 页是空的"。
+     */
+    const reviewBlockedOf = useCallback(
+        (
+            err: unknown,
+        ): { reason: RecoveryBlockedReason | "ai-error" | "not-review" | "build-page"; detail: string | null; message: string } => {
+            if (err instanceof ApiError) {
+                const data = err.data as
+                    | { message?: string; details?: { reason?: string; detail?: string } }
+                    | undefined;
+                const reason = data?.details?.reason;
+                if (
+                    reason === "volume-miss" ||
+                    reason === "wrong-volume" ||
+                    reason === "empty-page" ||
+                    reason === "not-review" ||
+                    reason === "build-page"
+                ) {
+                    return { reason, detail: data?.details?.detail ?? null, message: "" };
+                }
+                return { reason: "ai-error", detail: null, message: humanizeError(err) };
             }
-            return { reason: "ai-error", message: humanizeError(err) };
-        }
-        return { reason: "ai-error", message: humanizeError(err) };
-    }, []);
+            return { reason: "ai-error", detail: null, message: humanizeError(err) };
+        },
+        [],
+    );
 
     /**
      * 复练卡的"查卷 + 拼版面地图 + 让 AI 只读她标的记号"这一步（已存在的卡就地刷新）。
@@ -289,8 +313,12 @@ export default function RecoverPage() {
                     state: { k: "ready" },
                 }));
             } catch (err) {
-                const { reason, message } = reviewBlockedOf(err);
-                patchReview(id, (c) => ({ ...c, state: { k: "blocked", reason, detail: card.pageCode, message } }));
+                const { reason, detail, message } = reviewBlockedOf(err);
+                // 服务端给了具体 detail（卷号 / 页码）就用它；没给（如 AI 调用失败）才退回这张纸的页号，便于她对照
+                patchReview(id, (c) => ({
+                    ...c,
+                    state: { k: "blocked", reason, detail: detail ?? card.pageCode, message },
+                }));
             }
         },
         [language, patchReview, reviewBlockedOf],
@@ -361,6 +389,12 @@ export default function RecoverPage() {
                 alert(L("这一页还没标任何一道题：先在校对表格里点一下对 / 错，再保存。", "No questions marked yet."));
                 return;
             }
+            /**
+             * 这一页里"她没标 / 看不清"因而**没有写入**的格数。
+             * ⚠️ 必须回给用户看：`planRecoveryWrites` 故意跳过 none/unclear（不替她做主），
+             *    但保存成功时只说"已保存 N 道题"会让人以为整页都存了。
+             */
+            const skipped = card.rows.length - writes.length;
             patchReview(id, (c) => ({ ...c, saving: true }));
             try {
                 for (const w of writes) {
@@ -376,7 +410,7 @@ export default function RecoverPage() {
                         await apiClient.put(`/api/error-items/${w.errorItemId}`, { reviewOutcomes: outcomes });
                     }
                 }
-                patchReview(id, (c) => ({ ...c, saving: false, state: { k: "saved", written: writes.length } }));
+                patchReview(id, (c) => ({ ...c, saving: false, state: { k: "saved", written: writes.length, skipped } }));
             } catch (err) {
                 patchReview(id, (c) => ({ ...c, saving: false }));
                 alert(L("保存失败，请重试。", "Save failed, please retry."));
@@ -672,6 +706,12 @@ export default function RecoverPage() {
                     return L(
                         "这不是复练纸的页二维码（应为 RE…-NN）。",
                         "Not a review-sheet page code (expects RE…-NN).",
+                    );
+                case "build-page":
+                    // 分流时已经拦下积累纸，这里是接口层的第二道（防御）—— 也给人话
+                    return L(
+                        `这是积累纸的码（${state.detail ?? ""}），这一屏处理不了它。`,
+                        `This is a build-up sheet code (${state.detail ?? ""}); this screen can't handle it.`,
                     );
                 default:
                     return L(
@@ -1031,13 +1071,23 @@ export default function RecoverPage() {
                                         )}
 
                                         {card.state.k === "saved" && (
-                                            <p className="flex items-center gap-1.5 text-sm text-emerald-600">
-                                                <CheckCircle2 className="h-4 w-4" />
-                                                {L(
-                                                    `已保存：${card.state.written} 道题（卷标记 + 复习史）。`,
-                                                    `Saved: ${card.state.written} question(s).`,
+                                            <div className="space-y-1">
+                                                <p className="flex items-center gap-1.5 text-sm text-emerald-600">
+                                                    <CheckCircle2 className="h-4 w-4" />
+                                                    {L(
+                                                        `已保存：${card.state.written} 道题（卷标记 + 复习史）。`,
+                                                        `Saved: ${card.state.written} question(s).`,
+                                                    )}
+                                                </p>
+                                                {card.state.skipped > 0 && (
+                                                    <p className="text-xs text-muted-foreground">
+                                                        {L(
+                                                            `另有 ${card.state.skipped} 格没标或看不清，按规矩没有写入 —— 想记的话在校对表格里点一下，再保存一次。`,
+                                                            `${card.state.skipped} unmarked/unclear cell(s) were intentionally not saved.`,
+                                                        )}
+                                                    </p>
                                                 )}
-                                            </p>
+                                            </div>
                                         )}
 
                                         {card.state.k === "skipped" && (

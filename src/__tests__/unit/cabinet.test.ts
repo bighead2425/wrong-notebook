@@ -221,6 +221,18 @@ describe('⑥ 建议升为深挖', () => {
     it('已经是深挖 ⇒ 不进建议（不用再建议它升）', () => {
         expect(upgradeSuggestions([withOutcomes('1', 'deep', ['wrong', 'wrong', 'wrong'])])).toEqual([]);
     });
+
+    /**
+     * ★ 2026-10-04 审理补：把"未定也参与建议"**钉住**。
+     * 之前这段代码的注释写着"未定不在本任务里"，但实现是只排除 deep ⇒ 未定其实会进来。
+     * 裁决：保留行为（按 L0「未定读作复练」，对它的"建议升深挖"同样有用；且只是建议不强改），
+     * 所以补这条测试当文档 —— 若哪天决定"未定一律不提示"，改实现时这条也要一起改。
+     */
+    it('★ 未定（manageType=null 的老数据）也参与建议 —— 按 L0 它读作复练', () => {
+        const res = upgradeSuggestions([withOutcomes('1', null, ['wrong', 'wrong', null])]);
+        expect(res).toHaveLength(1);
+        expect(res[0].wrongCount).toBe(2);
+    });
 });
 
 describe('⑦ 编排 + 跨任务去重', () => {

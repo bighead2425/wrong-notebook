@@ -57,7 +57,21 @@ export async function GET() {
                 },
             }),
             prisma.errorItem.findMany({
-                where: { userId, deletedAt: null },
+                where: {
+                    userId,
+                    deletedAt: null,
+                    /**
+                     * 【2026-10-04 审理补】口径与**主库**（`/api/error-items/list` 的 scope=main）一致：
+                     * **归档本里的题不算"在用错题"**。
+                     * 不改的话，下面 `notebooks` 排除了归档本、这里却把它们的题算进
+                     * "错题总数 / 学科分布 / 掌握构成" ⇒ 同一页上三个数字自相矛盾，
+                     * 且归档本的题因为 `notebookSubject` 查不到会整批掉进"其他"学科。
+                     *
+                     * ⚠️ 只排除"归属归档本"的题；`notebookId=null`（还没归档到本）的题照常统计。
+                     * ⚠️ 这里**不**按 masteryLevel 过滤 —— "掌握构成"就是要显示已掌握的那些。
+                     */
+                    OR: [{ notebookId: null }, { notebook: { is: { archiveStatus: { not: "archived" } } } }],
+                },
                 select: {
                     id: true,
                     notebookId: true,
