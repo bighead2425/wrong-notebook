@@ -15,6 +15,7 @@ import {
     suggestManageType,
 } from "@/lib/manage-type";
 import { subjectKeyToCode, formatDateStamp, formatQuestionNo, startOfToday } from "@/lib/question-no";
+import { initialLevelForManageType } from "@/lib/level-linkage";
 
 const logger = createLogger('api:error-items');
 
@@ -270,6 +271,13 @@ export async function POST(req: Request) {
                     mistakeCategory: category,
                     manageType: finalManageType,
                     manageTypeSource: finalManageSource,
+                    /**
+                     * 【2026-10-03】**初定级**（一次性）：深挖 ⇒ 白银(2)、复练 ⇒ 青铜(1)。
+                     * 他拍板："初定只是一次性行为，之后靠调整既可。"
+                     * ⚠️ 只在这里定一次 —— 之后的升降全靠 `lib/level-linkage.ts`
+                     *    （类型切换 ±1、复习结果按规则加减），别在别处再"按类型重算等级"。
+                     */
+                    attention: initialLevelForManageType(finalManageType),
                     source: finalSource,
                     inputMethod: inputMethod || null,
                     // 【M1】框坐标：undefined（没传/形状不对）时**不写这一列**，

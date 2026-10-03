@@ -10,6 +10,12 @@ import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { normalizeMistakeCategory } from "@/lib/mistake-category";
 import { normalizeReviewOutcomes, serializeReviewOutcomes } from "@/lib/review-outcomes";
 import {
+    clampLevel,
+    computeLevelLinkage,
+    levelDeltaForTypeSwitch,
+    serializeLevelEntry,
+} from "@/lib/level-linkage";
+import {
     canAutoRewrite,
     normalizeManageType,
     normalizeManageTypeSource,
@@ -172,12 +178,18 @@ export async function PUT(
             updateData.reviewOutcomes = serializeReviewOutcomes(normalizeReviewOutcomes(reviewOutcomes));
         }
 
-        // 关注档 1-5（G8 难度档）：夹到 1..5，非法值忽略
-        if (attention !== undefined) {
-            const n = Number(attention);
-            if (Number.isFinite(n) && n >= 1 && n <= 5) {
-                updateData.attention = Math.round(n);
-            }
+        /**
+         * 关注档 1-5（G8 难度档）：夹到 1..5，非法值忽略。
+         * 【2026-10-03】**传了合法值 ⇒ 人工直接定级** —— 下面那段"等级联动"要让位：
+         * 人的动作永远优先于自动加减（否则他点一下奖牌，系统可能又给它弹回去）。
+         */
+        const hasExplicitAttention =
+            attention !== undefined &&
+            Number.isFinite(Number(attention)) &&
+            Number(attention) >= 1 &&
+            Number(attention) <= 5;
+        if (hasExplicitAttention) {
+            updateData.attention = Math.round(Number(attention));
         }
 
         // 掌握状态：0=New / 1=Reviewing / 2=Mastered（=2 即四分法「已掌握」，扫码「已会」写此位）
@@ -237,10 +249,12 @@ export async function PUT(
         }
 
         // ① 人显式定级 ⇒ 落定（手动 / 采纳 AI 建议）
+        let manageTypeChanged = false;
         if (manageType !== undefined) {
             const nextType = normalizeManageType(manageType);
             const fromAi = normalizeManageTypeSource(manageTypeSource) === 'ai';
             if ((errorItem.manageType ?? null) !== nextType) {
+                manageTypeChanged = true;
                 updateData.manageType = nextType;
                 // 清成"未定"时来源也一并清空（避免"未定但来源写着手动"这种自相矛盾）
                 updateData.manageTypeSource = nextType ? (fromAi ? 'ai' : 'manual') : null;
@@ -269,6 +283,67 @@ export async function PUT(
          */
         if (typeof deepNudgeDismissed === 'boolean') {
             updateData.deepNudgeDismissed = deepNudgeDismissed;
+        }
+
+        /**
+         * 【2026-10-03】等级 × 复习结果 / 类型切换的**联动收口**（他拍板的"事件记账"）。
+         *
+         * 规则只在 `lib/level-linkage.ts` 一处实现，这里只做"接线"：
+         *   (a) **类型切换**：复练 → 深挖 = +1；深挖 → 复练 = −1（只认**人显式**改的那次；
+         *       错因自动派生不算 —— 那是系统按 L1 映射表干活，不该动等级）；
+         *   (b) **复习结果**：按第 1/2/3 次与"最近一次"的组合记账；翻旧账不记账；
+         *       最新那一格允许反悔（撤销旧账 + 按新组合重算）。
+         *
+         * ⚠️ 顺序有讲究：**人工直接定级（`attention`）优先** —— 他点了奖牌就以他点的为准，
+         *    自动加减这一步整个让位（否则会出现"我刚点上去又被弹回来"）。
+         */
+        if (!hasExplicitAttention) {
+            let nextAttention = clampLevel(errorItem.attention);
+            let nextLedger: string | null = errorItem.levelLedger ?? null;
+            let ledgerTouched = false;
+            let note = '';
+
+            if (manageTypeChanged) {
+                const typeDelta = levelDeltaForTypeSwitch(errorItem.manageType ?? null, updateData.manageType ?? null);
+                const after = clampLevel(nextAttention + typeDelta);
+                if (after !== nextAttention) {
+                    note = updateData.manageType === 'deep' ? '升级为深挖 ⇒ 升 1 级' : '降为复练 ⇒ 降 1 级';
+                    nextAttention = after;
+                }
+            }
+
+            if (updateData.reviewOutcomes !== undefined) {
+                const linked = computeLevelLinkage({
+                    currentAttention: nextAttention,
+                    prevOutcomes: errorItem.reviewOutcomes,
+                    nextOutcomes: updateData.reviewOutcomes,
+                    prevEntry: errorItem.levelLedger,
+                });
+                if (linked.changed) {
+                    nextAttention = linked.attention;
+                    note = note ? `${note}；${linked.reasonZh}` : linked.reasonZh;
+                }
+                if (linked.entryChanged) {
+                    nextLedger = serializeLevelEntry(linked.entry);
+                    ledgerTouched = true;
+                }
+            }
+
+            if (nextAttention !== clampLevel(errorItem.attention)) {
+                updateData.attention = nextAttention;
+                stateLogs.push({
+                    errorItemId: id,
+                    field: 'attention',
+                    fromValue: String(errorItem.attention),
+                    toValue: String(nextAttention),
+                    actor: 'system',
+                    actorUserId: user.id,
+                    note: note || '等级联动',
+                });
+            }
+            if (ledgerTouched) {
+                updateData.levelLedger = nextLedger;
+            }
         }
 
         if (notebookId !== undefined) {

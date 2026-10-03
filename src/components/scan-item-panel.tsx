@@ -90,7 +90,13 @@ export function ScanItemPanel({
         const serialized = serializeReviewOutcomes(next);
         setItem({ ...item, reviewOutcomes: serialized });
         try {
-            await apiClient.put(`/api/error-items/${item.id}`, { reviewOutcomes: serialized });
+            // 【2026-10-03】复习结果会**联动等级** ⇒ 顺带把服务器算完的等级接回来
+            const updated = await apiClient.put<{ attention?: number }>(`/api/error-items/${item.id}`, {
+                reviewOutcomes: serialized,
+            });
+            if (typeof updated?.attention === 'number') {
+                setItem((prev) => (prev ? { ...prev, attention: updated.attention as number } : prev));
+            }
         } catch (error) {
             console.error(error);
             alert(t.common?.messages?.updateFailed || "Update failed");

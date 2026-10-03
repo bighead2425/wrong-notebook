@@ -273,7 +273,16 @@ export function ScanVolumeView({
             patchItem(item.id, { reviewOutcomes: serializeReviewOutcomes(next) });
             setSaveError(null);
             try {
-                await apiClient.put(`/api/error-items/${item.id}`, { reviewOutcomes: next });
+                const updated = await apiClient.put<{ attention?: number }>(`/api/error-items/${item.id}`, {
+                    reviewOutcomes: next,
+                });
+                /**
+                 * 【2026-10-03】复习结果会**联动等级**（见 `lib/level-linkage.ts`）⇒
+                 * 用服务器算完的值刷新（这一屏不显示奖牌，但列表/详情页可能正开着同一道题）。
+                 */
+                if (typeof updated?.attention === 'number') {
+                    patchItem(item.id, { attention: updated.attention });
+                }
             } catch (err) {
                 console.error(err);
                 patchItem(item.id, { reviewOutcomes: prevRaw });

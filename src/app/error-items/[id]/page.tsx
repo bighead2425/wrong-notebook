@@ -391,7 +391,17 @@ export default function ErrorDetailPage() {
         const serialized = serializeReviewOutcomes(next);
         setItem({ ...item, reviewOutcomes: serialized });
         try {
-            await apiClient.put(`/api/error-items/${item.id}`, { reviewOutcomes: serialized });
+            /**
+             * 【2026-10-03】复习结果与**等级联动**（他拍板的"事件记账"，规则在 `lib/level-linkage.ts`）
+             * ⇒ 用服务器算完的 `attention` 刷新页面上的奖牌。
+             * ⚠️ 仍然**不重拉整条 item**（那会闪、还会打断他连续点圆圈的节奏），只补这一个字段。
+             */
+            const updated = await apiClient.put<{ attention?: number }>(`/api/error-items/${item.id}`, {
+                reviewOutcomes: serialized,
+            });
+            if (typeof updated?.attention === 'number') {
+                setItem((prev) => (prev ? { ...prev, attention: updated.attention as number } : prev));
+            }
         } catch (error) {
             console.error(error);
             alert(t.common?.messages?.updateFailed || 'Update failed');
