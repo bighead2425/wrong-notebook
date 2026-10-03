@@ -728,9 +728,19 @@ export function ReviewQuestionBlock({
                         display: 'flex',
                         flexDirection: 'row',
                         justifyContent: 'flex-end',
-                        // 【2026-10-02 他要求】答案标签**上移**：顶边与升降框顶边差不多齐 ——
-                        // 原来底部对齐，标签下边沿超出了题的天蓝框，"有点低了"。
+                        /**
+                         * 内部**顶边对齐**（`flex-start`）⇒ 答案标签的顶边与升降框的顶边齐
+                         * （他 2026-10-03："上边沿可以和升降框的上边沿差不多"）。
+                         *
+                         * ⚠️【2026-10-03 修·他报的 bug】但**光有这一条会把升降框顶到上边去**
+                         * —— 这一栏被父层的 `alignItems: 'stretch'` 拉满整个答题区高度，
+                         * 内容就会停在这片区域的最上面（挨着题图），而设计要的是
+                         * **每道题右下角、虚线之上**。所以这一栏自己 `alignSelf: 'flex-end'`
+                         * （高度收缩到内容、贴着答题区底边）—— 两者合起来：
+                         * **整组沉到底部，组内标签与框顶边对齐**。
+                         */
                         alignItems: 'flex-start',
+                        alignSelf: 'flex-end',
                         gap: '1mm',
                     }}
                 >

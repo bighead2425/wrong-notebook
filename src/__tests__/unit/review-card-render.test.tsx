@@ -319,3 +319,32 @@ describe('卷 · 题干里的"假图"要去掉', () => {
         expect(stripMarkdownImages('甲   \n乙')).toBe('甲\n乙');
     });
 });
+
+describe('卷 · 升降框的位置（2026-10-03 他报的 bug）', () => {
+    /**
+     * 他的原话：
+     *   "每道题左侧的升降级框，现在是在题干的右下角，这和我们之前的设计不一样；
+     *    我们是要将升降级框放在每道题的右下角，视觉上看就是题下面虚线的上面位置。"
+     *
+     * 根因：为了让"答案标签的顶边与升降框的顶边齐"（2026-10-01 他要的），
+     * 我把装这两样的那一层 `alignItems` 改成了 `flex-start` —— 而那一层被父层
+     * `alignItems: 'stretch'` 拉满了整个答题区的高度 ⇒ **升降框被一起顶到了上边**
+     * （贴着题图），离开了"题块右下角"。
+     *
+     * 修法：那一层自己 `align-self: flex-end` —— 高度收缩到内容、贴着答题区底边，
+     * 内部仍保持顶边对齐。两者合起来 = **整组沉到底部，组内标签与框顶边对齐**。
+     *
+     * 这条测试是那次 bug 的看门人：**"整组沉底"这个属性不能被删**（删了就回到 bug）。
+     */
+    it('★ 装升降框的那一层必须"整组沉到答题区底部"（align-self: flex-end）', () => {
+        const html = renderSheets([item()]);
+
+        expect(html).toContain('align-self:flex-end');
+
+        /**
+         * 同时钉住另一半：那一层是**横排**的（答案标签贴在升降框**左边**、两者顶边齐）。
+         * 一个人把整套布局简化成竖排时，这两条会一起红 —— 正好提醒他改的是同一处。
+         */
+        expect(html).toMatch(/display:flex;flex-direction:row;justify-content:flex-end;align-items:flex-start;align-self:flex-end/);
+    });
+});

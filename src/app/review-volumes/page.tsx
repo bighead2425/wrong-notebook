@@ -37,7 +37,6 @@ import {
     Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
 import { apiClient } from "@/lib/api-client";
@@ -48,6 +47,7 @@ import { makeQrDataUrl } from "@/lib/qr";
 import { ReviewSheet, ReviewQuestionBlock, pageQrPayload } from "@/components/print/review-card";
 import { SheetZoom } from "@/components/print/sheet-zoom";
 import { ScanVolumeView } from "@/components/scan-volume-view";
+import { ScanItemPanel } from "@/components/scan-item-panel";
 import {
     VOLUME_VARIANTS,
     blankLinesFromDrag,
@@ -122,7 +122,8 @@ export default function ReviewVolumesPage() {
     const { language } = useLanguage();
     const zh = language === "zh";
     const L = useCallback((a: string, b: string) => (zh ? a : b), [zh]);
-    const router = useRouter();
+    // 【2026-10-03】这里原先有 `const router = useRouter()`：只为【扫码图】里"点加号跳 /scan"。
+    // 那条路已改成**页内叠一层**（见 `scanItemId`），本页再无跳转需求 ⇒ 一并去掉，免得留个没用的变量。
 
     // ---------- 左栏：卷列表 ----------
     const [volumes, setVolumes] = useState<VolumeSummary[]>([]);
@@ -178,6 +179,23 @@ export default function ReviewVolumesPage() {
      */
     const [scanCode, setScanCode] = useState<string | null>(null);
 
+    /**
+     * 【2026-10-03 下午·他要求】扫码图那一屏里**再叠的一层**："扫到的这道题"
+     * （点题块中间那个蓝底白加号进来）。
+     *
+     * 为什么放在本页而不是跳 `/scan`：他实测后指出 —— 跳过去之后那页的返回键
+     * 一路通向"回到复练卷 → 回到扫一扫"，**那是另一个流程**（真的扫码入口）。
+     * 他要在本页内形成闭环：预览 ⇒【扫码图】⇒ 扫到的复练卷 ⇒ 点加号 ⇒ 扫到的这道题
+     * ⇒【回到复练卷】**回到本页的扫码图**。
+     */
+    const [scanItemId, setScanItemId] = useState<string | null>(null);
+
+    /** 退出【扫码图】整组（连里面那层"扫到的这道题"一起清掉） */
+    const closeScan = useCallback(() => {
+        setScanItemId(null);
+        setScanCode(null);
+    }, []);
+
     const kind: VolumeKind = detail?.kind && VOLUME_KINDS.includes(detail.kind) ? detail.kind : "review";
 
     const blankValueOf = useCallback(
@@ -222,6 +240,22 @@ export default function ReviewVolumesPage() {
         const subject = qs.get("subject");
         if (grade) setGradeTermFilter(normalizeTerm(grade) || grade);
         if (subject) setSubjectFilter(subject);
+        /**
+         * 【2026-10-03】深链：`?vol=<卷 id>&scan=<第 1 页二维码内容>` ⇒
+         * 打开这一卷**并直接进【扫码图】**那一屏。
+         * 谁在用：① 扫码图里点【打开详情页】再退回来（`ScanItemPanel` 的 `backTo` 就拼这个地址）；
+         *        ② 在扫码图那一屏刷新页面时不丢这一屏。
+         */
+        const vol = qs.get("vol");
+        const scan = qs.get("scan");
+        if (vol) {
+            setSelectedId(vol);
+            void openVolume(vol).then(() => {
+                if (scan) setScanCode(scan);
+            });
+        }
+        // `openVolume` 是 useCallback([L, closeScan])：进依赖会随语言切换重建 ⇒ 只在挂载时跑一次
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     /**
@@ -235,8 +269,8 @@ export default function ReviewVolumesPage() {
             setNotice("");
             setPageQr({});
             setEditingTitle(false);
-            // 换卷 ⇒ 退出【扫码图】那一屏，并把旧基线清掉（新数据到了再立）
-            setScanCode(null);
+            // 换卷 ⇒ 退出【扫码图】整组，并把旧基线清掉（新数据到了再立）
+            closeScan();
             setSavedBaseline(null);
             try {
                 const { volume } = await apiClient.get<{ volume: VolumeDetail }>(`/api/review-volumes/${id}`);
@@ -284,7 +318,7 @@ export default function ReviewVolumesPage() {
                 setDetailLoading(false);
             }
         },
-        [L],
+        [L, closeScan],
     );
 
     /** 快照行 → 版面行（key：有题用题 id，没题用快照行自己的 id） */
@@ -410,10 +444,10 @@ export default function ReviewVolumesPage() {
             // 点的是已经打开的这一卷：重载只会白丢草稿，直接不动
             if (dirty && id === selectedId) return;
             if (!confirmDiscard("切换卷", "Switch volume")) return;
-            setScanCode(null);
+            closeScan();
             void openVolume(id);
         },
-        [dirty, selectedId, confirmDiscard, openVolume],
+        [dirty, selectedId, confirmDiscard, openVolume, closeScan],
     );
 
     /**
@@ -933,22 +967,40 @@ export default function ReviewVolumesPage() {
                              * （只加了个 backLabel，不传时行为一字不变）。
                              * 返回按钮文案改成"回到预览"，点了 `setScanCode(null)` 就回到本页、
                              * 右栏仍是刚才那份卷（本页选中态没动过）。
+                             *
+                             * 【2026-10-03 下午·他要求】**三层都在本页内**：
+                             *   预览 ⇒【扫码图】⇒ 扫到的复练卷 ⇒ 点蓝加号 ⇒ 扫到的这道题
+                             *   ⇒【回到复练卷】**回到本页的扫码图**（而不是跳进 `/scan` 那条链）。
+                             * 原来点加号是 `router.push('/scan?...')` —— 那是**真的扫码入口**，
+                             * 它上面的"返回"一路通向"扫一扫"，成了另一个流程（他实测后指出）。
                              */
                             <div className="mx-auto w-full max-w-6xl px-4 py-6">
                                 <h1 className="mb-3 flex items-center gap-2 text-lg font-bold">
                                     <ScanLine className="h-5 w-5" />
-                                    {L("扫到的复练卷", "Scanned volume")}
+                                    {scanItemId
+                                        ? L("扫到的这道题", "Scanned question")
+                                        : L("扫到的复练卷", "Scanned volume")}
                                 </h1>
-                                <ScanVolumeView
-                                    code={scanCode}
-                                    backLabel={L("回到预览", "Back to preview")}
-                                    onBack={() => setScanCode(null)}
-                                    onPickItem={(item) =>
-                                        router.push(
-                                            `/scan?vol=${encodeURIComponent(scanCode)}&item=${encodeURIComponent(item.id)}`,
-                                        )
-                                    }
-                                />
+                                {scanItemId ? (
+                                    <ScanItemPanel
+                                        itemId={scanItemId}
+                                        source="main"
+                                        onBack={() => setScanItemId(null)}
+                                        backLabel={L("回到复练卷", "Back to volume")}
+                                        /**
+                                         * 面板里那个【打开详情页】的返回目标：指回**本页 + 扫码图**，
+                                         * 这样从详情页退回来时还是这一屏（靠上面读 `?vol=&scan=` 还原）。
+                                         */
+                                        backTo={`/review-volumes?vol=${encodeURIComponent(selectedId || "")}&scan=${encodeURIComponent(scanCode)}`}
+                                    />
+                                ) : (
+                                    <ScanVolumeView
+                                        code={scanCode}
+                                        backLabel={L("回到预览", "Back to preview")}
+                                        onBack={closeScan}
+                                        onPickItem={(item) => setScanItemId(item.id)}
+                                    />
+                                )}
                             </div>
                         ) : (
                             <>
@@ -1024,7 +1076,12 @@ export default function ReviewVolumesPage() {
                                                     ? L("先保存版面（点【更新组卷】）才能进扫码图", "Save the layout first")
                                                     : L("看这份卷第一页的扫码预览", "Scan preview of page 1")
                                             }
-                                            onClick={() => detail && setScanCode(buildPageCode(detail.volumeNo, 1))}
+                                            onClick={() => {
+                                                if (!detail) return;
+                                                // 进【扫码图】前先把里面那层清掉，保证看到的是整卷
+                                                setScanItemId(null);
+                                                setScanCode(buildPageCode(detail.volumeNo, 1));
+                                            }}
                                         >
                                             <ScanLine className="mr-1.5 h-4 w-4" />
                                             {L("扫码图", "Scan view")}

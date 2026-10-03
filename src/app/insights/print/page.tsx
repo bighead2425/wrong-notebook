@@ -176,6 +176,16 @@ function PrintWorkspace({ volId }: { volId: string }) {
     /** 【2026-10-03 需求第 5 条】【扫码图】那一屏（非空即进入）；返回时清空、回到同一份纸 */
     const [scanCode, setScanCode] = useState<string | null>(null);
 
+    /**
+     * 【2026-10-03 下午·他要求】从日积月累页返回时带着 `?vol=…&scan=…` ⇒
+     * **直接回到"扫码图"那一屏**（右栏还是这张纸的扫码图，不是掉回普通预览）。
+     * 只在挂载时读一次 —— 之后页内切来切去都由 state 管。
+     */
+    useEffect(() => {
+        const qs = new URLSearchParams(window.location.search);
+        if (qs.get('vol') && qs.get('scan')) setScanCode(qs.get('scan'));
+    }, []);
+
     const load = useCallback(async () => {
         setLoading(true);
         try {
@@ -385,7 +395,14 @@ function PrintWorkspace({ volId }: { volId: string }) {
                                 onBack={() => setScanCode(null)}
                                 onPickItem={(insightCode) =>
                                     router.push(
-                                        `/insights?pick=${encodeURIComponent(insightCode)}&noleft=1&back=${encodeURIComponent(`/insights/print?vol=${volId}`)}`,
+                                        `/insights?pick=${encodeURIComponent(insightCode)}&noleft=1&back=${encodeURIComponent(
+                                            /**
+                                             * 【2026-10-03 下午·他要求】返回地址里**要把"扫码图"带上**：
+                                             * 从日积月累页点返回时，右栏得**还是这张纸的扫码图**，
+                                             * 而不是掉回普通预览（他实测："右边框就不是扫码图界面了"）。
+                                             */
+                                            `/insights/print?vol=${volId}&scan=${encodeURIComponent(scanCode)}`,
+                                        )}`,
                                     )
                                 }
                             />
