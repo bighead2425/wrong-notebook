@@ -15,7 +15,7 @@ import { AnalyzeResponse, Notebook, AppConfig } from "@/types/api";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { processImageFile } from "@/lib/image-utils";
-import { Upload, BookOpen, Tags, LogOut, BarChart3, QrCode, Layers, Sprout } from "lucide-react";
+import { Upload, BookOpen, Tags, LogOut, BarChart3, QrCode, Layers, Sprout, ScanText } from "lucide-react";
 import { SettingsDialog } from "@/components/settings-dialog";
 /**
  * 【custom-v24】公告通知按钮按用户要求从首页撤下（功能保留，组件文件不动）。
@@ -481,6 +481,19 @@ function HomeContent() {
                                 >
                                     <Sprout className="mr-2 h-4 w-4 shrink-0" />
                                     <span className="truncate">{t.app?.insights || '日积月累'}</span>
+                                </Button>
+                            </Link>
+
+                            {/* 【2026-10-04 他要求】「回录分析」入口：拍深挖纸正面下半部分她手写的分析，
+                                读二维码认出题号 → AI 整理成一条日积月累 → 打印，形成循环。
+                                紧挨日积月累放（同一条链路的两端）。 */}
+                            <Link href="/recover">
+                                <Button
+                                    variant="outline"
+                                    className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
+                                >
+                                    <ScanText className="mr-2 h-4 w-4 shrink-0" />
+                                    <span className="truncate">{t.app?.recover || '回录分析'}</span>
                                 </Button>
                             </Link>
                         </>

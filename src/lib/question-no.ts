@@ -29,6 +29,15 @@ const SUBJECT_CODE_MAP: Record<string, string> = {
 const FALLBACK_CODE = "OT"; // 其他 / 未识别
 
 /**
+ * 全部合法的题号前缀（10 个学科简拼）。
+ *
+ * 【2026-10-04】扫码/回录要用它判定"扫到的这两字母到底是不是题号前缀" ——
+ * `RE…`（复练卷）/ `BU…`（积累纸）不是题号，只认这 10 个，避免把卷号误当题号。
+ * 与 `SUBJECT_CODE_MAP` 同源，改一处即可（见本文件头"拼法只允许一处实现"）。
+ */
+export const QUESTION_NO_PREFIXES: readonly string[] = Object.values(SUBJECT_CODE_MAP);
+
+/**
  * 反查：2 字简拼 → subjectKey（`SX` → `math`）。
  * 【2026-09-30】复练卷页要按**学科**筛卷，而卷只存了题号 ⇒ 从题号前缀反推学科。
  * 认不出就返回 `other`（与生成时的兜底同一个值，**不猜**）。

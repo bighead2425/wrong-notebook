@@ -537,3 +537,108 @@ export function generateReanswerPrompt(
     provider_hints: options?.providerHints || ''
   }).trim();
 }
+
+/**
+ * 【2026-10-04】**回录分析**（深挖纸回录）—— 读孩子手写的反思。
+ *
+ * 这是"纸回录"的第一步：她在深挖纸正面下半部分手写"我卡在哪"，拍张照；
+ * 我们把照片 + 这道题的题干一起交给 AI，让它把她的手写内容整理成一条日积月累。
+ *
+ * ⚠️ 提示词的三条红线（他反复强调，也是这个功能存在的意义）：
+ *   ① **只整理、不编造** —— 只依据照片里她真正写下的字；看不清就说看不清，判不准留空。
+ *   ② **保留她的口吻** —— 不改成"标准答案腔"，不加"建议你……"这类说教。
+ *   ③ **区分"她的话"与"AI 整理"** —— 所以输出分 `her_words` / `organized` / `unclear`
+ *      三段（客户端把 organized 包成斜体批注，见 `lib/recover-analysis.ts` 的 compose）。
+ *
+ * ⚠️ 题干是当"地图"用的：帮她（其实是帮 AI）对上"她写的是哪一步"，**不是**让它去做题。
+ */
+export const DEFAULT_RECOVER_ANALYSIS_TEMPLATE = `【角色与核心任务 (ROLE AND CORE TASK)】
+你现在在读一个**小学五年级**的孩子在"错题分析纸（深挖纸）"**正面下半部分**手写的反思。
+她在那里写的是"我卡在哪 / 我当时是怎么想的 / 我现在明白了什么"。
+你的任务是：**把她手写的这几句话读出来、理顺**，作为一条"日积月累"的正文。
+
+{{language_instruction}}
+
+【这道题是什么（已知的上下文，只用来帮你对上她写的步骤）】
+{{question_context}}
+⚠️ 这段题干只是"地图"：用它判断她写的是哪一步，**不要**替她做题、不要复核题目对错。
+
+【这道题以前记过的日积月累（可能是空的）】
+{{previous_insight}}
+⚠️ 上面**有内容** ⇒ 说明这道题**以前回录过**，这次要**有机合并**：
+   · \`her_words\` **仍然只**输出**这次照片里**她写的那几句 —— **不要把上次的原话抄回来**
+     （上次她的话由客户端自己留着并与这次拼接，你只管这次的）；
+   · \`organized\` 要把**上次的整理**和**这次的整理**融合成通顺的正文：
+     去掉重复、保留两边都在意的点，把前后两次的意思理顺成一条。**不许只是把两段话接在一起**。
+   · 如果这次她写的内容和上次说的是一回事，就把它合成一句，不要重复说两遍。
+⚠️ 上面**是空的** ⇒ 就是第一次回录，照常整理即可。
+
+【三条铁规矩 (HARD RULES) —— 违反就等于没做】
+1. **只依据照片里她真正写下的字**。看不清的字词，就写「［看不清］」或留空；
+   **绝对不许**用你自己的猜想去补全，也不许"合理推测"她的意思。
+2. **不许编造**：不要补充你自己的错因、解法、正确步骤或学习建议；
+   不要写"你应该……""建议你……"这类说教；不要给题目解析，也不要给正确答案。
+   判不准的地方，**留空比乱写好**。
+3. **保留她的口吻**：用她的原话和视角（"我这次卡在……""我当时以为……"），
+   不要改写成标准答案腔，不要堆术语，也不要替她拔高或美化。
+
+【输出格式 (OUTPUT FORMAT)】
+严格只输出下面三个标签，不要输出任何其它文字，不要用 JSON、不要用 Markdown 代码块：
+
+<her_words>
+尽量**原样**转录她写在纸上的话：可以顺标点和断句，但**不许**改她的用词与口吻。
+看不清的位置就地写「［看不清］」。她一个字都没写清楚就留空。
+</her_words>
+
+<organized>
+把她的内容**理顺**成通顺的"日积月累"正文。**可以分成若干段**：
+段与段之间**必须空一行**（一段说一件事 / 一个想法）。
+⚠️ 别为了分段而分段 —— 内容少的时候一段就够（1～3 句）。
+⚠️ 每一段**内部不要换行**（客户端会给每一段单独包斜体批注；段内换行会把斜体断开）。
+仍然用她的口吻，仍然只讲她写过的内容。
+</organized>
+
+<unclear>
+一句话说明你觉得哪里看不清 / 拿不准（她复核时要看的一栏）。没有就留空。
+</unclear>
+
+{{grade_instruction}}
+{{provider_hints}}`;
+
+/**
+ * 生成回录分析提示词。
+ * @param questionContext - 由 `buildRecoverQuestionContext()` 拼好的"这道题是什么"上下文块
+ * @param language - 输出语言（默认简体中文）
+ * @param options - 自定义选项（customTemplate 可整段覆盖）
+ * @param gradeSemester - 年级学期（用于注入学历约束，可空）
+ * @param previousInsight - 【2026-10-04 他要求】**这道题上次记过的日积月累正文**：
+ *        有 ⇒ 让 AI 做**有机合并**（`organized` 融合前后两次，而不是拼接）；
+ *        没有 ⇒ 传入空/null（模板里会显示"以前没有记过"）。
+ *        ⚠️ 她写的**原话**不靠 AI 合并 —— 上次的原话由客户端保留（见
+ *        `lib/recover-analysis.ts` 的 `previousHersOf` + `composeRecoveryContent`），
+ *        这样"她的话"永远不会被模型改写或丢掉。
+ */
+export function generateRecoverAnalysisPrompt(
+  questionContext: string,
+  language: 'zh' | 'en' = 'zh',
+  options?: PromptOptions,
+  gradeSemester?: string | null,
+  previousInsight?: string | null
+): string {
+  const langInstruction = language === 'zh'
+    ? '请用**简体中文**输出。'
+    : 'Please output in English.';
+
+  const template = options?.customTemplate || DEFAULT_RECOVER_ANALYSIS_TEMPLATE;
+
+  const prev = (previousInsight ?? '').trim();
+
+  return replaceVariables(template, {
+    language_instruction: langInstruction,
+    question_context: questionContext,
+    // 空的时候给一句明确的"没有" —— 比留白更不容易让模型自己脑补
+    previous_insight: prev || '（这道题以前没有记过日积月累）',
+    grade_instruction: generateGradeInstruction(gradeSemester),
+    provider_hints: options?.providerHints || ''
+  }).trim();
+}
