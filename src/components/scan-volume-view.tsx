@@ -96,6 +96,12 @@ interface VolumeDetail {
     title?: string | null;
     defaultBlankLines: number;
     items: VolumeItemRow[];
+    /**
+     * 【2026-10-03 他要求】这份卷的随机 emoji 标识 —— **扫码预览页也要显示**，
+     * 因为它就是"查对"用的：拿手里这张纸和屏幕上这份卷，看 emoji 一样就是同一份。
+     * （由 `lookup` 接口给；老卷它会惰性补一个再返回。）
+     */
+    emojiMark?: string | null;
 }
 
 export function ScanVolumeView({
@@ -618,6 +624,9 @@ export function ScanVolumeView({
                                 volumeNo={volume.volumeNo}
                                 kind={kind}
                                 printDate={new Date()}
+                                /* 【2026-10-03 他要求】扫码预览页也显示 emoji 标识 —— 它是"查对"用的：
+                                   手里这张纸和屏幕上这份卷，emoji 相同即同一份（积累纸那边同理）。 */
+                                emojiMark={volume.emojiMark}
                                 pageQr={pageQr[i + 1]}
                                 itemByKey={itemByKey}
                                 missing={missingMap}
