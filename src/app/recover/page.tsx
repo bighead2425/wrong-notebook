@@ -37,12 +37,19 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { processImageFile } from "@/lib/image-utils";
 import { dayKey } from "@/lib/calendar-grid";
 import {
-    parseScannedCode,
     resolveScannedLookup,
-    type ScannedCode,
     type ScanBlockedReason,
     type ScanLookupResult,
 } from "@/lib/recover-analysis";
+import {
+    classifyRecoveryCode,
+    applyReadingToRows,
+    planRecoveryWrites,
+    type RecoveredMark,
+    type RecoveryBlockedReason,
+    type RecoveryRow,
+} from "@/lib/review-recover";
+import { nextReviewOutcomes } from "@/lib/scan-marking";
 import {
     Camera,
     CameraOff,
@@ -75,7 +82,7 @@ type CardState =
     | { k: "queued" }
     | { k: "working"; step: WorkStep }
     | { k: "ready" }
-    | { k: "blocked"; reason: ScanBlockedReason | "ai-error"; detail: string | null; message: string | null }
+    | { k: "blocked"; reason: ScanBlockedReason | "ai-error" | "build-page"; detail: string | null; message: string | null }
     | { k: "saved"; replaced: boolean }
     | { k: "skipped" };
 
@@ -94,6 +101,48 @@ interface RecoverCard {
     manual: string;
     saving: boolean;
     state: CardState;
+}
+
+/* ================= 复练纸（第二步）：一张页照片的状态机 ================= */
+
+/** 复练纸照片的工作阶段 */
+type ReviewStep = "reading";
+
+type ReviewCardState =
+    | { k: "queued" }
+    | { k: "working"; step: ReviewStep }
+    | { k: "ready" }
+    | {
+          k: "blocked";
+          reason: RecoveryBlockedReason | "ai-error" | "not-review";
+          detail: string | null;
+          message: string | null;
+      }
+    | { k: "saved"; written: number }
+    | { k: "skipped" };
+
+/** 校对表格里的一行 —— 就是这一页的一格（卷行）+ 她标的记号 */
+interface ReviewRowState extends RecoveryRow {
+    slot: string;
+    mark: RecoveredMark;
+}
+
+interface ReviewCard {
+    id: string;
+    fileName: string;
+    /** 压缩后的原图（既是缩略图，也是交给 AI 的那张照片） */
+    photo: string | null;
+    qr: string | null;
+    pageCode: string | null;
+    volumeId: string | null;
+    volumeNo: string | null;
+    pageNo: number | null;
+    /** 这一页每一格（校对表格的数据） */
+    rows: ReviewRowState[];
+    /** AI 交代的"哪里看不清" */
+    unclear: string;
+    saving: boolean;
+    state: ReviewCardState;
 }
 
 let seq = 0;
@@ -126,13 +175,20 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     });
 }
 
-/** 扫描分类结果 → 卡片的"卡住"状态（题号那一支不该走这里） */
-function blockedFromScanned(scanned: ScannedCode): CardState {
-    if (scanned.kind === "empty") return { k: "blocked", reason: "empty", detail: null, message: null };
-    if (scanned.kind === "page-code") {
-        return { k: "blocked", reason: "page-code", detail: scanned.value, message: null };
+/**
+ * 分流结果里"没法在深挖这条路上继续"的 → 深挖卡的"卡住"状态。
+ * ⚠️ 复练页（RE…）不会走到这里（它会转交给复练流程）；只有积累页（BU…）会带 `build-page`。
+ */
+function blockedFromRoute(route: ReturnType<typeof classifyRecoveryCode>): CardState {
+    if (route.route === "empty") return { k: "blocked", reason: "empty", detail: null, message: null };
+    if (route.route === "build-page") {
+        return { k: "blocked", reason: "build-page", detail: route.pageCode, message: null };
     }
-    return { k: "blocked", reason: "unknown", detail: scanned.value || null, message: null };
+    if (route.route === "review-page") {
+        // 理论上不会到这（上面已拦），兜底当成"卷里那一支还没接上"
+        return { k: "blocked", reason: "build-page", detail: route.pageCode, message: null };
+    }
+    return { k: "blocked", reason: "unknown", detail: route.route === "unknown" ? route.value : null, message: null };
 }
 
 /** 把各种异常翻译成一句人话 */
@@ -146,6 +202,22 @@ function humanizeError(err: unknown): string {
     }
     if (err instanceof Error) return err.message;
     return String(err);
+}
+
+/** 复练校对表格里的三态按钮（`unclear` 不在这里 —— 它是 AI 的读数，等她改） */
+const MARK_CHOICES: { value: RecoveredMark; zh: string; en: string }[] = [
+    { value: "right", zh: "对", en: "Right" },
+    { value: "wrong", zh: "错", en: "Wrong" },
+    { value: "none", zh: "没标", en: "None" },
+];
+
+/** `/api/recover/review` 的返回形状 */
+interface ReviewApiResponse {
+    volumeId: string;
+    volumeNo: string;
+    pageNo: number;
+    rows: RecoveryRow[];
+    reading: { marksBySlot: Record<string, RecoveredMark>; unclear: string };
 }
 
 export default function RecoverPage() {
@@ -164,6 +236,160 @@ export default function RecoverPage() {
         cardsRef.current = cardsRef.current.map((c) => (c.id === id ? updater(c) : c));
         setCards(cardsRef.current);
     }, []);
+
+    /* ================== 复练纸（第二步）：状态与流程 ================== */
+
+    const [reviewCards, setReviewCards] = useState<ReviewCard[]>([]);
+    /** ⚠️ 与 reviewCards 同步的**可变副本**（同 cardsRef 的道理） */
+    const reviewRef = useRef<ReviewCard[]>([]);
+
+    const patchReview = useCallback((id: string, updater: (c: ReviewCard) => ReviewCard) => {
+        reviewRef.current = reviewRef.current.map((c) => (c.id === id ? updater(c) : c));
+        setReviewCards(reviewRef.current);
+    }, []);
+
+    /** 把接口的 400 变成"具体原因 + 一句人话" */
+    const reviewBlockedOf = useCallback((err: unknown): { reason: RecoveryBlockedReason | "ai-error" | "not-review"; message: string } => {
+        if (err instanceof ApiError) {
+            const data = err.data as { message?: string; details?: { reason?: string } } | undefined;
+            const reason = data?.details?.reason;
+            if (reason === "volume-miss" || reason === "wrong-volume" || reason === "empty-page" || reason === "not-review") {
+                return { reason, message: "" };
+            }
+            return { reason: "ai-error", message: humanizeError(err) };
+        }
+        return { reason: "ai-error", message: humanizeError(err) };
+    }, []);
+
+    /**
+     * 复练卡的"查卷 + 拼版面地图 + 让 AI 只读她标的记号"这一步（已存在的卡就地刷新）。
+     * 起手（`startReviewCard`）与重试（`retryReview`）共用这一段，免得两处各写一遍。
+     */
+    const loadReviewInto = useCallback(
+        async (id: string) => {
+            const card = reviewRef.current.find((c) => c.id === id);
+            if (!card?.photo || !card.pageCode) return;
+            patchReview(id, (c) => ({ ...c, state: { k: "working", step: "reading" } }));
+            try {
+                const res = await apiClient.post<ReviewApiResponse>(
+                    "/api/recover/review",
+                    { imageBase64: card.photo, pageCode: card.pageCode, language },
+                    { timeout: 180000 },
+                );
+                const rows: ReviewRowState[] = applyReadingToRows(res.rows, res.reading).map(
+                    ({ row, slot, mark }) => ({ ...row, slot, mark }),
+                );
+                patchReview(id, (c) => ({
+                    ...c,
+                    volumeId: res.volumeId,
+                    volumeNo: res.volumeNo,
+                    pageNo: res.pageNo,
+                    rows,
+                    unclear: res.reading.unclear || "",
+                    state: { k: "ready" },
+                }));
+            } catch (err) {
+                const { reason, message } = reviewBlockedOf(err);
+                patchReview(id, (c) => ({ ...c, state: { k: "blocked", reason, detail: card.pageCode, message } }));
+            }
+        },
+        [language, patchReview, reviewBlockedOf],
+    );
+
+    /**
+     * 复练流程起点（照片已压缩、页二维码已解出）：
+     *   建一张复练卡，然后交给 `loadReviewInto` 查卷 + 拼地图 + 让 AI **只读她标的记号**。
+     */
+    const startReviewCard = useCallback(
+        async (photo: string, fileName: string, pageCode: string, volumeNo: string | null, pageNo: number | null) => {
+            const id = uid();
+            const card: ReviewCard = {
+                id,
+                fileName,
+                photo,
+                qr: pageCode,
+                pageCode,
+                volumeId: null,
+                volumeNo,
+                pageNo,
+                rows: [],
+                unclear: "",
+                saving: false,
+                state: { k: "working", step: "reading" },
+            };
+            reviewRef.current = [...reviewRef.current, card];
+            setReviewCards(reviewRef.current);
+            await loadReviewInto(id);
+        },
+        [loadReviewInto],
+    );
+
+    /** 复练卡重试：已解出页码码且照片还在 ⇒ 就地重跑那一步 */
+    const retryReview = useCallback(
+        (id: string) => {
+            void loadReviewInto(id);
+        },
+        [loadReviewInto],
+    );
+
+    /** 复练卡：改某一格她标的记号（校对表格里点对/错/没标） */
+    const setReviewMark = useCallback(
+        (id: string, rowId: string, mark: RecoveredMark) => {
+            patchReview(id, (c) => ({
+                ...c,
+                rows: c.rows.map((r) => (r.rowId === rowId ? { ...r, mark } : r)),
+            }));
+        },
+        [patchReview],
+    );
+
+    /**
+     * 保存复练卡：**只写"她标了"的那些题**（对/错），写两处：
+     *   ① 卷行 `markState`（"这张纸上我标了什么"，按卷）—— `PATCH /api/review-volumes/[id]`；
+     *   ② 题目的 `reviewOutcomes`（"这道题复习史"，跨卷）—— `PUT /api/error-items/[id]`。
+     * ⚠️ `none` / `unclear` 一律跳过（不静默清空、不替她做主）；题被删了只写①。
+     */
+    const saveReviewCard = useCallback(
+        async (id: string) => {
+            const card = reviewRef.current.find((c) => c.id === id);
+            if (!card || card.saving) return;
+            if (!card.volumeId) return;
+            const marksByRowId: Record<string, RecoveredMark> = {};
+            for (const r of card.rows) marksByRowId[r.rowId] = r.mark;
+            const writes = planRecoveryWrites(card.rows, marksByRowId);
+            if (writes.length === 0) {
+                alert(L("这一页还没标任何一道题：先在校对表格里点一下对 / 错，再保存。", "No questions marked yet."));
+                return;
+            }
+            patchReview(id, (c) => ({ ...c, saving: true }));
+            try {
+                for (const w of writes) {
+                    // ① 卷行标记（"这张纸上我标了什么"）
+                    await apiClient.patch(`/api/review-volumes/${card.volumeId}`, {
+                        markItemId: w.rowId,
+                        markState: w.markState,
+                    });
+                    // ② 这道题的复习史（口径与扫码页完全一致）
+                    if (w.writesOutcome && w.errorItemId) {
+                        const row = card.rows.find((r) => r.rowId === w.rowId);
+                        const { outcomes } = nextReviewOutcomes(row?.reviewOutcomes ?? null, w.markState);
+                        await apiClient.put(`/api/error-items/${w.errorItemId}`, { reviewOutcomes: outcomes });
+                    }
+                }
+                patchReview(id, (c) => ({ ...c, saving: false, state: { k: "saved", written: writes.length } }));
+            } catch (err) {
+                patchReview(id, (c) => ({ ...c, saving: false }));
+                alert(L("保存失败，请重试。", "Save failed, please retry."));
+                console.error(err);
+            }
+        },
+        [L, patchReview],
+    );
+
+    const skipReview = useCallback(
+        (id: string) => patchReview(id, (c) => ({ ...c, state: { k: "skipped" } })),
+        [patchReview],
+    );
 
     /** 查题 + 送 AI（假定"题号已知、照片已在卡里"） */
     const lookupAndAnalyze = useCallback(
@@ -227,7 +453,12 @@ export default function RecoverPage() {
         [L, language, patch],
     );
 
-    /** 一张照片的完整流程：压缩 → 解二维码 → 查题 → 送 AI */
+    /**
+     * 一张照片的完整流程：压缩 → 解二维码 → **按二维码类型分流**。
+     *   · 裸题号 ⇒ 深挖流程（`lookupAndAnalyze`，第一步，一字未改）；
+     *   · 复练页二维码（RE…）⇒ **转交复练流程**（把这张深挖卡换成一张复练卡）；
+     *   · 积累页二维码（BU…）/ 空 / 认不出 ⇒ 深挖卡进"卡住"态，给理由 + 三出口。
+     */
     const processCard = useCallback(
         async (id: string) => {
             const card = cardsRef.current.find((c) => c.id === id);
@@ -239,13 +470,23 @@ export default function RecoverPage() {
 
                 patch(id, (c) => ({ ...c, state: { k: "working", step: "decoding" } }));
                 const qr = await decodeQrFromDataUrl(photo);
-                const scanned = parseScannedCode(qr);
-                if (scanned.kind !== "question") {
-                    patch(id, (c) => ({ ...c, qr, no: null, state: blockedFromScanned(scanned) }));
+                const route = classifyRecoveryCode(qr);
+
+                if (route.route === "question") {
+                    patch(id, (c) => ({ ...c, qr, no: route.value }));
+                    await lookupAndAnalyze(id, route.value);
                     return;
                 }
-                patch(id, (c) => ({ ...c, qr, no: scanned.value }));
-                await lookupAndAnalyze(id, scanned.value);
+
+                if (route.route === "review-page") {
+                    // 这张其实是复练纸：把深挖卡换成一张复练卡，走第二步那套
+                    cardsRef.current = cardsRef.current.filter((c) => c.id !== id);
+                    setCards(cardsRef.current);
+                    await startReviewCard(photo, card.fileName, route.pageCode, route.volumeNo, route.pageNo);
+                    return;
+                }
+
+                patch(id, (c) => ({ ...c, qr, no: null, state: blockedFromRoute(route) }));
             } catch (err) {
                 patch(id, (c) => ({
                     ...c,
@@ -253,7 +494,7 @@ export default function RecoverPage() {
                 }));
             }
         },
-        [lookupAndAnalyze, patch],
+        [lookupAndAnalyze, patch, startReviewCard],
     );
 
     /** 选/拍了一组照片：逐张**串行**处理（一张失败不影响别的） */
@@ -299,25 +540,31 @@ export default function RecoverPage() {
         [lookupAndAnalyze, processCard],
     );
 
-    /** 二维码认不出时，用手输的题号兜底 */
+    /** 二维码认不出时，用手输的内容兜底（题号或页二维码都收） */
     const submitManual = useCallback(
         (id: string, raw: string) => {
-            const parsed = parseScannedCode(raw);
-            if (parsed.kind !== "question") {
-                patch(id, (c) => ({
-                    ...c,
-                    state: {
-                        k: "blocked",
-                        reason: parsed.kind === "empty" ? "empty" : parsed.kind === "page-code" ? "page-code" : "unknown",
-                        detail: parsed.value || null,
-                        message: null,
-                    },
-                }));
+            const route = classifyRecoveryCode(raw);
+            if (route.route === "question") {
+                void lookupAndAnalyze(id, route.value);
                 return;
             }
-            void lookupAndAnalyze(id, parsed.value);
+            if (route.route === "review-page") {
+                const card = cardsRef.current.find((c) => c.id === id);
+                if (!card?.photo) {
+                    patch(id, (c) => ({
+                        ...c,
+                        state: { k: "blocked", reason: "ai-error", detail: route.pageCode, message: L("图片丢了，请重试", "Image lost") },
+                    }));
+                    return;
+                }
+                cardsRef.current = cardsRef.current.filter((c) => c.id !== id);
+                setCards(cardsRef.current);
+                void startReviewCard(card.photo, card.fileName, route.pageCode, route.volumeNo, route.pageNo);
+                return;
+            }
+            patch(id, (c) => ({ ...c, state: blockedFromRoute(route) }));
         },
-        [lookupAndAnalyze, patch],
+        [L, lookupAndAnalyze, patch, startReviewCard],
     );
 
     const skip = useCallback(
@@ -377,6 +624,11 @@ export default function RecoverPage() {
                         `读出来的是卷的页码码（${state.detail ?? ""}），不是深挖纸上的题号。`,
                         `That is a volume page code (${state.detail ?? ""}), not a question code.`,
                     );
+                case "build-page":
+                    return L(
+                        `这是积累纸的码（${state.detail ?? ""}），这一屏还处理不了。请用积累纸那一屏回录。`,
+                        `This is a build-up sheet code (${state.detail ?? ""}); this screen can't handle it yet.`,
+                    );
                 case "unknown":
                     return L(
                         `读出来的内容「${state.detail ?? ""}」不像题号。`,
@@ -397,6 +649,40 @@ export default function RecoverPage() {
         [L],
     );
 
+    /** 复练卡"卡住"时的一句人话（原因 + 原样信息，绝不静默） */
+    const reviewBlockedText = useCallback(
+        (state: Extract<ReviewCardState, { k: "blocked" }>): string => {
+            switch (state.reason) {
+                case "volume-miss":
+                    return L(
+                        `按页二维码里的卷号 ${state.detail ?? ""} 没找到这一卷（可能卷被删了）。`,
+                        `Volume ${state.detail ?? ""} was not found.`,
+                    );
+                case "wrong-volume":
+                    return L(
+                        `查到的卷（${state.detail ?? ""}）不是这张纸上印的那一卷。`,
+                        `The looked-up volume (${state.detail ?? ""}) does not match this sheet.`,
+                    );
+                case "empty-page":
+                    return L(
+                        `这一卷的第 ${state.detail ?? ""} 页在库里是空的（可能扫到了超出范围的页码）。`,
+                        `Page ${state.detail ?? ""} has no items in this volume.`,
+                    );
+                case "not-review":
+                    return L(
+                        "这不是复练纸的页二维码（应为 RE…-NN）。",
+                        "Not a review-sheet page code (expects RE…-NN).",
+                    );
+                default:
+                    return L(
+                        `AI 没读出来：${state.message ?? "未知错误"}。可以重试或跳过。`,
+                        `AI failed: ${state.message ?? "unknown error"}. Retry or skip.`,
+                    );
+            }
+        },
+        [L],
+    );
+
     const stepText = (step: WorkStep) =>
         ({
             compressing: L("压图…", "Compressing…"),
@@ -405,8 +691,10 @@ export default function RecoverPage() {
             analyzing: L("AI 正在读她的手写…", "AI is reading her notes…"),
         })[step];
 
-    const total = cards.length;
-    const savedCount = cards.filter((c) => c.state.k === "saved").length;
+    const total = cards.length + reviewCards.length;
+    const savedCount =
+        cards.filter((c) => c.state.k === "saved").length +
+        reviewCards.filter((c) => c.state.k === "saved").length;
 
     return (
         <main className="min-h-screen bg-background p-4 md:p-8">
@@ -420,8 +708,8 @@ export default function RecoverPage() {
                         </h1>
                         <p className="text-sm text-muted-foreground sm:text-base">
                             {L(
-                                "拍深挖纸正面下半部分她手写的分析。系统读二维码认出题号，再让 AI 把她的手写整理成一条日积月累（原图一起存下）。",
-                                "Photograph the handwritten reflection on the deep-dive sheet. We read the QR to find the question, then let AI turn her notes into a takeaway — keeping the photo.",
+                                "拍纸面照片，按二维码自动分流：深挖纸（裸题号）读她手写的分析整理成日积月累；复练纸（RE 页码码）在已知版面上读她标的对/错，校对后写进卷与复习史。",
+                                "Photograph the sheet; we route by QR: deep-dive sheets (question code) become takeaways; review sheets (RE page code) have her right/wrong marks read at known positions and saved after review.",
                             )}
                         </p>
                     </div>
@@ -592,6 +880,163 @@ export default function RecoverPage() {
                                                 <Link href="/insights" className="underline">
                                                     {L("去查看", "View")}
                                                 </Link>
+                                            </p>
+                                        )}
+
+                                        {card.state.k === "skipped" && (
+                                            <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                                                <SkipForward className="h-4 w-4" />
+                                                {L("已跳过（这张没写进库）。", "Skipped (not saved).")}
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+
+                        {/* ===== 复练纸卡片（第二步）===== */}
+                        {reviewCards.map((card) => (
+                            <div key={card.id} className="overflow-hidden rounded-lg border">
+                                <div className="flex flex-col gap-4 p-4 sm:flex-row">
+                                    <div className="shrink-0">
+                                        {card.photo ? (
+                                            // eslint-disable-next-line @next/next/no-img-element
+                                            <img
+                                                src={card.photo}
+                                                alt={card.fileName}
+                                                className="h-36 w-auto max-w-full rounded border object-contain"
+                                            />
+                                        ) : (
+                                            <div className="flex h-36 w-28 items-center justify-center rounded border bg-muted text-muted-foreground">
+                                                <Loader2 className="h-5 w-5 animate-spin" />
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="min-w-0 flex-1 space-y-3">
+                                        <div className="flex flex-wrap items-center gap-2 text-sm">
+                                            {card.pageCode ? (
+                                                <span className="rounded bg-muted px-2 py-0.5 font-mono text-xs">{card.pageCode}</span>
+                                            ) : (
+                                                <span className="text-xs text-muted-foreground">{card.fileName}</span>
+                                            )}
+                                            {card.volumeNo && card.pageNo != null && (
+                                                <span className="text-muted-foreground">
+                                                    {L(`复练卷 ${card.volumeNo} 第 ${card.pageNo} 页`, `${card.volumeNo} p.${card.pageNo}`)}
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        {card.state.k === "queued" && (
+                                            <p className="text-sm text-muted-foreground">{L("排队中…", "Queued…")}</p>
+                                        )}
+                                        {card.state.k === "working" && (
+                                            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                {L("看这一页、读她标的记号…", "Reading her marks…")}
+                                            </p>
+                                        )}
+
+                                        {card.state.k === "ready" && (
+                                            <div className="space-y-3">
+                                                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                                    <Sparkles className="h-3.5 w-3.5" />
+                                                    {L(
+                                                        "AI 只读了她标的记号（不判卷）。下表可改，确认后保存。",
+                                                        "AI only read her marks (no grading). Edit below, then save.",
+                                                    )}
+                                                </p>
+                                                <div className="overflow-x-auto">
+                                                    <table className="w-full min-w-[30rem] text-sm">
+                                                        <thead>
+                                                            <tr className="text-left text-xs text-muted-foreground">
+                                                                <th className="py-1 pr-2">{L("位置", "Slot")}</th>
+                                                                <th className="py-1 pr-2">{L("题号 / 题干", "No. / Question")}</th>
+                                                                <th className="py-1 pr-2">{L("她标的", "Her mark")}</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {card.rows.map((r) => (
+                                                                <tr key={r.rowId} className="border-t align-top">
+                                                                    <td className="py-2 pr-2 font-mono text-xs">{r.slot}</td>
+                                                                    <td className="py-2 pr-2">
+                                                                        <div className="font-mono text-xs">{r.itemNo || "—"}</div>
+                                                                        <div className="max-w-[16rem] truncate text-muted-foreground">
+                                                                            {r.errorItemId
+                                                                                ? r.questionText || L("（无题干）", "(no text)")
+                                                                                : L("（题已从题库删除，只记纸面标记）", "(deleted; on-paper mark only)")}
+                                                                        </div>
+                                                                    </td>
+                                                                    <td className="py-2 pr-2">
+                                                                        <div className="flex flex-wrap gap-1">
+                                                                            {MARK_CHOICES.map((choice) => (
+                                                                                <Button
+                                                                                    key={choice.value}
+                                                                                    size="sm"
+                                                                                    variant={r.mark === choice.value ? "default" : "outline"}
+                                                                                    className="h-7 px-2"
+                                                                                    onClick={() => setReviewMark(card.id, r.rowId, choice.value)}
+                                                                                >
+                                                                                    {L(choice.zh, choice.en)}
+                                                                                </Button>
+                                                                            ))}
+                                                                        </div>
+                                                                        {r.mark === "unclear" && (
+                                                                            <span className="text-xs text-amber-600">
+                                                                                {L("AI 看不清这一格，请选一个", "Unclear — please pick one")}
+                                                                            </span>
+                                                                        )}
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                                {card.unclear && (
+                                                    <p className="text-xs text-amber-600">
+                                                        {L(`AI 看不清：${card.unclear}`, `Unclear: ${card.unclear}`)}
+                                                    </p>
+                                                )}
+                                                <div className="flex flex-wrap gap-2">
+                                                    <Button onClick={() => void saveReviewCard(card.id)} disabled={card.saving}>
+                                                        {card.saving ? (
+                                                            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                                                        ) : (
+                                                            <CheckCircle2 className="mr-1.5 h-4 w-4" />
+                                                        )}
+                                                        {L("保存（写卷与复习史）", "Save")}
+                                                    </Button>
+                                                    <Button variant="ghost" onClick={() => skipReview(card.id)}>
+                                                        {L("跳过", "Skip")}
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {card.state.k === "blocked" && (
+                                            <div className="space-y-2">
+                                                <p className="rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                                                    {reviewBlockedText(card.state)}
+                                                </p>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <Button variant="outline" onClick={() => retryReview(card.id)}>
+                                                        <RotateCcw className="mr-1.5 h-4 w-4" />
+                                                        {L("重试", "Retry")}
+                                                    </Button>
+                                                    <Button variant="ghost" onClick={() => skipReview(card.id)}>
+                                                        {L("跳过", "Skip")}
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {card.state.k === "saved" && (
+                                            <p className="flex items-center gap-1.5 text-sm text-emerald-600">
+                                                <CheckCircle2 className="h-4 w-4" />
+                                                {L(
+                                                    `已保存：${card.state.written} 道题（卷标记 + 复习史）。`,
+                                                    `Saved: ${card.state.written} question(s).`,
+                                                )}
                                             </p>
                                         )}
 

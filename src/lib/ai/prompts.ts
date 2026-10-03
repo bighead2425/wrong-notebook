@@ -642,3 +642,84 @@ export function generateRecoverAnalysisPrompt(
     provider_hints: options?.providerHints || ''
   }).trim();
 }
+
+/**
+ * 【2026-10-04】**复练纸回录**（纸回录的第二步）—— 读她**在纸面上标的记号**。
+ *
+ * 与第一步（深挖纸回录）根本不同：这一步**根本不判卷**。
+ * 复练纸上每道题右边有一个**灰圆**（圆里是本卷流水号）：她已经自己把它点成/画成了
+ * 三态之一 —— 灰底白数字 = 没标、绿底白勾 = 做对、粉底灰叉 = 做错。系统要做的只有一件事：
+ *   **在已知的位置上，把她标的记号读出来**（对 / 错 / 没标 / 看不清）。
+ *
+ * ⚠️ 提示词的红线（他反复强调，也是这个功能存在的意义）：
+ *   ① **不许判卷** —— 不许看题目、不许自己判断这道题做没做对；**她标的比 AI 看照片准**，
+ *      而且那是她的判断，本就该以她为准。AI 读不到就写 `unclear`，绝不猜对错。
+ *   ② **版面是给定的** —— 左栏/右栏、从上到下哪一格是哪题，都写在 {{page_map}} 里，
+ *      不需要（也不许）去"认版面"。
+ *   ③ **升降框与这一步无关** —— 右下角那个打了勾的升降框是"要不要改题目类型"，
+ *      **不看、不读、不据此输出任何东西**。
+ */
+export const DEFAULT_RECOVER_REVIEW_TEMPLATE = `【角色与核心任务 (ROLE AND CORE TASK)】
+你在读一张**复练纸**的照片。这张纸的**版面是已知的**（见下面的「版面地图」）：每一页分若干栏，
+每栏从上到下排着几道题；每道题右边有一个**灰圆**（圆里印着本卷流水号）。
+孩子已经**自己在纸上标了**每道题的结果 —— 你的任务**只有一件**：
+   **在下面地图给出的位置上，读出她标了什么记号**（对 / 错 / 没标 / 看不清）。
+
+{{language_instruction}}
+
+【这一页的版面地图（数据库里已知，**不需要你认版面**）】
+{{page_map}}
+
+【圆的三态长什么样（照着读，别猜）】
+- **灰底、白数字**（素灰的圆圈里是数字）⇒ 她**没标** ⇒ 写 \`none\`
+- **绿底、白勾（✓）** ⇒ 她标了**做对** ⇒ 写 \`right\`
+- **粉底、灰叉（✗）** ⇒ 她标了**做错** ⇒ 写 \`wrong\`
+- 看不清是哪一态（反光、糊了、被挡）⇒ 写 \`unclear\`
+
+【三条铁规矩 (HARD RULES) —— 违反就等于没做】
+1. **绝不判卷**：不许看题目内容去判断这道题做没做对，不许替她打分、不许改她的判断。
+   你唯一的依据是**她标在纸上的记号**。读不到就写 \`unclear\`，**不许猜**。
+2. **只读灰圆，别管升降框**：右下角那个打了勾的"升降框"讲的是"要不要改题目类型"，
+   与本次记录**无关** —— **不看、不读、不据此输出任何东西**。
+3. **按地图给的槽位对齐**：地图里每一格的代号（如 \`L1\`、\`R2\`）就是它在你输出里要用的代号，
+   **照抄代号**，不要自己另起一套编号。
+
+【输出格式 (OUTPUT FORMAT)】
+按**地图的顺序**，**每一格输出一行**下面这种标签（不要输出任何其它文字，不要用 JSON、不要用 Markdown 代码块）：
+
+<mark slot="L1">right</mark>
+<mark slot="L2">none</mark>
+<mark slot="R1">wrong</mark>
+
+- 每行的值只能是：\`right\` / \`wrong\` / \`none\` / \`unclear\` 这四个词之一。
+- 地图里**有**的槽位都要出现一行（哪怕她没标，也要写 \`none\`）。
+
+<unclear>
+一句话说明你哪里看不清 / 拿不准（她复核时要看的一栏）。没有就留空。
+</unclear>
+
+{{provider_hints}}`;
+
+/**
+ * 生成复练纸回录提示词。
+ * @param pageMap - 由 `buildReviewPageMap()` 拼好的"这一页版面地图"
+ * @param language - 输出语言（默认简体中文）
+ * @param options - 自定义选项（customTemplate 可整段覆盖）
+ */
+export function generateRecoverReviewPrompt(
+  pageMap: string,
+  language: 'zh' | 'en' = 'zh',
+  options?: PromptOptions
+): string {
+  const langInstruction = language === 'zh'
+    ? '请用**简体中文**输出标签外的说明文字（标签里的取值必须是英文的 right / wrong / none / unclear）。'
+    : 'Please output in English (the tag values must still be right / wrong / none / unclear).';
+
+  const template = options?.customTemplate || DEFAULT_RECOVER_REVIEW_TEMPLATE;
+
+  return replaceVariables(template, {
+    language_instruction: langInstruction,
+    page_map: pageMap,
+    provider_hints: options?.providerHints || ''
+  }).trim();
+}

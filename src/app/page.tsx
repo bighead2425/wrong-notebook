@@ -15,7 +15,7 @@ import { AnalyzeResponse, Notebook, AppConfig } from "@/types/api";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { processImageFile } from "@/lib/image-utils";
-import { Upload, BookOpen, Tags, LogOut, BarChart3, QrCode, Layers, Sprout, ScanText } from "lucide-react";
+import { Upload, BookOpen, Tags, LogOut, BarChart3, QrCode, Layers, Sprout, ScanText, LayoutDashboard } from "lucide-react";
 import { SettingsDialog } from "@/components/settings-dialog";
 /**
  * 【custom-v24】公告通知按钮按用户要求从首页撤下（功能保留，组件文件不动）。
@@ -494,6 +494,19 @@ function HomeContent() {
                                 >
                                     <ScanText className="mr-2 h-4 w-4 shrink-0" />
                                     <span className="truncate">{t.app?.recover || '回录分析'}</span>
+                                </Button>
+                            </Link>
+
+                            {/* 【2026-10-04 他要求】「总理内阁」：给他自己的控制台 ——
+                                统计总览 + 当前错题本一览 + **任务台**（"今天该干什么"自动排好，
+                                点一下就去做）。他原话："不用再自己思考现在哪个纸、哪个卷是不是该干什么了。" */}
+                            <Link href="/cabinet">
+                                <Button
+                                    variant="outline"
+                                    className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
+                                >
+                                    <LayoutDashboard className="mr-2 h-4 w-4 shrink-0" />
+                                    <span className="truncate">{t.app?.cabinet || '总理内阁'}</span>
                                 </Button>
                             </Link>
                         </>
