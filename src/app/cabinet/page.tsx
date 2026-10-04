@@ -477,6 +477,13 @@ function TaskCard({
     href: string | null;
     cta: string;
 }) {
+    /**
+     * ⚠️ 【2026-10-04 审理补】TaskCard 是**模块级独立组件**，`L` 是主组件里的闭包
+     *    ⇒ 这里**拿不到**，直接写 `L(...)` 会编译报 `Cannot find name 'L'`（CI Build Check 就是这么红的）。
+     *    所以本组件自己读一次语言上下文。其余文案（title/desc/cta）仍由调用方生成后传进来。
+     */
+    const { language } = useLanguage();
+    const L = (a: string, b: string) => (language === "zh" ? a : b);
     const empty = count === 0;
     return (
         <Card className={empty ? "border-dashed opacity-80" : ""}>
