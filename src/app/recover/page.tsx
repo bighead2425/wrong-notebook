@@ -34,6 +34,7 @@ import { BackButton } from "@/components/ui/back-button";
 import { ScanInboxBar } from "@/components/scan-inbox-bar";
 import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
 import { ImageCropper } from "@/components/image-cropper";
+import { StitchComposer } from "@/components/stitch-composer";
 import { MdEditor } from "@/components/md-editor";
 import { apiClient, ApiError } from "@/lib/api-client";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -290,6 +291,11 @@ export default function RecoverPage() {
     const editingShotRef = useRef<QueuedShot | null>(null);
     /** 连拍已拍张数（显示在按钮旁，给人一个数） */
     const [burstCount, setBurstCount] = useState(0);
+    /**
+     * 【2026-10-05】正在拼的那张（从「待处理」点【拼接】带进去的第一张图）。
+     * 非 null = 拼接窗口开着。拼好之后结果进「预处理」，**原来那张待处理的不动**。
+     */
+    const [stitchSeed, setStitchSeed] = useState<File | null>(null);
     /** 收不下时的一句提示（比如一次选了 40 张，只收前 30 张） */
     const [shotNotice, setShotNotice] = useState<string | null>(null);
 
@@ -718,6 +724,28 @@ export default function RecoverPage() {
         setReadyShots(readyShotsRef.current);
     }, []);
 
+    /** 点【拼接】：把这张图带进拼接窗口（跨页材料题：再取一张，各框一段，接成一张） */
+    const startStitch = useCallback((id: string) => {
+        const shot = pendingShotsRef.current.find((s) => s.id === id);
+        if (!shot) return;
+        setStitchSeed(shot.file);
+    }, []);
+
+    /**
+     * 拼接完成 ⇒ 结果进「预处理」。
+     *
+     * ⚠️ **原来那张「待处理」的图一动不动**（他特意要求的）：
+     *    "拼接方式生成的题只生成题，不从待处理消失 —— 这样原图上其它题还能继续提取"。
+     *    所以这里只往 ready 里加一条，**不做** dropShot/promoteShot。
+     */
+    const handleStitched = useCallback((blob: Blob) => {
+        const file = new File([blob], `stitch-${Date.now()}.jpg`, { type: "image/jpeg" });
+        setStitchSeed(null);
+        const shot: QueuedShot = { id: uid(), file, url: URL.createObjectURL(file) };
+        readyShotsRef.current = [...readyShotsRef.current, shot];
+        setReadyShots(readyShotsRef.current);
+    }, []);
+
     /** 页内相机（连拍）拍了一张 —— 直接进「待处理」，不绕收件箱那一圈 */
     const handleBurstShot = useCallback(
         (blob: Blob, action: "again" | "done") => {
@@ -1046,31 +1074,43 @@ export default function RecoverPage() {
                                 {pendingShots.map((s) => (
                                     <div key={s.id} className="overflow-hidden rounded-lg border">
                                         <img src={s.url} alt={s.file.name} className="h-24 w-full bg-muted object-cover" />
-                                        <div className="flex items-center gap-0.5 p-1">
+                                        <div className="space-y-0.5 p-1">
+                                            <div className="flex items-center gap-0.5">
+                                                <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    className="h-7 flex-1 px-1 text-xs"
+                                                    onClick={() => startEditShot(s.id)}
+                                                >
+                                                    {L("加工", "Process")}
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    className="h-7 px-1 text-xs"
+                                                    onClick={() => promoteShot(s.id)}
+                                                >
+                                                    {L("进预处理", "Skip")}
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    className="h-7 px-1 text-muted-foreground"
+                                                    onClick={() => dropShot(s.id, "pending")}
+                                                    aria-label={L("移除", "Remove")}
+                                                >
+                                                    <Trash2 className="h-3.5 w-3.5" />
+                                                </Button>
+                                            </div>
+                                            {/* 跨页材料题：这一张只是一部分，还要再接一张 ⇒ 进拼接窗口。
+                                                拼完只往「预处理」加一条，**这张待处理的图不动**。 */}
                                             <Button
                                                 size="sm"
-                                                variant="ghost"
-                                                className="h-7 flex-1 px-1 text-xs"
-                                                onClick={() => startEditShot(s.id)}
+                                                variant="outline"
+                                                className="h-7 w-full px-1 text-xs"
+                                                onClick={() => startStitch(s.id)}
                                             >
-                                                {L("加工", "Process")}
-                                            </Button>
-                                            <Button
-                                                size="sm"
-                                                variant="ghost"
-                                                className="h-7 px-1 text-xs"
-                                                onClick={() => promoteShot(s.id)}
-                                            >
-                                                {L("进预处理", "Skip")}
-                                            </Button>
-                                            <Button
-                                                size="sm"
-                                                variant="ghost"
-                                                className="h-7 px-1 text-muted-foreground"
-                                                onClick={() => dropShot(s.id, "pending")}
-                                                aria-label={L("移除", "Remove")}
-                                            >
-                                                <Trash2 className="h-3.5 w-3.5" />
+                                                {L("拼接（跨页材料）", "Stitch pages")}
                                             </Button>
                                         </div>
                                     </div>
@@ -1455,6 +1495,20 @@ export default function RecoverPage() {
                     open
                     onClose={closeEditShot}
                     onCropComplete={handleShotCropped}
+                />
+            )}
+
+            {/* ===== 拼接窗口（2026-10-05）=====
+                跨页材料题：第一张（从「待处理」带进来）+ 再取一张（本机 / 相机 / 收件箱），
+                各自框出有用的段，竖着接成一张 ⇒ 结果放进「预处理」。
+                ⚠️ 独立窗口，**没碰**裁剪页那个四页共用的编辑器。 */}
+            {stitchSeed && (
+                <StitchComposer
+                    open
+                    seed={stitchSeed}
+                    knownNames={[...pendingShots, ...readyShots].map((s) => s.file.name)}
+                    onCancel={() => setStitchSeed(null)}
+                    onDone={handleStitched}
                 />
             )}
         </main>
