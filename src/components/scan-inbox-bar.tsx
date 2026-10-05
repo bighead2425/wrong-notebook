@@ -58,6 +58,14 @@ interface InboxListing {
     files: InboxFile[];
     ignored: number;
     reason?: string;
+    /**
+     * 【2026-10-05】后端其实回得比这多（见 `lib/scan-inbox.ts` 的 `ScanInboxListing`），
+     * 这里只声明界面用得到的：
+     *   · `status` —— 分辨"不存在"(`no-subdir`) 与"读不到、多半是权限"(`error`)；
+     *   · `subPath` —— 提示里说清是哪个文件夹。
+     */
+    status?: "ok" | "no-root" | "no-subdir" | "invalid" | "error";
+    subPath?: string;
 }
 
 interface ScanInboxBarProps {
@@ -196,8 +204,42 @@ export function ScanInboxBar({
         onAvailability?.(listing.available);
     }, [listing, onAvailability]);
 
-    // 目录没挂载时整条都不出现（同样也适用于没有 files 的极端情况）
-    if (!listing || !listing.available) return null;
+    // 挂载根都没配好 ⇒ 整条不出现（这是部署问题，界面上多说无益）
+    if (!listing) return null;
+    if (listing.status === "no-root") return null;
+
+    /**
+     * 【2026-10-05】目录在、但**读不到**（不存在 / 权限不对）⇒ **说清楚原因**，不要默默消失。
+     *
+     * 为什么加：他在 NAS 上手工建 `scan2recover`，属主/权限跟容器内的用户不匹配，
+     * 后端 `fs.readdir` 抛 `EACCES` ⇒ 这条入口在页面上**整个不见**，
+     * 他完全不知道发生了什么（只能绕到设置页的"检查连接"才看见原因）。
+     * 现在直接把 `reason` 摆出来（含子目录名），一眼就知道是"权限/不存在"这类问题。
+     */
+    if (!listing.available) {
+        /**
+         * 文案**复用设置页那一套**（`t.settings.general.scanInbox`，中英都已存在），
+         * 不另造 key：约定 `noSubdir` 里带 `{sub}`、`readError` 里带 `{reason}`，按占位符替换。
+         */
+        const si = t.settings?.general?.scanInbox;
+        const sub = listing.subPath || "";
+        return (
+            <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                <p className="font-medium">
+                    {(si?.title || "转存文件夹")}（{sub}）
+                </p>
+                <p className="break-all">
+                    {listing.status === "no-subdir"
+                        ? (si?.noSubdir?.replace("{sub}", sub) || `子文件夹「${sub}」还不存在。`)
+                        : (si?.readError?.replace("{reason}", listing.reason || "") ||
+                          `读不到这个文件夹：${listing.reason || "原因未知"}`)}
+                </p>
+                <p className="text-amber-700/80 dark:text-amber-300/80">
+                    {si?.hint || "文件夹本身要先在 NAS 上建好。"}
+                </p>
+            </div>
+        );
+    }
 
     const inQueue = new Set(existingNames);
     /** 「新」= 既没导过、也不在当批队列里的（防止误把同名的重复塞进来） */
