@@ -15,7 +15,7 @@ import { AnalyzeResponse, Notebook, AppConfig } from "@/types/api";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { processImageFile } from "@/lib/image-utils";
-import { Upload, BookOpen, Tags, LogOut, BarChart3, QrCode, Layers, Sprout, ScanText, LayoutDashboard } from "lucide-react";
+import { Upload, BookOpen, LogOut, QrCode, Layers, Sprout, ScanText, LayoutDashboard } from "lucide-react";
 import { SettingsDialog } from "@/components/settings-dialog";
 /**
  * 【custom-v24】公告通知按钮按用户要求从首页撤下（功能保留，组件文件不动）。
@@ -414,10 +414,14 @@ function HomeContent() {
                 {/* Action Center
                     【custom-v24】两个改动：
                     ① 按钮宽度统一 —— 由 flex-wrap 换成 grid。flex-wrap 在放不下时换行，
-                       最后一行不满的按钮会各自拉伸，宽度就对不齐；grid 强制四列等宽。
-                       窄屏退化成 2×2，仍然等宽。
-                    ② 「回收箱」入口从这里撤掉 —— 用户要求以后统一从「查看题册」页进。 */}
-                <div className={initialNotebookId ? "flex justify-center mb-6" : "grid grid-cols-2 lg:grid-cols-4 gap-3"}>
+                       最后一行不满的按钮会各自拉伸，宽度就对不齐；grid 强制等宽。
+                    ② 「回收箱」入口从这里撤掉 —— 用户要求以后统一从「查看题册」页进。
+
+                    【2026-10-05 他要求】主页固定六个入口，顺序：
+                    批量上传 / 查看题册 / 复练卷页 / 日积月累 / 回录分析 / 总理内阁。
+                    窄屏 2 列（3 行）、宽屏 **3 列**（正好 2 行）—— 6 个按钮排成整行，
+                    不会出现"最后一行只占两格"的空缺。 */}
+                <div className={initialNotebookId ? "flex justify-center mb-6" : "grid grid-cols-2 lg:grid-cols-3 gap-3"}>
                     <Button
                         className={`h-11 text-sm shadow-sm hover:shadow-md transition-all ${initialNotebookId ? "w-full max-w-md" : "w-full"}`}
                         variant={batchMode ? "default" : (step === "upload" ? "default" : "secondary")}
@@ -439,25 +443,10 @@ function HomeContent() {
                                 </Button>
                             </Link>
 
-                            <Link href="/tags">
-                                <Button
-                                    variant="outline"
-                                    className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
-                                >
-                                    <Tags className="mr-2 h-4 w-4 shrink-0" />
-                                    <span className="truncate">{t.app?.tags || 'Tags'}</span>
-                                </Button>
-                            </Link>
-
-                            <Link href="/stats">
-                                <Button
-                                    variant="outline"
-                                    className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
-                                >
-                                    <BarChart3 className="mr-2 h-4 w-4 shrink-0" />
-                                    <span className="truncate">{t.app?.stats || 'Stats'}</span>
-                                </Button>
-                            </Link>
+                            {/* 【2026-10-05 他要求】主页只留六个入口：
+                                批量上传 / 查看题册 / 复练卷页 / 日积月累 / 回录分析 / 总理内阁。
+                                「标签管理」与「统计中心」**搬进总理内阁**（那两个是低频入口，
+                                和"今天该干什么"不是一类事，摆主页会跟主线抢注意力）。 */}
 
                             {/* 【2026-09-29】他要的「复练卷页」入口：已生成的卷都在那里
                                 （看纸面 / 改留白与图大小 / 更新组卷 / 删除 / 打印）。

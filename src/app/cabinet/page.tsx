@@ -50,6 +50,7 @@ import {
     Printer,
     ScanText,
     Sprout,
+    Tags,
     TrendingUp,
 } from "lucide-react";
 
@@ -189,6 +190,26 @@ export default function CabinetPage() {
                             )}
                         </p>
                     </div>
+                </div>
+
+                {/* 【2026-10-05 他要求】「标签管理」「统计中心」两个入口从主页搬到这里。
+                    理由（他的原话）：主页只留六个主线入口，这两个是低频的，
+                    摆主页会跟"今天该干什么"这条主线抢注意力。
+                    ⚠️ 只是**入口搬家**：两个页面本身一字未改，路径也不变。 */}
+                <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-muted-foreground">{L("常用入口：", "Shortcuts:")}</span>
+                    <Link href="/tags">
+                        <Button variant="outline" size="sm" className="h-8">
+                            <Tags className="mr-1.5 h-3.5 w-3.5" />
+                            {t.app?.tags || "标签管理"}
+                        </Button>
+                    </Link>
+                    <Link href="/stats">
+                        <Button variant="outline" size="sm" className="h-8">
+                            <BarChart3 className="mr-1.5 h-3.5 w-3.5" />
+                            {t.app?.stats || "统计中心"}
+                        </Button>
+                    </Link>
                 </div>
 
                 {/* ===== ① 统计总览（复用主页统计中心）===== */}

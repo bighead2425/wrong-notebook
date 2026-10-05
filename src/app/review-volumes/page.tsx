@@ -902,7 +902,12 @@ export default function ReviewVolumesPage() {
                                     </div>
                                 )}
 
-                                <div className="space-y-1">
+                                {/* 【2026-10-05 他要求】卷会越攒越多，左栏会一直长下去 ——
+                                    装进一个**自带滚动条**的框里（他建议"能显示 7-8 个卡片的量"）。
+                                    写法**照抄日积月累页左栏那套**（`max-h-[62vh] overflow-y-auto
+                                    rounded-md border p-2`）—— 他明确说那个设计很好，那就别另发明一套，
+                                    两页左栏看起来、用起来都一样。 */}
+                                <div className="max-h-[62vh] space-y-1 overflow-y-auto rounded-md border p-2">
                                     {visibleVolumes.map((v) => {
                                         const active = v.id === selectedId;
                                         return (
