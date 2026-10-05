@@ -34,11 +34,18 @@ export async function GET(req: Request) {
         const user = await currentUser();
         if (!user) return unauthorized("Authentication required");
 
-        // 没有 subPath 参数 = 正常列目录；带参数 = 试连接（只读探测，不落盘）
-        const probe = new URL(req.url).searchParams.get("subPath");
-        const listing = probe === null
-            ? await listInboxFiles()
-            : await listInboxFiles({ probeSubPath: probe });
+        /**
+         * 两个查询参数、两种语义，**不能混**：
+         *   · `?subPath=` = **试连接**（设置页用）：只读探测、一个字节都不落盘；
+         *   · `?dir=`     = **正常操作这个收件箱**（【2026-10-05】两套流水线各用一个目录）：
+         *                  照常读台账、照常自洁。不传就是默认那个（录错题用的）。
+         */
+        const params = new URL(req.url).searchParams;
+        const probe = params.get("subPath");
+        const dir = params.get("dir");
+        const listing = probe !== null
+            ? await listInboxFiles({ probeSubPath: probe })
+            : await listInboxFiles({ subPath: dir ?? undefined });
         return NextResponse.json(listing);
     } catch (err) {
         logger.error({ error: String(err) }, "列出收件箱失败");
@@ -66,8 +73,10 @@ export async function POST(req: Request) {
             patch.rotation = body.rotation;
         }
 
-        const n = await setInboxMeta(names, patch);
-        logger.info({ count: n, ...patch }, "更新收件箱文件属性");
+        /** 【2026-10-05】`dir` = 操作哪个收件箱（子目录）；不传 = 默认那个（录错题用的） */
+        const dir = typeof body?.dir === "string" ? body.dir : null;
+        const n = await setInboxMeta(names, patch, dir);
+        logger.info({ count: n, dir, ...patch }, "更新收件箱文件属性");
         return NextResponse.json({ ok: true, updated: n });
     } catch (err) {
         logger.error({ error: String(err) }, "标记已导入失败");
@@ -84,9 +93,11 @@ export async function DELETE(req: Request) {
         const names = Array.isArray(body?.names) ? body.names : [];
         if (!names.length) return badRequest("Missing field: names");
 
-        const result = await deleteInboxFiles(names);
+        /** 【2026-10-05】`dir` = 操作哪个收件箱（子目录）；不传 = 默认那个（录错题用的） */
+        const dir = typeof body?.dir === "string" ? body.dir : null;
+        const result = await deleteInboxFiles(names, dir);
         logger.info(
-            { deleted: result.deleted.length, failed: result.failed.length },
+            { deleted: result.deleted.length, failed: result.failed.length, dir },
             "清理收件箱文件",
         );
         return NextResponse.json({ ok: true, ...result });

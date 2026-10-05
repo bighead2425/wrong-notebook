@@ -33,6 +33,7 @@ import { Input } from "@/components/ui/input";
 import { BackButton } from "@/components/ui/back-button";
 import { ScanInboxBar } from "@/components/scan-inbox-bar";
 import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
+import { ImageCropper } from "@/components/image-cropper";
 import { MdEditor } from "@/components/md-editor";
 import { apiClient, ApiError } from "@/lib/api-client";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -64,7 +65,6 @@ import {
     Images,
     PlayCircle,
     Trash2,
-    Wand2,
 } from "lucide-react";
 
 /**
@@ -269,7 +269,7 @@ export default function RecoverPage() {
     /* ========== 采集层（2026-10-05）：待处理 / 预处理 / 页内相机 ==========
      * 为什么要有这一层：原来这里是「选照片 → 立刻直送 AI」，中间没有任何可干预的环节；
      * 而日常拍照得到的原图（背景、透视、偏暗）直接喂 AI 会让它读不准二维码和手写。
-     * 现在改成：**先收进「待处理」 → 逐张加工（透视拉正 + 漂白/黑白）→ 进「预处理」 → 一起分析**，
+     * 现在改成：**先收进「待处理」 → 逐张加工（剪裁 / 橡皮擦 / 框选 / 旋转 / 拉伸）→ 进「预处理」 → 一起分析**，
      * 与录题目时那套（BatchPipeline）是同一个思路，只是这里的出口是「回录分析」而不是「录错题」。
      */
 
@@ -281,9 +281,12 @@ export default function RecoverPage() {
     const readyShotsRef = useRef<QueuedShot[]>([]);
     /** 页内相机（连拍）的实例句柄 */
     const cameraScannerRef = useRef<DocScannerHandle | null>(null);
-    /** 加工器（把已有图送进「确认扫描效果」那一步）的实例句柄 */
-    const editScannerRef = useRef<DocScannerHandle | null>(null);
-    /** 正在加工的是哪一张 —— DocScanner 出图时靠它认领（它是异步的，不能靠 state） */
+    /**
+     * 正在加工的那张 —— 非 null 就开着**图片剪裁页**（`ImageCropper`：
+     * 剪裁 / 橡皮擦 / 框选 / 旋转 / 拉伸，与录题目时点待处理图片进的是**同一个页面**）。
+     */
+    const [editingShot, setEditingShot] = useState<QueuedShot | null>(null);
+    /** 与 editingShot 同步的副本：出图回调里要读"最新那张"，不能等 React 重渲染 */
     const editingShotRef = useRef<QueuedShot | null>(null);
     /** 连拍已拍张数（显示在按钮旁，给人一个数） */
     const [burstCount, setBurstCount] = useState(0);
@@ -662,21 +665,28 @@ export default function RecoverPage() {
     }, []);
 
     /**
-     * 点「加工」：把这张图送进扫描器的「确认扫描效果」那一步
-     *（可拖四个角做**透视拉正/剪裁**，并可切**原色 / 漂白 / 黑白**）。
-     * 用的是已经打磨过的那套（`DocScanner.openWithFile`），不另造轮子。
+     * 点「加工」：打开**图片剪裁页**（`ImageCropper`）—— 剪裁 / 橡皮擦 / 框选 / 旋转 / 拉伸。
+     * 与录题目时"点待处理的那张图"进的是**同一个页面**（`batch-pipeline.tsx` 里也是它），
+     * 所以拉伸（透视）等功能自然都在，不另造轮子。
      */
     const startEditShot = useCallback((id: string) => {
         const shot = pendingShotsRef.current.find((s) => s.id === id);
         if (!shot) return;
         editingShotRef.current = shot;
-        editScannerRef.current?.openWithFile(shot.file);
+        setEditingShot(shot);
     }, []);
 
-    /** 加工完成 ⇒ 用出图替换原图，并挪进「预处理」 */
-    const handleEditComplete = useCallback((blob: Blob) => {
+    /** 关掉剪裁页（没点「确定」= 这次加工作废，原图仍在「待处理」里） */
+    const closeEditShot = useCallback(() => {
+        editingShotRef.current = null;
+        setEditingShot(null);
+    }, []);
+
+    /** 剪裁页点了「确定」⇒ 用出图替换原图，并挪进「预处理」 */
+    const handleShotCropped = useCallback((blob: Blob) => {
         const target = editingShotRef.current;
         editingShotRef.current = null;
+        setEditingShot(null);
         if (!target) return;
         const file = new File([blob], target.file.name || "shot.jpg", {
             type: blob.type || "image/jpeg",
@@ -986,8 +996,12 @@ export default function RecoverPage() {
                     </div>
 
                     {/* 收件箱：手机上用别的 App 扫完丢进 NAS 目录，在这里一键拉进来。
+                        【2026-10-05】传 `subPath` ⇒ 用**回录分析专用**的那个子目录
+                        （`scan2recover`），与"录错题"默认用的 `scan2wrong` **分开管理**。
+                        NAS 上的实际路径 = 挂载根 + 子目录 = `/vol2/1000/scan-inbox/scan2recover`。
                         目录没挂载时它自己整条不渲染 —— 电脑上不会多出点了没反应的按钮。 */}
                     <ScanInboxBar
+                        subPath="scan2recover"
                         existingNames={[...pendingShots, ...readyShots].map((s) => s.file.name)}
                         onImport={handleInboxImport}
                         busy={
@@ -1004,8 +1018,8 @@ export default function RecoverPage() {
 
                     <p className="text-xs text-muted-foreground">
                         {L(
-                            "三条路都行：① 手机 App 扫完丢进收件箱批量拉；② 从相册 / 文件夹多选；③ 当场用页内相机连拍。图片先进下面的「待处理」，加工好再一起分析。",
-                            "Three ways in: inbox batch-pull, photo album, or in-app burst camera. Shots land in Pending; process them, then analyze together.",
+                            "三条路都行：① 手机 App 扫完丢进「回录专用收件箱」（NAS 上的 scan2recover 文件夹，跟录错题那个是分开的）批量拉；② 从相册 / 文件夹多选；③ 当场用页内相机连拍。图片先进下面的「待处理」，加工好再一起分析。",
+                            "Three ways in: the recover-only inbox folder (scan2recover on the NAS, separate from the one used for entering questions), your photo album, or the in-app burst camera. Shots land in Pending; process them, then analyze together.",
                         )}
                     </p>
 
@@ -1039,7 +1053,6 @@ export default function RecoverPage() {
                                                 className="h-7 flex-1 px-1 text-xs"
                                                 onClick={() => startEditShot(s.id)}
                                             >
-                                                <Wand2 className="mr-1 h-3.5 w-3.5" />
                                                 {L("加工", "Process")}
                                             </Button>
                                             <Button
@@ -1421,18 +1434,7 @@ export default function RecoverPage() {
                 )}
             </div>
 
-            {/* ===== 两个扫描器实例（2026-10-05 采集层）=====
-                · 相机那个（burstMode）：连拍，每拍一张把出图直接丢进「待处理」，不绕收件箱；
-                · 加工那个（单张）：`openWithFile` 打开已有图的「确认扫描效果」，
-                  拖四个角做透视拉正 / 剪裁，切原色 / 漂白 / 黑白，确认后进「预处理」。
-                两者互不干扰（各管各的相机与画布），且**挂上时都不会自动开相机**。 */}
-            <DocScanner
-                ref={editScannerRef}
-                onScanComplete={handleEditComplete}
-                onClose={() => {
-                    editingShotRef.current = null;
-                }}
-            />
+            {/* ===== 页内相机（连拍）：拍完直接进「待处理」，不绕收件箱 ===== */}
             <DocScanner
                 ref={cameraScannerRef}
                 burstMode
@@ -1441,6 +1443,20 @@ export default function RecoverPage() {
                 onScanComplete={handleScanCompleteFallback}
                 onClose={() => setBurstCount(0)}
             />
+
+            {/* ===== 加工用的图片剪裁页（2026-10-05 按他的要求换掉）=====
+                与录题目时"点待处理的那张图"进的是**同一个组件**（`batch-pipeline.tsx` 也是它）：
+                剪裁 / 橡皮擦 / 框选 / 旋转 / 拉伸（透视），所以"拉伸"自然就在里面。
+                ⚠️ 只接必需的四个 prop：不传绿框（`onCropBatch`）与坐标那几条通道 ——
+                   回录不需要净版/题图坐标，传了反而会写出一堆没用的数据。 */}
+            {editingShot && (
+                <ImageCropper
+                    imageSrc={editingShot.url}
+                    open
+                    onClose={closeEditShot}
+                    onCropComplete={handleShotCropped}
+                />
+            )}
         </main>
     );
 }

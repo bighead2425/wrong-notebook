@@ -58,8 +58,10 @@ export async function POST(req: Request) {
             );
         }
 
+        /** 【2026-10-05】`?dir=` = 写进哪个收件箱（子目录）；不传 = 默认那个（录错题用的） */
+        const dir = new URL(req.url).searchParams.get("dir");
         const data = Buffer.from(await file.arrayBuffer());
-        const result = await saveInboxImage(data);
+        const result = await saveInboxImage(data, new Date(), dir);
         if (!result.ok) {
             logger.warn({ error: result.error, bytes: file.size }, "转存照片到收件箱失败");
             return NextResponse.json({ ok: false, error: result.error }, { status: 400 });

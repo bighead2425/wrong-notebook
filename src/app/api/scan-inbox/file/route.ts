@@ -21,10 +21,13 @@ export async function GET(req: Request) {
     const user = await prisma.user.findUnique({ where: { email: session.user.email } });
     if (!user) return unauthorized("Authentication required");
 
-    const name = new URL(req.url).searchParams.get("name") || "";
+    const params = new URL(req.url).searchParams;
+    const name = params.get("name") || "";
     if (!name) return badRequest("Missing query parameter: name");
+    /** 【2026-10-05】`dir` = 读哪个收件箱（子目录）；不传 = 默认那个（录错题用的） */
+    const dir = params.get("dir");
 
-    const found = await readInboxFile(name);
+    const found = await readInboxFile(name, dir);
     if (!found) return notFound("File not found or not a supported image");
 
     return new NextResponse(new Uint8Array(found.data), {

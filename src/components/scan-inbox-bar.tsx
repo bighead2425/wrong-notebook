@@ -85,6 +85,16 @@ interface ScanInboxBarProps {
      * 连拍转存完照片后，上层把它 +1，「收到 N 张新照片」立刻跟着变。
      */
     refreshToken?: number;
+    /**
+     * 【2026-10-05】**这个收件箱是哪个子目录** —— 两套流水线各用一个，互不干扰。
+     *
+     *   · 不传       ⇒ 默认那个（**录错题**用的 `scan2wrong`，`batch-pipeline` 就是这条）；
+     *   · 传一个名字 ⇒ 用那个子目录（`/recover` 页传 `scan2recover`）。
+     *
+     * 台账在后端是**按子目录分桶**的（`state.inbox[subPath]`），所以同名照片
+     *（相机都爱叫 `IMG_0001.jpg`）放在两个目录里也不会互相把对方误标成"已导入"。
+     */
+    subPath?: string;
 }
 
 /** 2582314 → "2.5 MB" */
@@ -99,9 +109,16 @@ export function ScanInboxBar({
     busy,
     onAvailability,
     refreshToken = 0,
+    subPath,
 }: ScanInboxBarProps) {
     const { t } = useLanguage();
     const s = t.common.batch?.inbox || {};
+
+    /**
+     * 【2026-10-05】所有请求都要带上"操作哪个收件箱"。
+     * 空串 = 默认那个（录错题用的），一行都不用改。
+     */
+    const dirQ = subPath ? `dir=${encodeURIComponent(subPath)}` : "";
 
     const [listing, setListing] = useState<InboxListing | null>(null);
     const [open, setOpen] = useState(false);
@@ -152,7 +169,9 @@ export function ScanInboxBar({
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const data = await apiClient.get<InboxListing>("/api/scan-inbox");
+            const data = await apiClient.get<InboxListing>(
+                dirQ ? `/api/scan-inbox?${dirQ}` : "/api/scan-inbox",
+            );
             setListing(data);
             // 【custom-v35】选中态**对账**，不是重算：
             // 老面孔保留用户点过的勾，只给"这次新出现且没导入过的"补上默认勾选。
@@ -167,7 +186,7 @@ export function ScanInboxBar({
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [dirQ]);
 
     useEffect(() => { load(); }, [load, refreshToken]);
 
@@ -185,7 +204,8 @@ export function ScanInboxBar({
     const newFiles = listing.files.filter(f => !f.imported && !inQueue.has(f.name));
     const files = listing.files;
 
-    const fileUrl = (name: string) => `/api/scan-inbox/file?name=${encodeURIComponent(name)}`;
+    const fileUrl = (name: string) =>
+        `/api/scan-inbox/file?name=${encodeURIComponent(name)}${dirQ ? `&${dirQ}` : ""}`;
 
     /** 把一批照片从 NAS 拉下来 → 包成 File → 交给上层 → 按上层回传的名单记台账 */
     const doImport = async (names: string[]) => {
@@ -221,9 +241,14 @@ export function ScanInboxBar({
             if (accepted.length) {
                 // 必须**显式**写 imported: true —— 接口的规矩是"没提到的字段一概不动"
                 // （见 lib/scan-inbox 的 setInboxMeta）。这里就是要标记已导入，只传 names 是不够的。
-                await apiClient.post<{ ok: boolean }, { names: string[]; imported: boolean }>(
+                await apiClient.post<
+                    { ok: boolean },
+                    { names: string[]; imported: boolean; dir?: string }
+                >(
                     "/api/scan-inbox",
-                    { names: accepted, imported: true },
+                    // 【2026-10-05】带上"哪个收件箱"：台账是**按子目录分桶**的，
+                    // 不传的话"已导入"会记到默认那个目录头上，这个目录的照片就永远显示为"新"
+                    { names: accepted, imported: true, ...(subPath ? { dir: subPath } : {}) },
                 ).catch(() => undefined);
             }
 
@@ -253,7 +278,8 @@ export function ScanInboxBar({
             const res = await fetch("/api/scan-inbox", {
                 method: "DELETE",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ names }),
+                // 【2026-10-05】带上"哪个收件箱"：否则会去另一个目录里找同名文件删
+                body: JSON.stringify({ names, ...(subPath ? { dir: subPath } : {}) }),
             });
             const data = res.ok ? await res.json().catch(() => null) : null;
             /**
@@ -305,7 +331,10 @@ export function ScanInboxBar({
                 try {
                     const fd = new FormData();
                     fd.append("file", imgs[i], imgs[i].name);
-                    const res = await fetch("/api/scan-inbox/upload", { method: "POST", body: fd });
+                    const res = await fetch(
+                        dirQ ? `/api/scan-inbox/upload?${dirQ}` : "/api/scan-inbox/upload",
+                        { method: "POST", body: fd },
+                    );
                     const data = res.ok ? await res.json().catch(() => null) : null;
                     if (data?.ok) ok++;
                     else bad++;

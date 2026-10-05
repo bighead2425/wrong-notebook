@@ -452,6 +452,17 @@ export interface ListOptions {
      * 设置页的「检查连接」用它 —— 用户改了输入框还没保存，也想先知道能不能读到。
      */
     probeSubPath?: string;
+    /**
+     * 【2026-10-05】**正常操作某个子目录**（区别于 probe）：照常读台账、照常自洁。
+     *
+     * 用途：**两套流水线各用一个收件箱** ——
+     *   录错题用默认的 `scan2wrong`（不传这个参数），
+     *   回录分析用 `scan2recover`（由 `/recover` 页传进来）。
+     *
+     * ⚠️ 与 `probeSubPath` 的唯一区别是"要不要写台账"：probe 一个字节都不落盘。
+     *    两个同时传时 **probe 优先**（它是设置页的探测语义，绝不能有副作用）。
+     */
+    subPath?: string;
 }
 
 /**
@@ -464,7 +475,8 @@ export interface ListOptions {
 export async function listInboxFiles(opts: ListOptions = {}): Promise<ScanInboxListing> {
     const probing = opts.probeSubPath !== undefined;
 
-    const loc = getInboxLocation(opts.probeSubPath ?? null);
+    // probe 优先（无副作用）→ 否则用调用方指定的子目录 → 都没有就用配置里的默认值
+    const loc = getInboxLocation(probing ? opts.probeSubPath : (opts.subPath ?? null));
     const base = {
         path: loc.dir,
         dir: loc.dir,
@@ -572,14 +584,18 @@ export async function listInboxFiles(opts: ListOptions = {}): Promise<ScanInboxL
 }
 
 /** 目录是否可用（挂载了 + 子目录在 + 有读权限）。界面靠它决定要不要显示入口 */
-export async function isInboxAvailable(): Promise<boolean> {
-    const loc = getInboxLocation();
+export async function isInboxAvailable(subPath?: string | null): Promise<boolean> {
+    const loc = getInboxLocation(subPath ?? null);
     return (await isDir(loc.dir));
 }
 
 /** 读文件内容，返回给浏览器直接渲染成图片（只认普通文件，见 resolveSafeFilePath） */
-export async function readInboxFile(name: string): Promise<{ data: Buffer; mime: string } | null> {
-    const full = await resolveSafeFilePath(name);
+export async function readInboxFile(
+    name: string,
+    subPath?: string | null,
+): Promise<{ data: Buffer; mime: string } | null> {
+    // 【2026-10-05】第二参数是"哪个收件箱"（子目录）；不传 = 默认那个（录错题用）
+    const full = await resolveSafeFilePath(name, getInboxLocation(subPath ?? null).dir);
     if (!full) return null;
     try {
         const data = await fs.readFile(full);
@@ -614,9 +630,14 @@ export interface InboxMetaPatch {
  *
  * @returns 实际写入的记录条数（非法文件名会被跳过）
  */
-export async function setInboxMeta(names: string[], patch: InboxMetaPatch = {}): Promise<number> {
+export async function setInboxMeta(
+    names: string[],
+    patch: InboxMetaPatch = {},
+    /** 【2026-10-05】操作哪个收件箱（子目录）；不传 = 默认那个（录错题用） */
+    subPathOverride?: string | null,
+): Promise<number> {
     if (!names.length) return 0;
-    const { subPath } = getInboxLocation();
+    const { subPath } = getInboxLocation(subPathOverride ?? null);
     const state = readStateSync();
     const bucket = bucketOf(state, subPath);
     const now = new Date().toISOString();
@@ -651,8 +672,8 @@ export async function setInboxMeta(names: string[], patch: InboxMetaPatch = {}):
  * 标记一批文件为"已导入过" —— 之后它们不再计入「新照片」，但仍可手工重导。
  * 保留这个薄包装，是因为导入流水线那几处调用读起来更直白（markImported 比 setInboxMeta 好懂）。
  */
-export async function markImported(names: string[]): Promise<number> {
-    return setInboxMeta(names, { imported: true });
+export async function markImported(names: string[], subPath?: string | null): Promise<number> {
+    return setInboxMeta(names, { imported: true }, subPath ?? null);
 }
 
 export interface DeleteResult {
@@ -661,11 +682,15 @@ export interface DeleteResult {
 }
 
 /** 真的把文件从 NAS 目录里删掉（定期清理用）。删不掉的单列出来，不让用户以为是全删了 */
-export async function deleteInboxFiles(names: string[]): Promise<DeleteResult> {
+export async function deleteInboxFiles(
+    names: string[],
+    /** 【2026-10-05】操作哪个收件箱（子目录）；不传 = 默认那个（录错题用） */
+    subPathOverride?: string | null,
+): Promise<DeleteResult> {
     const result: DeleteResult = { deleted: [], failed: [] };
     if (!names.length) return result;
 
-    const { dir, subPath } = getInboxLocation();
+    const { dir, subPath } = getInboxLocation(subPathOverride ?? null);
     const state = readStateSync();
     const bucket = state.inbox[subPath];
 
@@ -748,8 +773,11 @@ export function makeShotName(ext: string, at: Date): string {
  * 注：`mkdir -p` 若沿途遇到软链接段，可能先建出一个空目录再被下面的校验拦下。
  * 留一个空目录无害，但**一个字节都不会写进去**。
  */
-async function ensureWritableDir(): Promise<{ ok: true; dir: string } | { ok: false; reason: string }> {
-    const loc = getInboxLocation();
+async function ensureWritableDir(
+    /** 【2026-10-05】写进哪个收件箱（子目录）；不传 = 默认那个（录错题用） */
+    subPath?: string | null,
+): Promise<{ ok: true; dir: string } | { ok: false; reason: string }> {
+    const loc = getInboxLocation(subPath ?? null);
     if (!(await isDir(loc.root))) {
         return { ok: false, reason: `收件箱根目录不可用：${loc.root}（检查 Docker 挂载）` };
     }
@@ -788,8 +816,13 @@ export interface SaveImageResult {
  *  ③ 写完**不记台账** —— 新拍的照片理应显示为"新"，等用户真的导入了才记。
  *
  * @param at 生成文件名用的时间，默认取当前时刻（测试里传固定值）
+ * @param subPath 【2026-10-05】写进哪个收件箱（子目录）；不传 = 默认那个（录错题用）
  */
-export async function saveInboxImage(data: Buffer, at: Date = new Date()): Promise<SaveImageResult> {
+export async function saveInboxImage(
+    data: Buffer,
+    at: Date = new Date(),
+    subPath?: string | null,
+): Promise<SaveImageResult> {
     if (!data || data.length === 0) return { ok: false, error: "空文件" };
     if (data.length > MAX_UPLOAD_BYTES) {
         return {
@@ -800,7 +833,7 @@ export async function saveInboxImage(data: Buffer, at: Date = new Date()): Promi
     const ext = sniffImageExt(data);
     if (!ext) return { ok: false, error: "不是可识别的图片（只支持 JPG / PNG / WebP）" };
 
-    const ready = await ensureWritableDir();
+    const ready = await ensureWritableDir(subPath ?? null);
     if (!ready.ok) return { ok: false, error: ready.reason };
 
     const name = makeShotName(ext, at);
