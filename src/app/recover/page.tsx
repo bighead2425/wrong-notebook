@@ -66,6 +66,9 @@ import {
     Images,
     PlayCircle,
     Trash2,
+    Check,
+    Crop,
+    Layers,
 } from "lucide-react";
 
 /**
@@ -1072,47 +1075,55 @@ export default function RecoverPage() {
                             </div>
                             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                                 {pendingShots.map((s) => (
-                                    <div key={s.id} className="overflow-hidden rounded-lg border">
-                                        <img src={s.url} alt={s.file.name} className="h-24 w-full bg-muted object-cover" />
-                                        <div className="space-y-0.5 p-1">
-                                            <div className="flex items-center gap-0.5">
-                                                <Button
-                                                    size="sm"
-                                                    variant="ghost"
-                                                    className="h-7 flex-1 px-1 text-xs"
-                                                    onClick={() => startEditShot(s.id)}
-                                                >
-                                                    {L("加工", "Process")}
-                                                </Button>
-                                                <Button
-                                                    size="sm"
-                                                    variant="ghost"
-                                                    className="h-7 px-1 text-xs"
-                                                    onClick={() => promoteShot(s.id)}
-                                                >
-                                                    {L("进预处理", "Skip")}
-                                                </Button>
-                                                <Button
-                                                    size="sm"
-                                                    variant="ghost"
-                                                    className="h-7 px-1 text-muted-foreground"
-                                                    onClick={() => dropShot(s.id, "pending")}
-                                                    aria-label={L("移除", "Remove")}
-                                                >
-                                                    <Trash2 className="h-3.5 w-3.5" />
-                                                </Button>
-                                            </div>
-                                            {/* 跨页材料题：这一张只是一部分，还要再接一张 ⇒ 进拼接窗口。
-                                                拼完只往「预处理」加一条，**这张待处理的图不动**。 */}
-                                            <Button
-                                                size="sm"
-                                                variant="outline"
-                                                className="h-7 w-full px-1 text-xs"
-                                                onClick={() => startStitch(s.id)}
-                                            >
-                                                {L("拼接（跨页材料）", "Stitch pages")}
-                                            </Button>
-                                        </div>
+                                    <div key={s.id} className="relative overflow-hidden rounded-lg border">
+                                        {/* 点图的**其他位置** = 加工（与右下角那个按钮同一个动作） */}
+                                        <button
+                                            type="button"
+                                            className="block w-full"
+                                            onClick={() => startEditShot(s.id)}
+                                            title={L("点这里加工", "Tap to process")}
+                                        >
+                                            <img src={s.url} alt={s.file.name} className="h-24 w-full bg-muted object-cover" />
+                                        </button>
+
+                                        {/* 【2026-10-05】四个角（他指定的位置）。都做成小图标按钮：
+                                            不挡图、也不会像文字按钮那样把缩略图挤变形。 */}
+                                        {/* 左上 = 进预处理 */}
+                                        <button
+                                            type="button"
+                                            className="absolute left-1 top-1 rounded bg-black/60 p-1 text-white hover:bg-black/80"
+                                            onClick={() => promoteShot(s.id)}
+                                            title={L("进预处理", "Mark as ready")}
+                                        >
+                                            <Check className="h-3 w-3" />
+                                        </button>
+                                        {/* 右上 = 移除 */}
+                                        <button
+                                            type="button"
+                                            className="absolute right-1 top-1 rounded bg-black/60 p-1 text-white hover:bg-black/80"
+                                            onClick={() => dropShot(s.id, "pending")}
+                                            title={L("移除", "Remove")}
+                                        >
+                                            <Trash2 className="h-3 w-3" />
+                                        </button>
+                                        {/* 左下 = 拼接（跨页材料题：这一张只是一部分，再接一张） */}
+                                        <button
+                                            type="button"
+                                            className="absolute bottom-1 left-1 rounded bg-black/60 p-1 text-white hover:bg-black/80"
+                                            onClick={() => startStitch(s.id)}
+                                            title={L("拼接（跨页材料）", "Stitch pages")}
+                                        >
+                                            <Layers className="h-3 w-3" />
+                                        </button>
+                                        {/* 右下 = 加工 */}
+                                        <button
+                                            type="button"
+                                            className="absolute bottom-1 right-1 rounded bg-black/60 p-1 text-white hover:bg-black/80"
+                                            onClick={() => startEditShot(s.id)}
+                                            title={L("加工（剪裁 / 拉伸）", "Process (crop)")}
+                                        >
+                                            <Crop className="h-3 w-3" />
+                                        </button>
                                     </div>
                                 ))}
                             </div>
@@ -1506,6 +1517,9 @@ export default function RecoverPage() {
                 <StitchComposer
                     open
                     seed={stitchSeed}
+                    /* 【2026-10-05】回录分析页用**它自己**那个收件箱（`scan2recover`）；
+                       批量上传页不传这个参数 ⇒ 那边用的是录错题那个（`scan2wrong`）。 */
+                    inboxSubPath="scan2recover"
                     knownNames={[...pendingShots, ...readyShots].map((s) => s.file.name)}
                     onCancel={() => setStitchSeed(null)}
                     onDone={handleStitched}

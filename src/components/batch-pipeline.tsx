@@ -39,6 +39,7 @@ import { frontendLogger } from "@/lib/frontend-logger";
 import { Progress } from "@/components/ui/progress";
 import { ProgressFeedback, ProgressStatus } from "@/components/ui/progress-feedback";
 import { ScanInboxBar } from "@/components/scan-inbox-bar";
+import { StitchComposer } from "@/components/stitch-composer";
 import {
     createBurstSession, noteBurstShot, noteBurstResult, burstDone, type BurstSession,
 } from "@/lib/burst-session";
@@ -155,6 +156,11 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
     const { t } = useLanguage();
 
     const [items, setItems] = useState<BatchItem[]>([]);
+    /**
+     * 【2026-10-05】正在拼的那张（点缩略图**左下角**「拼接」带进去的）。
+     * 非 null = 拼接窗口开着；拼完结果作为一张新的**预处理图**落进队列，**原图不动**。
+     */
+    const [stitchSeed, setStitchSeed] = useState<File | null>(null);
     /** 最后操作/选中的那张（只用于视觉高亮；送 AI 的范围改由勾选决定） */
     const [activeId, setActiveId] = useState<string | null>(null);
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -629,6 +635,34 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
      *   · 编辑的是**预处理**图（点右下角笔头再来编辑）：仍是"替换"，
      *     避免凭空多出一张一模一样的。
      */
+    /** 【2026-10-05】点缩略图左下角的「拼接」：把这张图带进拼接窗口（跨页材料题） */
+    const handleStitch = (it: BatchItem) => {
+        setStitchSeed(it.file);
+    };
+
+    /**
+     * 【2026-10-05】拼接完成 ⇒ 结果作为一张**新的预处理图**落进队列。
+     *
+     * ⚠️ **原来那张「待处理」的图一动不动**（他特意要求）：
+     *    "拼接方式生成的题只生成题，不从待处理消失 —— 原图上其它题还能继续提取"。
+     */
+    const handleStitched = (blob: Blob) => {
+        const file = new File([blob], `stitch-${Date.now()}.jpg`, { type: "image/jpeg" });
+        const url = URL.createObjectURL(file);
+        const added: BatchItem = {
+            id: `st${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            file,
+            previewUrl: url,
+            processed: true,
+            status: "processed",
+        };
+        setStitchSeed(null);
+        setItems(prev => [...prev, added]);
+        setActiveId(added.id);
+        // 拼出来就是要送 AI 的 ⇒ 默认勾上（与 handleCropComplete 同一个考虑，免得多点一次）
+        setSelectedIds(prev => new Set(prev).add(added.id));
+    };
+
     const handleCropComplete = async (blob: Blob) => {
         if (!editingId) return;
         const id = editingId;
@@ -1319,6 +1353,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                         onRemove={removeItem}
                         actionIcon={<PenLine className="h-3.5 w-3.5" />}
                         busy={busy}
+                        onStitch={handleStitch}
                     />
                     <FolderGrid
                         title={t.common.batch?.processedFolder || "预处理"}
@@ -1423,6 +1458,20 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                     analyzing={analysisStep !== "idle"}
                 />
             )}
+
+            {/* 【2026-10-05】拼接窗口：跨页材料题 —— 点缩略图**左下角**的「拼接」进来。
+                拼好的图作为一张新的**预处理图**落进队列（原图不动，它上面还有别的题要提）。
+                ⚠️ 不传 `inboxSubPath` ⇒ 这里读的是**录错题**那个收件箱（默认 `scan2wrong`），
+                   不是回录分析那个 —— 两套流水线的收件箱是分开的。 */}
+            {stitchSeed && (
+                <StitchComposer
+                    open
+                    seed={stitchSeed}
+                    knownNames={items.map(i => i.file.name)}
+                    onCancel={() => setStitchSeed(null)}
+                    onDone={handleStitched}
+                />
+            )}
         </div>
     );
 }
@@ -1436,6 +1485,7 @@ function FolderGrid({
     onToggleSelect,
     runningId,
     headerExtra,
+    onStitch,
 }: {
     title: string;
     hint: string;
@@ -1447,6 +1497,12 @@ function FolderGrid({
     onEdit: (it: BatchItem) => void;
     onRemove: (id: string) => void;
     actionIcon: React.ReactNode;
+    /**
+     * 【2026-10-05】点**左下角**「拼接」—— 跨页材料题（练习册/阅读）把两页接成一张。
+     * 只有**干净的待处理图**（没加工过、没状态角标）才显示这个按钮，
+     * 所以它跟左下角原有的"待录/已录"角标不会打架。
+     */
+    onStitch?: (it: BatchItem) => void;
     /** 送 AI 期间锁住所有点击，免得改到正在分析的那一批 */
     busy?: boolean;
     /** 【custom-v28】是否显示左上角勾选框（只有预处理区要） */
@@ -1495,6 +1551,19 @@ function FolderGrid({
                                 alt=""
                                 className={`w-full aspect-[3/4] object-cover ${dimmed ? "opacity-40 grayscale" : ""}`}
                             />
+
+                            {/* 【2026-10-05】左下角「拼接」：跨页材料题（练习册 / 阅读）把两页接成一张。
+                                只给**干净的待处理图**（没加工过、没有状态角标）显示 ——
+                                左下角原本放着「待录 / 已录 / 已处理」角标，条件互斥，不会撞位置。 */}
+                            {onStitch && it.status === "pending" && !dimmed && (
+                                <button
+                                    className="absolute bottom-1 left-1 bg-black/60 text-white rounded p-1 hover:bg-black/80 transition-colors"
+                                    onClick={(e) => { e.stopPropagation(); if (!busy) onStitch(it); }}
+                                    title="拼接（跨页材料）"
+                                >
+                                    <Layers className="h-3 w-3" />
+                                </button>
+                            )}
 
                             {/* 【custom-v28】左上角勾选框：只切换勾选，不触发缩略图本体的点击 */}
                             {selectable && (

@@ -61,8 +61,17 @@ export interface StitchComposerProps {
     seed: File | null;
     /** 已经在采集队列里的文件名 —— 收件箱挑图时给个提醒，不拦（可能就是想用同一张） */
     knownNames?: string[];
+    /**
+     * 【2026-10-05】"从收件箱挑一张"要读**哪个**收件箱（子目录名）。
+     *
+     * - 不传 ⇒ 用**默认**那个（= 录错题用的 `scan2wrong`）—— **批量上传页**走这条；
+     * - 传 `"scan2recover"` ⇒ 回录分析页那条（它有自己的收件箱）。
+     *
+     * 两套流水线的目录是分开的，拼接窗口被两边共用，所以必须由调用方指定。
+     */
+    inboxSubPath?: string;
     onCancel: () => void;
-    /** 拼好了：交回上层（回录页放进「预处理」） */
+    /** 拼好了：交回上层（放进「预处理」） */
     onDone: (blob: Blob) => void;
 }
 
@@ -101,12 +110,24 @@ async function rotateFile(file: File): Promise<{ file: File; width: number; heig
     return { file: nextFile, width: h, height: w, url: URL.createObjectURL(nextFile) };
 }
 
-export function StitchComposer({ open, seed, knownNames = [], onCancel, onDone }: StitchComposerProps) {
+export function StitchComposer({
+    open,
+    seed,
+    knownNames = [],
+    inboxSubPath,
+    onCancel,
+    onDone,
+}: StitchComposerProps) {
     const { language } = useLanguage();
     const L = useCallback(
         (a: string, b: string) => (language === "zh" ? a : b),
         [language],
     );
+
+    /** 收件箱那三处请求要带的"哪个目录"（空串 = 默认那个，批量上传页就是这条） */
+    const inboxDirQ = inboxSubPath ? `dir=${encodeURIComponent(inboxSubPath)}` : "";
+    /** 面板文案里显示给用户看的目录名 */
+    const inboxLabel = inboxSubPath || "scan2wrong";
 
     const [shots, setShots] = useState<Shot[]>([]);
     const [boxes, setBoxes] = useState<StitchBox[]>([]);
@@ -217,7 +238,7 @@ export function StitchComposer({ open, seed, knownNames = [], onCancel, onDone }
         setInboxLoading(true);
         try {
             const data = await apiClient.get<{ available: boolean; files: InboxListItem[] }>(
-                "/api/scan-inbox?dir=scan2recover",
+                inboxDirQ ? `/api/scan-inbox?${inboxDirQ}` : "/api/scan-inbox",
             );
             setInboxFiles(data.available ? data.files : []);
         } catch {
@@ -225,14 +246,14 @@ export function StitchComposer({ open, seed, knownNames = [], onCancel, onDone }
         } finally {
             setInboxLoading(false);
         }
-    }, []);
+    }, [inboxDirQ]);
 
     const pickFromInbox = useCallback(
         async (name: string) => {
             setInboxLoading(true);
             try {
                 const res = await fetch(
-                    `/api/scan-inbox/file?name=${encodeURIComponent(name)}&dir=scan2recover`,
+                    `/api/scan-inbox/file?name=${encodeURIComponent(name)}${inboxDirQ ? `&${inboxDirQ}` : ""}`,
                 );
                 if (!res.ok) throw new Error("fetch failed");
                 const blob = await res.blob();
@@ -244,8 +265,8 @@ export function StitchComposer({ open, seed, knownNames = [], onCancel, onDone }
                 setInboxLoading(false);
             }
         },
-        [addShot, L],
-    );
+                [addShot, L, inboxDirQ],
+            );
 
     /** 相机/本地图过来之后，都要先过一遍"确认扫描效果"（可拉正四角、切漂白/黑白）—— 他说了要进拉伸页 */
     const handleScanned = useCallback(
@@ -612,7 +633,7 @@ export function StitchComposer({ open, seed, knownNames = [], onCancel, onDone }
                     <div className="max-h-[80vh] w-full max-w-2xl overflow-auto rounded-lg border bg-background p-3">
                         <div className="mb-2 flex items-center gap-2">
                             <span className="text-sm font-medium">
-                                {L("从收件箱（scan2recover）挑一张", "Pick one from the inbox")}
+                                {L(`从收件箱（${inboxLabel}）挑一张`, `Pick one from the inbox (${inboxLabel})`)}
                             </span>
                             <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setInboxOpen(false)}>
                                 <X className="h-4 w-4" />
@@ -627,7 +648,7 @@ export function StitchComposer({ open, seed, knownNames = [], onCancel, onDone }
                         {!inboxLoading && inboxFiles && inboxFiles.length === 0 && (
                             <p className="py-6 text-sm text-muted-foreground">
                                 {L(
-                                    "这个收件箱里还没有照片（NAS 上的 scan2recover 文件夹）。",
+                                    `这个收件箱里还没有照片（NAS 上的 ${inboxLabel} 文件夹）。`,
                                     "The inbox folder is empty.",
                                 )}
                             </p>
@@ -643,7 +664,7 @@ export function StitchComposer({ open, seed, knownNames = [], onCancel, onDone }
                                     >
                                         {/* eslint-disable-next-line @next/next/no-img-element */}
                                         <img
-                                            src={`/api/scan-inbox/file?name=${encodeURIComponent(f.name)}&dir=scan2recover`}
+                                            src={`/api/scan-inbox/file?name=${encodeURIComponent(f.name)}${inboxDirQ ? `&${inboxDirQ}` : ""}`}
                                             alt={f.name}
                                             className="h-24 w-full bg-muted object-cover"
                                         />
