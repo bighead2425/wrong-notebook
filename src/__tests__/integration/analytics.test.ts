@@ -77,6 +77,36 @@ describe('/api/analytics', () => {
             expect(data.activityData).toBeDefined();
         });
 
+        /**
+         * ★【2026-10-04 看门测试】统计口径**不含回收箱**。
+         * 他拍板"回收箱的错题可以不计入错题总数"；这条钉住"**四处**查询都带 `deletedAt: null`"
+         * （总数 / 已掌握 / 学科分布 / 近 7 天活动），
+         * 免得以后有人只改一处 —— 那只改总数会让掌握率的分子分母口径又不一致。
+         */
+        it('★ 统计一律不含回收箱（每次查询都带 deletedAt: null）', async () => {
+            mocks.mockPrismaErrorItem.count.mockResolvedValue(0);
+            mocks.mockPrismaErrorItem.findMany.mockResolvedValue([]);
+
+            const request = new Request('http://localhost/api/analytics');
+            const response = await GET(request);
+            expect(response.status).toBe(200);
+
+            // 每一次 count（总数 / 已掌握 / 近 7 天各一次）都必须过滤回收箱
+            const countCalls = mocks.mockPrismaErrorItem.count.mock.calls as unknown as [
+                { where?: Record<string, unknown> },
+            ][];
+            expect(countCalls.length).toBeGreaterThanOrEqual(3);
+            for (const [args] of countCalls) {
+                expect(args.where).toMatchObject({ deletedAt: null });
+            }
+
+            // 学科分布（findMany）同样
+            const findCalls = mocks.mockPrismaErrorItem.findMany.mock.calls as unknown as [
+                { where?: Record<string, unknown> },
+            ][];
+            expect(findCalls[0][0].where).toMatchObject({ deletedAt: null });
+        });
+
         it('应该返回正确的学科分布', async () => {
             mocks.mockPrismaErrorItem.count.mockResolvedValue(0);
             mocks.mockPrismaErrorItem.findMany.mockResolvedValue([
