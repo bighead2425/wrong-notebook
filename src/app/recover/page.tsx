@@ -25,7 +25,7 @@
  *    避免踩本项目"漏包 Suspense ⇒ next build 中断"那个老坑（见 next-build-conventions.test.ts）。
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import jsQR from "jsqr";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,7 @@ import { BackButton } from "@/components/ui/back-button";
 import { ScanInboxBar } from "@/components/scan-inbox-bar";
 import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
 import { ImageCropper } from "@/components/image-cropper";
+import { ImageLightbox, type LightboxItem } from "@/components/image-lightbox";
 import { StitchComposer } from "@/components/stitch-composer";
 import { MdEditor } from "@/components/md-editor";
 import { apiClient, ApiError } from "@/lib/api-client";
@@ -259,6 +260,16 @@ interface QueuedShot {
     url: string;
 }
 
+/**
+ * 【2026-10-05】"点开看清是哪张"时，看的是**哪一组**图。
+ * 三组各自独立成册（互相之间不跨组翻页）—— 因为他翻图时的心理是
+ * "这一格里的图挨着看一遍"，混在一起反而找不到自己在哪儿。
+ *
+ * ⚠️ 「待处理」**不在这里**：那一格点图 = 加工（他定的），
+ *    而加工页本来就是大图，不存在"看不清是哪张"的问题。
+ */
+type LightboxKind = "ready" | "cards" | "review";
+
 export default function RecoverPage() {
     const { language } = useLanguage();
     const zh = language === "zh";
@@ -302,6 +313,12 @@ export default function RecoverPage() {
     /** 收不下时的一句提示（比如一次选了 40 张，只收前 30 张） */
     const [shotNotice, setShotNotice] = useState<string | null>(null);
 
+    /**
+     * 【2026-10-05】看图窗口开着没有、看的是哪一组、第几张。
+     * 他反馈："图片进了待处理 / 预处理 / 已分析之后都只有一小格，完全不知道是哪张图"。
+     */
+    const [lightbox, setLightbox] = useState<{ kind: LightboxKind; index: number } | null>(null);
+
     /** 改一张卡：ref 与 state 同步更新（见上面 ref 的说明） */
     const patch = useCallback((id: string, updater: (c: RecoverCard) => RecoverCard) => {
         cardsRef.current = cardsRef.current.map((c) => (c.id === id ? updater(c) : c));
@@ -318,6 +335,42 @@ export default function RecoverPage() {
         reviewRef.current = reviewRef.current.map((c) => (c.id === id ? updater(c) : c));
         setReviewCards(reviewRef.current);
     }, []);
+
+    /* ================== 看图窗口（2026-10-05）==================
+     * 只解决一件事：这三组图在小格子里都看不清是哪张，点开能看大图、能翻页。
+     * 用的 `ImageLightbox` 与收件箱预览是**同一个组件**（缩放/翻页手感一致）。
+     *
+     * ⚠️ 索引口径必须与下面 `lightboxItems` **一模一样**（都是"过滤掉没有图的"之后再数），
+     *    否则点第 3 张会打开第 2 张 —— 这种错很隐蔽，改了这边的过滤条件就要一起改那边。
+     */
+    const openReadyLightbox = useCallback((id: string) => {
+        const i = readyShotsRef.current.findIndex((s) => s.id === id);
+        if (i >= 0) setLightbox({ kind: "ready", index: i });
+    }, []);
+    const openCardLightbox = useCallback((id: string) => {
+        const i = cardsRef.current.filter((c) => c.photo).findIndex((c) => c.id === id);
+        if (i >= 0) setLightbox({ kind: "cards", index: i });
+    }, []);
+    const openReviewLightbox = useCallback((id: string) => {
+        const i = reviewRef.current.filter((c) => c.photo).findIndex((c) => c.id === id);
+        if (i >= 0) setLightbox({ kind: "review", index: i });
+    }, []);
+
+    /** 交给看图窗口的清单（与上面索引同口径） */
+    const lightboxItems: LightboxItem[] = useMemo(() => {
+        if (!lightbox) return [];
+        if (lightbox.kind === "ready") {
+            return readyShots.map((s) => ({ src: s.url, label: s.file.name }));
+        }
+        if (lightbox.kind === "cards") {
+            return cards
+                .filter((c) => c.photo)
+                .map((c) => ({ src: c.photo as string, label: c.no ?? c.fileName }));
+        }
+        return reviewCards
+            .filter((c) => c.photo)
+            .map((c) => ({ src: c.photo as string, label: c.pageCode ?? c.fileName }));
+    }, [lightbox, readyShots, cards, reviewCards]);
 
     /**
      * 把接口的 400 变成"具体原因 + 一句人话"。
@@ -1139,7 +1192,15 @@ export default function RecoverPage() {
                             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                                 {readyShots.map((s) => (
                                     <div key={s.id} className="relative overflow-hidden rounded-lg border border-emerald-300">
-                                        <img src={s.url} alt={s.file.name} className="h-24 w-full bg-muted object-cover" />
+                                        {/* 点图 = 看大图（这一格里的图是小格子，认不出是哪张就白等了） */}
+                                        <button
+                                            type="button"
+                                            className="block w-full"
+                                            onClick={() => openReadyLightbox(s.id)}
+                                            title={L("点开看大图", "Tap to view")}
+                                        >
+                                            <img src={s.url} alt={s.file.name} className="h-24 w-full bg-muted object-cover" />
+                                        </button>
                                         <button
                                             type="button"
                                             onClick={() => dropShot(s.id, "ready")}
@@ -1183,12 +1244,19 @@ export default function RecoverPage() {
                                     {/* 缩略图（原图就在这儿，别只存 AI 的话） */}
                                     <div className="shrink-0">
                                         {card.photo ? (
-                                            // eslint-disable-next-line @next/next/no-img-element
-                                            <img
-                                                src={card.photo}
-                                                alt={card.fileName}
-                                                className="h-36 w-auto max-w-full rounded border object-contain"
-                                            />
+                                            /* 点图 = 看大图（分析完就只剩这一小格，认不出是哪张卷子） */
+                                            <button
+                                                type="button"
+                                                onClick={() => openCardLightbox(card.id)}
+                                                title={L("点开看大图", "Tap to view")}
+                                            >
+                                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                <img
+                                                    src={card.photo}
+                                                    alt={card.fileName}
+                                                    className="h-36 w-auto max-w-full rounded border object-contain"
+                                                />
+                                            </button>
                                         ) : (
                                             <div className="flex h-36 w-28 items-center justify-center rounded border bg-muted text-muted-foreground">
                                                 <Loader2 className="h-5 w-5 animate-spin" />
@@ -1321,12 +1389,19 @@ export default function RecoverPage() {
                                 <div className="flex flex-col gap-4 p-4 sm:flex-row">
                                     <div className="shrink-0">
                                         {card.photo ? (
-                                            // eslint-disable-next-line @next/next/no-img-element
-                                            <img
-                                                src={card.photo}
-                                                alt={card.fileName}
-                                                className="h-36 w-auto max-w-full rounded border object-contain"
-                                            />
+                                            /* 点图 = 看大图（同上：分析完只剩一小格） */
+                                            <button
+                                                type="button"
+                                                onClick={() => openReviewLightbox(card.id)}
+                                                title={L("点开看大图", "Tap to view")}
+                                            >
+                                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                <img
+                                                    src={card.photo}
+                                                    alt={card.fileName}
+                                                    className="h-36 w-auto max-w-full rounded border object-contain"
+                                                />
+                                            </button>
                                         ) : (
                                             <div className="flex h-36 w-28 items-center justify-center rounded border bg-muted text-muted-foreground">
                                                 <Loader2 className="h-5 w-5 animate-spin" />
@@ -1525,6 +1600,19 @@ export default function RecoverPage() {
                     onDone={handleStitched}
                 />
             )}
+
+            {/* ===== 看图窗口（2026-10-05）=====
+                与收件箱预览**同一个组件**（`ImageLightbox`）：滚轮/双指缩放、拖动平移、
+                双击放大、手机横扫翻页、左右按钮翻页。
+                ⚠️ 传 `items` 而不是"一张图 + 列表"：翻页要在**同一组**里进行
+                   （预处理那组翻预处理，已分析那组翻已分析），不跨组。 */}
+            <ImageLightbox
+                open={lightbox !== null}
+                items={lightboxItems}
+                index={lightbox?.index ?? 0}
+                onIndexChange={(i) => setLightbox((prev) => (prev ? { ...prev, index: i } : prev))}
+                onClose={() => setLightbox(null)}
+            />
         </main>
     );
 }
