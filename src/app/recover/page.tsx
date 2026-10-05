@@ -31,6 +31,8 @@ import jsQR from "jsqr";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { BackButton } from "@/components/ui/back-button";
+import { ScanInboxBar } from "@/components/scan-inbox-bar";
+import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
 import { MdEditor } from "@/components/md-editor";
 import { apiClient, ApiError } from "@/lib/api-client";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -59,7 +61,17 @@ import {
     ScanText,
     SkipForward,
     Sparkles,
+    Images,
+    PlayCircle,
+    Trash2,
+    Wand2,
 } from "lucide-react";
+
+/**
+ * 【2026-10-05】采集层：一次最多收多少张（与批量上传页的 30 张一致）。
+ * 不设上限的话，几十张原图同时挂着会把手机浏览器的内存吃光。
+ */
+const MAX_SHOTS = 30;
 
 /** `/api/scan` 的返回（只取判定要用的字段） */
 interface ErrorItemLite {
@@ -225,6 +237,24 @@ interface ReviewApiResponse {
     reading: { marksBySlot: Record<string, RecoveredMark>; unclear: string };
 }
 
+/**
+ * 【2026-10-05 采集层】一张「还没开始分析的纸」。
+ *
+ * 三条通道（相册多选 / 页内相机连拍 / NAS 收件箱批量拉取）收上来的都长这样，
+ * 落到「待处理」；加工（透视拉正 + 漂白/黑白）之后挪到「预处理」，最后一起送分析。
+ *
+ * ⚠️ 只存 **File + objectURL**，**不存 data URL** —— 缩略图用 objectURL 画（几乎不占内存），
+ *    加工与送分析都直接用 File；整页最多也就一份原图在内存里。
+ * ⚠️ objectURL 用完必须 `revokeObjectURL`（删除 / 送分析 / 离开页面），否则内存一直涨。
+ */
+interface QueuedShot {
+    id: string;
+    /** 原始图（收件箱拉来的、相册选的、相机拍的）或加工后的图 */
+    file: File;
+    /** 给 `<img src>` 用的临时地址 */
+    url: string;
+}
+
 export default function RecoverPage() {
     const { language } = useLanguage();
     const zh = language === "zh";
@@ -235,6 +265,30 @@ export default function RecoverPage() {
     /** ⚠️ 与 cards 同步的**可变副本**：异步流程里每一步都要读"最新那张卡"，不能等 React 重渲染 */
     const cardsRef = useRef<RecoverCard[]>([]);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+    /* ========== 采集层（2026-10-05）：待处理 / 预处理 / 页内相机 ==========
+     * 为什么要有这一层：原来这里是「选照片 → 立刻直送 AI」，中间没有任何可干预的环节；
+     * 而日常拍照得到的原图（背景、透视、偏暗）直接喂 AI 会让它读不准二维码和手写。
+     * 现在改成：**先收进「待处理」 → 逐张加工（透视拉正 + 漂白/黑白）→ 进「预处理」 → 一起分析**，
+     * 与录题目时那套（BatchPipeline）是同一个思路，只是这里的出口是「回录分析」而不是「录错题」。
+     */
+
+    /** 待处理：刚收进来、还没加工的纸 */
+    const [pendingShots, setPendingShots] = useState<QueuedShot[]>([]);
+    const pendingShotsRef = useRef<QueuedShot[]>([]);
+    /** 预处理：加工好了、等着一起送分析的纸 */
+    const [readyShots, setReadyShots] = useState<QueuedShot[]>([]);
+    const readyShotsRef = useRef<QueuedShot[]>([]);
+    /** 页内相机（连拍）的实例句柄 */
+    const cameraScannerRef = useRef<DocScannerHandle | null>(null);
+    /** 加工器（把已有图送进「确认扫描效果」那一步）的实例句柄 */
+    const editScannerRef = useRef<DocScannerHandle | null>(null);
+    /** 正在加工的是哪一张 —— DocScanner 出图时靠它认领（它是异步的，不能靠 state） */
+    const editingShotRef = useRef<QueuedShot | null>(null);
+    /** 连拍已拍张数（显示在按钮旁，给人一个数） */
+    const [burstCount, setBurstCount] = useState(0);
+    /** 收不下时的一句提示（比如一次选了 40 张，只收前 30 张） */
+    const [shotNotice, setShotNotice] = useState<string | null>(null);
 
     /** 改一张卡：ref 与 state 同步更新（见上面 ref 的说明） */
     const patch = useCallback((id: string, updater: (c: RecoverCard) => RecoverCard) => {
@@ -533,9 +587,11 @@ export default function RecoverPage() {
 
     /** 选/拍了一组照片：逐张**串行**处理（一张失败不影响别的） */
     const handleFiles = useCallback(
-        async (fileList: FileList | null) => {
-            if (!fileList || fileList.length === 0) return;
-            const files = Array.from(fileList);
+        // 【2026-10-05】参数放宽成 `File[] | FileList`：采集层送进来的是一组 File 对象
+        //（不再是 `<input>` 的 FileList），两条入口共用同一段处理逻辑
+        async (input: File[] | FileList | null) => {
+            if (!input || input.length === 0) return;
+            const files = Array.from(input);
             const newCards: RecoverCard[] = files.map((file) => ({
                 id: uid(),
                 fileName: file.name || "photo.jpg",
@@ -559,6 +615,140 @@ export default function RecoverPage() {
         },
         [processCard],
     );
+
+    /* ============ 采集层：收图 / 加工 / 送分析（2026-10-05） ============ */
+
+    /** 把一批 File 收进「待处理」（超过上限的截掉，并给一句提示） */
+    const addShots = useCallback(
+        (files: File[]): string[] => {
+            const used = pendingShotsRef.current.length + readyShotsRef.current.length;
+            const room = Math.max(0, MAX_SHOTS - used);
+            const take = files.slice(0, room);
+            if (take.length < files.length) {
+                setShotNotice(
+                    L(
+                        `一次最多收 ${MAX_SHOTS} 张，这次只收了前 ${take.length} 张 —— 剩下的分下一批吧。`,
+                        `At most ${MAX_SHOTS} at a time; took the first ${take.length} only.`,
+                    ),
+                );
+            } else {
+                setShotNotice(null);
+            }
+            const shots: QueuedShot[] = take.map((file) => ({
+                id: uid(),
+                file,
+                url: URL.createObjectURL(file),
+            }));
+            pendingShotsRef.current = [...pendingShotsRef.current, ...shots];
+            setPendingShots(pendingShotsRef.current);
+            return take.map((f) => f.name);
+        },
+        [L],
+    );
+
+    /** 从「待处理」或「预处理」里丢掉一张（记得把 objectURL 还回去，否则内存一直涨） */
+    const dropShot = useCallback((id: string, from: "pending" | "ready") => {
+        const list = from === "pending" ? pendingShotsRef.current : readyShotsRef.current;
+        const target = list.find((s) => s.id === id);
+        if (target) URL.revokeObjectURL(target.url);
+        const next = list.filter((s) => s.id !== id);
+        if (from === "pending") {
+            pendingShotsRef.current = next;
+            setPendingShots(next);
+        } else {
+            readyShotsRef.current = next;
+            setReadyShots(next);
+        }
+    }, []);
+
+    /**
+     * 点「加工」：把这张图送进扫描器的「确认扫描效果」那一步
+     *（可拖四个角做**透视拉正/剪裁**，并可切**原色 / 漂白 / 黑白**）。
+     * 用的是已经打磨过的那套（`DocScanner.openWithFile`），不另造轮子。
+     */
+    const startEditShot = useCallback((id: string) => {
+        const shot = pendingShotsRef.current.find((s) => s.id === id);
+        if (!shot) return;
+        editingShotRef.current = shot;
+        editScannerRef.current?.openWithFile(shot.file);
+    }, []);
+
+    /** 加工完成 ⇒ 用出图替换原图，并挪进「预处理」 */
+    const handleEditComplete = useCallback((blob: Blob) => {
+        const target = editingShotRef.current;
+        editingShotRef.current = null;
+        if (!target) return;
+        const file = new File([blob], target.file.name || "shot.jpg", {
+            type: blob.type || "image/jpeg",
+        });
+        pendingShotsRef.current = pendingShotsRef.current.filter((s) => s.id !== target.id);
+        setPendingShots(pendingShotsRef.current);
+        URL.revokeObjectURL(target.url);
+        const shot: QueuedShot = { id: target.id, file, url: URL.createObjectURL(file) };
+        readyShotsRef.current = [...readyShotsRef.current, shot];
+        setReadyShots(readyShotsRef.current);
+    }, []);
+
+    /** 不想加工、直接用原图 ⇒ 从「待处理」挪进「预处理」 */
+    const promoteShot = useCallback((id: string) => {
+        const shot = pendingShotsRef.current.find((s) => s.id === id);
+        if (!shot) return;
+        pendingShotsRef.current = pendingShotsRef.current.filter((s) => s.id !== id);
+        setPendingShots(pendingShotsRef.current);
+        readyShotsRef.current = [...readyShotsRef.current, shot];
+        setReadyShots(readyShotsRef.current);
+    }, []);
+
+    /** 待处理**全部**挪进预处理 —— 一次收了几十张又不想逐张点的时候用（不然手要废） */
+    const promoteAllShots = useCallback(() => {
+        if (pendingShotsRef.current.length === 0) return;
+        readyShotsRef.current = [...readyShotsRef.current, ...pendingShotsRef.current];
+        pendingShotsRef.current = [];
+        setPendingShots([]);
+        setReadyShots(readyShotsRef.current);
+    }, []);
+
+    /** 页内相机（连拍）拍了一张 —— 直接进「待处理」，不绕收件箱那一圈 */
+    const handleBurstShot = useCallback(
+        (blob: Blob, action: "again" | "done") => {
+            const file = new File([blob], `camera-${Date.now()}.jpg`, { type: "image/jpeg" });
+            addShots([file]);
+            if (action === "again") {
+                setBurstCount((c) => c + 1);
+                return;
+            }
+            setBurstCount(0);
+        },
+        [addShots],
+    );
+
+    /** 收件箱拉来一批（NAS 上别的 App 扫进来的照片）—— 收进「待处理」，并回报真正收下的名字 */
+    const handleInboxImport = useCallback((files: File[]) => addShots(files), [addShots]);
+
+    /**
+     * 兜底：相机那个实例**理论上**永远走 `onBurstShot`（burstMode 下），不会走这里；
+     * 但 `DocScannerProps.onScanComplete` 是必填项，且"万一"走到也不能丢图 ——
+     * 所以让它同样收进「待处理」（等价于"拍完就收工"那一张）。
+     */
+    const handleScanCompleteFallback = useCallback(
+        (blob: Blob) => handleBurstShot(blob, "done"),
+        [handleBurstShot],
+    );
+
+    /**
+     * 【开始分析】把「预处理」里的图**一起**交给既有的分流流程
+     * —— 深挖纸走 `/api/recover`、复练纸走 `/api/recover/review`，由二维码自动判定。
+     */
+    const analyzeReady = useCallback(async () => {
+        const shots = readyShotsRef.current;
+        if (shots.length === 0) return;
+        readyShotsRef.current = [];
+        setReadyShots([]);
+        const files = shots.map((s) => s.file);
+        // 图已经交给 handleFiles（它会把 File 留在卡片里），这两个临时地址可以还回去了
+        shots.forEach((s) => URL.revokeObjectURL(s.url));
+        await handleFiles(files);
+    }, [handleFiles]);
 
     /** 重试：已经认出题号且拿到图 ⇒ 只重跑"查题 + 送 AI"；否则整条重来 */
     const retry = useCallback(
@@ -755,38 +945,165 @@ export default function RecoverPage() {
                     </div>
                 </div>
 
-                {/* ===== 选照片 / 拍一张 ===== */}
+                {/* ===== 采集：三条通道 + 待处理 / 预处理（2026-10-05 改版） ===== */}
                 <div className="space-y-3 rounded-lg border p-4">
                     <input
                         ref={fileInputRef}
                         type="file"
                         accept="image/*"
                         multiple
-                        capture="environment"
                         className="hidden"
                         onChange={(e) => {
-                            void handleFiles(e.target.files);
+                            // 【2026-10-05】这里**故意不加 `capture`** ——
+                            // 加了以后手机会直接弹系统摄像头，而那条路拍出来的照片回不到软件里（实测）；
+                            // 不加就正常走相册 / 文件选择（全项目其它入口也都是这么做的）。
+                            addShots(Array.from(e.target.files || []));
                             e.target.value = "";
                         }}
                     />
-                    <div className="flex flex-wrap items-center gap-3">
-                        <Button onClick={() => fileInputRef.current?.click()}>
-                            <Camera className="mr-1.5 h-4 w-4" />
-                            {L("选照片 / 拍一张", "Pick photos / Take one")}
+
+                    {/* 三条通道：电脑端用前两条，手机端三条都能用 */}
+                    <div className="flex flex-wrap items-center gap-2">
+                        <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
+                            <Images className="mr-1.5 h-4 w-4" />
+                            {L("从相册 / 文件夹选（可多选）", "Pick photos (multiple)")}
                         </Button>
-                        {total > 0 && (
+                        <Button
+                            variant="outline"
+                            onClick={() => {
+                                setShotNotice(null);
+                                cameraScannerRef.current?.openCamera();
+                            }}
+                        >
+                            <Camera className="mr-1.5 h-4 w-4" />
+                            {L("页内相机（可连拍）", "In-app camera (burst)")}
+                        </Button>
+                        {burstCount > 0 && (
                             <span className="text-sm text-muted-foreground">
-                                {L(`共 ${total} 张，已保存 ${savedCount} 张`, `${total} photo(s), ${savedCount} saved`)}
+                                {L(`本轮已拍 ${burstCount} 张`, `${burstCount} shot(s) this round`)}
                             </span>
                         )}
                     </div>
+
+                    {/* 收件箱：手机上用别的 App 扫完丢进 NAS 目录，在这里一键拉进来。
+                        目录没挂载时它自己整条不渲染 —— 电脑上不会多出点了没反应的按钮。 */}
+                    <ScanInboxBar
+                        existingNames={[...pendingShots, ...readyShots].map((s) => s.file.name)}
+                        onImport={handleInboxImport}
+                        busy={
+                            cards.some((c) => c.state.k === "working" || c.saving) ||
+                            reviewCards.some((c) => c.state.k === "working" || c.saving)
+                        }
+                    />
+
+                    {shotNotice && (
+                        <p className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                            {shotNotice}
+                        </p>
+                    )}
+
                     <p className="text-xs text-muted-foreground">
                         {L(
-                            "可一次选多张：每张单独处理，一张失败不影响别张。认不出二维码的卡会显示原因，可重试、手输题号或跳过。",
-                            "You can select several: each is processed on its own; a failure won't affect the others.",
+                            "三条路都行：① 手机 App 扫完丢进收件箱批量拉；② 从相册 / 文件夹多选；③ 当场用页内相机连拍。图片先进下面的「待处理」，加工好再一起分析。",
+                            "Three ways in: inbox batch-pull, photo album, or in-app burst camera. Shots land in Pending; process them, then analyze together.",
                         )}
                     </p>
+
+                    {/* ---- 待处理：刚收进来、还没加工 ---- */}
+                    {pendingShots.length > 0 && (
+                        <div className="space-y-2 border-t pt-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="text-sm font-medium">
+                                    {L(`待处理 ${pendingShots.length} 张`, `Pending ${pendingShots.length}`)}
+                                </span>
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-xs text-muted-foreground">
+                                        {L(
+                                            "「加工」= 拉正四个角 + 漂白 / 黑白；不想加工就直接进预处理",
+                                            "Process = straighten corners + whiten; or move on as-is",
+                                        )}
+                                    </span>
+                                    <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={promoteAllShots}>
+                                        {L("全部进预处理", "All → Ready")}
+                                    </Button>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                {pendingShots.map((s) => (
+                                    <div key={s.id} className="overflow-hidden rounded-lg border">
+                                        <img src={s.url} alt={s.file.name} className="h-24 w-full bg-muted object-cover" />
+                                        <div className="flex items-center gap-0.5 p-1">
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 flex-1 px-1 text-xs"
+                                                onClick={() => startEditShot(s.id)}
+                                            >
+                                                <Wand2 className="mr-1 h-3.5 w-3.5" />
+                                                {L("加工", "Process")}
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 px-1 text-xs"
+                                                onClick={() => promoteShot(s.id)}
+                                            >
+                                                {L("进预处理", "Skip")}
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 px-1 text-muted-foreground"
+                                                onClick={() => dropShot(s.id, "pending")}
+                                                aria-label={L("移除", "Remove")}
+                                            >
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ---- 预处理：加工好了、等着一起分析 ---- */}
+                    {readyShots.length > 0 && (
+                        <div className="space-y-2 border-t pt-3">
+                            <span className="text-sm font-medium">
+                                {L(`预处理 ${readyShots.length} 张（就绪）`, `Ready ${readyShots.length}`)}
+                            </span>
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                {readyShots.map((s) => (
+                                    <div key={s.id} className="relative overflow-hidden rounded-lg border border-emerald-300">
+                                        <img src={s.url} alt={s.file.name} className="h-24 w-full bg-muted object-cover" />
+                                        <button
+                                            type="button"
+                                            onClick={() => dropShot(s.id, "ready")}
+                                            className="absolute right-1 top-1 rounded bg-background/80 p-1 text-muted-foreground hover:text-foreground"
+                                            aria-label={L("移除", "Remove")}
+                                        >
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
+
+                {/* 【开始分析】把预处理里的图**一起**送进去 —— 按二维码自动分流深挖纸 / 复练纸 */}
+                {readyShots.length > 0 && (
+                    <Button className="w-full" onClick={() => void analyzeReady()}>
+                        <PlayCircle className="mr-1.5 h-4 w-4" />
+                        {L(`开始分析这 ${readyShots.length} 张`, `Analyze these ${readyShots.length}`)}
+                    </Button>
+                )}
+
+                {total > 0 && (
+                    <p className="text-sm text-muted-foreground">
+                        {L(`已分析 ${total} 张，已保存 ${savedCount} 张`, `${total} analyzed, ${savedCount} saved`)}
+                    </p>
+                )}
 
                 {/* ===== 回录卡片 ===== */}
                 {total === 0 ? (
@@ -1103,6 +1420,27 @@ export default function RecoverPage() {
                     </div>
                 )}
             </div>
+
+            {/* ===== 两个扫描器实例（2026-10-05 采集层）=====
+                · 相机那个（burstMode）：连拍，每拍一张把出图直接丢进「待处理」，不绕收件箱；
+                · 加工那个（单张）：`openWithFile` 打开已有图的「确认扫描效果」，
+                  拖四个角做透视拉正 / 剪裁，切原色 / 漂白 / 黑白，确认后进「预处理」。
+                两者互不干扰（各管各的相机与画布），且**挂上时都不会自动开相机**。 */}
+            <DocScanner
+                ref={editScannerRef}
+                onScanComplete={handleEditComplete}
+                onClose={() => {
+                    editingShotRef.current = null;
+                }}
+            />
+            <DocScanner
+                ref={cameraScannerRef}
+                burstMode
+                burstCount={burstCount}
+                onBurstShot={handleBurstShot}
+                onScanComplete={handleScanCompleteFallback}
+                onClose={() => setBurstCount(0)}
+            />
         </main>
     );
 }
