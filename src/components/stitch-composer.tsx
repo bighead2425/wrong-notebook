@@ -35,7 +35,7 @@ import {
     type StitchBox,
     type StitchImage,
 } from "@/lib/image-stitch";
-import { Camera, FolderOpen, Inbox, Loader2, Plus, RotateCcw, Trash2, Undo2, X } from "lucide-react";
+import { Camera, FolderOpen, Inbox, Loader2, MoveVertical, Pencil, Plus, RotateCcw, Trash2, Undo2, X } from "lucide-react";
 
 /** 紫框 —— 与裁剪页四色（红 #e50000 / 蓝 #0055ff / 绿 #009a4c / 橙 #ff7a00）不冲突 */
 const STITCH_COLOR = "#8b5cf6";
@@ -140,6 +140,29 @@ export function StitchComposer({
     const [inboxLoading, setInboxLoading] = useState(false);
     /** 正在画的那个框（还没落进 boxes） */
     const drawingRef = useRef<{ imageIndex: number; x0: number; y0: number; x: number; y: number } | null>(null);
+
+    /**
+     * 【2026-10-05 修】他报的问题：**手机端**加进来的第二张图"滚不上来"。
+     *
+     * 根因：叠在图上的那块 canvas 写了 `touch-none`（`touch-action: none`）——
+     * 手指按在图上时，浏览器**连滚动都不允许**（因为要在图上画框，不能让页面跟着动）。
+     * 电脑端靠滚轮滚动，不受 `touch-action` 管 ⇒ 所以他只在手机上撞到，症状完全吻合。
+     *
+     * 矛盾一句话说清：**手机上一根手指只能干一件事** ——
+     * 要么画框（那页面就不能滚），要么滚动（那就画不了框）。
+     * 所以手机端给一个开关：
+     *   · 默认 **画框**（跟原来一模一样，不改变他熟悉的用法）；
+     *   · 想看下面那张图就切到 **滚动**（此时 canvas 用 `touch-pan-y`，手指正常滚页面）。
+     * 鼠标 / 触控笔**不受影响**，任何模式下都能画 —— 他在电脑上完全感觉不到这个开关。
+     */
+    const [touchOnly, setTouchOnly] = useState(false);
+    const [touchMode, setTouchMode] = useState<"draw" | "scroll">("draw");
+    useEffect(() => {
+        if (typeof window === "undefined" || !window.matchMedia) return;
+        setTouchOnly(window.matchMedia("(hover: none)").matches);
+    }, []);
+    /** 手机端且切到了"滚动" ⇒ 手指只滚页面，不画框 */
+    const touchScrollMode = touchOnly && touchMode === "scroll";
 
     const cameraRef = useRef<DocScannerHandle | null>(null);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -381,6 +404,8 @@ export function StitchComposer({
             const canvas = canvasRefs.current[index];
             const shot = shotsRef.current[index];
             if (!canvas || !shot || busy) return;
+            // 手机端切到「滚动」时，手指只用来滚页面 —— 别在这里拦下来画框（见 touchMode 的说明）
+            if (touchScrollMode && e.pointerType === "touch") return;
             const r = canvas.getBoundingClientRect();
             const x = ((e.clientX - r.left) / r.width) * shot.width;
             const y = ((e.clientY - r.top) / r.height) * shot.height;
@@ -388,7 +413,7 @@ export function StitchComposer({
             setSelected(null);
             canvas.setPointerCapture?.(e.pointerId);
         },
-        [busy],
+        [busy, touchScrollMode],
     );
 
     const onPointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>, index: number) => {
@@ -441,6 +466,18 @@ export function StitchComposer({
         },
         [L, redraw],
     );
+
+    /**
+     * 【2026-10-05 顺手补一个真 bug】浏览器决定"这一指用来滚动页面"时会发 `pointercancel`，
+     * 原来没接这个事件 ⇒ 画到一半的 `drawingRef` 一直挂着，
+     * 下一次在任何地方抬手都会被当成"落框"（落出一个巨框）。
+     * 现在收到 cancel 就把它丢掉，并重画一遍（把半截框擦掉）。
+     */
+    const onPointerCancel = useCallback(() => {
+        if (!drawingRef.current) return;
+        drawingRef.current = null;
+        redraw();
+    }, [redraw]);
 
     /** 【拼接】—— 用纯逻辑算出方案，再照着一块块画上去 */
     const doStitch = useCallback(async () => {
@@ -539,6 +576,29 @@ export function StitchComposer({
                     {L("从收件箱挑", "From inbox")}
                 </Button>
 
+                {/* 【2026-10-05】手机端专用开关：手指要么画框、要么滚页面（见 touchMode 的说明）。
+                    只在这类设备上出现 —— 电脑上滚轮就能滚，多一个按钮纯属添乱。 */}
+                {touchOnly && (
+                    <Button
+                        size="sm"
+                        variant={touchScrollMode ? "default" : "outline"}
+                        onClick={() => setTouchMode(touchScrollMode ? "draw" : "scroll")}
+                        title={L(
+                            "手机上一个手指只能干一件事：画框，或者滚动页面",
+                            "On a phone one finger can either draw or scroll",
+                        )}
+                    >
+                        {touchScrollMode ? (
+                            <MoveVertical className="mr-1 h-4 w-4" />
+                        ) : (
+                            <Pencil className="mr-1 h-4 w-4" />
+                        )}
+                        {touchScrollMode
+                            ? L("滚动模式（点一下切回画框）", "Scroll mode (tap to draw)")
+                            : L("画框模式（点一下可滚动）", "Draw mode (tap to scroll)")}
+                    </Button>
+                )}
+
                 <span className="mx-1 h-5 w-px bg-border" />
 
                 <Button size="sm" variant="outline" onClick={undoBox} disabled={busy || boxCount === 0}>
@@ -556,6 +616,12 @@ export function StitchComposer({
                 </Button>
                 <span className="text-xs text-muted-foreground">
                     {L("在图上按住拖，画紫色框；框之间不许交叉", "Drag on an image to draw a purple box; boxes must not cross")}
+                    {touchOnly
+                        ? L(
+                              " · 手机上：想看下面那张图，先点上面的「滚动模式」",
+                              " · Phone: to reach the next image, switch to Scroll mode first",
+                          )
+                        : ""}
                 </span>
             </div>
 
@@ -605,10 +671,11 @@ export function StitchComposer({
                                     }}
                                     width={shot.width}
                                     height={shot.height}
-                                    className="absolute inset-0 h-full w-full cursor-crosshair touch-none"
+                                    className={`absolute inset-0 h-full w-full cursor-crosshair ${touchScrollMode ? "touch-pan-y" : "touch-none"}`}
                                     onPointerDown={(e) => onPointerDown(e, i)}
                                     onPointerMove={(e) => onPointerMove(e, i)}
                                     onPointerUp={(e) => onPointerUp(e, i)}
+                                    onPointerCancel={onPointerCancel}
                                 />
                             </div>
                         </div>
