@@ -25,7 +25,7 @@
  *    避免踩本项目"漏包 Suspense ⇒ next build 中断"那个老坑（见 next-build-conventions.test.ts）。
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import jsQR from "jsqr";
 import { Button } from "@/components/ui/button";
@@ -100,7 +100,7 @@ type CardState =
     | { k: "working"; step: WorkStep }
     | { k: "ready" }
     | { k: "blocked"; reason: ScanBlockedReason | "ai-error" | "build-page"; detail: string | null; message: string | null }
-    | { k: "saved"; replaced: boolean }
+    | { k: "saved"; replaced: boolean; insightCode: string | null }
     | { k: "skipped" };
 
 interface RecoverCard {
@@ -173,8 +173,42 @@ function uid(): string {
     return `rc-${Date.now()}-${seq}`;
 }
 
-/** 把图片 data URL 解成二维码文本（jsQR，纯 JS，任何浏览器可跑） */
-async function decodeQrFromDataUrl(dataUrl: string): Promise<string | null> {
+/* =================== 这一场（同一屏会话内）保留 ===================
+ *
+ * 【2026-10-05 他报的问题，原话】"可能其他分析都结束了，还没有保存到日积月累中，
+ * 就因为点击了一个去察看，其他刚刚送 AI 分析的内容就全丢了……风险特别大。"
+ *
+ * 为什么会丢：他一跳去「日积月累」，这个页面的 React 组件就被卸载了，
+ * 里面的 `useState` 全部归零 —— 再回来是一张白纸。
+ *
+ * 解法：把"这一场"的四份数据放到**模块作用域**。
+ * 客户端路由跳转（点链接、点返回）不会重新加载 JS 模块，所以模块里的东西还在；
+ * 回到这一页时用它们做初始值，看起来就跟"从没离开过"一样。
+ *
+ * ⚠️ 三条边界，别越：
+ *   ① **绝不写盘、绝不进 localStorage** —— 里面是她的作业照片，不该留在浏览器里；
+ *      整页刷新（F5）就没了，这是**有意**的。
+ *   ② 只存"这一场的数据"，**不存浮层**（正在加工哪张、拼接窗口、看图窗口）——
+ *      回来时不该自动弹出一个窗口。
+ *   ③ 一定要有办法**清空**（下面顶栏那个「清空」按钮）：否则卡片只进不出，
+ *      一场接一场攒下去。这也是为什么这个按钮是必需的，不是装饰。
+ */
+interface RecoverSession {
+    pendingShots: QueuedShot[];
+    readyShots: QueuedShot[];
+    cards: RecoverCard[];
+    reviewCards: ReviewCard[];
+    burstCount: number;
+}
+const session: RecoverSession = {
+    pendingShots: [],
+    readyShots: [],
+    cards: [],
+    reviewCards: [],
+    burstCount: 0,
+};
+
+/** 把图片 data URL 解成二维码文本（jsQR，纯 JS，任何浏览器可跑） */async function decodeQrFromDataUrl(dataUrl: string): Promise<string | null> {
     const img = await loadImage(dataUrl);
     const canvas = document.createElement("canvas");
     canvas.width = img.naturalWidth;
@@ -195,6 +229,26 @@ function loadImage(src: string): Promise<HTMLImageElement> {
         img.onerror = () => reject(new Error("图片加载失败"));
         img.src = src;
     });
+}
+
+/**
+ * 「去查看」这条积累 —— 跳去哪。
+ *
+ * ⚠️ 三个参数缺一不可，缺一个他就得自己找（这是他 2026-10-05 报的第 1 条）：
+ *   · `pick=<编号>`   ⇒ 日积月累页打开就**选中刚存的这一条**（不用在一长串里翻）；
+ *   · `noleft=1`      ⇒ 隐掉左栏，直接落在右边那一栏（他原话："在右边框显示"）；
+ *   · `back=/recover` ⇒ 那边的**返回键回到本页** —— 原来返回直接回主页，
+ *                       而他手上还有几张"分析好了没保存"的卡。
+ *
+ * 光有 `back=` 还不够：回来这一屏的内容也**不能丢**，靠的是模块里的 `session`
+ * （见文件上方"这一场保留"那段说明）。
+ */
+function insightViewHref(code: string | null): string {
+    const q = new URLSearchParams();
+    if (code) q.set("pick", code);
+    q.set("noleft", "1");
+    q.set("back", "/recover");
+    return `/insights?${q.toString()}`;
 }
 
 /**
@@ -276,9 +330,11 @@ export default function RecoverPage() {
     /** 双语助手（与 /scan 页同一写法） */
     const L = useCallback((a: string, b: string) => (zh ? a : b), [zh]);
 
-    const [cards, setCards] = useState<RecoverCard[]>([]);
+    /* 下面四份数据都从 `session` 起手（见文件里"这一场保留"那段说明）：
+     * 从日积月累页返回、或误点主页再回来，这一场还在。 */
+    const [cards, setCards] = useState<RecoverCard[]>(session.cards);
     /** ⚠️ 与 cards 同步的**可变副本**：异步流程里每一步都要读"最新那张卡"，不能等 React 重渲染 */
-    const cardsRef = useRef<RecoverCard[]>([]);
+    const cardsRef = useRef<RecoverCard[]>(session.cards);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
 
     /* ========== 采集层（2026-10-05）：待处理 / 预处理 / 页内相机 ==========
@@ -289,11 +345,11 @@ export default function RecoverPage() {
      */
 
     /** 待处理：刚收进来、还没加工的纸 */
-    const [pendingShots, setPendingShots] = useState<QueuedShot[]>([]);
-    const pendingShotsRef = useRef<QueuedShot[]>([]);
+    const [pendingShots, setPendingShots] = useState<QueuedShot[]>(session.pendingShots);
+    const pendingShotsRef = useRef<QueuedShot[]>(session.pendingShots);
     /** 预处理：加工好了、等着一起送分析的纸 */
-    const [readyShots, setReadyShots] = useState<QueuedShot[]>([]);
-    const readyShotsRef = useRef<QueuedShot[]>([]);
+    const [readyShots, setReadyShots] = useState<QueuedShot[]>(session.readyShots);
+    const readyShotsRef = useRef<QueuedShot[]>(session.readyShots);
     /** 页内相机（连拍）的实例句柄 */
     const cameraScannerRef = useRef<DocScannerHandle | null>(null);
     /**
@@ -304,7 +360,7 @@ export default function RecoverPage() {
     /** 与 editingShot 同步的副本：出图回调里要读"最新那张"，不能等 React 重渲染 */
     const editingShotRef = useRef<QueuedShot | null>(null);
     /** 连拍已拍张数（显示在按钮旁，给人一个数） */
-    const [burstCount, setBurstCount] = useState(0);
+    const [burstCount, setBurstCount] = useState(session.burstCount);
     /**
      * 【2026-10-05】正在拼的那张（从「待处理」点【拼接】带进去的第一张图）。
      * 非 null = 拼接窗口开着。拼好之后结果进「预处理」，**原来那张待处理的不动**。
@@ -322,19 +378,80 @@ export default function RecoverPage() {
     /** 改一张卡：ref 与 state 同步更新（见上面 ref 的说明） */
     const patch = useCallback((id: string, updater: (c: RecoverCard) => RecoverCard) => {
         cardsRef.current = cardsRef.current.map((c) => (c.id === id ? updater(c) : c));
+        // ⚠️ 顺手落进"这一场"：**AI 分析是异步的**，他可能在中途跳去日积月累页，
+        //    回来后这个组件已经是**新实例**了。只靠"每次渲染同步"会漏掉这一步
+        //    （旧实例卸载后不再渲染）⇒ 回来会看到一张永远卡在"AI 正在读…"的卡。
+        session.cards = cardsRef.current;
         setCards(cardsRef.current);
     }, []);
 
     /* ================== 复练纸（第二步）：状态与流程 ================== */
 
-    const [reviewCards, setReviewCards] = useState<ReviewCard[]>([]);
+    const [reviewCards, setReviewCards] = useState<ReviewCard[]>(session.reviewCards);
     /** ⚠️ 与 reviewCards 同步的**可变副本**（同 cardsRef 的道理） */
-    const reviewRef = useRef<ReviewCard[]>([]);
+    const reviewRef = useRef<ReviewCard[]>(session.reviewCards);
 
     const patchReview = useCallback((id: string, updater: (c: ReviewCard) => ReviewCard) => {
         reviewRef.current = reviewRef.current.map((c) => (c.id === id ? updater(c) : c));
+        // 同上：异步结果要能穿过"跳走又回来"（他离开时这个组件已经卸载）
+        session.reviewCards = reviewRef.current;
         setReviewCards(reviewRef.current);
     }, []);
+
+    /**
+     * 把"这一场"同步进模块里的 `session`（每次渲染后都跑一次）。
+     *
+     * 为什么用"每次渲染都同步"，而不是在每个 setState 旁边手写一句：
+     * 这个页面有二十多处改这几份数据的地方，**漏一处就是"回来以后少一张"** ——
+     * 而这种 bug 只在他跳走再回来时出现，平时根本看不出来。
+     * 每次渲染同步一遍，就不存在"漏改某处"的可能（代价是一次赋值，可忽略）。
+     */
+    useEffect(() => {
+        session.pendingShots = pendingShots;
+        session.readyShots = readyShots;
+        session.cards = cards;
+        session.reviewCards = reviewCards;
+        session.burstCount = burstCount;
+    });
+
+    /**
+     * 清空这一屏（顶栏那个按钮）。
+     *
+     * 为什么**必需**：卡片一旦进了 `session`，就不再随刷新消失 ⇒
+     * 没有这个按钮，旧的"已分析 / 已保存"卡会一直挂在页面上、越攒越多。
+     * ⚠️ 只清**界面**：已经保存进日积月累的条目、已经写进卷与复习史的记录**都不动**（那是落过库的）。
+     * ⚠️ 待处理 / 预处理里的 objectURL 要还回去（不然内存一直涨）。
+     */
+    const clearSession = useCallback(() => {
+        if (
+            !confirm(
+                L(
+                    "清空这一屏？还没保存的分析结果会从界面上消失（已经存进日积月累的不受影响）。",
+                    "Clear this screen? Unsaved analyses will be dropped (saved takeaways are untouched).",
+                ),
+            )
+        ) {
+            return;
+        }
+        for (const s of [...pendingShotsRef.current, ...readyShotsRef.current]) {
+            URL.revokeObjectURL(s.url);
+        }
+        pendingShotsRef.current = [];
+        readyShotsRef.current = [];
+        cardsRef.current = [];
+        reviewRef.current = [];
+        session.pendingShots = [];
+        session.readyShots = [];
+        session.cards = [];
+        session.reviewCards = [];
+        session.burstCount = 0;
+        setPendingShots([]);
+        setReadyShots([]);
+        setCards([]);
+        setReviewCards([]);
+        setBurstCount(0);
+        setShotNotice(null);
+    }, [L]);
 
     /* ================== 看图窗口（2026-10-05）==================
      * 只解决一件事：这三组图在小格子里都看不清是哪张，点开能看大图、能翻页。
@@ -902,7 +1019,7 @@ export default function RecoverPage() {
             }
             patch(id, (c) => ({ ...c, saving: true }));
             try {
-                const created = await apiClient.post<{ replaced?: boolean }>("/api/insights", {
+                const created = await apiClient.post<{ replaced?: boolean; code?: string }>("/api/insights", {
                     dateKey: dayKey(new Date()),
                     content,
                     // ★ 原图（压缩后）一并存进日积月累的配图 —— AI 认手写会错，原图是唯一真相
@@ -918,7 +1035,12 @@ export default function RecoverPage() {
                      */
                     subject: card.item?.notebook?.subject || null,
                 });
-                patch(id, (c) => ({ ...c, saving: false, state: { k: "saved", replaced: !!created?.replaced } }));
+                patch(id, (c) => ({
+                    ...c,
+                    saving: false,
+                    /** 记下编号：下面「去查看」要**直接跳到这一条**（`/insights?pick=<编号>`） */
+                    state: { k: "saved", replaced: !!created?.replaced, insightCode: created?.code ?? null },
+                }));
             } catch (err) {
                 patch(id, (c) => ({ ...c, saving: false }));
                 alert(L("保存失败，请重试。", "Save failed, please retry."));
@@ -1037,6 +1159,19 @@ export default function RecoverPage() {
                             )}
                         </p>
                     </div>
+                    {/* 【2026-10-05】清空这一屏 —— 卡片会跨页面保留（见 session 的说明），
+                        所以必须给一个"重新开始"的出口，不然旧的卡会一直挂着。 */}
+                    {pendingShots.length + readyShots.length + total > 0 && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="shrink-0 text-muted-foreground"
+                            onClick={clearSession}
+                        >
+                            <Trash2 className="mr-1 h-3.5 w-3.5" />
+                            {L("清空", "Clear")}
+                        </Button>
+                    )}
                 </div>
 
                 {/* ===== 采集：三条通道 + 待处理 / 预处理（2026-10-05 改版） ===== */}
@@ -1316,7 +1451,7 @@ export default function RecoverPage() {
                                                         ) : (
                                                             <CheckCircle2 className="mr-1.5 h-4 w-4" />
                                                         )}
-                                                        {L("保存进日积月累", "Save as takeaway")}
+                                                        {L("保存积累", "Save takeaway")}
                                                     </Button>
                                                     <Button variant="ghost" onClick={() => skip(card.id)}>
                                                         {L("跳过", "Skip")}
@@ -1361,12 +1496,19 @@ export default function RecoverPage() {
                                         )}
 
                                         {card.state.k === "saved" && (
-                                            <p className="flex items-center gap-1.5 text-sm text-emerald-600">
-                                                <CheckCircle2 className="h-4 w-4" />
+                                            <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-emerald-600">
+                                                <CheckCircle2 className="h-4 w-4 shrink-0" />
                                                 {card.state.replaced
-                                                    ? L("已更新这道题的日积月累（编号不变）。", "Updated this question's takeaway.")
-                                                    : L("已保存进日积月累。", "Saved as a takeaway.")}
-                                                <Link href="/insights" className="underline">
+                                                    ? L("已更新这道题的积累（编号不变）。", "Updated this question's takeaway.")
+                                                    : L("已存进日积月累。", "Saved as a takeaway.")}
+                                                {card.state.insightCode && (
+                                                    <span className="font-mono text-xs text-muted-foreground">
+                                                        {card.state.insightCode}
+                                                    </span>
+                                                )}
+                                                {/* 带 pick / noleft / back 三个参数（见 insightViewHref 的说明）——
+                                                    日积月累页的「后退」会回到本页，而本页这一场**还在**。 */}
+                                                <Link href={insightViewHref(card.state.insightCode)} className="underline">
                                                     {L("去查看", "View")}
                                                 </Link>
                                             </p>
