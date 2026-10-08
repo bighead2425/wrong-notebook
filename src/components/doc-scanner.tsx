@@ -21,6 +21,7 @@ import {
   type EnhanceMode,
 } from "@/lib/doc-scan";
 import { Button } from "@/components/ui/button";
+import { CORNER_KEYS, guideBox, settleCorners, toNormCorners } from "@/lib/doc-live-corners";
 import { Camera, Image as ImageIcon, RotateCcw, Check, Loader2 } from "lucide-react";
 
 export interface DocScannerHandle {
@@ -81,6 +82,15 @@ const TEXT = {
   useOriginalOn: "已选原图",
   previewing: "正在生成预览…",
   finalizing: "正在生成图片…",
+  /** 【2026-10-08】取景页的"预览实时提示四角"开关（实验，默认关） */
+  liveToggle: "预览时实时提示四角（实验）",
+  livePreparing: "正在准备图像处理模块…",
+  liveSearching: "对准纸的四个角，正在识别…",
+  liveFound: "已认到纸边，四角对齐即可拍",
+  /* 【2026-10-08】拍完的一句诊断 —— 把已有的置信档说人话，省掉"拍完才发现歪了" */
+  diagHigh: "四角自动识别：准（可直接确认或微调）",
+  diagLow: "四角是估算的，请看一眼并修正",
+  diagNone: "没自动认出四角，请手动拖四个角",
 };
 
 const ENHANCE_LABEL: Record<EnhanceMode, string> = {
@@ -129,6 +139,26 @@ const HANDLE_COLOR_LOW = "#F59E0B";
 const LOW_CONFIDENCE_DASH = [10, 6];
 
 /**
+ * 【2026-10-08】取景页"预览实时提示四角"的三个参数。为什么要一个个定：
+ *
+ * · `LIVE_DETECT_WIDTH = 800` —— **与找角算法内部的 `DETECT_WIDTH` 对齐**。
+ *   `findPaperCorners` 内部是 `scale = min(1, 800 / cols)`（只缩不放）⇒
+ *   我们这边直接喂 800 宽，它就**一次 resize 都不用做**（不多不少正好），
+ *   而且**检测分辨率与"拍完那条路"完全一致**：拍完那条路喂的是 4K 原图，
+ *   到了算法里同样被缩到 800 宽。⇒ 预览里给出的提示，与拍完得到的结果**同源**，
+ *   不会出现"预览说行、拍完却认歪了"。
+ * · `LIVE_INTERVAL_MS = 280` —— 约 3~4 帧/秒。实时描边没必要 30fps：
+ *   人要看清"对没对齐" 3 帧/秒足够，而耗电与发热差一个量级。
+ * · `LIVE_FRAMES = 3` —— 判稳要看最近 3 帧（见 settleCorners）。
+ */
+const LIVE_DETECT_WIDTH = 800;
+const LIVE_INTERVAL_MS = 280;
+const LIVE_FRAMES = 3;
+
+/** 开关记忆的 localStorage key（不勾就永远不加载这一层，老路径一字不变） */
+const LIVE_CORNERS_KEY = "wn_doc_live_corners";
+
+/**
  * 【custom-v21】非高置信档允许把手拖出画面外的比例。
  *
  * 历史：custom-v19 把角点硬夹在图片范围内，理由是"拖出边界会导致拉正结果异常"
@@ -168,6 +198,99 @@ function defaultCornersFor(img: {
   };
 }
 
+/**
+ * 【2026-10-08】取景页的叠加层 —— **1.414 参考框（四角小直角）+ 一条水平参考线 + 认到的纸边**。
+ *
+ * ⚠️ 写成模块级组件是**有意**的：它只吃 props 与模块常量（不碰主组件的闭包）
+ *    —— 这个项目吃过"模块级组件引用了主组件里的变量 ⇒ 构建报 Cannot find name"的亏。
+ * ⚠️ 全部用**百分比**定位：叠加层与画面天然同步，不必知道预览显示成多少像素。
+ *    这正是"框和纸错位"最常见的成因（拿容器尺寸当画面尺寸），这里从根上避开。
+ */
+function LiveGuideOverlay({
+  frameW,
+  frameH,
+  corners,
+}: {
+  frameW: number;
+  frameH: number;
+  corners: Corners | null;
+}) {
+  const g = guideBox(frameW, frameH);
+  const pct = (v: number) => `${(v * 100).toFixed(3)}%`;
+  const guideColor = "rgba(255,255,255,0.55)";
+  // 四角的"∟"：每个角两条边（用 border 拼），刻意**不画整框** —— 免得被当成裁剪框
+  const brackets = [
+    { left: g.x0, top: g.y0, tx: "0", ty: "0", borders: { borderTop: true, borderLeft: true } },
+    { left: g.x1, top: g.y0, tx: "-100%", ty: "0", borders: { borderTop: true, borderRight: true } },
+    { left: g.x1, top: g.y1, tx: "-100%", ty: "-100%", borders: { borderBottom: true, borderRight: true } },
+    { left: g.x0, top: g.y1, tx: "0", ty: "-100%", borders: { borderBottom: true, borderLeft: true } },
+  ];
+  const quad = corners
+    ? CORNER_KEYS.map((k) => `${corners[k].x * 100},${corners[k].y * 100}`).join(" ")
+    : "";
+
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      {/* 水平参考线：帮她把纸放平（歪没歪一眼能看出来） */}
+      <div
+        className="absolute left-0 right-0 top-1/2 border-t border-dashed"
+        style={{ borderColor: "rgba(255,255,255,0.25)" }}
+      />
+      {/* 1.414 参考框的四角小直角 */}
+      {brackets.map((b, i) => (
+        <div
+          key={i}
+          className="absolute h-6 w-6"
+          style={{
+            left: pct(b.left),
+            top: pct(b.top),
+            transform: `translate(${b.tx}, ${b.ty})`,
+            borderColor: guideColor,
+            borderStyle: "solid",
+            borderWidth: 0,
+            borderTopWidth: b.borders.borderTop ? 2 : 0,
+            borderBottomWidth: b.borders.borderBottom ? 2 : 0,
+            borderLeftWidth: b.borders.borderLeft ? 2 : 0,
+            borderRightWidth: b.borders.borderRight ? 2 : 0,
+          }}
+        />
+      ))}
+      {/* 认到的纸边（青色；与审核页"高置信=青色"同一套语义） */}
+      {corners && (
+        <svg
+          className="absolute inset-0 h-full w-full"
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+        >
+          <polygon
+            points={quad}
+            fill="rgba(0,212,255,0.08)"
+            stroke={HANDLE_COLOR_HIGH}
+            strokeWidth={2}
+            vectorEffect="non-scaling-stroke"
+          />
+        </svg>
+      )}
+      {/* 四个角点用 div 画（不用 SVG circle）：viewBox 被非等比拉伸，
+          circle 会变成椭圆 —— div + translate(-50%,-50%) 才是正圆。 */}
+      {corners &&
+        CORNER_KEYS.map((k) => (
+          <div
+            key={k}
+            className="absolute h-3 w-3 rounded-full"
+            style={{
+              left: pct(corners[k].x),
+              top: pct(corners[k].y),
+              transform: "translate(-50%,-50%)",
+              background: HANDLE_COLOR_HIGH,
+              boxShadow: "0 0 6px rgba(0,212,255,0.7)",
+            }}
+          />
+        ))}
+    </div>
+  );
+}
+
 export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
   function DocScanner({ onScanComplete, onClose, burstMode = false, onBurstShot, burstCount = 0 }, ref) {
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -195,6 +318,50 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
     const pendingRef = useRef<{ x: number; y: number } | null>(null);
     /** 「用原图」二次确认的定时器 */
     const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    /* ==================== 【2026-10-08】预览实时提示四角（实验开关）====================
+     * 他提的想法：现在拍照是"先拍、后校对四角"，他想在按快门之前就看到软件认出的纸边。
+     * 现状盘点：找角算法（findPaperCorners）、OpenCV 按需加载、坐标换算**都已经有了**，
+     * 拍完也已经在自动找角；这一层只是把同一个算法**每 280ms 拿到取景帧上跑一次**，
+     * 稳了才画出来（判稳见 lib/doc-live-corners）。
+     *
+     * ⚠️ 三条刻意的边界：
+     *   ① **默认关**、记住上次选择 ⇒ 不勾就与老版本一字不差（他说这版只当测验，不合适就关掉）；
+     *   ② 只有 `high` 档才参与显示 —— low/none 时宁可什么都不画，也不让框乱晃误导人；
+     *   ③ 显示用**归一化坐标**，叠加层用百分比定位 ⇒ 不必知道预览显示成多少像素
+     *      （"框和纸错位"最常见的成因就是拿容器尺寸当画面尺寸，这里从根上避开）。
+     */
+    const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    /** 最近几帧的"high 档"结果（null = 这一帧没得出可用结果） */
+    const liveFramesRef = useRef<(Corners | null)[]>([]);
+    /** 判稳后、已平滑的显示角点（归一化 0..1）；null = 现在不该画 */
+    const [liveCorners, setLiveCorners] = useState<Corners | null>(null);
+    /** 这一层是否可用（OpenCV 就绪）。就绪前勾上会显示"正在准备…" */
+    const [liveCvReady, setLiveCvReady] = useState(false);
+    /** 取景画面的宽高比（用于算参考框的比例；流尺寸还没拿到时为 null） */
+    const [liveFrameSize, setLiveFrameSize] = useState<{ w: number; h: number } | null>(null);
+    /**
+     * 开关本身。惰性初值：读 localStorage（他只在本机浏览器上用，不涉隐私）。
+     * 读不到就是 false —— 默认关。
+     */
+    const [liveOn, setLiveOn] = useState<boolean>(() => {
+      if (typeof window === "undefined") return false;
+      try {
+        return window.localStorage.getItem(LIVE_CORNERS_KEY) === "1";
+      } catch {
+        return false;
+      }
+    });
+
+    const setLiveOnPersist = useCallback((v: boolean) => {
+      setLiveOn(v);
+      try {
+        window.localStorage.setItem(LIVE_CORNERS_KEY, v ? "1" : "0");
+      } catch {
+        /* 隐私模式下写不进去，不影响本次使用 */
+      }
+    }, []);
+
 
     const [open, setOpen] = useState(false);
     const [mode, setMode] = useState<"camera" | "review">("camera");
@@ -301,6 +468,8 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
           setVideoReady(true);
           if (s?.width && s?.height) {
             setShotSize(`相机流 ${s.width}×${s.height}`);
+            // 参考框要按**画面本身**的比例画（见 guideBox 的注释）
+            setLiveFrameSize({ w: s.width, h: s.height });
           }
         }
       } catch {
@@ -325,6 +494,100 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
         }
       }
     }, [stopCamera]);
+
+    /* ==================== 【2026-10-08】逐帧找角（只在取景页 + 开关打开时跑）====================
+     * 节奏：约每 280ms 抓一帧 → 缩到 800 宽（与算法内部 DETECT_WIDTH 对齐，互不 resize）
+     *      → findPaperCorners → 归一化 → 进判稳缓冲 → 稳了才 setLiveCorners。
+     *
+     * ⚠️ 三件事必须做对，否则会变成"框乱晃"或"手机发烫"：
+     *   ① **只在 `mode === "camera" && videoReady && liveOn` 时跑**，其余情况（进了审核页、
+     *      拍完 stopCamera、用户关开关、组件卸载）一律停 —— 所以依赖数组就是这三样；
+     *   ② **单帧失败不许中断循环**（弱光/反光下随时可能认不出）：try/catch 包住，
+     *      这一帧记 null，等下一帧；
+     *   ③ **Mat 立刻释放**：这个项目为 Mat 泄漏吃过亏（4K 图一帧就几十 MB）。
+     */
+    useEffect(() => {
+      if (!open || mode !== "camera" || !videoReady || !liveOn) {
+        // 关掉/离开时把显示清干净，别让上一帧的框留在画面上
+        liveFramesRef.current = [];
+        setLiveCorners(null);
+        return;
+      }
+      let stopped = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+
+      const tick = async () => {
+        if (stopped) return;
+        try {
+          const cv = cvRef.current ?? (await loadOpenCV());
+          if (stopped) return;
+          cvRef.current = cv;
+          setLiveCvReady(true);
+
+          const v = videoRef.current;
+          if (!v || !v.videoWidth || !v.videoHeight) {
+            timer = setTimeout(tick, LIVE_INTERVAL_MS);
+            return;
+          }
+          // ⚠️ 只在真的变了才 setState：这个 effect 每秒跑 3~4 次，
+          //    每次都塞一个**新对象**会让整个组件白白重渲染（手机上就是白耗电）。
+          setLiveFrameSize((prev) =>
+            prev && prev.w === v.videoWidth && prev.h === v.videoHeight
+              ? prev
+              : { w: v.videoWidth, h: v.videoHeight },
+          );
+
+          // 抓帧：只画到 800 宽的小画布（4K 直接进算法没必要，见 LIVE_DETECT_WIDTH 注释）
+          const cw = LIVE_DETECT_WIDTH;
+          const ch = Math.max(1, Math.round((v.videoHeight / v.videoWidth) * cw));
+          let canvas = liveCanvasRef.current;
+          if (!canvas) {
+            canvas = document.createElement("canvas");
+            liveCanvasRef.current = canvas;
+          }
+          if (canvas.width !== cw || canvas.height !== ch) {
+            canvas.width = cw;
+            canvas.height = ch;
+          }
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.drawImage(v, 0, 0, cw, ch);
+            // ⚠️ 类型写成 `ReturnType<typeof imageToMat>` 而不是裸 `any`：
+            //    本项目有"lint 基线门禁（error 只许降不许涨）"，多加一个显式 any 就会顶掉门禁；
+            //    而 imageToMat 的返回本来就是 OpenCV 的 Mat，借用它的返回类型既准确又不违规。
+            let mat: ReturnType<typeof imageToMat> | null = null;
+            try {
+              mat = imageToMat(cv, canvas);
+              const found = findPaperCorners(cv, mat);
+              // 只有严格档才参与显示；low/none 记 null（宁可什么都不画）
+              liveFramesRef.current = [
+                ...liveFramesRef.current,
+                found.corners && found.confidence === "high"
+                  ? toNormCorners(found.corners, cw, ch)
+                  : null,
+              ].slice(-LIVE_FRAMES);
+              setLiveCorners(settleCorners(liveFramesRef.current));
+            } finally {
+              mat?.delete?.();
+            }
+          }
+        } catch {
+          // 单帧出问题（OpenCV 没就绪 / 抓帧失败）→ 丢掉这一帧，下一轮再试
+          liveFramesRef.current = [...liveFramesRef.current, null].slice(-LIVE_FRAMES);
+          setLiveCorners(null);
+        }
+        if (!stopped) timer = setTimeout(tick, LIVE_INTERVAL_MS);
+      };
+
+      // 首帧稍微推迟一点，避免和"相机刚起来"抢主线程
+      timer = setTimeout(tick, 60);
+      return () => {
+        stopped = true;
+        if (timer != null) clearTimeout(timer);
+        liveFramesRef.current = [];
+        setLiveCorners(null);
+      };
+    }, [open, mode, videoReady, liveOn]);
 
     /** 把图片载入审核态，并自动找纸张四角 */
     const loadImgAndReview = useCallback(
@@ -825,6 +1088,25 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
             {shotSize && (
               <span className="ml-2 text-xs text-[#00D4FF]">{shotSize}</span>
             )}
+            {/* 【2026-10-08】拍完的一句诊断：把**已有的**置信档说成人话。
+                以前只有"青色/琥珀色把手"这一个隐晦信号，用户得自己知道颜色的含义；
+                现在直接写出来，省的正是他说的那种"拍完才发现歪了、要重拍"。
+                ⚠️ 只在他还没动过把手时显示（`!manualWarp`）—— 一旦他开始拖，
+                   这句诊断就没意义了，页面上另有一句拖动提示。 */}
+            {mode === "review" && !manualWarp && (
+              <span
+                className="ml-2 text-xs"
+                style={{
+                  color: cornerConfidence === "high" ? HANDLE_COLOR_HIGH : HANDLE_COLOR_LOW,
+                }}
+              >
+                {cornerConfidence === "high"
+                  ? TEXT.diagHigh
+                  : cornerConfidence === "low"
+                    ? TEXT.diagLow
+                    : TEXT.diagNone}
+              </span>
+            )}
             {burstMode && burstCount > 0 && (
               <span className="ml-2 text-xs text-[#00D4FF]">
                 已拍 {burstCount} 张
@@ -839,16 +1121,62 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
         <div className="flex-1 overflow-auto p-4">
           {mode === "camera" ? (
             <div className="space-y-4">
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                onLoadedMetadata={() => setVideoReady(true)}
-                onCanPlay={() => setVideoReady(true)}
-                className="w-full rounded-lg bg-black"
-                style={{ maxHeight: "60vh", objectFit: "contain" }}
-              />
+              {/* 【2026-10-08】画面 + 叠加层。
+                  容器**贴着画面**（video 用 w-auto/h-auto 由浏览器按比例撑出内容尺寸），
+                  叠加层再 `absolute inset-0` ⇒ 与画面严格重合。
+                  ⚠️ 不能直接把叠加层放在"占满宽度的容器"上：那时容器尺寸 ≠ 画面尺寸
+                     （有黑边/留白），框就会跟纸错位。 */}
+              <div className="relative mx-auto w-fit max-w-full">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  onLoadedMetadata={(e) => {
+                    setVideoReady(true);
+                    const v = e.currentTarget;
+                    // 真实画面尺寸以元素为准（降级路径拿不到 track settings）
+                    if (v.videoWidth) {
+                      setLiveFrameSize((prev) =>
+                        prev && prev.w === v.videoWidth && prev.h === v.videoHeight
+                          ? prev
+                          : { w: v.videoWidth, h: v.videoHeight },
+                      );
+                    }
+                  }}
+                  onCanPlay={() => setVideoReady(true)}
+                  className="block h-auto max-h-[60vh] w-auto max-w-full rounded-lg bg-black"
+                />
+                {liveOn && liveFrameSize && (
+                  <LiveGuideOverlay
+                    frameW={liveFrameSize.w}
+                    frameH={liveFrameSize.h}
+                    corners={liveCorners}
+                  />
+                )}
+              </div>
+
+              {/* 开关：只在取景页、默认关、记住上次选择。关掉 = 与老版本一字不差。 */}
+              <label className="flex flex-wrap items-center justify-center gap-2 text-xs text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={liveOn}
+                  onChange={(e) => setLiveOnPersist(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-[#00D4FF]"
+                />
+                {TEXT.liveToggle}
+                {liveOn && (
+                  <span className="text-slate-500">
+                    ·{" "}
+                    {!liveCvReady
+                      ? TEXT.livePreparing
+                      : liveCorners
+                        ? TEXT.liveFound
+                        : TEXT.liveSearching}
+                  </span>
+                )}
+              </label>
+
               {camError && (
                 <p className="text-red-400 text-sm text-center">{camError}</p>
               )}
