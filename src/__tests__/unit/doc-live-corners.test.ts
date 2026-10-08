@@ -3,6 +3,8 @@ import {
     CORNER_KEYS,
     GUIDE_INSET,
     PAPER_RATIO,
+    expectedQuad,
+    frameAffinity,
     guideBox,
     maxCornerShift,
     meanCorners,
@@ -240,5 +242,62 @@ describe('presetFromLive —— 把"预览定的角"换算到照片上（他第 
         const got = presetFromLive({ live: wild, stillW: 1000, stillH: 1000, frameW: 1000, frameH: 1000 });
         expect(got!.topLeftCorner).toEqual({ x: 0, y: 0 });
         expect(got!.bottomRightCorner).toEqual({ x: 1000, y: 1000 });
+    });
+});
+
+describe('expectedQuad / frameAffinity —— "纸大概在框里"的先验（他第 2 条）', () => {
+    const FW = 800;
+    const FH = 1067;
+
+    it('expectedQuad 就是参考框的四个角（画面像素坐标）', () => {
+        const g = guideBox(FW, FH);
+        const q = expectedQuad(FW, FH);
+        expect(q).toHaveLength(4);
+        expect(q[0].x).toBeCloseTo(g.x0 * FW, 6); // 左上
+        expect(q[0].y).toBeCloseTo(g.y0 * FH, 6);
+        expect(q[2].x).toBeCloseTo(g.x1 * FW, 6); // 右下
+        expect(q[2].y).toBeCloseTo(g.y1 * FH, 6);
+    });
+
+    it('四个角正好落在参考框上 → 满分 1', () => {
+        expect(frameAffinity(expectedQuad(FW, FH), FW, FH)).toBeCloseTo(1, 6);
+    });
+
+    it('顺序被打乱也算 1（不该因为点序不同判错）', () => {
+        const q = expectedQuad(FW, FH);
+        expect(frameAffinity([q[2], q[0], q[3], q[1]], FW, FH)).toBeCloseTo(1, 6);
+    });
+
+    it('整体偏出画面短边的 25% ⇒ 0 分（"完全不像"的尺度）', () => {
+        const q = expectedQuad(FW, FH);
+        const far = q.map((p) => ({ x: p.x + 25, y: p.y + 200 })); // 短边 800 的 25% = 200
+        expect(frameAffinity(far, FW, FH)).toBe(0);
+    });
+
+    it('偏一半的距离 ⇒ 大约一半分（线性）', () => {
+        const q = expectedQuad(FW, FH);
+        const half = q.map((p) => ({ x: p.x + 100, y: p.y })); // 100 / 200 = 一半
+        expect(frameAffinity(half, FW, FH)).toBeCloseTo(0.5, 6);
+    });
+
+    it('**只跑偏一个角**也按最差的那个算（一个角不对就说明不像纸）', () => {
+        const q = expectedQuad(FW, FH);
+        const one = q.map((p, i) => (i === 2 ? { x: p.x + 200, y: p.y } : p));
+        expect(frameAffinity(one, FW, FH)).toBe(0);
+    });
+
+    it('纸缩在画面中间（没充满）→ 0 分：先验帮不上忙，但也**不添乱**', () => {
+        const small = makeCorners(FW / 2, FH / 2, FW * 0.25, FH * 0.25);
+        expect(frameAffinity(
+            [small.topLeftCorner, small.topRightCorner, small.bottomRightCorner, small.bottomLeftCorner],
+            FW,
+            FH,
+        )).toBe(0);
+    });
+
+    it('角点不够 4 个 / 尺寸非法 → 0（不炸）', () => {
+        expect(frameAffinity([], FW, FH)).toBe(0);
+        expect(frameAffinity(expectedQuad(FW, FH).slice(0, 3), FW, FH)).toBe(0);
+        expect(frameAffinity(expectedQuad(FW, FH), 0, 0)).toBe(0);
     });
 });

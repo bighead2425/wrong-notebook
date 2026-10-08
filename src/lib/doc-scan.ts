@@ -21,6 +21,10 @@
 // 3. 拖动时每帧都全量重算 → 由调用方 doc-scanner.tsx 改为「拖动只画把手、松手才重算」
 // 注意：以上三条都只改「算得多快」，不改「算得对不对」——参数一格没动，画质应与 v18 一致。
 
+// ⚠️ 只从 doc-live-corners 取"纸大概该在框里"的打分函数（他 2026-10-08 第 2 条）。
+//    对方只**类型**引用本文件，所以运行时没有循环依赖。
+import { frameAffinity } from "./doc-live-corners";
+
 export type Corner = { x: number; y: number };
 export type Corners = {
   topLeftCorner: Corner;
@@ -647,10 +651,23 @@ export function findPaperCorners(cv: any, srcMat: any): DetectResult {
     };
 
     /** 取候选：先过合理性校验，再按 rank 优先、同 rank 面积最大 */
-    const pick = (maxRank = Infinity): Candidate | null => {
-      const ok = cands
-        .filter((x) => x.rank <= maxRank && quadSanity(x.pts, imgW, imgH))
-        .sort((a, b) => (a.rank !== b.rank ? a.rank - b.rank : b.area - a.area));
+    /**
+     * 从候选里挑一个：先比 rank（越小越优先），同 rank 再比大小。
+     *
+     * 【2026-10-08 他第 2 条】`useFramePrior = true` 时，同 rank 之间不再只比面积，
+     * 而是比 `面积 × (0.5 + 0.5 × "像不像纸就在框里")` —— 把"最大的那个"换成
+     * "**又大、位置又像纸**的那个"。他的观察：纸基本是 A4/B5/A3，拍的时候都会尽量
+     * 让纸充满取景框 ⇒ 四个角离参考框的四个角应该不远（打分见 frameAffinity）。
+     *
+     * ⚠️ 只在**兜底路径**用它（严格档那条路一字未动）⇒ 本来就能认出来的图行为完全不变。
+     *    这是"不拿既有能力冒险"的取舍：先只改进"原来认不出来"的那一档。
+     */
+    const pick = (maxRank = Infinity, useFramePrior = false): Candidate | null => {
+      const ok = cands.filter((x) => x.rank <= maxRank && quadSanity(x.pts, imgW, imgH));
+      const score = (c: Candidate) => c.area * (0.5 + 0.5 * frameAffinity(c.pts, imgW, imgH));
+      ok.sort((a, b) =>
+        a.rank !== b.rank ? a.rank - b.rank : useFramePrior ? score(b) - score(a) : b.area - a.area
+      );
       return ok.length ? ok[0] : null;
     };
 
@@ -698,7 +715,8 @@ export function findPaperCorners(cv: any, srcMat: any): DetectResult {
           console.warn("[doc-scan] minAreaRect 兜底不可用:", e);
         }
       }
-      best = pick();
+      // 兜底路径：带上"纸大概在框里"的先验（他 2026-10-08 第 2 条，见 pick 的说明）
+      best = pick(Infinity, true);
     }
 
     if (best) {

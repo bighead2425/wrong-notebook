@@ -157,6 +157,50 @@ export function guideBox(
 }
 
 /**
+ * 参考框的四个角（画面像素坐标），顺序 左上/右上/右下/左下。
+ * 这是"纸应该在哪"的先验，用于下面的 frameAffinity（他 2026-10-08 第 2 条）。
+ */
+export function expectedQuad(frameW: number, frameH: number): Corner[] {
+    const b = guideBox(frameW, frameH);
+    return [
+        { x: b.x0 * frameW, y: b.y0 * frameH },
+        { x: b.x1 * frameW, y: b.y0 * frameH },
+        { x: b.x1 * frameW, y: b.y1 * frameH },
+        { x: b.x0 * frameW, y: b.y1 * frameH },
+    ];
+}
+
+/**
+ * 【2026-10-08 他第 2 条】"纸基本是 A4/B5/A3，拍的时候人都会尽量让纸充满取景框，
+ * 所以纸的四个角应该离**参考框的四个角**不远 —— 找角应该优先在框的四周（尤其框内附近）找。"
+ *
+ * 这个观察是对的，但**不能做成硬性"只在框附近找"**，原因是结构性的：
+ * 轮廓法要的是"纸的四条边连成**一条闭合轮廓**"——把搜索限制在框四周的窄带里，
+ * 这条轮廓在带内根本闭不上，反而整条候选都没了（这就是为什么不做 ROI 裁剪）。
+ * 所以这里只把它做成一个 **0..1 的"像不像纸就在框里"的打分**，
+ * 由调用方**在同档次候选之间**用它排序（见 doc-scan.ts 里 pick 的 useFramePrior）。
+ *
+ * 实现要点：
+ *   · 每个角取"**离它最近的那个参考角**"的距离 —— 不要求点序一致（候选点序不同不该判错）；
+ *   · 取四个角里最差的那个（一个角跑偏就说明不像），以画面短边的 25% 作为"完全不像"的尺度。
+ */
+export function frameAffinity(pts: Corner[], frameW: number, frameH: number): number {
+    if (pts.length < 4 || !(frameW > 0) || !(frameH > 0)) return 0;
+    const exp = expectedQuad(frameW, frameH);
+    const scale = Math.max(1, 0.25 * Math.min(frameW, frameH));
+    let worst = 0;
+    for (const p of pts) {
+        let nearest = Infinity;
+        for (const e of exp) {
+            const d = Math.hypot(p.x - e.x, p.y - e.y);
+            if (d < nearest) nearest = d;
+        }
+        if (nearest > worst) worst = nearest;
+    }
+    return clamp01(1 - worst / scale);
+}
+
+/**
  * 【2026-10-08 他提的第 1 条】"预览里四个角已经准了（青色），一拍完却又重新找一遍、反而找歪了。"
  *
  * 解法：拍下来的这张**如果与预览是同一画幅**，就直接沿用预览定的四个角，**不再重找**。

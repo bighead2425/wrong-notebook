@@ -139,6 +139,31 @@ const HANDLE_COLOR_LOW = "#F59E0B";
 const LOW_CONFIDENCE_DASH = [10, 6];
 
 /**
+ * 【2026-10-08 他第 1 条】拖动把手时的"放大镜"。
+ *
+ * 他的原话：拖把手时"只能凭感觉挪位置，我需要一点精确的指示"，
+ * 并且自己给出了**正确的位置**——放大镜要显示在**对面那个角**
+ * （因为手指正好挡住被拖的那个角，看得见才怪）。
+ *
+ * 下面两张表就是这件事的"数据"部分：角的中文名、以及谁跟谁是对角。
+ */
+const CORNER_LABEL: Record<keyof Corners, string> = {
+  topLeftCorner: "左上角",
+  topRightCorner: "右上角",
+  bottomRightCorner: "右下角",
+  bottomLeftCorner: "左下角",
+};
+const OPPOSITE_CORNER: Record<keyof Corners, keyof Corners> = {
+  topLeftCorner: "bottomRightCorner",
+  topRightCorner: "bottomLeftCorner",
+  bottomRightCorner: "topLeftCorner",
+  bottomLeftCorner: "topRightCorner",
+};
+/** 放大镜的放大倍数与边长占比（相对叠加层短边） */
+const LOUPE_ZOOM = 2.6;
+const LOUPE_RATIO = 0.32;
+
+/**
  * 【2026-10-08】取景页"预览实时提示四角"的三个参数。为什么要一个个定：
  *
  * · `LIVE_DETECT_WIDTH = 800` —— **与找角算法内部的 `DETECT_WIDTH` 对齐**。
@@ -949,7 +974,105 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
         ctx.lineWidth = 1;
         ctx.stroke();
       });
-    }, [corners, display, cornerConfidence]);
+
+      /* ===== 【2026-10-08 他第 1 条】拖动时的放大镜 =====
+         他的需求：拖把手时"只能凭感觉挪位置，我需要一点精确的指示"，
+         并自己指定了位置 —— 显示在**对面那个角**（手指挡住的地方看不见，
+         对面正好空着）。这是成熟做法（iOS 选字、Excalidraw 等都用），照做。
+         我额外加了一行百分比：判断"左右两个角是否对称"时比肉眼靠谱。
+         ⚠️ 只在拖动中画，松手立刻消失 —— 不挡他看整张纸。 */
+      const dk = dragRef.current;
+      if (dk) {
+        const hx = corners[dk].x * s;
+        const hy = corners[dk].y * s;
+        const lw = Math.round(Math.min(ov.width, ov.height) * LOUPE_RATIO);
+        const M = 12;
+        const rr = 10;
+        const opp = OPPOSITE_CORNER[dk];
+        // 放在**对角**那一边（手指够不着的地方）
+        const lx = opp === "topRightCorner" || opp === "bottomRightCorner" ? ov.width - M - lw : M;
+        const ly = opp === "bottomLeftCorner" || opp === "bottomRightCorner" ? ov.height - M - lw : M;
+        const roundRect = () => {
+          ctx.beginPath();
+          ctx.moveTo(lx + rr, ly);
+          ctx.arcTo(lx + lw, ly, lx + lw, ly + lw, rr);
+          ctx.arcTo(lx + lw, ly + lw, lx, ly + lw, rr);
+          ctx.arcTo(lx, ly + lw, lx, ly, rr);
+          ctx.arcTo(lx, ly, lx + lw, ly, rr);
+          ctx.closePath();
+        };
+
+        ctx.save();
+        // ① 放大镜内容：圆角矩形裁剪 → 把坐标系挪成"以被拖的点为中心、放大 LOUPE_ZOOM 倍"
+        roundRect();
+        ctx.clip();
+        ctx.fillStyle = "#0b1220";
+        ctx.fillRect(lx, ly, lw, lw);
+        ctx.translate(lx + lw / 2, ly + lw / 2);
+        ctx.scale(LOUPE_ZOOM, LOUPE_ZOOM);
+        ctx.translate(-hx, -hy);
+        // 画面本身（与叠加层同一套显示坐标，所以下面画的纸边天然对得上）
+        ctx.drawImage(img, 0, 0, display.w, display.h);
+        // 纸的四条边（线宽除以倍数 ⇒ 屏幕上看起来仍是原来的粗细）
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2 / LOUPE_ZOOM;
+        ctx.setLineDash(low ? LOW_CONFIDENCE_DASH.map((v) => v / LOUPE_ZOOM) : []);
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < 4; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(hx, hy, HANDLE_R / LOUPE_ZOOM, 0, Math.PI * 2);
+        ctx.lineWidth = 1.5 / LOUPE_ZOOM;
+        ctx.stroke();
+        ctx.restore();
+
+        // ② 镜框
+        roundRect();
+        ctx.strokeStyle = "rgba(255,255,255,0.85)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // ③ 十字准心（正中留缺口 —— 那一点就是"圆心"，别被线盖住）+ 圆心小点
+        const cxp = lx + lw / 2;
+        const cyp = ly + lw / 2;
+        const gap = 7;
+        const arm = 14;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(cxp - gap - arm, cyp);
+        ctx.lineTo(cxp - gap, cyp);
+        ctx.moveTo(cxp + gap, cyp);
+        ctx.lineTo(cxp + gap + arm, cyp);
+        ctx.moveTo(cxp, cyp - gap - arm);
+        ctx.lineTo(cxp, cyp - gap);
+        ctx.moveTo(cxp, cyp + gap);
+        ctx.lineTo(cxp, cyp + gap + arm);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cxp, cyp, 2, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+
+        // ④ 角标 + 数字（"距左 12.0% · 距下 8.0%"这种，用来判断对称）
+        const pctX = (corners[dk].x / img.width) * 100;
+        const pctY = (corners[dk].y / img.height) * 100;
+        const info = `${CORNER_LABEL[dk]}　x ${pctX.toFixed(1)}% · y ${pctY.toFixed(1)}%`;
+        ctx.font = "12px ui-sans-serif, system-ui, sans-serif";
+        ctx.textBaseline = "middle";
+        const tw = ctx.measureText(info).width;
+        const bx = Math.max(M, Math.min(ov.width - M - tw - 12, lx));
+        // 放大镜在下半屏 → 文字放它上面；在上半屏 → 放下面（永远不越出画布）
+        const by = ly > ov.height / 2 ? ly - 26 : Math.min(ly + lw + 8, ov.height - 22);
+        ctx.fillStyle = "rgba(15,23,42,0.85)";
+        ctx.fillRect(bx, by, tw + 12, 20);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(info, bx + 6, by + 10);
+      }
+    }, [corners, display, cornerConfidence, dragging]);
 
     // —— 四角拖拽微调 ——
     const onPointerDown = (e: React.PointerEvent) => {
