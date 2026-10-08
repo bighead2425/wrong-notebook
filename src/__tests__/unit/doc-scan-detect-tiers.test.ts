@@ -195,13 +195,22 @@ describe('findPaperCorners 置信分档（真实 OpenCV）', () => {
         expect(r.corners).not.toBeNull();
     });
 
-    it('灰阶差低到 30 时连宽松档都认不出 → 必须老实报 none，不许硬凑', async () => {
+    /**
+     * 【2026-10-08 断言更新】原来这条期望 `none`（"连宽松档都认不出"）。
+     * 现在改期望 low + stage `otsu:*`，原因不是放宽要求，而是**能力确实长了**：
+     * 他给的真照片（白纸放浅色木桌上）暴露出"灰度差小 ⇒ Canny 梯度低于阈值 ⇒ 纸的外轮廓不闭合"
+     * 这一类，于是补了一条**按亮度分割（Otsu）**的路（详见 lib/doc-scan.ts 的 quadFromOtsu）。
+     * 这张合成图是"纯灰底 + 浅色多边形纸"，亮度上一分为二非常干净 ⇒ 新路能接住。
+     * ⚠️ 真正要守的那条（**没有纸时不许硬凑**）在下面那条噪声测试里，它仍然是 `none`。
+     */
+    it('灰阶差低到 30（Canny 两档都认不出）→ 由亮度分割接住', async () => {
         const cv = await loadCvForTest();
         const mat = matOf(cv, pageQuad, 90, 60);
         const r = findPaperCorners(cv, mat);
         mat.delete();
-        expect(r.confidence).toBe('none');
-        expect(r.corners).toBeNull();
+        expect(r.confidence).toBe('low');
+        expect(r.stage.startsWith('otsu')).toBe(true);
+        expect(r.corners).not.toBeNull();
     });
 
     it('缺一个角的五边形 → 低置信，走点数补救', async () => {

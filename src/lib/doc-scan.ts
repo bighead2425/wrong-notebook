@@ -520,12 +520,150 @@ function quadFromHoughLines(cv: CvModule, edges: CvMat, imgW: number, imgH: numb
     if (!quad) return null;
     const fixed = repairToQuad(quad);
     if (!fixed || !quadSanity(fixed, imgW, imgH)) return null;
+
+    /**
+     * ⚠️【2026-10-08 真图诊断发现的坑，必须挡住】Hough 很容易把**画面边框本身**
+     * 当成"纸的一条边" —— 实测他给的那张照片（白纸放浅色木桌上）给出
+     * `(0,-6) (1421,93) (1447,1907) (0,1930)`，整条左边贴在 x=0 上，
+     * 结果比"认不出来"更糟：低置信档**默认参与拉正**，于是裁出一张莫名其妙的图。
+     * 两条闸门：① 有两角贴在画面边缘 1% 以内；② 占掉画面 90% 以上。命中任一条就不要。
+     */
+    let onBorder = 0;
+    for (const p of fixed) {
+      if (
+        p.x <= imgW * 0.01 ||
+        p.x >= imgW * 0.99 ||
+        p.y <= imgH * 0.01 ||
+        p.y >= imgH * 0.99
+      ) {
+        onBorder++;
+      }
+    }
+    if (onBorder >= 2) return null;
+    if (polyArea(fixed) / (imgW * imgH) > 0.9) return null;
+
     return fixed;
   } catch {
     return null;
   } finally {
     lines.delete();
   }
+}
+
+/**
+ * 【rank 4 · 2026-10-08 用他的真照片诊断出来的新路】按**亮度**分割找纸。
+ *
+ * ── 为什么必须加 ──────────────────────────────────────────────
+ * 他给的那张照片：白纸放在浅色木桌上、光线很软。实测数据：
+ *   · 纸面灰度 ~155~190，桌面 ~85~135 ⇒ 边界处的**灰度差只有 40~60**；
+ *   · Canny 卡的是**梯度**阈值（严格 50/150、宽松 30/100），边缘被抹平后掉到阈值以下
+ *     ⇒ 纸的外轮廓**根本没闭合**（实测最大轮廓是桌面木纹，不是纸；minAreaRect 直接退化成整张图）；
+ *   · 但**亮度**分得开：Otsu 阈值 129，最亮那块占 63%，四个角一拟合就过校验。
+ * ⇒ 补一条"按亮度分割"的路，专门对付「纸比背景亮/暗、但边缘很软」这类照片。
+ *
+ * ── 三个刻意的把关 ────────────────────────────────────────────
+ * ① **两个极性都试**（亮区 / 暗区）：纸比桌面暗的场面（白桌面上放深色书本）同样存在；
+ * ② **拟合出的四边形必须真的贴合那块区域**（面积比 ≥ 0.8）——
+ *    这条是防"硬凑"的关键：没有纸的图（平滑噪声）里，Otsu 也会切出一大块，
+ *    但那种歪歪扭扭的区域用四边形去套，面积比会明显偏低 ⇒ 被挡掉；
+ * ③ 仍然要过 `quadSanity`（面积占比、角度、边长那几关）。
+ *
+ * ⚠️ 只在兜底路径调用（严格档/宽松档都没给出干净四边形之后）⇒ 正常照片耗时与旧版一致。
+ * @returns 检测缩略图坐标系的四角 + stage（`otsu:bright` / `otsu:dark`）
+ */
+function quadFromOtsu(
+  cv: CvModule,
+  gray: CvMat,
+  imgW: number,
+  imgH: number
+): { pts: Corner[]; stage: string } | null {
+  const imgArea = imgW * imgH;
+  const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
+  const bin = new cv.Mat();
+  const opened = new cv.Mat();
+  try {
+    const polarities: [string, number][] = [
+      ["bright", cv.THRESH_BINARY],
+      ["dark", cv.THRESH_BINARY_INV],
+    ];
+    for (const [tag, type] of polarities) {
+      cv.threshold(gray, bin, 0, 255, type + cv.THRESH_OTSU);
+      // 开运算：去掉细碎噪点，只留成片的区域（纸就是一大片）
+      cv.morphologyEx(bin, opened, cv.MORPH_OPEN, kernel);
+
+      const contours = new cv.MatVector();
+      const hierarchy = new cv.Mat();
+      const regions: { c: CvMat; area: number }[] = [];
+      try {
+        cv.findContours(opened, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+        for (let i = 0; i < contours.size(); i++) {
+          const c = contours.get(i);
+          const area = cv.contourArea(c);
+          // 太小的当噪点；克隆保存（contours.get 拿到的 Mat 用完要还）
+          if (area >= imgArea * MIN_CONTOUR_AREA_RATIO) {
+            regions.push({ c: c.clone(), area });
+          }
+          c.delete();
+        }
+        regions.sort((a, b) => b.area - a.area);
+
+        for (const region of regions.slice(0, 5)) {
+          const peri = cv.arcLength(region.c, true);
+          for (const eps of APPROX_EPS_SEQ) {
+            const approx = new cv.Mat();
+            cv.approxPolyDP(region.c, approx, eps * peri, true);
+            if (approx.rows >= 3 && approx.rows <= 8) {
+              const d = approx.data32S;
+              const list: Corner[] = [];
+              for (let j = 0; j + 1 < d.length; j += 2) {
+                list.push({ x: d[j], y: d[j + 1] });
+              }
+              const fixed = repairToQuad(list);
+              /**
+               * ④【必须成对，否则"没有纸"的图会硬凑出一个四边形 —— 实测踩到了】
+               *
+               * 判据是**四边形与这块区域的面积比**（都要），不是周长比 —— 实测数据（2026-10-08）：
+               *   · 他的真照片（白纸放浅色木桌）：面积比 **0.937** ✓（贴合）
+               *   · 平滑噪声（画面里没有纸）：面积比 **1.823** ✗
+               *     —— 噪声区域的边界是锯齿状的**凹**形，`repairToQuad` 走凸包会套出一个
+               *        **比区域本身还大 82%** 的四边形，正是"错得像对的"那种；
+               *   · 为什么不看周长比：二值掩膜的边界天生是像素锯齿，真纸的周长比只有 0.553，
+               *     要留住纸就得把阈值放到 0.5，那噪声（0.355）也快跟上来了 —— 分不开。
+               *
+               * ⇒ 下界 0.8（四边形要盖住区域）、上界 1.05（不许盖过头）。
+               *    配套单测：平滑噪声必须仍然返回 none。
+               */
+              const quadArea = fixed ? polyArea(fixed) : 0;
+              const fitRatio = quadArea / region.area;
+              if (
+                fixed &&
+                quadSanity(fixed, imgW, imgH) &&
+                fitRatio >= 0.8 &&
+                fitRatio <= 1.05
+              ) {
+                // ⚠️ 这里**不要**自己 delete regions —— 下面 finally 会统一还，
+                //    重复 delete 同一块 Mat 会报错（这个项目为 Mat 生命周期吃过亏）。
+                approx.delete();
+                return { pts: fixed, stage: `otsu:${tag}` };
+              }
+            }
+            approx.delete();
+          }
+        }
+      } finally {
+        regions.forEach((r) => r.c.delete());
+        contours.delete();
+        hierarchy.delete();
+      }
+    }
+  } catch {
+    return null;
+  } finally {
+    bin.delete();
+    opened.delete();
+    kernel.delete();
+  }
+  return null;
 }
 
 /** 降级链里的一个候选（rank 越小越优先，同 rank 取面积最大） */
@@ -676,6 +814,22 @@ export function findPaperCorners(cv: any, srcMat: any): DetectResult {
     if (!best) {
       // 严格档没能给出"干净四边形"才跑宽松档 —— 本来就能认出来的图，耗时与旧版一致
       runPass(false);
+
+      /**
+       * 【rank 4 · 2026-10-08 真图诊断新增】按**亮度**分割找纸。
+       * 他给的那张"白纸放浅色木桌上"的照片：Canny 两档都认不出（梯度太低、轮廓不闭合），
+       * 但 Otsu 一亮度分割立刻给出过校验的四边形 ⇒ 补这条路（详见 quadFromOtsu 的说明）。
+       */
+      const otsu = quadFromOtsu(cv, gray, imgW, imgH);
+      if (otsu) {
+        cands.push({
+          pts: otsu.pts,
+          confidence: "low",
+          stage: otsu.stage,
+          area: polyArea(otsu.pts),
+          rank: 4,
+        });
+      }
 
       /**
        * 【rank 5 · 2026-10-08 他的建议】四边直线拟合 + 交点兜底。
