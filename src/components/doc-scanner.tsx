@@ -21,7 +21,7 @@ import {
   type EnhanceMode,
 } from "@/lib/doc-scan";
 import { Button } from "@/components/ui/button";
-import { CORNER_KEYS, guideBox, settleCorners, toNormCorners } from "@/lib/doc-live-corners";
+import { CORNER_KEYS, guideBox, presetFromLive, settleCorners, toNormCorners } from "@/lib/doc-live-corners";
 import { Camera, Image as ImageIcon, RotateCcw, Check, Loader2 } from "lucide-react";
 
 export interface DocScannerHandle {
@@ -342,14 +342,15 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
     const [liveFrameSize, setLiveFrameSize] = useState<{ w: number; h: number } | null>(null);
     /**
      * 开关本身。惰性初值：读 localStorage（他只在本机浏览器上用，不涉隐私）。
-     * 读不到就是 false —— 默认关。
+     * 【2026-10-08 他第 2 条】**缺省改成选中** —— 他试过之后觉得好用，
+     * 所以只有**明确关过**（存了 "0"）才不勾；没存过就默认开。
      */
     const [liveOn, setLiveOn] = useState<boolean>(() => {
-      if (typeof window === "undefined") return false;
+      if (typeof window === "undefined") return true;
       try {
-        return window.localStorage.getItem(LIVE_CORNERS_KEY) === "1";
+        return window.localStorage.getItem(LIVE_CORNERS_KEY) !== "0";
       } catch {
-        return false;
+        return true;
       }
     });
 
@@ -591,7 +592,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
 
     /** 把图片载入审核态，并自动找纸张四角 */
     const loadImgAndReview = useCallback(
-      async (dataUrl: string, sizeNote?: string) => {
+      async (dataUrl: string, sizeNote?: string, preset?: Corners | null) => {
         const token = ++tokenRef.current;
         setBusy(true);
         setCornerConfidence("none");
@@ -637,7 +638,14 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
             // high → 严格档认出来的，直接拉正（同旧版成功路径）；
             // low  → 降级链兜住的，过合理性校验即默认拉正，把手画成琥珀虚线提示"这是估算"；
             // none → 旧版失败路径：给默认内缩框当把手，不动就保持整张原图。
-            const found = findPaperCorners(cv, full);
+            //
+            // 【2026-10-08 他第 1 条】有 `preset` 就**直接用、不再重找**：
+            // 那是他按快门时预览里已经认准的四个角（他自己的话说："本来框准了拍摄的，
+            // 结果拍出来又重找一遍，反而找不对了"）。只在"照片与预览同一画幅"时才会传进来
+            //（判据在 presetFromLive 里，画幅一变就不敢照搬）。
+            const found = preset
+              ? { corners: preset, confidence: "high" as CornerConfidence, stage: "live-preset" }
+              : findPaperCorners(cv, full);
             if (found.corners) {
               setCorners(found.corners);
               setCornerConfidence(found.confidence);
@@ -770,10 +778,25 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
         h = v.videoHeight;
       }
 
+      /**
+       * 【2026-10-08 他第 1 条】把"按快门时预览里已经认准的四个角"一并带进审核态。
+       *
+       * 只在**照片与预览同一画幅**时才会真的带上（判据在 presetFromLive 里）——
+       * 因为 `takePhoto()` 可能换成 4:3 之类的另一种传感器模式，画幅一变，
+       * 纸在照片里的位置整体都不同，照搬预览的角会错得更离谱。
+       */
+      const preset = presetFromLive({
+        live: liveOn ? liveCorners : null,
+        stillW: w,
+        stillH: h,
+        frameW: liveFrameSize?.w ?? v.videoWidth,
+        frameH: liveFrameSize?.h ?? v.videoHeight,
+      });
+
       stopCamera();
       setShotSize(`实拍 ${w}×${h}（${((w * h) / 1e6).toFixed(1)}MP）`);
-      loadImgAndReview(dataUrl);
-    }, [loadImgAndReview, stopCamera, videoReady]);
+      loadImgAndReview(dataUrl, undefined, preset);
+    }, [loadImgAndReview, stopCamera, videoReady, liveOn, liveCorners, liveFrameSize]);
 
     /** 渲染增强预览。用**预览尺寸**的 Mat，比全尺寸快 4 倍以上。 */
     const renderPreview = useCallback(
@@ -885,6 +908,27 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
       // 【custom-v21】低置信档用琥珀虚线：颜色本身就是"这是系统估算、可能不准"的信号
       const low = cornerConfidence === "low";
       const color = low ? HANDLE_COLOR_LOW : HANDLE_COLOR_HIGH;
+
+      /**
+       * 【2026-10-08 他第 3 条】把手改成三处画法，目的只有一个：
+       * 让他一眼看清"**圆心到底压在纸角上没有**"。
+       *   ① 圆**不再实心** —— 只留一圈细边 + 很淡的填充，底下的纸角能透出来；
+       *   ② 四边形折线**画在圆的上面**，于是四条边一直连到圆心（就是他要的"边与圆心的连线"）；
+       *   ③ 圆心补一个实心小点（外描一圈白边，深色纸上也看得见）—— 判"准不准"最终看这个点。
+       */
+      const HANDLE_R = 12;
+      pts.forEach((p) => {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, HANDLE_R, 0, Math.PI * 2);
+        ctx.fillStyle = low ? "rgba(245,158,11,0.14)" : "rgba(0,212,255,0.14)";
+        ctx.fill();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([]);
+        ctx.stroke();
+      });
+
+      // 折线压在圆上面：四条边一直画到圆心
       ctx.strokeStyle = color;
       ctx.lineWidth = 2;
       ctx.setLineDash(low ? LOW_CONFIDENCE_DASH : []);
@@ -894,11 +938,16 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
       ctx.closePath();
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = color;
+
+      // 圆心：实心小点（最后画，永远在最上层）
       pts.forEach((p) => {
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 12, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+        ctx.fillStyle = color;
         ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,0.9)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
       });
     }, [corners, display, cornerConfidence]);
 

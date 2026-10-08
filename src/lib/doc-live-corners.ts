@@ -155,3 +155,42 @@ export function guideBox(
     const y0 = (1 - nh) / 2;
     return { x0, y0, x1: x0 + nw, y1: y0 + nh };
 }
+
+/**
+ * 【2026-10-08 他提的第 1 条】"预览里四个角已经准了（青色），一拍完却又重新找一遍、反而找歪了。"
+ *
+ * 解法：拍下来的这张**如果与预览是同一画幅**，就直接沿用预览定的四个角，**不再重找**。
+ *
+ * ⚠️ 为什么不能无条件沿用：`ImageCapture.takePhoto()` 拿到的静帧可能来自**另一个传感器模式**
+ * （常见是 4:3，而预览流是 16:9）—— 画幅一变，纸在照片里的位置整体都不同，
+ * 照搬预览的角会**错得更离谱**。所以拿"宽高比是否一致"当判据：
+ *   · 比例一致（相对差 ≤ `aspectTol`）⇒ 同一视野、只是分辨率不同 ⇒ 缩放到照片像素后直接用；
+ *   · 比例不同 ⇒ 老老实实重找（这时"重找"才是对的）。
+ *
+ * ⚠️ 入参 `live` 必须是**归一化**角点（0..1，相对预览画面）；
+ *    返回值是**照片像素**坐标（与审核页 corners 的坐标基准一致）。
+ */
+export function presetFromLive(opts: {
+    live: Corners | null;
+    stillW: number;
+    stillH: number;
+    frameW: number;
+    frameH: number;
+    aspectTol?: number;
+}): Corners | null {
+    const { live, stillW, stillH, frameW, frameH, aspectTol = 0.02 } = opts;
+    if (!live) return null;
+    if (!(stillW > 0) || !(stillH > 0) || !(frameW > 0) || !(frameH > 0)) return null;
+
+    const rel = Math.abs(stillW / stillH - frameW / frameH) / (frameW / frameH);
+    if (!Number.isFinite(rel) || rel > aspectTol) return null;
+
+    const out = {} as Corners;
+    for (const k of CORNER_KEYS) {
+        out[k] = {
+            x: clamp01(live[k].x) * stillW,
+            y: clamp01(live[k].y) * stillH,
+        };
+    }
+    return out;
+}

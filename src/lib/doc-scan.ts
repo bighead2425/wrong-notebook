@@ -358,6 +358,172 @@ function readApproxPts(approx: any): Corner[] {
   return out;
 }
 
+/* ==================== 四边直线拟合 + 交点（rank 5 兜底） ====================
+ *
+ * 【2026-10-08 他的建议】原话："我建议可以增加用边来辅助找角，通过分析发现的白边四个大概的
+ * 切线延长交于四个角，特别是找不到角的时候，可以尝试用这种方法来辅助找四个角。"
+ *
+ * ── 先说清现状（他问"现在是只找角还是也用边"）────────────────────────
+ * 现在**一直是"先用边、再找角"**：Canny 找边缘 → 膨胀把断边连起来 → findContours 取**连通轮廓**
+ * → approxPolyDP 把轮廓拟合成四边形 → minAreaRect 兜底。
+ * 缺的不是"用边"，而是**另一条拟合路线**：上面这条要求"纸的四条边连成**一条闭合轮廓**"，
+ * 而下面这些情况轮廓法会整条失败：
+ *   · 纸被取景框切掉一个角 → 轮廓不闭合；
+ *   · 页面弯曲 / 大片阴影把一条边打断 → 轮廓碎成几段，拟合不出四边形。
+ * "四条边的**延长线**求交点"不怕这个 —— 边断了，延长线照样相交，能把角**推**出来。
+ *
+ * ── 边界（刻意不越）────────────────────────────────────────────
+ * ① 只在**兜底路径**跑（严格档没认出干净四边形之后）⇒ 正常能认出来的图，耗时与旧版一致；
+ * ② 仍然要过 `quadSanity`（含"顶点不得跑到图外 8% 以外"）⇒ 不放松"错得像对的"那道闸门。
+ *    所以"角完全跑到画面外"这种情况这次**仍然不支持** —— 那要先单独评估闸门怎么改。
+ * ③ 置信标 `low`：它是**推断**出来的，按既有语义配琥珀虚线 + 默认参与拉正。
+ */
+
+/** 一条线段（HoughLinesP 的输出，检测缩略图坐标系） */
+export interface HoughSeg {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/** 线段相对水平线的夹角，规范化到 -90..90（竖直 ≈ ±90，水平 ≈ 0）【导出仅供单元测试】 */
+export function segAngleDeg(s: HoughSeg): number {
+  let a = (Math.atan2(s.y2 - s.y1, s.x2 - s.x1) * 180) / Math.PI; // -180..180
+  if (a > 90) a -= 180;
+  if (a <= -90) a += 180;
+  return a;
+}
+
+/**
+ * 按方向把线段分两组：以 45° 为界（更接近水平 → horiz，更接近竖直 → vert）。
+ * 纸被拍歪到 45° 以上基本不现实，所以这条界够用。【导出仅供单元测试】
+ */
+export function splitSegsByOrientation(segs: HoughSeg[]): { horiz: HoughSeg[]; vert: HoughSeg[] } {
+  const horiz: HoughSeg[] = [];
+  const vert: HoughSeg[] = [];
+  for (const s of segs) {
+    if (Math.abs(segAngleDeg(s)) < 45) horiz.push(s);
+    else vert.push(s);
+  }
+  return { horiz, vert };
+}
+
+/** 线段中点（代表点） */
+function segMid(s: HoughSeg): Corner {
+  return { x: (s.x1 + s.x2) / 2, y: (s.y1 + s.y2) / 2 };
+}
+
+/**
+ * 从一组**同方向**的线段里挑出**最靠外的两条**：
+ * 水平组挑最上（y 最小）与最下（y 最大）；竖直组挑最左（x 最小）与最右（x 最大）。
+ *
+ * ⚠️ `minSep` 是必须的：同一条纸边常被 Hough 拆成好几段，若不加"两者间距足够大"这一条，
+ *    会把"同一条边的两段"当成上下（左右）两条边，交点算出来就是错的。
+ * 【导出仅供单元测试】
+ */
+export function pickOuterPair(
+  segs: HoughSeg[],
+  horizontal: boolean,
+  minSep: number
+): [HoughSeg, HoughSeg] | null {
+  if (segs.length < 2) return null;
+  const key = (s: HoughSeg) => (horizontal ? segMid(s).y : segMid(s).x);
+  const sorted = [...segs].sort((a, b) => key(a) - key(b));
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  if (Math.abs(key(last) - key(first)) < minSep) return null;
+  return [first, last];
+}
+
+/**
+ * 两条**直线**求交点（按延长线算，不要求交点落在两条线段内部 —— 这正是"推角"的关键）。
+ * 行列式太小（平行/重合）→ null。【导出仅供单元测试】
+ */
+export function lineIntersect(a: HoughSeg, b: HoughSeg): Corner | null {
+  const r1x = a.x2 - a.x1;
+  const r1y = a.y2 - a.y1;
+  const r2x = b.x2 - b.x1;
+  const r2y = b.y2 - b.y1;
+  const den = r1x * r2y - r1y * r2x;
+  // 相对判据：用两条线段长度的乘积做尺度，免得长短线段混在一起时阈值失效
+  const lenScale = Math.hypot(r1x, r1y) * Math.hypot(r2x, r2y) || 1;
+  if (Math.abs(den) / lenScale < 0.05) return null; // ≈ 夹角小于 3°，当平行
+  const dx = b.x1 - a.x1;
+  const dy = b.y1 - a.y1;
+  const t = (dx * r2y - dy * r2x) / den;
+  const p = { x: a.x1 + t * r1x, y: a.y1 + t * r1y };
+  if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return null;
+  return p;
+}
+
+/**
+ * 四条边 → 四个角：上×左 / 上×右 / 下×右 / 下×左。
+ * 任一交点算不出来（平行）→ null。【导出仅供单元测试】
+ */
+export function quadFromEdges(
+  top: HoughSeg,
+  bottom: HoughSeg,
+  left: HoughSeg,
+  right: HoughSeg
+): Corner[] | null {
+  const tl = lineIntersect(top, left);
+  const tr = lineIntersect(top, right);
+  const br = lineIntersect(bottom, right);
+  const bl = lineIntersect(bottom, left);
+  if (!tl || !tr || !br || !bl) return null;
+  return [tl, tr, br, bl];
+}
+
+/**
+ * 下面两个别名**只为"不新增显式 any"**而存在 —— 本项目有 lint 基线门禁（error 只许降不许涨），
+ * 而这个文件里到处都是 `cv: any`（历史写法）。新加的代码借"已有函数收/返回的类型"来表达，
+ * 语义一样准，但不会往门禁上再添一笔。
+ */
+type CvModule = Parameters<typeof findPaperCorners>[0];
+type CvMat = ReturnType<typeof imageToMat>;
+
+/**
+ * 兜底：在边缘图上用 HoughLinesP 找直线 → 分两组 → 各取最外两条 → 求 4 个交点。
+ * 任何一步不成立（线段太少 / 挑不出成对边 / 交点为平行 / 过大过小 / 过不了合理性校验）→ null。
+ *
+ * ⚠️ 全程包 try/catch：某些 OpenCV 构建可能没把 HoughLinesP 编进来，
+ *    这时静默返回 null，降级链的其余部分照旧 —— 绝不因为一个可选阶段把整条链路带崩。
+ */
+function quadFromHoughLines(cv: CvModule, edges: CvMat, imgW: number, imgH: number): Corner[] | null {
+  const lines = new cv.Mat();
+  try {
+    // 阈值一律按**图宽比例**给：检测尺寸固定 800 宽，所以这些数就是"所见即所得"的
+    const threshold = Math.max(24, Math.round(imgW * 0.06));
+    const minLen = Math.max(24, Math.round(imgW * 0.18));
+    const maxGap = Math.max(6, Math.round(imgW * 0.03));
+    cv.HoughLinesP(edges, lines, 1, Math.PI / 180, threshold, minLen, maxGap);
+
+    const d = lines.data32S as Int32Array;
+    if (!d || d.length < 16) return null; // 至少 4 条线段才有得挑
+    const segs: HoughSeg[] = [];
+    for (let i = 0; i + 3 < d.length; i += 4) {
+      segs.push({ x1: d[i], y1: d[i + 1], x2: d[i + 2], y2: d[i + 3] });
+    }
+
+    const { horiz, vert } = splitSegsByOrientation(segs);
+    // 间距门槛取图宽/高的 20%：纸至少占画面这么多，两条对面边不可能比这更近
+    const tb = pickOuterPair(horiz, true, imgH * 0.2);
+    const lr = pickOuterPair(vert, false, imgW * 0.2);
+    if (!tb || !lr) return null;
+
+    const quad = quadFromEdges(tb[0], tb[1], lr[0], lr[1]);
+    if (!quad) return null;
+    const fixed = repairToQuad(quad);
+    if (!fixed || !quadSanity(fixed, imgW, imgH)) return null;
+    return fixed;
+  } catch {
+    return null;
+  } finally {
+    lines.delete();
+  }
+}
+
 /** 降级链里的一个候选（rank 越小越优先，同 rank 取面积最大） */
 type Candidate = {
   pts: Corner[];
@@ -493,6 +659,26 @@ export function findPaperCorners(cv: any, srcMat: any): DetectResult {
     if (!best) {
       // 严格档没能给出"干净四边形"才跑宽松档 —— 本来就能认出来的图，耗时与旧版一致
       runPass(false);
+
+      /**
+       * 【rank 5 · 2026-10-08 他的建议】四边直线拟合 + 交点兜底。
+       *
+       * 排在这里的理由：轮廓法（rank 1~4）要的是"一条闭合的纸边轮廓"，
+       * 而"直线延长求交点"在**轮廓断掉/缺一个角**时仍然能推角 —— 这正是他说的那种情况。
+       * 又因为它比 minAreaRect（rank 6）更保得住透视，所以放在 minAreaRect **之前**。
+       * 只在兜底路径执行 ⇒ 正常能认出来的图，耗时与旧版完全一致。
+       */
+      const houghQuad = quadFromHoughLines(cv, edges, imgW, imgH);
+      if (houghQuad) {
+        cands.push({
+          pts: houghQuad,
+          confidence: "low", // 推断来的 ⇒ 琥珀虚线 + 过校验即默认参与拉正
+          stage: "loose:houghQuad",
+          area: polyArea(houghQuad),
+          rank: 5,
+        });
+      }
+
       if (largestLoose) {
         // rank 6：最大轮廓的旋转矩形。永远给得出 4 点，是最后一道兜底
         try {

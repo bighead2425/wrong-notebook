@@ -6,6 +6,7 @@ import {
     guideBox,
     maxCornerShift,
     meanCorners,
+    presetFromLive,
     settleCorners,
     toNormCorners,
 } from '@/lib/doc-live-corners';
@@ -176,5 +177,68 @@ describe('guideBox —— 1.414 参考框', () => {
         const w = (b.x1 - b.x0) * 800;
         const h = (b.y1 - b.y0) * 1067;
         expect(Math.max(w, h) / Math.min(w, h)).toBeCloseTo(2.0, 3);
+    });
+});
+
+describe('presetFromLive —— 把"预览定的角"换算到照片上（他第 1 条）', () => {
+    const live = makeCorners(0.5, 0.5, 0.25, 0.35); // 归一化：0.25..0.75 / 0.15..0.85
+
+    it('没认到角 → null（这种时候就该老老实实重找）', () => {
+        expect(
+            presetFromLive({ live: null, stillW: 3840, stillH: 2160, frameW: 3840, frameH: 2160 }),
+        ).toBeNull();
+    });
+
+    it('尺寸缺失（流还没起来）→ null，不产生 NaN', () => {
+        expect(presetFromLive({ live, stillW: 0, stillH: 0, frameW: 3840, frameH: 2160 })).toBeNull();
+        expect(presetFromLive({ live, stillW: 3840, stillH: 2160, frameW: 0, frameH: 0 })).toBeNull();
+    });
+
+    it('同一画幅（16:9 拍出 16:9）→ 按比例缩放到照片像素', () => {
+        const got = presetFromLive({
+            live,
+            stillW: 1920,
+            stillH: 1080,
+            frameW: 3840,
+            frameH: 2160,
+        });
+        expect(got).not.toBeNull();
+        expect(got!.topLeftCorner.x).toBeCloseTo(0.25 * 1920, 6);
+        expect(got!.topLeftCorner.y).toBeCloseTo(0.15 * 1080, 6);
+        expect(got!.bottomRightCorner.x).toBeCloseTo(0.75 * 1920, 6);
+        expect(got!.bottomRightCorner.y).toBeCloseTo(0.85 * 1080, 6);
+    });
+
+    it('画幅不同（静帧 4:3、预览 16:9）→ null（不能照搬，画幅一变位置全变）', () => {
+        expect(
+            presetFromLive({ live, stillW: 4000, stillH: 3000, frameW: 3840, frameH: 2160 }),
+        ).toBeNull();
+    });
+
+    it('画幅只差一点点（同款比例的不同分辨率）→ 仍算同一画幅', () => {
+        // 3840×2160 = 1.7778；3840×2176 相对差 0.0074 < 0.02
+        expect(
+            presetFromLive({ live, stillW: 3840, stillH: 2176, frameW: 3840, frameH: 2160 }),
+        ).not.toBeNull();
+    });
+
+    it('阈值可调（差 0.7% 时给 0.005 的容差就不认）', () => {
+        expect(
+            presetFromLive({
+                live,
+                stillW: 3840,
+                stillH: 2176,
+                frameW: 3840,
+                frameH: 2160,
+                aspectTol: 0.005,
+            }),
+        ).toBeNull();
+    });
+
+    it('归一化值越界会被夹到照片范围内', () => {
+        const wild: Corners = makeCorners(0.5, 0.5, 0.9, 0.9); // 0..-0.4 / -0.4..1.4
+        const got = presetFromLive({ live: wild, stillW: 1000, stillH: 1000, frameW: 1000, frameH: 1000 });
+        expect(got!.topLeftCorner).toEqual({ x: 0, y: 0 });
+        expect(got!.bottomRightCorner).toEqual({ x: 1000, y: 1000 });
     });
 });
