@@ -87,6 +87,8 @@ const TEXT = {
   livePreparing: "正在准备图像处理模块…",
   liveSearching: "对准纸的四个角，正在识别…",
   liveFound: "已认到纸边，四角对齐即可拍",
+  /** 【2026-10-09】估算档（琥珀）也显示 —— 文案要让它"敢拍"，而不是让它犹豫 */
+  liveFoundLow: "已认到纸边（估算，可直接拍，拍完还能微调）",
   /* 【2026-10-08】拍完的一句诊断 —— 把已有的置信档说人话，省掉"拍完才发现歪了" */
   diagHigh: "四角自动识别：准（可直接确认或微调）",
   diagLow: "四角是估算的，请看一眼并修正",
@@ -235,14 +237,24 @@ function LiveGuideOverlay({
   frameW,
   frameH,
   corners,
+  confidence,
 }: {
   frameW: number;
   frameH: number;
   corners: Corners | null;
+  confidence?: CornerConfidence | null;
 }) {
   const g = guideBox(frameW, frameH);
   const pct = (v: number) => `${(v * 100).toFixed(3)}%`;
   const guideColor = "rgba(255,255,255,0.55)";
+  /**
+   * 【2026-10-09】颜色 = 可信度（与审核页同一套语义）：
+   * 青色实线 = 严格档确定；琥珀虚线 = 降级链估算（**现在也显示**，他反馈"藏起来用户不敢按快门"）。
+   */
+  const low = confidence === "low";
+  const quadColor = low ? HANDLE_COLOR_LOW : HANDLE_COLOR_HIGH;
+  const quadGlow = low ? "rgba(245,158,11,0.7)" : "rgba(0,212,255,0.7)";
+  const quadFill = low ? "rgba(245,158,11,0.10)" : "rgba(0,212,255,0.08)";
   // 四角的"∟"：每个角两条边（用 border 拼），刻意**不画整框** —— 免得被当成裁剪框
   const brackets = [
     { left: g.x0, top: g.y0, tx: "0", ty: "0", borders: { borderTop: true, borderLeft: true } },
@@ -289,9 +301,10 @@ function LiveGuideOverlay({
         >
           <polygon
             points={quad}
-            fill="rgba(0,212,255,0.08)"
-            stroke={HANDLE_COLOR_HIGH}
+            fill={quadFill}
+            stroke={quadColor}
             strokeWidth={2}
+            strokeDasharray={low ? "8 5" : undefined}
             vectorEffect="non-scaling-stroke"
           />
         </svg>
@@ -307,8 +320,8 @@ function LiveGuideOverlay({
               left: pct(corners[k].x),
               top: pct(corners[k].y),
               transform: "translate(-50%,-50%)",
-              background: HANDLE_COLOR_HIGH,
-              boxShadow: "0 0 6px rgba(0,212,255,0.7)",
+              background: quadColor,
+              boxShadow: `0 0 6px ${quadGlow}`,
             }}
           />
         ))}
@@ -357,10 +370,25 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
      *      （"框和纸错位"最常见的成因就是拿容器尺寸当画面尺寸，这里从根上避开）。
      */
     const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
-    /** 最近几帧的"high 档"结果（null = 这一帧没得出可用结果） */
+    /** 最近几帧的结果（null = 这一帧没得出可用结果） */
     const liveFramesRef = useRef<(Corners | null)[]>([]);
+    /** 与上面对齐的置信档（用来判断这一窗结果整体算"确定"还是"估算"） */
+    const liveConfRef = useRef<(CornerConfidence | null)[]>([]);
     /** 判稳后、已平滑的显示角点（归一化 0..1）；null = 现在不该画 */
     const [liveCorners, setLiveCorners] = useState<Corners | null>(null);
+    /**
+     * 【2026-10-09 他的反馈】预览里**琥珀色（估算档）也要显示**。
+     *
+     * 他的原话："只有将纸张框为青色框的时候才会显示出来，琥珀色框是不会显示的，
+     * 事实上很多时候琥珀色框也是对的，但在预览不到的情况下，用户迟迟不敢下定决心拍摄
+     * ……只要有识别出来的框就显示出来然后动态调整，这样用户才比较有信心和比较。"
+     *
+     * 判断：这条要求是对的。审核页里 low 档**本来就默认参与拉正**（只把把手画成琥珀虚线
+     * 提示"这是估算"），所以预览里把它藏起来，等于让用户在最需要参照的时刻失去参照。
+     * 现在改成"认到就画"，用**颜色**表达可信度：青色=确定，琥珀=估算（与审核页同一套语义）。
+     * ⚠️ 判稳那一关不放松（仍然要连续 3 帧对得上），否则会变成"框乱晃"，比不画更糟。
+     */
+    const [liveConfidence, setLiveConfidence] = useState<CornerConfidence | null>(null);
     /** 这一层是否可用（OpenCV 就绪）。就绪前勾上会显示"正在准备…" */
     const [liveCvReady, setLiveCvReady] = useState(false);
     /** 取景画面的宽高比（用于算参考框的比例；流尺寸还没拿到时为 null） */
@@ -536,7 +564,9 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
       if (!open || mode !== "camera" || !videoReady || !liveOn) {
         // 关掉/离开时把显示清干净，别让上一帧的框留在画面上
         liveFramesRef.current = [];
+        liveConfRef.current = [];
         setLiveCorners(null);
+        setLiveConfidence(null);
         return;
       }
       let stopped = false;
@@ -585,14 +615,27 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
             try {
               mat = imageToMat(cv, canvas);
               const found = findPaperCorners(cv, mat);
-              // 只有严格档才参与显示；low/none 记 null（宁可什么都不画）
+              /**
+               * 【2026-10-09】high / low **都参与显示**（只排除 none）。
+               * 颜色区分可信度，语义与审核页一致：青色=严格档确定，琥珀=降级链估算。
+               * 他要的就是这个 —— "只要有识别出来的框就显示出来"，才敢下决心按快门。
+               */
+              const usable = !!found.corners && found.confidence !== "none";
               liveFramesRef.current = [
                 ...liveFramesRef.current,
-                found.corners && found.confidence === "high"
-                  ? toNormCorners(found.corners, cw, ch)
-                  : null,
+                usable ? toNormCorners(found.corners as Corners, cw, ch) : null,
               ].slice(-LIVE_FRAMES);
-              setLiveCorners(settleCorners(liveFramesRef.current));
+              liveConfRef.current = [
+                ...liveConfRef.current,
+                usable ? found.confidence : null,
+              ].slice(-LIVE_FRAMES);
+
+              const settled = settleCorners(liveFramesRef.current);
+              setLiveCorners(settled);
+              // 这一窗里**只要有一帧是估算**，整体就按估算显示（保守：不把"估算"说成"确定"）
+              setLiveConfidence(
+                settled ? (liveConfRef.current.includes("low") ? "low" : "high") : null,
+              );
             } finally {
               mat?.delete?.();
             }
@@ -600,7 +643,9 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
         } catch {
           // 单帧出问题（OpenCV 没就绪 / 抓帧失败）→ 丢掉这一帧，下一轮再试
           liveFramesRef.current = [...liveFramesRef.current, null].slice(-LIVE_FRAMES);
+          liveConfRef.current = [...liveConfRef.current, null].slice(-LIVE_FRAMES);
           setLiveCorners(null);
+          setLiveConfidence(null);
         }
         if (!stopped) timer = setTimeout(tick, LIVE_INTERVAL_MS);
       };
@@ -1324,6 +1369,7 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
                     frameW={liveFrameSize.w}
                     frameH={liveFrameSize.h}
                     corners={liveCorners}
+                    confidence={liveConfidence}
                   />
                 )}
               </div>
@@ -1343,7 +1389,9 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
                     {!liveCvReady
                       ? TEXT.livePreparing
                       : liveCorners
-                        ? TEXT.liveFound
+                        ? liveConfidence === "low"
+                          ? TEXT.liveFoundLow
+                          : TEXT.liveFound
                         : TEXT.liveSearching}
                   </span>
                 )}
