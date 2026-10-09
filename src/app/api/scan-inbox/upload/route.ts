@@ -4,7 +4,7 @@ import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
 import { badRequest, internalError, unauthorized } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
-import { MAX_UPLOAD_BYTES, saveInboxImage } from "@/lib/scan-inbox";
+import { MAX_UPLOAD_BYTES, isStitchStamp, saveInboxImage } from "@/lib/scan-inbox";
 
 const logger = createLogger("api:scan-inbox:upload");
 
@@ -60,8 +60,20 @@ export async function POST(req: Request) {
 
         /** 【2026-10-05】`?dir=` = 写进哪个收件箱（子目录）；不传 = 默认那个（录错题用的） */
         const dir = new URL(req.url).searchParams.get("dir");
+        /**
+         * 【2026-10-09 第 6 条】拼接成品存回收件箱：客户端把**本地时间**的
+         * `yyyymmdd_hhmmss` 放在 `stamp` 字段里（容器跑 UTC，服务端取时间会对不上）。
+         *
+         * ⚠️ 这里**必须校验**：它会进文件名。传了但不合法 ⇒ **直接拒**，不静默退回落名规则
+         *    —— 静默退化会让人以为拼好了、却在收件箱里按 `拼接_` 怎么也找不到。
+         *    合法值的形状被钉死为 14 个数字 + 一个下划线，前缀和扩展名都在服务端。
+         */
+        const rawStamp = form?.get("stamp") ?? null;
+        if (rawStamp !== null && !isStitchStamp(rawStamp)) {
+            return badRequest("Invalid stamp (expected yyyymmdd_hhmmss)");
+        }
         const data = Buffer.from(await file.arrayBuffer());
-        const result = await saveInboxImage(data, new Date(), dir);
+        const result = await saveInboxImage(data, new Date(), dir, rawStamp);
         if (!result.ok) {
             logger.warn({ error: result.error, bytes: file.size }, "转存照片到收件箱失败");
             return NextResponse.json({ ok: false, error: result.error }, { status: 400 });

@@ -40,8 +40,10 @@ import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { apiClient } from "@/lib/api-client";
 import { reconcileSelection } from "@/lib/inbox-selection";
-import { Check, Download, FolderOpen, ImageUp, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { stampYmd } from "@/lib/volume-code";
+import { Check, Download, FolderOpen, ImageUp, Layers, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { InboxImageViewer } from "@/components/inbox-image-viewer";
+import { StitchComposer } from "@/components/stitch-composer";
 
 interface InboxFile {
     name: string;
@@ -111,6 +113,21 @@ function humanSize(n: number): string {
     return `${Math.round(n / 1024)} KB`;
 }
 
+/**
+ * 【2026-10-09 第 6 条】拼好的图存回收件箱时用的那串时间戳：`yyyymmdd_hhmmss`。
+ *
+ * ⚠️ 取的是**浏览器本地时间**，不是服务器时间 —— 容器跑的是 UTC（这是本项目的既知事实），
+ *    让服务端自己取时间，晚上 9 点拼的图会被标成下午 1 点，对着文件名完全对不上。
+ *    日期部分复用 `stampYmd`（`lib/volume-code.ts`，已按本地时间算并有单测）。
+ *
+ * ⚠️ 这串值会进**文件名**，所以服务端**必须**再校验一次格式（见
+ *    `lib/scan-inbox.ts` 的 `isStitchStamp`）—— 客户端传什么都得当成可疑输入。
+ */
+function stitchStamp(d: Date): string {
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${stampYmd(d)}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
 export function ScanInboxBar({
     existingNames,
     onImport,
@@ -150,6 +167,14 @@ export function ScanInboxBar({
      * "当前看的是谁"必须交给一个知道列表全貌的地方来收敛。
      */
     const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+
+    /**
+     * 【2026-10-09 第 4 条】勾选 ≥2 张后点「拼接」⇒ 把它们送进拼接窗口。
+     * 非 null = 拼接窗口开着（装着的就是这几张）。
+     */
+    const [stitchFiles, setStitchFiles] = useState<File[] | null>(null);
+    /** 拼完存回收件箱后的交代（文件名给出来，好让人在列表里找到它） */
+    const [stitchedNote, setStitchedNote] = useState<string | null>(null);
 
     /**
      * 【custom-v35】上一次列表里有哪些文件名（null = 还没读过列表）。
@@ -249,24 +274,36 @@ export function ScanInboxBar({
     const fileUrl = (name: string) =>
         `/api/scan-inbox/file?name=${encodeURIComponent(name)}${dirQ ? `&${dirQ}` : ""}`;
 
+    /**
+     * 把收件箱里的这几张**拉下来**（逐张串行，带"正在拉取 i/n"的进度）。
+     *
+     * 抽出来是因为现在有两个用处：① 「导入选中的」；② 【2026-10-09 第 4 条】
+     * 「拼接选中的」也要先把那几张拿到手（拼接窗口是本地画布在拼，得有真文件）。
+     * 两处都要同一套"拉不到就跳过、别把整批拖死"的容错。
+     */
+    const pullInbox = async (names: string[]): Promise<{ pulled: File[]; missed: string[] }> => {
+        const pulled: File[] = [];
+        const missed: string[] = [];
+        for (let i = 0; i < names.length; i++) {
+            setPulling({ i: i + 1, n: names.length });
+            try {
+                const res = await fetch(fileUrl(names[i]));
+                if (!res.ok) { missed.push(names[i]); continue; }
+                const blob = await res.blob();
+                pulled.push(new File([blob], names[i], { type: blob.type || "image/jpeg" }));
+            } catch {
+                missed.push(names[i]);
+            }
+        }
+        return { pulled, missed };
+    };
+
     /** 把一批照片从 NAS 拉下来 → 包成 File → 交给上层 → 按上层回传的名单记台账 */
     const doImport = async (names: string[]) => {
         if (!names.length) return;
         setWorking(true);
         try {
-            const pulled: File[] = [];
-            const missed: string[] = [];
-            for (let i = 0; i < names.length; i++) {
-                setPulling({ i: i + 1, n: names.length });
-                try {
-                    const res = await fetch(fileUrl(names[i]));
-                    if (!res.ok) { missed.push(names[i]); continue; }
-                    const blob = await res.blob();
-                    pulled.push(new File([blob], names[i], { type: blob.type || "image/jpeg" }));
-                } catch {
-                    missed.push(names[i]);
-                }
-            }
+            const { pulled, missed } = await pullInbox(names);
             if (!pulled.length) {
                 alert(s.pullFailed || "一张都没读到，照片可能已被别的工具删掉了");
                 await load();
@@ -307,6 +344,78 @@ export function ScanInboxBar({
         } finally {
             setPulling(null);
             setWorking(false);
+        }
+    };
+
+    /**
+     * 【2026-10-09 第 4 条】「拼接选中的 N 张」—— 把勾选的照片送进拼接窗口。
+     *
+     * 他的要求："在收件扫描箱页、扫描收件箱页内增加一个拼接按钮，当选中一张以上图片时，
+     * 这个按钮成为可选状态，点击后将选中的图片送入拼接（把跨页的几段接成一张）页。"
+     *
+     * ⚠️ 为什么这里要**主动关掉收件箱对话框**再开拼接窗口：
+     *    收件箱是个 Radix Dialog（内容 portal 到 body 上，z-50），而拼接窗口是本页里的
+     *    一个 `fixed inset-0` 浮层 —— 两者都 z-50 时，**后来进 body 的那个赢**，
+     *    也就是对话框会盖在拼接窗口上面。与其去比谁 z 高（还可能被祖先的层叠上下文吃掉），
+     *    不如把对话框先收起来：退出拼接时再原样弹回来（见 onCancel / handleStitched 的 finally）。
+     */
+    const startStitch = async (names: string[]) => {
+        if (names.length < 2) return;
+        setWorking(true);
+        setStitchedNote(null);
+        try {
+            const { pulled, missed } = await pullInbox(names);
+            if (missed.length) {
+                alert((s.pullPartial || "有 {n} 张没读到，可能已被其它工具删掉").replace("{n}", String(missed.length)));
+            }
+            if (pulled.length >= 2) {
+                setStitchFiles(pulled);
+                setOpen(false);
+            } else if (pulled.length === 1) {
+                alert(s.stitchHint || "至少选中两张才能拼接");
+            }
+        } finally {
+            setPulling(null);
+            setWorking(false);
+        }
+    };
+
+    /**
+     * 【2026-10-09 第 6 条】拼完 ⇒ **存回这个收件箱**（不是在本地收下）。
+     *
+     * 他定的规矩："从收件扫描箱页、扫描收件箱页内导入的图片，拼接后存入收件扫描箱、
+     * 扫描收件箱，形成一个新文件，命名规则为 拼接_8位日期（yyyymmdd）_6位时间（hhmmss）。"
+     *
+     * 走的是「本机传进收件箱」那条老路（POST /api/scan-inbox/upload）——
+     * 那个接口的每一道闸（登录、服务端定名、文件头校验、单张上限、realpath 边界）全都生效，
+     * 这里只是多带一个**时间戳**（服务端会严格校验格式，别的一个字都不能塞）。
+     */
+    const handleStitched = async (blob: Blob) => {
+        setStitchFiles(null);
+        setWorking(true);
+        setStitchedNote(null);
+        try {
+            const stamp = stitchStamp(new Date());
+            const fd = new FormData();
+            // 文件名由服务端定（这里给的名字只是 multipart 里那个 filename 字段，服务端不看它）
+            fd.append("file", blob, `stitch-${stamp}.jpg`);
+            fd.append("stamp", stamp);
+            const res = await fetch(
+                dirQ ? `/api/scan-inbox/upload?${dirQ}` : "/api/scan-inbox/upload",
+                { method: "POST", body: fd },
+            );
+            const data = res.ok ? await res.json().catch(() => null) : null;
+            if (data?.ok) {
+                setStitchedNote(typeof data.name === "string" ? data.name : `拼接_${stamp}.jpg`);
+                await load();
+            } else {
+                alert(s.stitchFailed || "拼接失败，请重试");
+            }
+        } catch {
+            alert(s.stitchFailed || "拼接失败，请重试");
+        } finally {
+            setWorking(false);
+            setOpen(true);
         }
     };
 
@@ -633,6 +742,16 @@ export function ScanInboxBar({
                         </div>
                     )}
 
+                    {/* 【2026-10-09 第 6 条】拼完存回收件箱后的交代：把文件名给出来，
+                        好让人在下面那一格里找到它（新文件会自动带上「新」角标）。 */}
+                    {stitchedNote && (
+                        <p className="text-xs text-green-600">
+                            {(s.stitchSaved || "已拼好，并存回收件箱（文件名以「拼接_」开头）")}
+                            {" "}
+                            <span className="font-medium break-all">{stitchedNote}</span>
+                        </p>
+                    )}
+
                     <DialogFooter className="gap-2 sm:gap-2">
                         <span className="mr-auto text-xs text-muted-foreground self-center">
                             {pulling
@@ -648,6 +767,18 @@ export function ScanInboxBar({
                         >
                             <Trash2 className="mr-2 h-4 w-4" />
                             {(s.deleteBtn || "删除选中的 {n} 张").replace("{n}", String(selectedNames.length))}
+                        </Button>
+                        {/* 【2026-10-09 第 4 条】把选中的照片送进拼接窗口。
+                            选中 ≥2 张才可用 —— 一张图"拼"不出东西来（这个禁用条件是**故意的**，
+                            不是功能没做完）。 */}
+                        <Button
+                            variant="outline"
+                            disabled={disabled || selectedNames.length < 2}
+                            title={selectedNames.length < 2 ? (s.stitchHint || "至少选中两张才能拼接") : undefined}
+                            onClick={() => void startStitch(selectedNames)}
+                        >
+                            <Layers className="mr-2 h-4 w-4" />
+                            {(s.stitchBtn || "拼接选中的 {n} 张").replace("{n}", String(selectedNames.length))}
                         </Button>
                         <Button
                             disabled={disabled || selectedNames.length === 0}
@@ -675,6 +806,21 @@ export function ScanInboxBar({
                     onMetaChange={patchFile}
                     onReload={load}
                     onClose={() => setViewerIndex(null)}
+                />
+            )}
+
+            {/* 【2026-10-09 第 4 / 6 条】拼接窗口：勾选 ≥2 张 → 「拼接选中的 N 张」进来。
+                拼完（onDone）**存回本收件箱**，文件名「拼接_yyyymmdd_hhmmss」。
+                `inboxSubPath` 必须透传：本组件在哪套流水线上，拼接窗口里那个
+                「自收件箱」就该读同一个收件箱（录错题 / 回录分析是分开的两套目录）。 */}
+            {stitchFiles && (
+                <StitchComposer
+                    open
+                    seeds={stitchFiles}
+                    inboxSubPath={subPath}
+                    knownNames={existingNames}
+                    onCancel={() => { setStitchFiles(null); setOpen(true); }}
+                    onDone={(blob) => void handleStitched(blob)}
                 />
             )}
         </>

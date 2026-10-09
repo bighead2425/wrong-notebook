@@ -763,6 +763,33 @@ export function makeShotName(ext: string, at: Date): string {
 }
 
 /**
+ * 【2026-10-09 第 6 条】拼接成品存回收件箱时的**固定前缀**。
+ *
+ * 他定的命名规则："拼接_8位日期（yyyymmdd）_6位时间（hhmmss）"。
+ * 前缀写死在服务端（`拼接_`），只有时间戳允许从客户端来。
+ */
+export const STITCH_NAME_PREFIX = "拼接";
+
+/**
+ * 校验客户端给的**时间戳**：必须严格长成 `8位日期_6位时间`（如 `20261009_113045`）。
+ *
+ * ── 为什么要让客户端给时间 ────────────────────────────────────────────
+ * 容器跑的是 UTC（本项目既知事实）。服务端自己取时间，晚上 9 点拼的图会被标成下午 1 点，
+ * 对着文件名完全对不上 —— 而这个文件名是**给人看的**（他要在收件箱里认出它）。
+ * 浏览器知道自己的本地时间，所以让浏览器给。
+ *
+ * ── 为什么必须在这里再校验一遍 ────────────────────────────────────────
+ * 这个值会**进文件名**。本文件所在的那条上传路径是全项目唯一"把调用方给的字节写进 NAS"
+ * 的接口 —— 任何来自调用方的字符串都得当成可疑输入。
+ * 正则只放行 `数字 + 一个下划线`，路径分隔符（`/` `\`）、点号、空格、控制字符、Unicode
+ * 一个都进不来；而且**长度被钉死**（15 字节），也就没有"塞一个超长名字进去"的余地。
+ * 客户端就算被改得面目全非，能影响的也只是这 14 个数字 —— 前缀和扩展名都在服务端。
+ */
+export function isStitchStamp(s: unknown): s is string {
+    return typeof s === "string" && /^\d{8}_\d{6}$/.test(s);
+}
+
+/**
  * 准备（必要时创建）收件箱子目录，并确认它的**真实路径**确实落在挂载根之下。
  *
  * 【为什么写入侧也要这道闸】读侧的软链接闸挡的是"读出去"，写入侧的风险是"写进去"：
@@ -822,6 +849,12 @@ export async function saveInboxImage(
     data: Buffer,
     at: Date = new Date(),
     subPath?: string | null,
+    /**
+     * 【2026-10-09 第 6 条】"拼接成品"用的时间戳（`yyyymmdd_hhmmss`，客户端给本地时间）。
+     * 传了（且格式合法）⇒ 文件名 = `拼接_<时间戳><扩展名>`；不传 ⇒ 还是 `shot-…` 那套。
+     * ⚠️ 非法值一律**当作没传**（退回落名字规则），绝不把没洗过的字符串拼进路径。
+     */
+    stitchStamp?: string | null,
 ): Promise<SaveImageResult> {
     if (!data || data.length === 0) return { ok: false, error: "空文件" };
     if (data.length > MAX_UPLOAD_BYTES) {
@@ -836,7 +869,9 @@ export async function saveInboxImage(
     const ready = await ensureWritableDir(subPath ?? null);
     if (!ready.ok) return { ok: false, error: ready.reason };
 
-    const name = makeShotName(ext, at);
+    const name = isStitchStamp(stitchStamp)
+        ? `${STITCH_NAME_PREFIX}_${stitchStamp}${ext}`
+        : makeShotName(ext, at);
     const finalPath = path.join(ready.dir, name);
     const tmpPath = path.join(ready.dir, `tmp-${randomBytes(6).toString("hex")}`);
 

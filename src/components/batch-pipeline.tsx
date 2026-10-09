@@ -158,7 +158,8 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
     const [items, setItems] = useState<BatchItem[]>([]);
     /**
      * 【2026-10-05】正在拼的那张（点缩略图**左下角**「拼接」带进去的）。
-     * 非 null = 拼接窗口开着；拼完结果作为一张新的**预处理图**落进队列，**原图不动**。
+     * 非 null = 拼接窗口开着；【2026-10-09 第 3 条】拼完结果作为一张新的**待处理图**
+     * 落进队列（不是预处理），**原图不动**。
      */
     const [stitchSeed, setStitchSeed] = useState<File | null>(null);
     /** 最后操作/选中的那张（只用于视觉高亮；送 AI 的范围改由勾选决定） */
@@ -641,9 +642,15 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
     };
 
     /**
-     * 【2026-10-05】拼接完成 ⇒ 结果作为一张**新的预处理图**落进队列。
+     * 【2026-10-09 第 3 条 · 改去向】拼接完成 ⇒ 结果作为**一张新的待处理图**落进队列。
      *
-     * ⚠️ **原来那张「待处理」的图一动不动**（他特意要求）：
+     * 原来落的是「预处理」。他实机用下来指出这不对：
+     *   "拼接后的图片不应该显示在预处理范围内，而是应该留在待处理范围，因为拼接好的内容
+     *    很可能并未处理，虽然到预处理后也能框选等动作，但容易忘记。"
+     * ⇒ 拼出来的往往还只是一张"接好的原图"，还没拉正/漂白/裁题；
+     *   直接放进预处理区，会被当成"已经能送 AI 了"，最容易漏掉加工那一步。
+     *
+     * ⚠️ **原来那张「待处理」的图一动不动**（他 10-05 特意要求）：
      *    "拼接方式生成的题只生成题，不从待处理消失 —— 原图上其它题还能继续提取"。
      */
     const handleStitched = (blob: Blob) => {
@@ -653,14 +660,14 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             id: `st${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             file,
             previewUrl: url,
-            processed: true,
-            status: "processed",
+            processed: false,
+            status: "pending",
         };
         setStitchSeed(null);
         setItems(prev => [...prev, added]);
         setActiveId(added.id);
-        // 拼出来就是要送 AI 的 ⇒ 默认勾上（与 handleCropComplete 同一个考虑，免得多点一次）
-        setSelectedIds(prev => new Set(prev).add(added.id));
+        // ⚠️ **不勾选**：待处理图本来就不参与送 AI（勾了也没用，反而让人以为它能直接送）。
+        // 与 handleCropComplete 那边"默认勾上"不同，那一步出来的是预处理图。
     };
 
     const handleCropComplete = async (blob: Blob) => {
@@ -1460,13 +1467,15 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             )}
 
             {/* 【2026-10-05】拼接窗口：跨页材料题 —— 点缩略图**左下角**的「拼接」进来。
-                拼好的图作为一张新的**预处理图**落进队列（原图不动，它上面还有别的题要提）。
+                【2026-10-09 第 3 条】拼好的图作为一张**新的待处理图**落进队列
+                （原来落的是预处理，他指出来"拼好的内容很可能并未处理，容易忘记加工"）；
+                原图不动，它上面还有别的题要提。
                 ⚠️ 不传 `inboxSubPath` ⇒ 这里读的是**录错题**那个收件箱（默认 `scan2wrong`），
                    不是回录分析那个 —— 两套流水线的收件箱是分开的。 */}
             {stitchSeed && (
                 <StitchComposer
                     open
-                    seed={stitchSeed}
+                    seeds={[stitchSeed]}
                     knownNames={items.map(i => i.file.name)}
                     onCancel={() => setStitchSeed(null)}
                     onDone={handleStitched}
@@ -1553,9 +1562,10 @@ function FolderGrid({
                             />
 
                             {/* 【2026-10-05】左下角「拼接」：跨页材料题（练习册 / 阅读）把两页接成一张。
-                                只给**干净的待处理图**（没加工过、没有状态角标）显示 ——
-                                左下角原本放着「待录 / 已录 / 已处理」角标，条件互斥，不会撞位置。 */}
-                            {onStitch && it.status === "pending" && !dimmed && (
+                                【2026-10-09 第 2 条】**已处理（变灰）的图上也要保留这个按钮** ——
+                                原先它加了 `!dimmed` 条件，于是"加工过一次"的图就再也不能拼了；
+                                他明确要求留着（已处理的脸上仍然可能要接一段）。 */}
+                            {onStitch && it.status === "pending" && (
                                 <button
                                     className="absolute bottom-1 left-1 bg-black/60 text-white rounded p-1 hover:bg-black/80 transition-colors"
                                     onClick={(e) => { e.stopPropagation(); if (!busy) onStitch(it); }}
@@ -1607,9 +1617,17 @@ function FolderGrid({
                                     AI 失败
                                 </span>
                             )}
+                            {/* 【2026-10-09 第 2 条】「已处理」不再挂在左下角。
+                                他的反馈：左下角那个角标**把拼接按钮盖住了**，而且"已处理"三个字
+                                本身也不如一个记号直接。现在改成**图片正中的一个绿色对号**
+                                （字留在 title 里）—— 一眼看得出"这张动过了"，
+                                左下角腾出来给拼接按钮，互不打架。 */}
                             {dimmed && it.status === "pending" && (
-                                <span className="absolute bottom-1 left-1 bg-gray-600 text-white text-[10px] rounded px-1">
-                                    已处理
+                                <span
+                                    className="pointer-events-none absolute left-1/2 top-1/2 flex h-9 w-9 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-green-600/90 text-white shadow-md ring-2 ring-white/70"
+                                    title="已处理（原图仍在待处理，可再加工）"
+                                >
+                                    <Check className="h-5 w-5" strokeWidth={3} />
                                 </span>
                             )}
                             {/* 【custom-v27】笔头：始终可见，点它进图片编辑器（点图本体是按状态分派） */}

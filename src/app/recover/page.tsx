@@ -363,7 +363,8 @@ export default function RecoverPage() {
     const [burstCount, setBurstCount] = useState(session.burstCount);
     /**
      * 【2026-10-05】正在拼的那张（从「待处理」点【拼接】带进去的第一张图）。
-     * 非 null = 拼接窗口开着。拼好之后结果进「预处理」，**原来那张待处理的不动**。
+     * 非 null = 拼接窗口开着。【2026-10-09 第 3 条】拼好之后结果进**「待处理」**
+     * （不是预处理，理由见 handleStitched），**原来那张待处理的不动**。
      */
     const [stitchSeed, setStitchSeed] = useState<File | null>(null);
     /** 收不下时的一句提示（比如一次选了 40 张，只收前 30 张） */
@@ -905,18 +906,22 @@ export default function RecoverPage() {
     }, []);
 
     /**
-     * 拼接完成 ⇒ 结果进「预处理」。
+     * 【2026-10-09 第 3 条 · 改去向】拼接完成 ⇒ 结果进「待处理」（原来是进「预处理」）。
      *
-     * ⚠️ **原来那张「待处理」的图一动不动**（他特意要求的）：
+     * 他实机用下来的原话："拼接后的图片不应该显示在预处理范围内，而是应该留在待处理范围，
+     * 因为拼接好的内容很可能并未处理，虽然到预处理后也能框选等动作，但容易忘记。"
+     * ⇒ 拼出来的通常还只是一张"接好的原图"，直接进预处理会被当成"可以送分析了"，加工那步最容易漏。
+     *
+     * ⚠️ **原来那张「待处理」的图一动不动**（他 10-05 特意要求）：
      *    "拼接方式生成的题只生成题，不从待处理消失 —— 这样原图上其它题还能继续提取"。
-     *    所以这里只往 ready 里加一条，**不做** dropShot/promoteShot。
+     *    所以这里只往 pending 里加一条，**不做** dropShot / promoteShot。
      */
     const handleStitched = useCallback((blob: Blob) => {
         const file = new File([blob], `stitch-${Date.now()}.jpg`, { type: "image/jpeg" });
         setStitchSeed(null);
         const shot: QueuedShot = { id: uid(), file, url: URL.createObjectURL(file) };
-        readyShotsRef.current = [...readyShotsRef.current, shot];
-        setReadyShots(readyShotsRef.current);
+        pendingShotsRef.current = [...pendingShotsRef.current, shot];
+        setPendingShots(pendingShotsRef.current);
     }, []);
 
     /** 页内相机（连拍）拍了一张 —— 直接进「待处理」，不绕收件箱那一圈 */
@@ -1728,12 +1733,14 @@ export default function RecoverPage() {
 
             {/* ===== 拼接窗口（2026-10-05）=====
                 跨页材料题：第一张（从「待处理」带进来）+ 再取一张（本机 / 相机 / 收件箱），
-                各自框出有用的段，竖着接成一张 ⇒ 结果放进「预处理」。
+                各自框出有用的段，竖着接成一张。
+                【2026-10-09 第 3 条】结果放进**「待处理」**（原先进预处理 —— 他说
+                "拼好的内容很可能并未处理，进预处理容易忘记加工"）。
                 ⚠️ 独立窗口，**没碰**裁剪页那个四页共用的编辑器。 */}
             {stitchSeed && (
                 <StitchComposer
                     open
-                    seed={stitchSeed}
+                    seeds={[stitchSeed]}
                     /* 【2026-10-05】回录分析页用**它自己**那个收件箱（`scan2recover`）；
                        批量上传页不传这个参数 ⇒ 那边用的是录错题那个（`scan2wrong`）。 */
                     inboxSubPath="scan2recover"

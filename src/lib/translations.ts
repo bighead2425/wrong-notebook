@@ -133,6 +133,11 @@ export const translations = {
                     selectedCount: "{n} selected",
                     importBtn: "Import {n} selected",
                     deleteBtn: "Delete {n} selected",
+                    // 【2026-10-09 第 4 条】把选中的照片送进拼接窗口（至少 2 张）
+                    stitchBtn: "Stitch {n} selected",
+                    stitchHint: "Select two or more pictures to stitch",
+                    stitchSaved: "Stitched and saved back to the inbox",
+                    stitchFailed: "Stitching failed; try again",
                     deleteConfirm: "Delete these {n} picture(s) from the inbox? This cannot be undone.",
                     badgeImported: "Imported",
                     badgeNew: "New",
@@ -988,6 +993,11 @@ export const translations = {
                     selectedCount: "已选 {n} 张",
                     importBtn: "导入选中的 {n} 张",
                     deleteBtn: "删除选中的 {n} 张",
+                    // 【2026-10-09 第 4 条】把选中的照片送进拼接窗口（至少 2 张）
+                    stitchBtn: "拼接选中的 {n} 张",
+                    stitchHint: "至少选中两张才能拼接",
+                    stitchSaved: "已拼好，并存回收件箱（文件名以「拼接_」开头）",
+                    stitchFailed: "拼接失败，请重试",
                     deleteConfirm: "确定要从收件箱里删掉这 {n} 张照片吗？删了就找不回来了。",
                     badgeImported: "已导入",
                     badgeNew: "新",

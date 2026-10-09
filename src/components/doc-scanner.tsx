@@ -143,23 +143,26 @@ const LOW_CONFIDENCE_DASH = [10, 6];
 /**
  * 【2026-10-08 他第 1 条】拖动把手时的"放大镜"。
  *
- * 他的原话：拖把手时"只能凭感觉挪位置，我需要一点精确的指示"，
- * 并且自己给出了**正确的位置**——放大镜要显示在**对面那个角**
- * （因为手指正好挡住被拖的那个角，看得见才怪）。
+ * 他的原话：拖把手时"只能凭感觉挪位置，我需要一点精确的指示"。
  *
- * 下面两张表就是这件事的"数据"部分：角的中文名、以及谁跟谁是对角。
+ * 【2026-10-09 他第 1 条 · 位置改了】第一版是"放在**对角**"（左上的把手 ⇒ 右上…不，
+ * 是**右下**）。他实机用下来不满意，给了新规则，理由也说清了：
+ *
+ *   "特别是右手操作左上角的时候，放大在右下角十分不便捷……图片左侧的把手都在右上角放大，
+ *    图片右侧的把手都在左上角放大。"
+ *
+ *   ⇒ **只看左右**：把手在图片左半边 ⇒ 放大镜在**右上角**；在右半边 ⇒ **左上角**；
+ *      **纵向一律贴顶**（不再看上下）。
+ *   真正要避开的只是"手指压住把手"，而那是**左右方向**的遮挡；
+ *   纵向固定贴顶之后，放大镜永远出现在可预期的那一处，看一眼不用找。
+ *
+ * 下面那张表是这件事的"数据"部分：角的中文名（给放大镜里的角标文字用）。
  */
 const CORNER_LABEL: Record<keyof Corners, string> = {
   topLeftCorner: "左上角",
   topRightCorner: "右上角",
   bottomRightCorner: "右下角",
   bottomLeftCorner: "左下角",
-};
-const OPPOSITE_CORNER: Record<keyof Corners, keyof Corners> = {
-  topLeftCorner: "bottomRightCorner",
-  topRightCorner: "bottomLeftCorner",
-  bottomRightCorner: "topLeftCorner",
-  bottomLeftCorner: "topRightCorner",
 };
 /** 放大镜的放大倍数与边长占比（相对叠加层短边） */
 const LOUPE_ZOOM = 2.6;
@@ -1033,10 +1036,20 @@ export const DocScanner = forwardRef<DocScannerHandle, DocScannerProps>(
         const lw = Math.round(Math.min(ov.width, ov.height) * LOUPE_RATIO);
         const M = 12;
         const rr = 10;
-        const opp = OPPOSITE_CORNER[dk];
-        // 放在**对角**那一边（手指够不着的地方）
-        const lx = opp === "topRightCorner" || opp === "bottomRightCorner" ? ov.width - M - lw : M;
-        const ly = opp === "bottomLeftCorner" || opp === "bottomRightCorner" ? ov.height - M - lw : M;
+        /**
+         * 【2026-10-09 他第 1 条】放大镜放在**哪一角**（他给的规则，照做）：
+         *   · 把手在图片**左半边** ⇒ 放大镜在**右上角**；
+         *   · 把手在图片**右半边** ⇒ 放大镜在**左上角**；
+         *   · 纵向**一律贴顶**（不再看上下）。
+         *
+         * 为什么改：原先放的是"**对角**"（左上↔右下）。他右手拖**左上角**那个把手时，
+         * 放大镜飞到屏幕右下 —— 手和眼睛要分头跑，很不便。
+         * 他的判断是：真正要避开的只是"手指压住把手"这件事，那是**左右**方向的遮挡，
+         * 所以只在**水平方向**镜像就够了；纵向固定在顶部，位置永远是可预期的那一处。
+         */
+        const leftHalf = corners[dk].x < img.width / 2;
+        const lx = leftHalf ? ov.width - M - lw : M;
+        const ly = M;
         const roundRect = () => {
           ctx.beginPath();
           ctx.moveTo(lx + rr, ly);

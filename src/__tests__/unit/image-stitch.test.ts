@@ -5,8 +5,10 @@ import {
     boxesOverlap,
     clampBoxToImage,
     findBoxConflicts,
+    planConcat,
     planStitch,
     sortStitchBoxes,
+    STITCH_MAX_EDGE,
     STITCH_MAX_HEIGHT,
     type StitchBox,
     type StitchImage,
@@ -217,5 +219,113 @@ describe('planStitch · 等宽 + 首尾相接', () => {
 
     it('默认总高上限就是 2560', () => {
         expect(STITCH_MAX_HEIGHT).toBe(2560);
+    });
+});
+
+describe('planConcat · 页横拼 / 页竖拼（不画框，整页接）', () => {
+    it('页竖拼：等宽 —— 以最宽那张为基准，其余等比缩到同宽，上下首尾相接', () => {
+        // ① 1000×500（最宽）② 500×500（缩到同宽后应变成 1000 高）
+        const plan = planConcat(
+            [
+                { width: 1000, height: 500 },
+                { width: 500, height: 500 },
+            ],
+            "vertical",
+        );
+        expect(plan.width).toBe(1000);
+        expect(plan.segments[0]).toMatchObject({ dx: 0, dy: 0, dw: 1000, dh: 500 });
+        // 第二张：k = 1000/500 = 2 ⇒ 高 1000
+        expect(plan.segments[1]).toMatchObject({ dx: 0, dy: 500, dw: 1000, dh: 1000 });
+        expect(plan.height).toBe(1500);
+        expect(plan.scale).toBe(1);
+    });
+
+    it('页横拼：等高 —— 以最高那张为基准，其余等比缩到同高，左右首尾相接', () => {
+        const plan = planConcat(
+            [
+                { width: 500, height: 1000 },
+                { width: 1000, height: 500 },
+            ],
+            "horizontal",
+        );
+        expect(plan.height).toBe(1000);
+        // 基准高 1000：第一张本来就 1000 高 ⇒ 宽 500；第二张 k=2 ⇒ 宽 2000
+        expect(plan.segments[0]).toMatchObject({ dx: 0, dy: 0, dw: 500, dh: 1000 });
+        expect(plan.segments[1]).toMatchObject({ dx: 500, dy: 0, dw: 2000, dh: 1000 });
+        expect(plan.width).toBe(2500);
+    });
+
+    it('顺序照传入顺序，不自己排序（页序由用户的上下移决定）', () => {
+        const plan = planConcat(
+            [
+                { width: 300, height: 100 },
+                { width: 900, height: 100 },
+            ],
+            "vertical",
+        );
+        // 若被按宽度排过序，第一大段就会是 imageIndex=1（900 那张在前）
+        expect(plan.segments.map((s) => s.imageIndex)).toEqual([0, 1]);
+        // 顺序对了，尺寸还得对：竖向拼是**等宽**，基准 = 最宽的 900
+        // ⇒ 第一张 300 宽的那张要放大 3 倍，高 100 → 300（不是原样的 100）
+        expect(plan.segments[0]).toMatchObject({ dw: 900, dh: 300, dy: 0 });
+        expect(plan.segments[1]).toMatchObject({ dw: 900, dh: 100, dy: 300 });
+        expect(plan.height).toBe(400);
+    });
+
+    it('长边超上限 ⇒ 整体等比缩，宽高一起缩（保形）', () => {
+        const plan = planConcat(
+            [
+                { width: 1000, height: 2000 },
+                { width: 1000, height: 2000 },
+            ],
+            "vertical",
+            { maxEdge: 1000 },
+        );
+        expect(plan.scale).toBeCloseTo(0.25, 5);
+        expect(plan.height).toBeLessThanOrEqual(1001);
+        expect(plan.width).toBe(250);
+    });
+
+    it('横拼超上限 ⇒ 缩的是宽（长边）', () => {
+        const plan = planConcat(
+            [
+                { width: 2000, height: 1000 },
+                { width: 2000, height: 1000 },
+            ],
+            "horizontal",
+            { maxEdge: 1000 },
+        );
+        expect(plan.scale).toBeCloseTo(0.25, 5);
+        expect(plan.width).toBeLessThanOrEqual(1001);
+        expect(plan.height).toBe(250);
+    });
+
+    it('单张 ⇒ 原尺寸（不放大也不缩）', () => {
+        const plan = planConcat([{ width: 800, height: 600 }], "vertical");
+        expect(plan).toMatchObject({ width: 800, height: 600, scale: 1 });
+    });
+
+    it('坏图（0 尺寸）跳过，不带出空段；全是坏图 ⇒ 空方案', () => {
+        const plan = planConcat(
+            [
+                { width: 0, height: 0 },
+                { width: 100, height: 50 },
+            ],
+            "vertical",
+        );
+        expect(plan.segments).toHaveLength(1);
+        expect(plan.segments[0].imageIndex).toBe(1);
+
+        expect(planConcat([{ width: 0, height: 0 }], "horizontal")).toMatchObject({
+            width: 0,
+            height: 0,
+            scale: 1,
+            segments: [],
+        });
+        expect(planConcat([], "horizontal").segments).toHaveLength(0);
+    });
+
+    it('默认长边上限就是 2560', () => {
+        expect(STITCH_MAX_EDGE).toBe(2560);
     });
 });

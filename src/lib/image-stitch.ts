@@ -81,6 +81,15 @@ export interface StitchPlan {
  */
 export const STITCH_MAX_HEIGHT = 2560;
 
+/**
+ * 【2026-10-09 第 6 条】「页横拼 / 页竖拼」（不画框、整页一起拼）的**长边**上限。
+ *
+ * 与 `STITCH_MAX_HEIGHT` 同值、同理由（进裁剪编辑器吃内存），只是横拼时受限的是**宽**。
+ * 单独起个名字而不是复用 `STITCH_MAX_HEIGHT`：那两个数字现在相等，但语义不同
+ * （一个是"高的上限"、一个是"长边的上限"），以后要调也不会被误改到一起。
+ */
+export const STITCH_MAX_EDGE = 2560;
+
 /** 一段太细（宽或高不足 1 像素）就当没有 —— 手抖点出来的小框不该产生一条缝 */
 const MIN_SEGMENT_EDGE = 1;
 
@@ -239,4 +248,145 @@ export function planStitch(
         segments,
         dropped,
     };
+}
+
+/* ==========================================================================
+ * 【2026-10-09 第 6 条】页横拼 / 页竖拼 —— **不画框**，把每一张整页地接起来
+ *
+ * 他要的两句话：
+ *   · 「页横拼」= 忽略所有紫框，把所有图片**横向**并排接成一张；
+ *   · 「页竖拼」= 忽略所有紫框，把所有图片**纵向**摞起来接成一张。
+ *
+ * ── 与上面 `planStitch` 的关系：同一套思路，只换了"对齐哪条边" ─────────
+ *   · 竖拼：**等宽**（以最宽那张为基准，其余按比例放大/缩小）→ 接着往下排；
+ *   · 横拼：**等高**（以最高那张为基准）→ 接着往右排。
+ *   与 `planStitch` 一样是**等比**缩放（宽高同乘一个系数），内容不会被压扁。
+ *
+ * 为什么单独一个函数、而不是给 `planStitch` 加开关：两者"输入"根本不是一回事
+ * —— 那个要框（`StitchBox`），这个不要框（直接吃图片尺寸）。硬合成一个函数
+ * 会让里面到处是 `if (axis)` 两套分支，反而更难验。这里各写各的，共用底下的
+ * 缩放与限长规则。
+ * ========================================================================== */
+
+/** 整页拼接的方向 */
+export type ConcatAxis = "horizontal" | "vertical";
+
+/** 整页拼接里的一页：在成品图上的位置与尺寸（都已经是缩放后的像素） */
+export interface ConcatSegment {
+    /** 对应传入 images 的下标 */
+    imageIndex: number;
+    dx: number;
+    dy: number;
+    dw: number;
+    dh: number;
+}
+
+export interface ConcatPlan {
+    width: number;
+    height: number;
+    /** 为了不超过长边上限而做的**整体**缩放比（1 = 没缩） */
+    scale: number;
+    segments: ConcatSegment[];
+}
+
+export interface ConcatPlanOptions {
+    /** 长边上限，默认 `STITCH_MAX_EDGE`（测试里可传小值） */
+    maxEdge?: number;
+}
+
+/** 一整页拼出来，尺寸上限之外的情况 */
+function finalizeConcat(
+    segments: ConcatSegment[],
+    axis: ConcatAxis,
+    maxEdge: number,
+): ConcatPlan {
+    if (segments.length === 0) {
+        return { width: 0, height: 0, scale: 1, segments: [] };
+    }
+    const rawW = axis === "horizontal"
+        ? segments.reduce((sum, s) => sum + s.dw, 0)
+        : segments[0].dw;
+    const rawH = axis === "vertical"
+        ? segments.reduce((sum, s) => sum + s.dh, 0)
+        : segments[0].dh;
+    const longEdge = Math.max(rawW, rawH);
+    const scale = longEdge > maxEdge ? maxEdge / longEdge : 1;
+
+    if (scale < 1) {
+        // 整体等比缩；**缩完重排坐标**，保证仍然首尾相接、没有缝
+        let acc = 0;
+        for (const s of segments) {
+            s.dw = Math.max(MIN_SEGMENT_EDGE, Math.round(s.dw * scale));
+            s.dh = Math.max(MIN_SEGMENT_EDGE, Math.round(s.dh * scale));
+            if (axis === "horizontal") {
+                s.dx = acc;
+                s.dy = 0;
+                acc += s.dw;
+            } else {
+                s.dx = 0;
+                s.dy = acc;
+                acc += s.dh;
+            }
+        }
+    }
+
+    const width = axis === "horizontal"
+        ? segments.reduce((sum, s) => sum + s.dw, 0)
+        : segments[0].dw;
+    const height = axis === "vertical"
+        ? segments.reduce((sum, s) => sum + s.dh, 0)
+        : segments[0].dh;
+    return {
+        width: Math.max(MIN_SEGMENT_EDGE, width),
+        height: Math.max(MIN_SEGMENT_EDGE, height),
+        scale,
+        segments,
+    };
+}
+
+/**
+ * 【核心 · 整页拼接】不画框，把每一张整页接成一张 —— 对应第 6 条的「页横拼 / 页竖拼」。
+ *
+ *   · `"vertical"`（页竖拼）⇒ **等宽**：基准宽 = 最宽那张的宽，其余按比例缩到同宽，上下相接；
+ *   · `"horizontal"`（页横拼）⇒ **等高**：基准高 = 最高那张的高，其余按比例缩到同高，左右相接；
+ *   · 尺寸不足 1 像素的（坏图 / 空图）跳过，不产生空段；
+ *   · 长边超过上限 ⇒ `scale < 1`，**宽高一起缩**（保形），返回的宽高已是缩过的值。
+ *
+ * ⚠️ 输出顺序 = **传入 images 的顺序**（不排序）。页序由用户在窗口里用"上移/下移"定，
+ *    这里再自作主张排一次序，会把他的调整冲掉。
+ */
+export function planConcat(
+    images: readonly StitchImage[],
+    axis: ConcatAxis,
+    options: ConcatPlanOptions = {},
+): ConcatPlan {
+    const maxEdge = options.maxEdge ?? STITCH_MAX_EDGE;
+
+    // 只留下能用的图（尺寸至少 1 像素），下标照原样带出去
+    const usable = images
+        .map((img, imageIndex) => ({ img, imageIndex }))
+        .filter(({ img }) => img && img.width >= 1 && img.height >= 1);
+    if (usable.length === 0) return { width: 0, height: 0, scale: 1, segments: [] };
+
+    const segments: ConcatSegment[] = [];
+    if (axis === "vertical") {
+        const baseW = usable.reduce((max, u) => (u.img.width > max ? u.img.width : max), 0);
+        let dy = 0;
+        for (const u of usable) {
+            const k = baseW / u.img.width;
+            const dh = Math.max(MIN_SEGMENT_EDGE, Math.round(u.img.height * k));
+            segments.push({ imageIndex: u.imageIndex, dx: 0, dy, dw: baseW, dh });
+            dy += dh;
+        }
+    } else {
+        const baseH = usable.reduce((max, u) => (u.img.height > max ? u.img.height : max), 0);
+        let dx = 0;
+        for (const u of usable) {
+            const k = baseH / u.img.height;
+            const dw = Math.max(MIN_SEGMENT_EDGE, Math.round(u.img.width * k));
+            segments.push({ imageIndex: u.imageIndex, dx, dy: 0, dw, dh: baseH });
+            dx += dw;
+        }
+    }
+    return finalizeConcat(segments, axis, maxEdge);
 }

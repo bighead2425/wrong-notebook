@@ -584,6 +584,69 @@ function webpBytes(size = 4096): Buffer {
 }
 
 describe('scan-inbox：写入（连拍转存）', () => {
+    /* ===== 【2026-10-09 第 6 条】拼接成品存回收件箱的命名 ===== */
+    it('拼图存回收件箱：文件名 = 拼接_yyyymmdd_hhmmss.jpg（时间戳用客户端给的本地时间）', async () => {
+        writeConfig({ subPath: 'scan2wrong' });
+        const lib = await freshLib();
+        const data = jpegBytes(4096);
+        const res = await lib.saveInboxImage(
+            data,
+            new Date(2026, 8, 21, 11, 30, 45), // 服务端时间：故意与下面那个戳不一样
+            null,
+            '20261009_201530',
+        );
+
+        expect(res.ok).toBe(true);
+        expect(res.name).toBe('拼接_20261009_201530.jpg');
+        expect(fs.readFileSync(path.join(inboxDir, res.name!)).equals(data)).toBe(true);
+
+        // 它会像别的照片一样出现在收件箱列表里（列表只按扩展名过滤，不认前缀）
+        const listing = await lib.listInboxFiles();
+        expect(listing.files.some((f) => f.name === res.name)).toBe(true);
+    });
+
+    it('时间戳格式不对 ⇒ 一律退回落名规则（名字里塞不进任何路径/特殊字符）', async () => {
+        writeConfig({ subPath: 'scan2wrong' });
+        const lib = await freshLib();
+        const bad = [
+            '',
+            '20261009',                       // 只有日期
+            '20261009_1130',                  // 时间不足 6 位
+            '20261009-113045',                // 分隔符不对
+            '20261009_113045 ',               // 尾巴带空格
+            ' 20261009_113045',
+            '../20261009_113045',             // 想跳目录
+            '20261009/113045',
+            '20261009_113045.jpg',            // 想自带扩展名
+            'abc',
+            null,
+            undefined,
+        ] as const;
+        for (const stamp of bad) {
+            const res = await lib.saveInboxImage(jpegBytes(4096), new Date(2026, 8, 21), null, stamp);
+            expect(res.ok).toBe(true);
+            expect(res.name).toMatch(/^shot-/);          // 退回落名规则
+            expect(res.name).not.toContain('..');
+            expect(res.name).not.toContain('/');
+            // 写出来的东西老老实实待在收件箱里
+            expect(fs.existsSync(path.join(inboxDir, res.name!))).toBe(true);
+        }
+    });
+
+    it('isStitchStamp 只放行「8 位日期_6 位时间」', async () => {
+        const { isStitchStamp } = await freshLib();
+        expect(isStitchStamp('20261009_113045')).toBe(true);
+        expect(isStitchStamp('00000000_000000')).toBe(true);
+        expect(isStitchStamp('20261009_11304')).toBe(false);
+        expect(isStitchStamp('20261009_1130455')).toBe(false);
+        expect(isStitchStamp('2026-10-09_113045')).toBe(false);
+        expect(isStitchStamp('20261009_113045\n')).toBe(false);
+        expect(isStitchStamp('２０２６１００９_１１３０４５')).toBe(false); // 全角数字也不行
+        expect(isStitchStamp(20261009)).toBe(false);
+        expect(isStitchStamp(null)).toBe(false);
+        expect(isStitchStamp(undefined)).toBe(false);
+    });
+
     it('sniffImageExt 只认真图片的文件头，不认扩展名也不认声明', async () => {
         const { sniffImageExt } = await freshLib();
         expect(sniffImageExt(jpegBytes())).toBe('.jpg');
