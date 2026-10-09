@@ -24,12 +24,21 @@
  */
 export function inboxFileUrl(
     name: string,
-    opts: { dir?: string | null; version?: number | string | null } = {},
+    opts: {
+        dir?: string | null;
+        version?: number | string | null;
+        /**
+         * 【2026-10-09】`true` ⇒ 取**缩略图**（`<收件箱>/.thumbs/<名字>.thumb.jpg`）。
+         * 没有缩略图时服务端回 404，前端要**退回原图**（那是第一次打开的正常路径）。
+         */
+        thumb?: boolean;
+    } = {},
 ): string {
     const qs = new URLSearchParams({ name });
     if (opts.dir) qs.set("dir", opts.dir);
     if (opts.version !== undefined && opts.version !== null && opts.version !== "") {
         qs.set("v", String(opts.version));
     }
+    if (opts.thumb) qs.set("thumb", "1");
     return `/api/scan-inbox/file?${qs.toString()}`;
 }

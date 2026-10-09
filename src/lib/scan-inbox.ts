@@ -79,6 +79,14 @@ export interface ScanInboxFile {
     /** 之前是否已经导入过（导入过的仍可重导，只是不再计为"新照片"） */
     imported: boolean;
     /**
+     * 【2026-10-09】收件箱里有没有这张照片的**缩略图**（见本文件末尾"缩略图"那一节）。
+     *
+     * 有 ⇒ 网页上的小格子直接取它（几十 KB，快得多）；
+     * 没有 ⇒ 只能取原图，并且**顺手生成一张传回来**（下次就快了）。
+     * ⚠️ 它只影响"用什么图画格子"：点开看大图、导入到待处理，一律仍用**原图**。
+     */
+    hasThumb?: boolean;
+    /**
      * 【custom-v33】显示方向：逆时针累计角度，0 / 90 / 180 / 270。
      *
      * 注意它**不改 NAS 上的文件**，只是"以后按这个方向显示 / 导入"。
@@ -541,6 +549,7 @@ export async function listInboxFiles(opts: ListOptions = {}): Promise<ScanInboxL
     const files: ScanInboxFile[] = [];
     let ignored = 0;
 
+    const thumbsDir = thumbsDirOf(loc.subPath);
     for (const entry of entries) {
         if (!entry.isFile()) continue;
         const ext = path.extname(entry.name).toLowerCase();
@@ -555,12 +564,22 @@ export async function listInboxFiles(opts: ListOptions = {}): Promise<ScanInboxL
                 continue;
             }
             const meta = bucket[entry.name];
+            /**
+             * 【2026-10-09】有没有缩略图 —— 用 `lstat` 判（**不跟随软链接**）：
+             * `.thumbs` 里如果有人塞了个软链接，这里会判成"没有"，
+             * 前端就老老实实退回原图，而不是去请求一个读不出来的地址（那会显示破图）。
+             */
+            const hasThumb = await fs
+                .lstat(path.join(thumbsDir, thumbNameOf(entry.name)))
+                .then((s) => s.isFile())
+                .catch(() => false);
             files.push({
                 name: entry.name,
                 size: st.size,
                 mtimeMs: st.mtimeMs,
                 imported: probing ? false : Boolean(meta?.imported),
                 rotation: probing ? 0 : normalizeRotation(meta?.rotation),
+                hasThumb: probing ? false : hasThumb,
             });
         } catch {
             ignored++;
@@ -578,6 +597,12 @@ export async function listInboxFiles(opts: ListOptions = {}): Promise<ScanInboxL
         pruneBucket(state, loc.subPath, new Set(files.map((f) => f.name)));
         const after = state.inbox[loc.subPath] ? Object.keys(state.inbox[loc.subPath]).length : 0;
         if (after !== before) writeStateSync(state);
+        /**
+         * 【2026-10-09】同一时机顺手收拾"没有原图的缩略图"：
+         * 他可能直接在飞牛的文件管理里删照片（绕过软件），那样缩略图就没人管了。
+         * 放在这里而不是删照片时，是因为"外面删的"这种情况只能在读的时候发现。
+         */
+        await pruneOrphanThumbs(loc.subPath, new Set(files.map((f) => f.name)));
     }
 
     return { ...base, available: true, status: "ok", folders, files, ignored };
@@ -704,6 +729,17 @@ export async function deleteInboxFiles(
         }
         try {
             await fs.unlink(full);
+            /**
+             * 【2026-10-09 他要求的】删了原图，**它的缩略图跟着删** —— 不能留孤儿。
+             *
+             * 为什么必须在这儿做：缩略图是"派生文件"，原图没了它就没有任何意义，
+             * 而且它**在界面上看不见**（列表只列照片、不列目录），
+             * 只能靠程序自己收拾，否则会在 NAS 上悄悄攒一堆垃圾。
+             *
+             * ⚠️ 缩略图删失败**不算这次删除失败**：原图已经删掉了，这是主结果；
+             *    缩略图没删掉顶多留个垃圾文件，下次列表自洁还会再清一次（见 pruneOrphanThumbs）。
+             */
+            await fs.unlink(path.join(dir, THUMB_DIR_NAME, thumbNameOf(raw))).catch(() => undefined);
             result.deleted.push(raw);
             if (bucket) delete bucket[raw];
         } catch (err) {
@@ -713,6 +749,181 @@ export async function deleteInboxFiles(
     pruneBucket(state, subPath);
     writeStateSync(state);
     return result;
+}
+
+/* ------------------------------------------------------------------ */
+/* 缩略图（2026-10-09）                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 缩略图放在收件箱子目录下的一个**隐藏目录**里：`<收件箱>/.thumbs/`。
+ *
+ * ── 为什么要做缩略图（起因是他实测"打开收件箱很慢"）──────────────────
+ * 原来列表里每一个小格子都在下载**整张原图**（3~5MB × 30 张 ≈ 上百 MB），
+ * 局域网都要等，外网更不用说。而小格子只需要几十 KB 就够看清"是哪张照片"。
+ *
+ * ── 为什么是子目录、而不是跟照片混在一起 ──────────────────────────────
+ * ① 列表是按 `entry.isFile()` 过滤的（目录天然不会被当成照片列出来）⇒ 混不进去；
+ * ② `.` 开头的名字会被 `normalizeSubPath` 拒绝 ⇒ 他不可能手滑把这个目录设成收件箱；
+ * ③ 备份 / 清理时一眼能看出"这一坨是可再生的派生文件"。
+ *
+ * ── 命名：`<原文件名>.thumb.jpg`（确定性映射，**不建对照表**）──────────
+ * 名字能直接从原图名推出来，所以"有没有缩略图"就是"这个文件在不在"，
+ * 不需要第三份名单。⚠️ 多一份名单就多一个"两边对不上"的机会，
+ * 而他担心的"有缩略图没大图"正是那种对不上造成的。
+ *
+ * ── 谁生成 ──────────────────────────────────────────────────────────
+ * **谁的页面先碰到没有缩略图的照片，谁就顺手压好传回来**（浏览器 canvas 缩，
+ * 见 `scan-inbox-bar.tsx`）。这样不需要给服务端引入 sharp/jimp 这类原生依赖
+ *（那会让镜像变重、CI 变慢），代价只是"第一次打开还是慢一次"。
+ */
+export const THUMB_DIR_NAME = ".thumbs";
+
+/** 缩略图的单张上限。320px 宽的 JPEG 正常只有几十 KB，1 MB 是给足余量 */
+export const MAX_THUMB_BYTES = 1024 * 1024;
+
+/** 缩略图文件名：原图名后面挂 `.thumb.jpg` */
+export function thumbNameOf(originalName: string): string {
+    return `${originalName}.thumb.jpg`;
+}
+
+/** 缩略图目录的**路径**（纯拼串，不建目录、不查磁盘） */
+function thumbsDirOf(subPath?: string | null): string {
+    return path.join(getInboxLocation(subPath ?? null).dir, THUMB_DIR_NAME);
+}
+
+/**
+ * 读一张缩略图。读不到返回 null（调用方退回原图，属于正常路径，不是错误）。
+ *
+ * 用的是**和读原图同一道闸**（`resolveSafeFilePath`：只认普通文件 + realpath 父目录相等），
+ * 只是把"目标目录"换成 `.thumbs`。所以 `.thumbs` 里就算被人塞了软链接也读不出去。
+ */
+export async function readInboxThumb(
+    name: string,
+    subPathOverride?: string | null,
+): Promise<{ data: Buffer; mime: string } | null> {
+    const full = await resolveSafeFilePath(thumbNameOf(name), thumbsDirOf(subPathOverride));
+    if (!full) return null;
+    try {
+        const data = await fs.readFile(full);
+        if (!data.length) return null;
+        return { data, mime: mimeOf(full) };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 准备（必要时创建）缩略图目录，并确认它的真实路径仍在挂载根之下。
+ *
+ * ⚠️ 为什么要**再校验一次**：`ensureWritableDir` 已经保证了收件箱目录本身在根之下，
+ * 但 `.thumbs` 这一层仍可能被做成软链接（指向 `/app/config` 之类）——
+ * 那就等于把文件写到不该写的地方。所以建完再 realpath 一次。
+ */
+async function ensureThumbDir(
+    subPath?: string | null,
+): Promise<{ ok: true; dir: string } | { ok: false; reason: string }> {
+    const ready = await ensureWritableDir(subPath ?? null);
+    if (!ready.ok) return ready; // 理由已经说清了（根不可用 / 建不出 / 越界）
+    const dir = path.join(ready.dir, THUMB_DIR_NAME);
+    try {
+        await fs.mkdir(dir, { recursive: true });
+    } catch (err) {
+        return { ok: false, reason: `建缩略图目录失败：${err instanceof Error ? err.message : String(err)}` };
+    }
+    try {
+        const realRoot = await fs.realpath(getInboxLocation(subPath ?? null).root);
+        const realDir = await fs.realpath(dir);
+        if (realDir !== realRoot && !realDir.startsWith(realRoot + path.sep)) {
+            return { ok: false, reason: "缩略图目录不在收件箱根目录内（疑似软链接），已拒绝写入" };
+        }
+        return { ok: true, dir: realDir };
+    } catch (err) {
+        return { ok: false, reason: `缩略图目录校验失败：${err instanceof Error ? err.message : String(err)}` };
+    }
+}
+
+/**
+ * 存一张缩略图。**这是本文件第二个"把调用方给的字节写进 NAS"的入口**，
+ * 所以六道闸一道都不能少（与 `saveInboxImage` 完全同规格）：
+ *
+ *   ① 调用方是登录用户 —— 由路由查会话（本函数管不着，见 `app/api/scan-inbox/thumb/route.ts`）；
+ *   ② **文件名不由调用方决定**：客户端只传"这是哪张原图的名字"，
+ *      服务端校验它**确实是收件箱里已存在的普通图片文件**，然后自己拼出
+ *      `<原图名>.thumb.jpg` 落到 `.thumbs/` 里 —— 拼串全程在服务端；
+ *   ③ 只看**文件头**（`sniffImageExt`），不信调用方声明的类型；
+ *   ④ 先看 `Content-Length` 再解析（路由里做），并有单张上限；
+ *   ⑤ 目标目录 realpath 必须在挂载根之下（`ensureThumbDir`）；
+ *   ⑥ tmp + rename 原子写，失败收残片。
+ */
+export async function saveInboxThumb(
+    data: Buffer,
+    /** 原图文件名（客户端只用来"指认原图"，不用它拼路径） */
+    originalName: string,
+    subPath?: string | null,
+): Promise<SaveImageResult> {
+    if (!data || data.length === 0) return { ok: false, error: "空文件" };
+    if (data.length > MAX_THUMB_BYTES) {
+        return { ok: false, error: `缩略图超过 ${Math.round(MAX_THUMB_BYTES / 1024)} KB，已拒绝` };
+    }
+    if (!sniffImageExt(data)) return { ok: false, error: "不是可识别的图片（只支持 JPG / PNG / WebP）" };
+
+    const loc = getInboxLocation(subPath ?? null);
+    /**
+     * 原图必须真实存在 —— 这一条同时办了四件事：
+     *   · 挡住"给一张根本不存在的照片传缩略图"（避免在 NAS 上攒无名垃圾）；
+     *   · 挡住往收件箱外写（`resolveSafeFilePath` 已经确认它在收件箱里且是普通文件）；
+     *   · 挡住软链接原图（那说明这名字不可信，不该基于它派生出任何文件）；
+     *   · 让下面的文件名只可能长成 `<某个真实照片名>.thumb.jpg`。
+     */
+    const originalReal = await resolveSafeFilePath(originalName, loc.dir);
+    if (!originalReal) return { ok: false, error: "原图不存在，或不是收件箱里的普通图片文件" };
+
+    const ready = await ensureThumbDir(subPath ?? null);
+    if (!ready.ok) return { ok: false, error: ready.reason };
+
+    const name = thumbNameOf(path.basename(originalReal));
+    const finalPath = path.join(ready.dir, name);
+    const tmpPath = path.join(ready.dir, `tmp-${randomBytes(6).toString("hex")}`);
+    try {
+        await fs.writeFile(tmpPath, data, { flag: "wx" });
+    } catch (err) {
+        return { ok: false, error: `写入失败：${err instanceof Error ? err.message : String(err)}` };
+    }
+    try {
+        await fs.rename(tmpPath, finalPath);
+    } catch (err) {
+        await fs.unlink(tmpPath).catch(() => undefined);
+        return { ok: false, error: `落盘失败：${err instanceof Error ? err.message : String(err)}` };
+    }
+    return { ok: true, name };
+}
+
+/**
+ * 清掉"没有原图的缩略图"（孤儿）。
+ *
+ * 两个用途：
+ *   ① 他在飞牛的文件管理里直接删了照片（绕过了软件）⇒ 缩略图会留在那儿没人管；
+ *   ② 上面 `deleteInboxFiles` 里那次 unlink 万一失败（文件被占用等）。
+ * 挂在列表的"自洁"那一段里跑（与台账瘦身同一时机），所以它**不需要被单独调用**。
+ *
+ * ⚠️ 只删**长得像缩略图的**（以 `.thumb.jpg` 结尾）且**原图已不在**的；
+ *    其它任何东西一律不碰 —— 这个目录里原则上只有缩略图，但"原则上"不是"假定"。
+ */
+async function pruneOrphanThumbs(subPath: string, alive: Set<string>): Promise<void> {
+    const dir = thumbsDirOf(subPath);
+    let entries: string[];
+    try {
+        entries = await fs.readdir(dir);
+    } catch {
+        return; // 目录还不存在（没人生成过）⇒ 无事可做
+    }
+    for (const entry of entries) {
+        if (!entry.endsWith(".thumb.jpg")) continue;
+        const original = entry.slice(0, -".thumb.jpg".length);
+        if (alive.has(original)) continue;
+        await fs.unlink(path.join(dir, entry)).catch(() => undefined);
+    }
 }
 
 /* ------------------------------------------------------------------ */

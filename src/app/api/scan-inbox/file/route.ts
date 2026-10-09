@@ -3,10 +3,10 @@ import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
 import { badRequest, notFound, unauthorized } from "@/lib/api-errors";
-import { readInboxFile } from "@/lib/scan-inbox";
+import { readInboxFile, readInboxThumb } from "@/lib/scan-inbox";
 
 /**
- * GET /api/scan-inbox/file?name=xxx.jpg&dir=scan2recover&v=1728451234567
+ * GET /api/scan-inbox/file?name=xxx.jpg&dir=scan2recover&v=1728451234567[&thumb=1]
  *
  * 【custom-v29】把收件箱里的一张照片原样吐给浏览器。
  * 前端拿到 blob 后包装成 File，直接走现成的「收图 → 待处理」流程，
@@ -33,8 +33,21 @@ export async function GET(req: Request) {
      *    它在不在，决定下面给不给长缓存 —— 这是本次改动的全部要害，见下。
      */
     const version = params.get("v");
+    /**
+     * 【2026-10-09】`thumb=1` ⇒ 取**缩略图**（`<收件箱>/.thumbs/<名字>.thumb.jpg`）。
+     *
+     * 为什么不另开一个路由：读文件这件事（只认普通文件 + realpath 父目录校验 +
+     * 缓存策略）两边**一模一样**，分成两个路由就等于把那套闸写两遍 —— 迟早走偏。
+     * 想取缩略图时，目标目录换成 `.thumbs` 而已（见 `readInboxThumb`）。
+     *
+     * ⚠️ 缩略图**不在**就直接 404，前端退回原图。这是正常路径（第一次打开必然没有），
+     *    不是错误 —— 所以不加任何日志噪音。
+     */
+    const wantThumb = params.get("thumb") === "1";
 
-    const found = await readInboxFile(name, dir);
+    const found = wantThumb
+        ? await readInboxThumb(name, dir)
+        : await readInboxFile(name, dir);
     if (!found) return notFound("File not found or not a supported image");
 
     /**

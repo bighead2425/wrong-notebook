@@ -784,3 +784,163 @@ describe('scan-inbox：写入（连拍转存）', () => {
         expect(fs.existsSync(path.join(inboxDir, res.name!))).toBe(true);
     });
 });
+
+/**
+ * 【2026-10-09】缩略图。
+ *
+ * 他要的效果："打开收件箱快一点" + "删了原图，缩略图跟着删"。
+ * 这里是这块逻辑的**纯后端**部分（客户端压图那半在浏览器里，测不了）：
+ * 存、读、跟着删、孤儿自洁、以及"`.thumbs` 被做成联接 ⇒ 拒写且一个字节都不落过去"。
+ */
+describe('scan-inbox：缩略图', () => {
+    const thumbsDirOf = () => path.join(inboxDir, '.thumbs');
+    const thumbPathOf = (name: string) => path.join(thumbsDirOf(), `${name}.thumb.jpg`);
+
+    it('thumbNameOf：名字能直接从原图名推出来（**不建对照表**）', async () => {
+        const { thumbNameOf } = await freshLib();
+        expect(thumbNameOf('IMG_0001.jpg')).toBe('IMG_0001.jpg.thumb.jpg');
+        expect(thumbNameOf('拼接_20261009_201530.jpg')).toBe('拼接_20261009_201530.jpg.thumb.jpg');
+    });
+
+    it('存一张：落在 <收件箱>/.thumbs 里，而且**不会被当成照片列出来**', async () => {
+        writeConfig({ subPath: 'scan2wrong' });
+        const lib = await freshLib();
+        fakeImage(inboxDir, 'a.jpg');
+
+        const res = await lib.saveInboxThumb(jpegBytes(2048), 'a.jpg');
+        expect(res.ok).toBe(true);
+        expect(res.name).toBe('a.jpg.thumb.jpg');
+        expect(fs.readFileSync(thumbPathOf('a.jpg')).length).toBe(2048);
+
+        const listing = await lib.listInboxFiles();
+        expect(listing.files.map((f) => f.name)).toEqual(['a.jpg']); // 目录天然列不进来
+        expect(listing.files[0].hasThumb).toBe(true);
+    });
+
+    it('没有缩略图 ⇒ hasThumb = false（前端据此决定"要不要顺手生成一张"）', async () => {
+        writeConfig({ subPath: 'scan2wrong' });
+        const lib = await freshLib();
+        fakeImage(inboxDir, 'a.jpg');
+
+        const listing = await lib.listInboxFiles();
+        expect(listing.files[0].hasThumb).toBe(false);
+    });
+
+    it('读缩略图：取得到；没有就 null（**不是错误**，前端退回原图）', async () => {
+        writeConfig({ subPath: 'scan2wrong' });
+        const lib = await freshLib();
+        fakeImage(inboxDir, 'a.jpg');
+
+        expect(await lib.readInboxThumb('a.jpg')).toBeNull();
+
+        await lib.saveInboxThumb(jpegBytes(1024), 'a.jpg');
+        const got = await lib.readInboxThumb('a.jpg');
+        expect(got?.mime).toBe('image/jpeg');
+        expect(got?.data.length).toBe(1024);
+    });
+
+    it('★ 原图不存在 ⇒ 拒绝（不在 NAS 上攒没名没姓的垃圾）', async () => {
+        writeConfig({ subPath: 'scan2wrong' });
+        const lib = await freshLib();
+
+        const res = await lib.saveInboxThumb(jpegBytes(1024), 'nobody.jpg');
+        expect(res.ok).toBe(false);
+        expect(res.error).toContain('原图不存在');
+        expect(fs.existsSync(thumbsDirOf())).toBe(false); // 连目录都不该建
+    });
+
+    it('不是图片的字节 ⇒ 拒绝（只看文件头，不信调用方声明）', async () => {
+        writeConfig({ subPath: 'scan2wrong' });
+        const lib = await freshLib();
+        fakeImage(inboxDir, 'a.jpg');
+
+        const res = await lib.saveInboxThumb(Buffer.from('<script>alert(1)</script>'), 'a.jpg');
+        expect(res.ok).toBe(false);
+        expect(fs.existsSync(thumbPathOf('a.jpg'))).toBe(false);
+    });
+
+    it('超过单张上限 ⇒ 拒绝', async () => {
+        writeConfig({ subPath: 'scan2wrong' });
+        const lib = await freshLib();
+        fakeImage(inboxDir, 'a.jpg');
+        const { MAX_THUMB_BYTES } = lib;
+
+        const res = await lib.saveInboxThumb(jpegBytes(MAX_THUMB_BYTES + 1024), 'a.jpg');
+        expect(res.ok).toBe(false);
+        expect(res.error).toContain('KB');
+    });
+
+    it('★ 删原图 ⇒ 它的缩略图跟着删（他明确要求的，不能留孤儿）', async () => {
+        writeConfig({ subPath: 'scan2wrong' });
+        const lib = await freshLib();
+        fakeImage(inboxDir, 'a.jpg');
+        fakeImage(inboxDir, 'b.jpg');
+        await lib.saveInboxThumb(jpegBytes(1024), 'a.jpg');
+        await lib.saveInboxThumb(jpegBytes(1024), 'b.jpg');
+        expect(fs.existsSync(thumbPathOf('a.jpg'))).toBe(true);
+
+        const del = await lib.deleteInboxFiles(['a.jpg']);
+        expect(del.deleted).toEqual(['a.jpg']);
+        expect(fs.existsSync(path.join(inboxDir, 'a.jpg'))).toBe(false);
+        expect(fs.existsSync(thumbPathOf('a.jpg'))).toBe(false);   // ← 重点
+        expect(fs.existsSync(thumbPathOf('b.jpg'))).toBe(true);    // 别的照片不受影响
+    });
+
+    it('原图在**软件外面**被删掉（飞牛里手删）⇒ 下次列目录时孤儿缩略图被清掉', async () => {
+        writeConfig({ subPath: 'scan2wrong' });
+        const lib = await freshLib();
+        fakeImage(inboxDir, 'a.jpg');
+        fakeImage(inboxDir, 'b.jpg');
+        await lib.saveInboxThumb(jpegBytes(1024), 'a.jpg');
+        await lib.saveInboxThumb(jpegBytes(1024), 'b.jpg');
+
+        fs.unlinkSync(path.join(inboxDir, 'a.jpg')); // 绕过软件直接删
+        await lib.listInboxFiles();
+
+        expect(fs.existsSync(thumbPathOf('a.jpg'))).toBe(false);
+        expect(fs.existsSync(thumbPathOf('b.jpg'))).toBe(true);
+    });
+
+    it('列目录时不会碰 .thumbs 里的**非缩略图**文件（原则上是空的，但不能假定）', async () => {
+        writeConfig({ subPath: 'scan2wrong' });
+        const lib = await freshLib();
+        fakeImage(inboxDir, 'a.jpg');
+        fs.mkdirSync(thumbsDirOf(), { recursive: true });
+        const keep = path.join(thumbsDirOf(), 'README.txt');
+        fs.writeFileSync(keep, '人工放的说明');
+
+        await lib.listInboxFiles();
+        expect(fs.existsSync(keep)).toBe(true);
+    });
+
+    /** 造链接的能力探测（与上面"链接防护"那段同一手法：Windows 用 junction 免权限） */
+    const canDirLink = (() => {
+        const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'thumb-link-probe-'));
+        try {
+            fs.mkdirSync(path.join(probe, 't'));
+            fs.symlinkSync(path.join(probe, 't'), path.join(probe, 'l'), 'junction');
+            return true;
+        } catch {
+            return false;
+        } finally {
+            fs.rmSync(probe, { recursive: true, force: true });
+        }
+    })();
+
+    it.skipIf(!canDirLink)('★ .thumbs 被做成联接指向根之外 ⇒ 拒绝写入，且**目标目录一个字节都没多**', async () => {
+        const outside = path.join(tmpRoot, 'outside-target');
+        fs.mkdirSync(outside, { recursive: true });
+        writeConfig({ subPath: 'scan2wrong' });
+        fakeImage(inboxDir, 'a.jpg');
+        // 关键：一个**外部的** .thumbs（真实攻击面：谁都能在共享目录里放这么个链接）
+        fs.symlinkSync(outside, thumbsDirOf(), 'junction');
+
+        const lib = await freshLib();
+        const res = await lib.saveInboxThumb(jpegBytes(1024), 'a.jpg');
+
+        expect(res.ok).toBe(false);
+        expect(res.error).toContain('软链接');
+        // 只断言返回值是不够的 —— 必须断言"真的没写过去"
+        expect(fs.readdirSync(outside)).toEqual([]);
+    });
+});

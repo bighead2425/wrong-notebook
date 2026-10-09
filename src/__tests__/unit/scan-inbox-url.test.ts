@@ -54,6 +54,12 @@ describe('inboxFileUrl · 收件箱取图地址只在这里拼', () => {
         }
     });
 
+    it('thumb=1 ⇒ 取缩略图（小格子用）；不带 ⇒ 原图（导入/看大图必须用原图）', () => {
+        expect(parse(inboxFileUrl('a.jpg', { thumb: true })).get('thumb')).toBe('1');
+        expect(parse(inboxFileUrl('a.jpg')).has('thumb')).toBe(false);
+        expect(parse(inboxFileUrl('a.jpg', { thumb: false })).has('thumb')).toBe(false);
+    });
+
     it('文件名里的路径分隔符不会被"洗掉" —— 原样交给服务端去拒（防目录穿越要有一处硬闸）', () => {
         // 这里只保证**编码正确**（不要把 ../ 变成别的东西让服务端看不出来）
         const qs = parse(inboxFileUrl('../config/app-config.json'));

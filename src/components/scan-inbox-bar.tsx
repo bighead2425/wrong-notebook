@@ -53,6 +53,11 @@ interface InboxFile {
     imported: boolean;
     /** 【custom-v33】逆时针累计角度（0/90/180/270）—— 缩略图也照它转，两边显示一致 */
     rotation: number;
+    /**
+     * 【2026-10-09】NAS 上有没有这张照片的**缩略图**。
+     * 有 ⇒ 小格子直接取它（几十 KB）；没有 ⇒ 先取原图，然后**顺手生成一张传回去**。
+     */
+    hasThumb?: boolean;
 }
 
 interface InboxListing {
@@ -180,6 +185,23 @@ export function ScanInboxBar({
     const [working, setWorking] = useState(false);
     /** 逐张下载的进度（几十张串行下载要等一会儿，光转圈会让人以为卡死） */
     const [pulling, setPulling] = useState<{ i: number; n: number } | null>(null);
+
+    /* ===== 【2026-10-09】缩略图：小格子用小图，没有就顺手生成一张传回去 ===== */
+
+    /**
+     * ⚠️⚠️ 这三个 state / ref **必须留在这个位置**（组件顶部、任何早退之前）！
+     *
+     * 本组件中间有几个早退（`if (!listing) return null`、`if (!listing.available) return (...)`），
+     * 一旦把 hook 放到早退之后，就会出现"某次渲染比上一次多跑/少跑几个 hook"——
+     * React 直接抛错崩掉。而这两个状态恰恰**只在正常态用得到**，最容易被顺手写在与它相邻的位置，
+     * 那就是这个坑（本例就是 eslint 的 `react-hooks/rules-of-hooks` 抓出来的，tsc 看不出来）。
+     */
+    /** 这次会话里刚生成成功的（用它切到缩略图地址，不用等下次重读列表） */
+    const [thumbsMade, setThumbsMade] = useState<Set<string>>(new Set());
+    /** 请求缩略图失败的（服务端说"有"、实际取不到时兜底回原图，避免显示破图） */
+    const [thumbBroken, setThumbBroken] = useState<Set<string>>(new Set());
+    /** 正在生成中的（同一个文件别重复压、重复传） */
+    const thumbBusyRef = useRef<Set<string>>(new Set());
 
     /* ===== 【custom-v33】从本机传入收件箱 ===== */
     const uploadInputRef = useRef<HTMLInputElement>(null);
@@ -338,9 +360,12 @@ export function ScanInboxBar({
      *    服务端对"带了版本号"的请求才允许长缓存（见 file 路由的注释）。
      *    不带的话会退回 `no-store` —— 每张缩略图都重下整张原图，
      *    那就是"打开收件箱很慢"的老毛病。
+     *
+     * 【2026-10-09】`thumb` = 取缩略图。⚠️ 导入到待处理那一处**必须用原图**（`false` 是默认），
+     * 否则会把几十 KB 的缩略图当成题图交给后面的裁剪/AI —— 那等于把画质砍掉了。
      */
-    const fileUrl = (name: string, version?: number | null) =>
-        inboxFileUrl(name, { dir: subPath, version });
+    const fileUrl = (name: string, version?: number | null, thumb = false) =>
+        inboxFileUrl(name, { dir: subPath, version, thumb });
 
     /**
      * 把收件箱里的这几张**拉下来**（逐张串行，带"正在拉取 i/n"的进度）。
@@ -486,6 +511,64 @@ export function ScanInboxBar({
         } finally {
             setWorking(false);
             setOpen(true);
+        }
+    };
+
+    /* ===== 【2026-10-09】缩略图：小格子用小图，没有就顺手生成一张传回去 ===== */
+
+    /**
+     * 缩略图宽度上限。320px 在手机的小格子里已经足够看清"是哪张照片"，
+     * JPEG 质量 0.72 时通常只有 15~40 KB（原图是 3~5 MB）。
+     * （相关的 state / ref 在组件顶部 —— 这里在早退之后，**不能**放 hook，见那边的注释。）
+     */
+    const THUMB_MAX_WIDTH = 320;
+
+    /**
+     * 把这张照片压成小图传给 NAS（**客户端生成**）。
+     *
+     * 为什么在这边压：服务端没有图像库（不引入 sharp/jimp 就不会让镜像变重、CI 变慢），
+     * 而浏览器手里正好有这张图的像素 —— 顺手缩一下最省事。
+     * 代价是"第一次打开还是慢一次"，但**只慢一次、只慢一台机器**：
+     * 传上去之后，手机、另一台电脑再打开就都走小图了。
+     *
+     * ⚠️ 这是**锦上添花**：任何一步失败都静默放弃，绝不弹错误打扰他 ——
+     *    缩略图没成，功能一点不缺（照样用原图）。
+     */
+    const uploadThumb = async (name: string, img: HTMLImageElement) => {
+        if (thumbBusyRef.current.has(name)) return;
+        thumbBusyRef.current.add(name);
+        try {
+            const nw = img.naturalWidth || 0;
+            const nh = img.naturalHeight || 0;
+            if (nw < 1 || nh < 1) return;
+            // 只缩不放：本来就比 320 窄的图，别给它放大（放大只是白占空间）
+            const scale = Math.min(1, THUMB_MAX_WIDTH / nw);
+            const w = Math.max(1, Math.round(nw * scale));
+            const h = Math.max(1, Math.round(nh * scale));
+            const canvas = document.createElement("canvas");
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) return;
+            ctx.drawImage(img, 0, 0, w, h);
+            const blob = await new Promise<Blob | null>((res) =>
+                canvas.toBlob((b) => res(b), "image/jpeg", 0.72),
+            );
+            if (!blob) return;
+            const fd = new FormData();
+            fd.append("file", blob, `${name}.thumb.jpg`);
+            // 服务端只认这个名字用来"指认原图"，真正的落盘文件名由它自己拼（见 saveInboxThumb）
+            fd.append("name", name);
+            const res = await fetch(
+                dirQ ? `/api/scan-inbox/thumb?${dirQ}` : "/api/scan-inbox/thumb",
+                { method: "POST", body: fd },
+            );
+            const data = res.ok ? await res.json().catch(() => null) : null;
+            if (data?.ok) setThumbsMade((prev) => new Set(prev).add(name));
+        } catch {
+            /* 静默：这只是提速，失败不影响任何功能 */
+        } finally {
+            thumbBusyRef.current.delete(name);
         }
     };
 
@@ -741,6 +824,14 @@ export function ScanInboxBar({
                                 const checked = selected.has(f.name);
                                 /** 转过 90°/270° 的图，长宽是对调的 —— 缩略图约束得跟着换 */
                                 const turned = f.rotation % 180 !== 0;
+                                /**
+                                 * 【2026-10-09】这一格用小图还是原图：
+                                 *   · 服务端说有（`hasThumb`）或这次会话里刚生成成功 ⇒ 用小图；
+                                 *   · 小图取失败过（`thumbBroken`）⇒ 退回原图（别留破图）；
+                                 *   · 都没有 ⇒ 用原图，并在它加载完后**顺手生成一张传回去**。
+                                 */
+                                const useThumb =
+                                    (!!f.hasThumb || thumbsMade.has(f.name)) && !thumbBroken.has(f.name);
                                 return (
                                     <div key={f.name} className="space-y-1">
                                         <div
@@ -756,10 +847,35 @@ export function ScanInboxBar({
                                             >
                                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                                 <img
-                                                    src={fileUrl(f.name, f.mtimeMs)}
+                                                    src={fileUrl(f.name, f.mtimeMs, useThumb)}
                                                     alt={f.name}
                                                     loading="lazy"
                                                     draggable={false}
+                                                    onLoad={(e) => {
+                                                        /**
+                                                         * 原图加载完了 ⇒ 顺手压一张缩略图传回去（客户端生成）。
+                                                         * ⚠️ 先把元素存下来再交给异步函数：事件对象在处理器返回后就失效了。
+                                                         * ⚠️ 只对"本来就没有缩略图"的做，且 `uploadThumb` 内部有"同一张不重复"的闸。
+                                                         */
+                                                        if (useThumb) return;
+                                                        const el = e.currentTarget;
+                                                        void uploadThumb(f.name, el);
+                                                    }}
+                                                    onError={() => {
+                                                        /**
+                                                         * 小图取不到（服务端说"有"但其实读不出来，或被删了）⇒
+                                                         * 退回原图。**必须兜这一步**，否则页面上就是一个破图图标。
+                                                         */
+                                                        if (useThumb) {
+                                                            setThumbBroken((prev) => new Set(prev).add(f.name));
+                                                            // 退回原图之后，也顺手补一张新的上去
+                                                            return;
+                                                        }
+                                                        /**
+                                                         * 连**原图**都取不到 ⇒ 大概率是 NAS 上被删了（或在别处改了名）。
+                                                         * 不弹错（他可能正看着旧列表），下次刷新列表自会消失。
+                                                         */
+                                                    }}
                                                     style={{
                                                         transform: `rotate(${f.rotation}deg)`,
                                                         // 容器固定 3:4（宽:高）。转 90° 后要让"宽"受容器**高**约束、

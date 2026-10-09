@@ -67,6 +67,8 @@ interface InboxListItem {
     name: string;
     imported: boolean;
     mtimeMs: number;
+    /** 【2026-10-09】NAS 上有没有缩略图（有就取小图，几十 KB vs 几 MB） */
+    hasThumb?: boolean;
 }
 
 export interface StitchComposerProps {
@@ -906,7 +908,17 @@ export function StitchComposer({
                                     >
                                         {/* eslint-disable-next-line @next/next/no-img-element */}
                                         <img
-                                            src={inboxFileUrl(f.name, { dir: inboxSubPath, version: f.mtimeMs })}
+                                            /**
+                                             * 【2026-10-09】有缩略图就取缩略图（小格子 h-24，看小图足够）。
+                                             * ⚠️ 这里**不生成**缩略图 —— 生成只在收件箱面板那一处做
+                                             *    （同一个目录，那边跑过这边就有了），免得两处各写一套。
+                                             *    没有就照旧取原图。
+                                             */
+                                            src={inboxFileUrl(f.name, {
+                                                dir: inboxSubPath,
+                                                version: f.mtimeMs,
+                                                thumb: !!f.hasThumb,
+                                            })}
                                             alt={f.name}
                                             className="h-24 w-full bg-muted object-cover"
                                         />
