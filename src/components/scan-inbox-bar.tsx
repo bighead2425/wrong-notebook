@@ -38,7 +38,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, ApiError } from "@/lib/api-client";
 import { reconcileSelection } from "@/lib/inbox-selection";
 import { inboxFileUrl } from "@/lib/scan-inbox-url";
 import { stampYmd } from "@/lib/volume-code";
@@ -66,8 +66,11 @@ interface InboxListing {
      * 这里只声明界面用得到的：
      *   · `status` —— 分辨"不存在"(`no-subdir`) 与"读不到、多半是权限"(`error`)；
      *   · `subPath` —— 提示里说清是哪个文件夹。
+     *
+     * 【2026-10-09 新增 `unreachable`】**请求本身没成功**（未登录 / 超时 / 断网 / 服务端 500），
+     * 与"文件夹不存在"是**两件完全不同的事**，用户要做的事也完全不同（见下面的渲染分支）。
      */
-    status?: "ok" | "no-root" | "no-subdir" | "invalid" | "error";
+    status?: "ok" | "no-root" | "no-subdir" | "invalid" | "error" | "unreachable";
     subPath?: string;
 }
 
@@ -112,6 +115,30 @@ interface ScanInboxBarProps {
 function humanSize(n: number): string {
     if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
     return `${Math.round(n / 1024)} KB`;
+}
+
+/**
+ * 【2026-10-09】把"这一次请求没成功"翻译成**一句人话**。
+ *
+ * 为什么必须做：`load()` 原来在请求失败时兜成 `{ available:false }` 且
+ * **不带 subPath、不带 reason** ⇒ 界面上就成了「转存文件夹（）/ 读不到这个文件夹：」，
+ * 一个字的线索都没有。他第一反应必然是"文件夹没建"——**跑去 NAS 上白建目录**。
+ * 真实原因通常是登录过期、等太久、或服务端一时没答上来，与文件夹无关。
+ *
+ * 带上 HTTP 状态码，是为了让他反馈时能直接念给我（"HTTP 401"比"打不开"有用一百倍）。
+ */
+function describeFetchFailure(err: unknown): string {
+    if (err instanceof ApiError) {
+        if (err.status === 401) return "HTTP 401 · 登录状态可能已过期，刷新页面重新登录一次试试";
+        if (err.status === 408) return "HTTP 408 · 等了 60 秒没答上来，NAS 可能正忙，稍后再试";
+        const data = err.data as { error?: unknown; message?: unknown } | null;
+        const detail = typeof data?.error === "string"
+            ? data.error
+            : (typeof data?.message === "string" ? data.message : "");
+        return `HTTP ${err.status}${detail ? ` · ${detail}` : ""}`;
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    return msg ? `连不上服务（${msg}）` : "连不上服务";
 }
 
 /**
@@ -214,9 +241,26 @@ export function ScanInboxBar({
             const prevKnown = knownNamesRef.current;
             knownNamesRef.current = new Set(data.files.map(f => f.name));
             setSelected(prev => reconcileSelection(prev, prevKnown, data.files));
-        } catch {
-            // 探测失败就当没挂在这个目录 —— 不要弹错误打扰用户
-            setListing({ available: false, path: "", files: [], ignored: 0 });
+        } catch (err) {
+            /**
+             * 【2026-10-09 修】请求**本身**没成功 ⇒ 说清是哪一种，别留两个窟窿。
+             *
+             * 原来这里无条件兜成 `{ available:false, path:"", files:[], ignored:0 }`
+             * ——**不带 subPath、不带 reason** ⇒ 界面上就成了
+             * 「转存文件夹（）/ 读不到这个文件夹：」，一个字的线索都没有。
+             * 他今天真撞上了，第一反应必然是"文件夹没建"，差点去 NAS 上白建目录；
+             * 而实情是登录过期 / 等太久 / 服务端一时没答上来这类**与文件夹无关**的事。
+             *
+             * 现在标成 `unreachable`：界面上分开说（见下面的渲染分支），并把 HTTP 状态码带出来。
+             */
+            setListing({
+                available: false,
+                path: "",
+                files: [],
+                ignored: 0,
+                status: "unreachable",
+                reason: describeFetchFailure(err),
+            });
         } finally {
             setLoading(false);
         }
@@ -249,19 +293,34 @@ export function ScanInboxBar({
          */
         const si = t.settings?.general?.scanInbox;
         const sub = listing.subPath || "";
+        /**
+         * 【2026-10-09】三类失败**分开说** —— 它们要用户做的事完全不同：
+         *   · `unreachable`（请求没成功：登录过期 / 超时 / 断网）⇒ 刷新页面、重新登录，
+         *     **不用去 NAS 建目录**。这也是今天让他白担心一场的那种；
+         *   · `no-subdir`（子目录不存在）⇒ 去 NAS 上把那个文件夹建出来（记得 chmod 707）；
+         *   · `error`（读到了但读不动：多半是权限）⇒ 把后端给的真实原因原样摆出来。
+         * ⚠️ 名字拿不到时**不要显示空括号** —— 「转存文件夹（）」看着就像程序坏了。
+         */
+        const unreachable = listing.status === "unreachable";
         return (
             <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
                 <p className="font-medium">
-                    {(si?.title || "转存文件夹")}（{sub}）
+                    {sub ? `${si?.title || "转存文件夹"}（${sub}）` : (si?.title || "转存文件夹")}
                 </p>
                 <p className="break-all">
-                    {listing.status === "no-subdir"
-                        ? (si?.noSubdir?.replace("{sub}", sub) || `子文件夹「${sub}」还不存在。`)
-                        : (si?.readError?.replace("{reason}", listing.reason || "") ||
-                          `读不到这个文件夹：${listing.reason || "原因未知"}`)}
+                    {unreachable
+                        ? (si?.loadError?.replace("{reason}", listing.reason || "") ||
+                          `收件箱没能读出来：${listing.reason || "原因未知"}`)
+                        : listing.status === "no-subdir"
+                            ? (si?.noSubdir?.replace("{sub}", sub) || `子文件夹「${sub}」还不存在。`)
+                            : (si?.readError?.replace("{reason}", listing.reason || "") ||
+                              `读不到这个文件夹：${listing.reason || "原因未知"}`)}
                 </p>
                 <p className="text-amber-700/80 dark:text-amber-300/80">
-                    {si?.hint || "文件夹本身要先在 NAS 上建好。"}
+                    {unreachable
+                        ? (si?.loadErrorHint ||
+                          "多半是登录过期或网络一时不通 —— 刷新页面重试一次；不用去 NAS 上建文件夹。")
+                        : (si?.hint || "文件夹本身要先在 NAS 上建好。")}
                 </p>
             </div>
         );
