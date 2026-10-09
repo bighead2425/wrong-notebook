@@ -90,6 +90,46 @@ interface InsightDetail extends InsightRow {
 }
 
 /**
+ * 【2026-10-09】列表接口的返回：多了 `nextCursor`。
+ * 非 null ⇒ 还有更早的条目，拿它再要一页（滚到底自动加载，也可以点按钮）。
+ */
+interface InsightListResponse {
+    insights: InsightRow[];
+    questions: Record<string, ErrorItem>;
+    nextCursor?: string | null;
+}
+
+/**
+ * 【2026-10-09】一次要多少条。
+ *
+ * 50 是"一屏多一点"的量。⚠️ 它是**单次**的批量，不是总量上限 ——
+ * 往下翻多少页都行。这条接口原来**一次把全部条目拉回来**（还带着正文），
+ * 条目越攒越多、打开就越慢；改成"一次一页"之后，**总量再多也不影响单次耗时**。
+ */
+const INSIGHT_PAGE_SIZE = 50;
+
+/**
+ * 拼列表查询串（**筛选一律在服务端**）。
+ *
+ * ⚠️ 抽成模块级函数而不是写在组件里：这样它没有闭包、不会随渲染换身份，
+ *    用在哪个 `useCallback` 的依赖数组里都不会引起多余的重新请求。
+ */
+function insightListQuery(p: {
+    grade: string;
+    subjects: string[];
+    q: string;
+    cursor: string | null;
+}): string {
+    const qs = new URLSearchParams();
+    qs.set('limit', String(INSIGHT_PAGE_SIZE));
+    if (p.grade) qs.set('grade', p.grade);
+    if (p.subjects.length) qs.set('subjects', p.subjects.join(','));
+    if (p.q.trim()) qs.set('q', p.q.trim());
+    if (p.cursor) qs.set('cursor', p.cursor);
+    return qs.toString();
+}
+
+/**
  * 【2026-10-03 他要求】新建条目时**默认沿用上一次用的年级/学期**。
  * 原话："新建一条积累条目，年级/学期默认选为上次新建时的年级学期，这样就减少一次输入了。"
  *
@@ -123,6 +163,13 @@ export default function InsightsPage() {
     const [rows, setRows] = useState<InsightRow[]>([]);
     const [questions, setQuestions] = useState<Record<string, ErrorItem>>({});
     const [loading, setLoading] = useState(true);
+    /** 【2026-10-09】还有更早的条目没拿（null = 已经到底了） */
+    const [nextCursor, setNextCursor] = useState<string | null>(null);
+    /** 【2026-10-09】正在要下一页（防止滚到底时连发请求） */
+    const [loadingMore, setLoadingMore] = useState(false);
+    /** 列表滚动容器 + 底部哨兵（滚到哨兵露头就自动要下一页） */
+    const listScrollRef = useRef<HTMLDivElement | null>(null);
+    const listSentinelRef = useRef<HTMLDivElement | null>(null);
 
     // 筛选（他 2026-10-01 定的：年级学期 + 学科多选 + 检索；日期只排先后不筛）
     const [grade, setGrade] = useState('');
@@ -185,7 +232,26 @@ export default function InsightsPage() {
     const [query, setQuery] = useState('');
 
     const [currentId, setCurrentId] = useState<string | null>(null);
-    const current = useMemo(() => rows.find((r) => r.id === currentId) ?? null, [rows, currentId]);
+    /**
+     * 【2026-10-09】把"选中的那条"本身也记一份。
+     *
+     * 列表改成"一次只加载一页"之后（见 `INSIGHT_PAGE_SIZE`），`rows` 里**可能没有**
+     * 你正看着的那条：滚动加载过老条目、然后又改了筛选，新的一页只含最新的 50 条。
+     * 只按 `rows.find` 算的话，右边编辑区会**突然变空**，而且
+     * "有改动没保存"那个提醒也会失灵（没有 current ⇒ 判不出脏）——
+     * 用户会以为这条丢了、甚至白白丢掉没保存的改动。
+     * 所以留一份兜底：列表里找不到时，用记住的这份（保存后会同步刷新它，脏判断不会跑偏）。
+     */
+    const [selectedRow, setSelectedRow] = useState<InsightRow | null>(null);
+    /** 选中那条的最新引用（给 `fetchList` 用：列表刷新时别把深链跳过来的那条冲掉） */
+    const selectedRowRef = useRef<InsightRow | null>(null);
+    selectedRowRef.current = selectedRow;
+    const current = useMemo(
+        () =>
+            rows.find((r) => r.id === currentId) ??
+            (selectedRow && selectedRow.id === currentId ? selectedRow : null),
+        [rows, currentId, selectedRow],
+    );
 
     // 编辑区状态
     const [gradeDraft, setGradeDraft] = useState('');
@@ -236,15 +302,28 @@ export default function InsightsPage() {
         async () => {
             setLoading(true);
             try {
-                const qs = new URLSearchParams();
-                if (grade) qs.set('grade', grade);
-                if (subjectSet.size > 0) qs.set('subjects', [...subjectSet].join(','));
-                if (query.trim()) qs.set('q', query.trim());
-                const res = await apiClient.get<{ insights: InsightRow[]; questions: Record<string, ErrorItem> }>(
-                    `/api/insights${qs.toString() ? `?${qs.toString()}` : ''}`,
+                const res = await apiClient.get<InsightListResponse>(
+                    `/api/insights?${insightListQuery({
+                        grade,
+                        subjects: [...subjectSet],
+                        q: query,
+                        cursor: null,
+                    })}`,
                 );
-                setRows(res.insights || []);
+                setRows(() => {
+                    const list = res.insights || [];
+                    /**
+                     * 【2026-10-09】深链跳过来的那条（`?pick=JL…`）可能**不在这一页里**。
+                     * 列表整体替换时会把它冲掉 ⇒ "跳过来却看不见那一条"。
+                     * 所以：不在就把它留在最前面。
+                     * ⚠️ 用 ref 读它（不进依赖数组）：否则一选中就会触发一次重新拉取，来回抖。
+                     */
+                    const keep = selectedRowRef.current;
+                    if (keep && !list.some((r) => r.id === keep.id)) return [keep, ...list];
+                    return list;
+                });
                 setQuestions(res.questions || {});
+                setNextCursor(res.nextCursor ?? null);
                 return res.insights || [];
             } catch (error) {
                 console.error(error);
@@ -259,6 +338,59 @@ export default function InsightsPage() {
     useEffect(() => {
         fetchList();
     }, [fetchList]);
+
+    /**
+     * 【2026-10-09】滚到底／点按钮 ⇒ 再要一页，**追加**在后面（不替换）。
+     *
+     * ⚠️ 追加前按 id 去重：翻页期间你自己可能刚新建了一条（它排在最新，
+     *    会把上一页的最后一条挤到下一页 ⇒ 发回来两次）。
+     */
+    const loadMoreInsights = useCallback(async () => {
+        if (!nextCursor || loadingMore) return;
+        setLoadingMore(true);
+        try {
+            const res = await apiClient.get<InsightListResponse>(
+                `/api/insights?${insightListQuery({
+                    grade,
+                    subjects: [...subjectSet],
+                    q: query,
+                    cursor: nextCursor,
+                })}`,
+            );
+            setRows((prev) => {
+                const seen = new Set(prev.map((r) => r.id));
+                return [...prev, ...(res.insights || []).filter((r) => !seen.has(r.id))];
+            });
+            setQuestions((prev) => ({ ...prev, ...(res.questions || {}) }));
+            setNextCursor(res.nextCursor ?? null);
+        } catch (error) {
+            console.error(error);
+        } finally {
+            setLoadingMore(false);
+        }
+    }, [nextCursor, loadingMore, grade, subjectSet, query]);
+
+    /**
+     * 【2026-10-09】滚到底自动加载下一页（他说的"上拉显示更多"）。
+     *
+     * ⚠️ `root` 必须是**列表自己的滚动容器**（`max-h-[62vh] overflow-y-auto` 那个框），
+     *    用默认视口当 root 的话这个框永远"在视口里"，哨兵会被认为一直可见 ⇒ 一进页面全拉下来。
+     * ⚠️ 不支持 `IntersectionObserver` 的老浏览器也不会出事：下面的按钮一直都在。
+     */
+    useEffect(() => {
+        const root = listScrollRef.current;
+        const target = listSentinelRef.current;
+        if (!root || !target || !nextCursor) return;
+        if (typeof IntersectionObserver === 'undefined') return;
+        const io = new IntersectionObserver(
+            (entries) => {
+                if (entries.some((e) => e.isIntersecting)) void loadMoreInsights();
+            },
+            { root, rootMargin: '120px' },
+        );
+        io.observe(target);
+        return () => io.disconnect();
+    }, [nextCursor, loadMoreInsights]);
 
     /** 选中某条 ⇒ 单独取详情（**图片在这里才取**，列表不背） */
     useEffect(() => {
@@ -296,6 +428,7 @@ export default function InsightsPage() {
             setRows((prev) => [created, ...prev]);
             // 右栏也切到继承值：否则界面上显示空、库里却有值，他一看就以为没生效
             setGradeDraft(inheritGrade);
+            setSelectedRow(created);
             setCurrentId(created.id);
         } catch (error) {
             console.error(error);
@@ -324,13 +457,38 @@ export default function InsightsPage() {
      */
     const pickedRef = useRef(false);
     useEffect(() => {
-        if (pickedRef.current || rows.length === 0) return;
-        pickedRef.current = true;
+        if (pickedRef.current) return;
         const pick = new URLSearchParams(window.location.search).get('pick');
-        if (!pick) return;
-        const hit = rows.find((r) => r.code === pick || r.id === pick);
-        if (hit) setCurrentId(hit.id);
-    }, [rows]);
+        if (!pick) {
+            pickedRef.current = true;
+            return;
+        }
+        pickedRef.current = true;
+        /**
+         * 【2026-10-09 改法】**直接按编号把这一条取回来**，不再"在当前列表里找"。
+         *
+         * 原来是从 `rows` 里 `find(code === pick)` —— 那时列表是"一次全拿"，总能找到。
+         * 现在一次只加载 50 条，而跳过来的这条**多半是老条目**（从错题详情页点"看全文"
+         * 或从回录流程点"去查看"）⇒ 继续在列表里找会**静默失效**：
+         * 页面打开了、却什么都没选中，用户以为链接坏了。
+         * 取回来之后**插到列表最前面**，这样"跳过来看的那条"就在眼前，不用再翻。
+         */
+        void (async () => {
+            try {
+                const res = await apiClient.get<InsightListResponse>(
+                    `/api/insights?limit=1&codes=${encodeURIComponent(pick.toUpperCase())}`,
+                );
+                const hit = (res.insights || [])[0] ?? null;
+                if (!hit) return;
+                setRows((prev) => (prev.some((r) => r.id === hit.id) ? prev : [hit, ...prev]));
+                setSelectedRow(hit);
+                setCurrentId(hit.id);
+            } catch (e) {
+                console.error(e);
+            }
+        })();
+        // 只在挂载时跑一次：这段读的是 URL，不随列表/筛选变化
+    }, []);
 
     const save = async () => {
         if (!current) return;
@@ -343,6 +501,8 @@ export default function InsightsPage() {
                 photo,
             });
             setRows((prev) => prev.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
+            // 兜底那份也要刷新 —— 它不在列表里时，脏判断靠的就是它（见 selectedRow 的说明）
+            setSelectedRow((prev) => (prev && prev.id === updated.id ? { ...prev, ...updated } : prev));
             setLoadedPhoto(photo);
             // 记住这次用的年级/学期，供下一次"新建"默认（他要求的"减少一次输入"）
             rememberGrade(gradeDraft);
@@ -614,7 +774,10 @@ export default function InsightsPage() {
                             </div>
                         )}
 
-                        <div className="max-h-[62vh] space-y-1.5 overflow-y-auto rounded-md border p-2">
+                        <div
+                            ref={listScrollRef}
+                            className="max-h-[62vh] space-y-1.5 overflow-y-auto rounded-md border p-2"
+                        >
                             {loading && (
                                 <p className="px-2 py-6 text-center text-sm text-muted-foreground">
                                     {t.common?.loading || 'Loading…'}
@@ -673,6 +836,28 @@ export default function InsightsPage() {
                                     </div>
                                 );
                             })}
+
+                            {/* 【2026-10-09】上拉加载更多：滚到这附近自动要下一页；
+                                不支持自动触发的浏览器（或就是想手动点）用这个按钮一样行。 */}
+                            {nextCursor && (
+                                <div ref={listSentinelRef} className="pt-1">
+                                    <button
+                                        type="button"
+                                        onClick={() => void loadMoreInsights()}
+                                        disabled={loadingMore}
+                                        className="w-full rounded-md border border-dashed px-2 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground disabled:opacity-60"
+                                    >
+                                        {loadingMore
+                                            ? L('加载中…', 'Loading…')
+                                            : L('上拉显示更早的条目（点这里也行）', 'Scroll for older entries (or click)')}
+                                    </button>
+                                </div>
+                            )}
+                            {!nextCursor && rows.length > INSIGHT_PAGE_SIZE && (
+                                <p className="py-1 text-center text-[11px] text-muted-foreground">
+                                    {L('已经到底了', "That's all")}
+                                </p>
+                            )}
                         </div>
                     </aside>
                     )}

@@ -34,6 +34,7 @@ import { ImageLightbox, type LightboxItem } from "@/components/image-lightbox";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { apiClient } from "@/lib/api-client";
 import { rotateCCW } from "@/lib/image-rotation";
+import { inboxFileUrl } from "@/lib/scan-inbox-url";
 import { Check, Download, Loader2, RotateCcw, Trash2 } from "lucide-react";
 
 export interface ViewerFile {
@@ -48,6 +49,16 @@ export interface InboxImageViewerProps {
     open: boolean;
     /** 收件箱当前列表（决定左右切换的顺序：与拍照顺序一致，旧→新） */
     files: ViewerFile[];
+    /**
+     * 【2026-10-09 修 bug】这是**哪个**收件箱（子目录名，如 `scan2recover`）。
+     *
+     * ⚠️ 原来本组件**不知道**目录，取图时只传了文件名 ⇒ 在回录分析页打开预览，
+     * 它会去**默认那个**收件箱（录错题用的）找同名文件。
+     * 而两个收件箱里同名是常态（手机导出的照片都叫 `IMG_xxxx.jpg`），
+     * 后果是**默默显示另一套收件箱里的照片**，不报错、也不缺图 —— 最容易被忽略的那种错。
+     * 不传 = 默认那个（与 `lib/scan-inbox-url.ts` 的约定一致）。
+     */
+    subPath?: string;
     /** 当前看第几张。越界会自动按环形收敛，删图后不必由上层精确修正 */
     index: number;
     onIndexChange: (i: number) => void;
@@ -72,6 +83,7 @@ const divider = <span className="w-px h-5 bg-border mx-1" />;
 export function InboxImageViewer({
     open,
     files,
+    subPath,
     index,
     onIndexChange,
     selected,
@@ -143,7 +155,8 @@ export function InboxImageViewer({
      */
     const doDownload = async () => {
         if (!cur) return;
-        const url = `/api/scan-inbox/file?name=${encodeURIComponent(cur.name)}`;
+        // 下载拿的是**原图**，不稀罕缓存（下完就落盘了）；但目录必须带对，否则会下到另一套收件箱的同名照片
+        const url = inboxFileUrl(cur.name, { dir: subPath });
         const isTouch = typeof navigator !== "undefined"
             && (navigator.maxTouchPoints > 0 || (window.matchMedia?.("(hover: none)").matches ?? false));
 
@@ -218,14 +231,18 @@ export function InboxImageViewer({
         await onReload();
     };
 
-    /* 图片列表交给 lightbox（src 只在这里拼一次，注意编码文件名） */
+    /* 图片列表交给 lightbox（src 只在这里拼一次：走统一的拼装函数，带目录 + 版本号） */
     const items: LightboxItem[] = useMemo(
         () => files.map((f) => ({
-            src: `/api/scan-inbox/file?name=${encodeURIComponent(f.name)}`,
+            /**
+             * 【2026-10-09】带 `mtimeMs` 当版本号 ⇒ 服务端给长缓存 ⇒
+             * 左右翻页、退出再进来都不会重新下载整张原图（这是"看大图慢"的主修）。
+             */
+            src: inboxFileUrl(f.name, { dir: subPath, version: f.mtimeMs }),
             label: f.name,
             rotation: f.rotation,
         })),
-        [files],
+        [files, subPath],
     );
 
     // 照片被删光了（可能是在别处删的）→ 自动收起，别留一个空窗口。

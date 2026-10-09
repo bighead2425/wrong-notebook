@@ -40,6 +40,7 @@ import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { apiClient } from "@/lib/api-client";
 import { reconcileSelection } from "@/lib/inbox-selection";
+import { inboxFileUrl } from "@/lib/scan-inbox-url";
 import { stampYmd } from "@/lib/volume-code";
 import { Check, Download, FolderOpen, ImageUp, Layers, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { InboxImageViewer } from "@/components/inbox-image-viewer";
@@ -271,8 +272,16 @@ export function ScanInboxBar({
     const newFiles = listing.files.filter(f => !f.imported && !inQueue.has(f.name));
     const files = listing.files;
 
-    const fileUrl = (name: string) =>
-        `/api/scan-inbox/file?name=${encodeURIComponent(name)}${dirQ ? `&${dirQ}` : ""}`;
+    /**
+     * 收件箱图片的地址（**只在这里拼**，实现见 `lib/scan-inbox-url.ts`）。
+     *
+     * ⚠️ **缩略图路径一定要把 `version` 传进来**（= 文件修改时间）：
+     *    服务端对"带了版本号"的请求才允许长缓存（见 file 路由的注释）。
+     *    不带的话会退回 `no-store` —— 每张缩略图都重下整张原图，
+     *    那就是"打开收件箱很慢"的老毛病。
+     */
+    const fileUrl = (name: string, version?: number | null) =>
+        inboxFileUrl(name, { dir: subPath, version });
 
     /**
      * 把收件箱里的这几张**拉下来**（逐张串行，带"正在拉取 i/n"的进度）。
@@ -287,7 +296,9 @@ export function ScanInboxBar({
         for (let i = 0; i < names.length; i++) {
             setPulling({ i: i + 1, n: names.length });
             try {
-                const res = await fetch(fileUrl(names[i]));
+                // 带上修改时间 ⇒ 同一张照片重复导入时不再从 NAS 重拉一遍
+                const meta = files.find((x) => x.name === names[i]);
+                const res = await fetch(fileUrl(names[i], meta?.mtimeMs));
                 if (!res.ok) { missed.push(names[i]); continue; }
                 const blob = await res.blob();
                 pulled.push(new File([blob], names[i], { type: blob.type || "image/jpeg" }));
@@ -686,7 +697,7 @@ export function ScanInboxBar({
                                             >
                                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                                 <img
-                                                    src={fileUrl(f.name)}
+                                                    src={fileUrl(f.name, f.mtimeMs)}
                                                     alt={f.name}
                                                     loading="lazy"
                                                     draggable={false}
@@ -798,6 +809,7 @@ export function ScanInboxBar({
                 <InboxImageViewer
                     open
                     files={files}
+                    subPath={subPath}
                     index={viewerIndex}
                     onIndexChange={setViewerIndex}
                     selected={selected}

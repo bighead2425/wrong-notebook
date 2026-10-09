@@ -93,6 +93,23 @@ interface VolumeSummary {
     emojiMark?: string | null;
 }
 
+/**
+ * 【2026-10-09】卷列表接口的返回：多了一个 `nextCursor`。
+ * 非 null ⇒ 还有更早的卷，拿它再要一页（滚到底自动加载，也可以点按钮）。
+ */
+interface VolumeListResponse {
+    volumes: VolumeSummary[];
+    nextCursor?: string | null;
+}
+
+/**
+ * 【2026-10-09】一次要多少份卷。
+ *
+ * 50 是"一屏多一点"的量：既不用等太久，也不至于翻两下就到底。
+ * ⚠️ 它是**单次**的批量，不是总量上限 —— 往下翻多少页都行（他要的正是这个）。
+ */
+const VOLUME_PAGE_SIZE = 50;
+
 interface VolumeItemRow {
     id: string;
     seqInVolume: number;
@@ -129,6 +146,13 @@ export default function ReviewVolumesPage() {
     const [volumes, setVolumes] = useState<VolumeSummary[]>([]);
     const [listLoading, setListLoading] = useState(true);
     const [listError, setListError] = useState("");
+    /** 【2026-10-09】还有更早的卷没拿（null = 已经到底了） */
+    const [nextCursor, setNextCursor] = useState<string | null>(null);
+    /** 【2026-10-09】正在要下一页（防止滚到底时连点、连发请求） */
+    const [listLoadingMore, setListLoadingMore] = useState(false);
+    /** 列表滚动容器 + 底部哨兵（滚到哨兵露头就自动要下一页） */
+    const listScrollRef = useRef<HTMLDivElement | null>(null);
+    const listSentinelRef = useRef<HTMLDivElement | null>(null);
     const [query, setQuery] = useState("");
     const [kindFilter, setKindFilter] = useState<"all" | VolumeKind>("all");
     /**
@@ -209,23 +233,96 @@ export default function ReviewVolumesPage() {
 
     // ================= 拉数据 =================
 
+    /**
+     * 【2026-10-09】列表查询串 —— **筛选一律在服务端**。
+     *
+     * 为什么必须这样（这是"卷超过 200 份会看不见"那个隐患的修法）：
+     * 原来前端写死 `limit=200`，然后在**拿到的那 200 份里**做搜索/学期/学科筛选
+     * ⇒ 第 201 份及更早的，在这个页面上既不出现、也搜不到。
+     * 现在改成"单次一页 + 滚到底再要下一页"，筛选条件跟着每一次请求一起发上去。
+     * ⚠️ 配套条件：**筛选必须在服务端**。只加翻页不改筛选，搜索仍然只搜"已加载的那几页"。
+     */
+    const buildListQuery = useCallback(
+        (cursor: string | null) => {
+            const qs = new URLSearchParams();
+            qs.set("limit", String(VOLUME_PAGE_SIZE));
+            if (kindFilter !== "all") qs.set("kind", kindFilter);
+            if (gradeTermFilter) qs.set("term", gradeTermFilter);
+            if (subjectFilter) qs.set("subject", subjectFilter);
+            if (query.trim()) qs.set("q", query.trim());
+            if (cursor) qs.set("cursor", cursor);
+            return qs.toString();
+        },
+        [kindFilter, gradeTermFilter, subjectFilter, query],
+    );
+
     const fetchList = useCallback(async () => {
         setListLoading(true);
         setListError("");
         try {
-            const res = await apiClient.get<{ volumes: VolumeSummary[] }>("/api/review-volumes?limit=200");
+            const res = await apiClient.get<VolumeListResponse>(
+                `/api/review-volumes?${buildListQuery(null)}`,
+            );
             setVolumes(res.volumes || []);
+            setNextCursor(res.nextCursor ?? null);
         } catch (error) {
             console.error("Failed to load volumes:", error);
             setListError(L("加载卷列表失败", "Failed to load volumes"));
         } finally {
             setListLoading(false);
         }
-    }, [L]);
+    }, [L, buildListQuery]);
 
     useEffect(() => {
         fetchList();
     }, [fetchList]);
+
+    /** 【2026-10-09】滚到底／点按钮 ⇒ 再要一页，**追加**在后面（不替换） */
+    const loadMoreVolumes = useCallback(async () => {
+        if (!nextCursor || listLoadingMore) return;
+        setListLoadingMore(true);
+        try {
+            const res = await apiClient.get<VolumeListResponse>(
+                `/api/review-volumes?${buildListQuery(nextCursor)}`,
+            );
+            setVolumes((prev) => {
+                // 去重兜底：翻页期间别的地方新建/删除了卷时，同一条可能被发回来两次
+                const seen = new Set(prev.map((v) => v.id));
+                return [...prev, ...(res.volumes || []).filter((v) => !seen.has(v.id))];
+            });
+            setNextCursor(res.nextCursor ?? null);
+        } catch (error) {
+            console.error("Failed to load more volumes:", error);
+            setListError(L("加载更多失败，再点一次试试", "Failed to load more"));
+        } finally {
+            setListLoadingMore(false);
+        }
+    }, [nextCursor, listLoadingMore, buildListQuery, L]);
+
+    /**
+     * 【2026-10-09】滚到底自动加载下一页（他说的"上拉显示更多"）。
+     *
+     * 用 `IntersectionObserver` 盯列表**底部那个哨兵**：它一露头就要下一页。
+     * ⚠️ `root` 必须是**列表自己的滚动容器**（不是视口）——列表是
+     *    `max-h-[62vh] overflow-y-auto` 的一个框，用默认视口当 root 的话，
+     *    这个框永远"在视口里"，哨兵会一直被认为可见 ⇒ 一进页面就把所有页全拉下来。
+     * ⚠️ 浏览器不支持 `IntersectionObserver`（老 Safari）也不会出事：
+     *    下面那个「加载更多」**按钮一直都在**，手动点一样能用。
+     */
+    useEffect(() => {
+        const root = listScrollRef.current;
+        const target = listSentinelRef.current;
+        if (!root || !target || !nextCursor) return;
+        if (typeof IntersectionObserver === "undefined") return;
+        const io = new IntersectionObserver(
+            (entries) => {
+                if (entries.some((e) => e.isIntersecting)) void loadMoreVolumes();
+            },
+            { root, rootMargin: "120px" },
+        );
+        io.observe(target);
+        return () => io.disconnect();
+    }, [nextCursor, loadMoreVolumes]);
 
     /**
      * 【2026-09-30】从错题本页的「复练卷」按钮跳过来时带了 `?grade=…&subject=…`：
@@ -724,13 +821,20 @@ export default function ReviewVolumesPage() {
              * 【2026-10-01 他定】积累纸（build）**不出现在这一页**。
              * 原话："复练卷页就是复练卷的内容，不和积累交互这么深。复练卷页管理复练卷，
              * 那么积累纸·打印就管理积累纸。" ⇒ 各管各的，这一页只看复练卷。
+             *
+             * ⚠️ 这一条**必须留在本地**：筛选选"全部类型"时服务端会把两种卷一起给回来，
+             *    挡住积累卷是"这一页只看复练卷"这条产品决定，不是筛选条件。
              */
             if (v.kind === "build") return false;
+            /**
+             * 【2026-10-09】下面这几个判断**服务端已经做过了**（见 `/api/review-volumes` 的注释：
+             * 筛选必须搬到服务端，翻页才不会"只在已加载的那批里搜"）。
+             * 这里留作**兜底**：万一服务端与本地口径有出入，也不会把不该出现的卷摆出来。
+             * 谓词与 SQL 那边逐条等价（学期走同一张写法表、关键词走同样的三个字段）。
+             */
             if (kindFilter !== "all" && v.kind !== kindFilter) return false;
             // 年级/学期：卷页眉可能是"六年级上·五年级上"（跨本组卷），**任一部分**命中就算
             if (gradeTermFilter && !volumeMatchesTerm(v.gradeSemester, gradeTermFilter)) return false;
-            // 学科：卷可能跨学科，命中任一即可
-            if (subjectFilter && !(v.subjectKeys || []).includes(subjectFilter)) return false;
             if (!q) return true;
             return (
                 v.volumeNo.toLowerCase().includes(q) ||
@@ -738,7 +842,7 @@ export default function ReviewVolumesPage() {
                 (v.gradeSemester || "").toLowerCase().includes(q)
             );
         });
-    }, [volumes, kindFilter, gradeTermFilter, subjectFilter, query]);
+    }, [volumes, kindFilter, gradeTermFilter, query]);
 
     const formatTime = (iso: string) => {
         const d = new Date(iso);
@@ -907,7 +1011,10 @@ export default function ReviewVolumesPage() {
                                     写法**照抄日积月累页左栏那套**（`max-h-[62vh] overflow-y-auto
                                     rounded-md border p-2`）—— 他明确说那个设计很好，那就别另发明一套，
                                     两页左栏看起来、用起来都一样。 */}
-                                <div className="max-h-[62vh] space-y-1 overflow-y-auto rounded-md border p-2">
+                                <div
+                                    ref={listScrollRef}
+                                    className="max-h-[62vh] space-y-1 overflow-y-auto rounded-md border p-2"
+                                >
                                     {visibleVolumes.map((v) => {
                                         const active = v.id === selectedId;
                                         return (
@@ -958,6 +1065,28 @@ export default function ReviewVolumesPage() {
                                             </button>
                                         );
                                     })}
+
+                                    {/* 【2026-10-09】上拉加载更多：滚到这附近会自动要下一页；
+                                        万一浏览器不支持自动触发（或他就是想手动点），这个按钮一直在。 */}
+                                    {nextCursor && (
+                                        <div ref={listSentinelRef} className="pt-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => void loadMoreVolumes()}
+                                                disabled={listLoadingMore}
+                                                className="w-full rounded-md border border-dashed px-2 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground disabled:opacity-60"
+                                            >
+                                                {listLoadingMore
+                                                    ? L("加载中…", "Loading…")
+                                                    : L("上拉显示更早的卷（点这里也行）", "Scroll for older volumes (or click)")}
+                                            </button>
+                                        </div>
+                                    )}
+                                    {!nextCursor && volumes.length > VOLUME_PAGE_SIZE && (
+                                        <p className="py-1 text-center text-[11px] text-muted-foreground">
+                                            {L("已经到底了", "That's all")}
+                                        </p>
+                                    )}
                                 </div>
                             </div>
                         </aside>

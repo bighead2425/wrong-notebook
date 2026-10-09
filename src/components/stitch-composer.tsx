@@ -34,6 +34,7 @@ import { Button } from "@/components/ui/button";
 import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { apiClient } from "@/lib/api-client";
+import { inboxFileUrl } from "@/lib/scan-inbox-url";
 import {
     findBoxConflicts,
     planConcat,
@@ -323,7 +324,10 @@ export function StitchComposer({
             setInboxLoading(true);
             try {
                 const res = await fetch(
-                    `/api/scan-inbox/file?name=${encodeURIComponent(name)}${inboxDirQ ? `&${inboxDirQ}` : ""}`,
+                    inboxFileUrl(name, {
+                        dir: inboxSubPath,
+                        version: inboxFiles?.find((f) => f.name === name)?.mtimeMs,
+                    }),
                 );
                 if (!res.ok) throw new Error("fetch failed");
                 const blob = await res.blob();
@@ -335,8 +339,9 @@ export function StitchComposer({
                 setInboxLoading(false);
             }
         },
-                [addShot, L, inboxDirQ],
-            );
+        // 依赖里必须有 inboxFiles：版本号就是从它里面取的（少了它就会一直带着旧列表的修改时间）
+        [addShot, L, inboxSubPath, inboxFiles],
+    );
 
     /** 相机/本地图过来之后，都要先过一遍"确认扫描效果"（可拉正四角、切漂白/黑白）—— 他说了要进拉伸页 */
     const handleScanned = useCallback(
@@ -901,7 +906,7 @@ export function StitchComposer({
                                     >
                                         {/* eslint-disable-next-line @next/next/no-img-element */}
                                         <img
-                                            src={`/api/scan-inbox/file?name=${encodeURIComponent(f.name)}${inboxDirQ ? `&${inboxDirQ}` : ""}`}
+                                            src={inboxFileUrl(f.name, { dir: inboxSubPath, version: f.mtimeMs })}
                                             alt={f.name}
                                             className="h-24 w-full bg-muted object-cover"
                                         />

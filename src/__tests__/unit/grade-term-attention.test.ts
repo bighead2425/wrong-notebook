@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GRADE_TERMS, normalizeTerm, splitGradeText, termLabel, volumeMatchesTerm } from '@/lib/grade-term';
+import { GRADE_TERMS, normalizeTerm, splitGradeText, termLabel, termSearchVariants, volumeMatchesTerm } from '@/lib/grade-term';
 import { ATTENTION_LEVELS, attentionLabel, attentionLevelOf, cycleAttentionLevel, isAttentionUnfiltered, toggleAttentionLevel } from '@/lib/attention-level';
 
 /**
@@ -127,5 +127,45 @@ describe('等级 · 多选下拉的勾选', () => {
         expect(isAttentionUnfiltered([1, 2, 3, 4, 5])).toBe(true);
         expect(isAttentionUnfiltered([1, 2, 3, 4])).toBe(false);
         expect(isAttentionUnfiltered([])).toBe(false);
+    });
+});
+
+/**
+ * 【2026-10-09】服务端筛选用：把一个学期键展开成库里可能出现的各种写法。
+ * 为什么必须有它：SQL 里只能做字符串包含，不会像 `splitGradeText` 那样先归一 ——
+ * 少列一种写法，就会出现"明明有卷却筛不出来"。
+ */
+describe('年级·学期 · 服务端筛选用的写法展开', () => {
+    it('五年级上 ⇒ 各种写法都在，且覆盖 小五上 / 5年级上', () => {
+        const v = termSearchVariants('五年级上');
+        expect(v).toContain('五年级上');
+        expect(v).toContain('小五上');
+        expect(v).toContain('5年级上');
+        expect(new Set(v).size).toBe(v.length); // 不重复
+    });
+
+    it('★ 展开出来的写法必须都归一回同一个键（与客户端口径一致，否则两边筛出不同结果）', () => {
+        for (const term of GRADE_TERMS) {
+            for (const form of termSearchVariants(term.key)) {
+                expect(normalizeTerm(form)).toBe(term.key);
+            }
+        }
+    });
+
+    it('★ 不会串到别的学期：六年级上的写法，一个都不能被"五年级上"这一组命中', () => {
+        const other = new Set(termSearchVariants('五年级上'));
+        for (const form of termSearchVariants('六年级上')) {
+            expect(other.has(form)).toBe(false);
+        }
+        // 也不会串到"下"学期
+        for (const form of termSearchVariants('五年级下')) {
+            expect(other.has(form)).toBe(false);
+        }
+    });
+
+    it('认不出的写法原样返回一项（宁可筛不到，也不要拼出一个奇怪的串）', () => {
+        expect(termSearchVariants('火星上')).toEqual(['火星上']);
+        expect(termSearchVariants('六年级')).toEqual(['六年级']);
+        expect(termSearchVariants('')).toEqual([]);
     });
 });

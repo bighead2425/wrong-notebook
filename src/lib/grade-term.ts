@@ -73,6 +73,30 @@ export function volumeMatchesTerm(gradeText: string | null | undefined, termKey:
     return splitGradeText(gradeText).includes(termKey);
 }
 
+/**
+ * 【2026-10-09】把一个学期键，展开成**库里可能出现的各种写法** —— 给服务端筛选用。
+ *
+ * ── 为什么需要它 ──────────────────────────────────────────────────────
+ * 客户端那份 `splitGradeText` 是"先归一、再比"，所以 `小五上` 和 `五年级上` 能对上。
+ * 但**服务端筛选是 SQL 里的字符串包含**（`gradeSemester contains …`），
+ * 它不会做这层归一 ⇒ 只搜一种写法就会漏掉另一种写法的卷
+ *（"我明明有一份五年级上的卷，筛五年级上却看不见"—— 正是这次要修的毛病）。
+ *
+ * 拿这个函数把 **8 种写法**（`五年级上` / `小五上` / `5年级上` / `五年上` …）都列出来，
+ * OR 起来查，效果就与客户端那份归一逻辑等价了。
+ *
+ * ⚠️ 只用于**筛选**（放宽一点无害：这几种写法互不为子串，不会误命中别的学期）。
+ *    显示用的仍是库里存的原值，不做任何改写。
+ */
+export function termSearchVariants(termKey: string): string[] {
+    const s = (termKey || '').replace(/\s/g, '');
+    const m = s.match(/^(.*?)([上下])$/);
+    if (!m) return s ? [s] : [];
+    const grade = GRADES.find((g) => g.key === m[1]);
+    const forms = grade ? [grade.key, grade.short, ...grade.aliases] : [m[1]];
+    return [...new Set(forms.map((f) => `${f}${m[2]}`))];
+}
+
 /** 学期下拉的显示名（`六年级上` → `小六上`；认不出就原样显示） */
 export function termLabel(termKey: string): string {
     const hit = GRADE_TERMS.find((t) => t.key === termKey);

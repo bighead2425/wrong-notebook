@@ -132,11 +132,23 @@ export function InsightScanView({
                  * （构建卷的行只挂 insightId）。这里取一次日积月累清单，把"编号 → 有没有关联错题"
                  * 记成一张表；清单不含图片本体，很轻。
                  * ⚠️ 取失败不报错也不挡路：颜色一律按"未关联（棕黄）"走 —— 纸照样能看、能点。
+                 *
+                 * 【2026-10-09 改法】**只问这张纸上出现的那些编号**。
+                 * 原来是无条件取一遍**全部**日积月累，在这里现建"编号 → 有没有关联错题"的表。
+                 * 那条接口现在改成"一次只给一页"了（默认 50 条）——继续那样取会**悄悄取不全**，
+                 * 后果是纸上的老条目全被画成"未关联（棕黄）"，而且看不出来是错的。
+                 * 现在按需要问：本卷里出现的 JL 编号一次问完（一页纸几十条，远小于上限）。
                  */
                 try {
+                    const codes = [
+                        ...new Set((res.volume.items || []).map((r) => r.itemNo || "").filter(Boolean)),
+                    ];
                     const list = await apiClient.get<{
                         insights: Array<{ code: string; errorItemNo: string | null }>;
-                    }>("/api/insights");
+                    }>(
+                        `/api/insights?limit=${Math.min(200, Math.max(1, codes.length))}` +
+                        (codes.length ? `&codes=${encodeURIComponent(codes.join(","))}` : ""),
+                    );
                     if (cancelled) return;
                     const map: Record<string, boolean> = {};
                     for (const it of list.insights || []) map[it.code] = !!it.errorItemNo;

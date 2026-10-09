@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
@@ -6,8 +7,15 @@ import { unauthorized, badRequest, internalError, conflict } from "@/lib/api-err
 import { createLogger } from "@/lib/logger";
 import { formatInsightCode, nextInsightSeq } from "@/lib/insight-code";
 import { writePhoto } from "@/lib/insight-photo";
+import { decodeCursor, encodeCursor } from "@/lib/list-cursor";
 
 const logger = createLogger('api:insights');
+
+/** 【2026-10-09】列表单次条数：默认给多少、最多给多少（只限单次，不限总量） */
+const INSIGHT_PAGE_DEFAULT = 50;
+const INSIGHT_PAGE_MAX = 200;
+/** 【2026-10-09】按编号清单查询（`?codes=`）一次最多认多少个编号 */
+const INSIGHT_CODES_MAX = 200;
 
 /**
  * GET /api/insights —— 日积月累条目列表。
@@ -17,6 +25,18 @@ const logger = createLogger('api:insights');
  *   `?subjects=math,physics`  **学科多选**（可组合；逗号分隔）
  *   `?q=`                     关键词（搜编号或正文 —— "记得有个什么内容但想不起具体"）
  *   `?errorItemNo=`           只取某道题的那一条（详情页「日积月累」栏用）
+ *   `?codes=JL…,JL…`          【2026-10-09】只取这几个编号（积累纸扫码预览用它问"这一页上
+ *                             那些编号里，哪些关联了错题"—— 见 `insight-scan-view.tsx`）
+ *
+ * 翻页（【2026-10-09】加的）：
+ *   `?limit=`   一次给多少条（默认 50，上限 200）
+ *   `?cursor=`  上一批最后一条的位置（原样带回；不给 = 从最新一批开始）
+ *   返回里的 `nextCursor` 非 null ⇒ 还有更早的，拿它再要一批。
+ *
+ * ⚠️ **为什么必须有这个上限**：原来这条接口**一次把全部条目拉出来**
+ *    （还带着每条的正文）。条目只会越攒越多，打开页面就会越来越慢 ——
+ *    而"每次只给一页、滚到底再要下一页"之后，**总量再多也不影响单次的耗时**。
+ *    上限只限**单次**，不限总量：只要还有，就一直能往下翻（他要的就是这个）。
  *
  * ⚠️ 按**编号倒序**排（日期只用来排先后，他不按日期筛）。
  * ⚠️ **不返回图片本体**（在 InsightPhoto 表，编辑某条时单独取 —— 2026-10-01 存储改正）。
@@ -39,32 +59,82 @@ export async function GET(req: Request) {
             .filter(Boolean);
         const q = (searchParams.get("q") || "").trim();
         const errorItemNo = (searchParams.get("errorItemNo") || "").trim().toUpperCase();
+        /**
+         * 【2026-10-09】按**编号清单**取（积累纸扫码预览用）。
+         *
+         * 为什么需要它：那个页面要知道"这张纸上那几十个 JL 编号，哪些关联了错题"，
+         * 而原来的做法是**取回全部条目**再在本地建表 —— 列表一改成分页，那种取法就会
+         * **悄悄取不全**（老条目全被判成"未关联"，颜色错了还看不出来）。
+         * 现在按需要问，一次问清。
+         *
+         * ⚠️ 数量钉上限：这只是"按清单查"的便利入口，不该变成"绕过翻页拉全表"的后门。
+         */
+        const codes = (searchParams.get("codes") || "")
+            .split(",")
+            .map((s) => s.trim().toUpperCase())
+            .filter(Boolean)
+            .slice(0, INSIGHT_CODES_MAX);
+        /** 【2026-10-09】单次条数（默认 50、上限 200） */
+        const limitParam = Number(searchParams.get("limit"));
+        const limit = Number.isFinite(limitParam) && limitParam > 0
+            ? Math.min(INSIGHT_PAGE_MAX, Math.round(limitParam))
+            : INSIGHT_PAGE_DEFAULT;
+        /**
+         * 【2026-10-09】游标 = 上一批最后一条的 `日期|当日序号`。
+         * 拆不开就当作没传（从最新一批开始）—— 坏值不该换来一个 500。
+         */
+        const cursorParts = decodeCursor(searchParams.get("cursor"), 2);
+        const anchorSeq = cursorParts ? Number(cursorParts[1]) : NaN;
+        const anchor = cursorParts && Number.isFinite(anchorSeq)
+            ? { dateKey: cursorParts[0], seq: anchorSeq }
+            : null;
+
+        const filters: Prisma.InsightWhereInput[] = [{ userId: user.id }];
+        if (grade) filters.push({ gradeSemester: grade });
+        if (subjects.length) filters.push({ subject: { in: subjects } });
+        if (errorItemNo) filters.push({ errorItemNo });
+        if (codes.length) filters.push({ code: { in: codes } });
+        if (q) {
+            filters.push({
+                OR: [
+                    { code: { contains: q } },
+                    { content: { contains: q } },
+                ],
+            });
+        }
+        /**
+         * 游标按 `(dateKey desc, seq desc)` 这个**复合序**往后走：
+         * "日期更早" 或 "同一天但序号更小" —— 两条都要写。
+         * ⚠️ 只写日期那一条会**漏掉同一天的条目**（同一天往往有好几条，这是常态）。
+         */
+        if (anchor) {
+            filters.push({
+                OR: [
+                    { dateKey: { lt: anchor.dateKey } },
+                    { AND: [{ dateKey: anchor.dateKey }, { seq: { lt: anchor.seq } }] },
+                ],
+            });
+        }
 
         const rows = await prisma.insight.findMany({
-            where: {
-                userId: user.id,
-                ...(grade ? { gradeSemester: grade } : {}),
-                ...(subjects.length ? { subject: { in: subjects } } : {}),
-                ...(errorItemNo ? { errorItemNo } : {}),
-                ...(q
-                    ? {
-                          OR: [
-                              { code: { contains: q } },
-                              { content: { contains: q } },
-                          ],
-                      }
-                    : {}),
-            },
+            where: { AND: filters },
             orderBy: [{ dateKey: 'desc' }, { seq: 'desc' }],
+            // 多要一条来判断"还有没有"：比再发一次 count 查询便宜
+            take: limit + 1,
         });
 
-        // 有关联错题的条目，把**活的题**一起带回来（右栏要出错题卡）
+        const hasMore = rows.length > limit;
+        const page = hasMore ? rows.slice(0, limit) : rows;
+        const last = page[page.length - 1];
+        const nextCursor = hasMore && last ? encodeCursor(last.dateKey, last.seq) : null;
+
+        // 有关联错题的条目，把**活的题**一起带回来（右栏要出错题卡）—— 只查这一页用到的
         const questions = await loadQuestions(
             user.id,
-            rows.map((r) => r.errorItemNo || ''),
+            page.map((r) => r.errorItemNo || ''),
         );
 
-        return NextResponse.json({ insights: rows, questions });
+        return NextResponse.json({ insights: page, questions, nextCursor });
     } catch (error) {
         logger.error({ error }, 'Error listing insights');
         return internalError("Failed to list insights");

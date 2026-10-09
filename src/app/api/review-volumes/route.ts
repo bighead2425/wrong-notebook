@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
@@ -19,10 +20,15 @@ import {
     resolvePageCount,
     normalizeVolumeTitle,
 } from "@/lib/volume-input";
-import { codeToSubjectKey } from "@/lib/question-no";
+import { codeToSubjectKey, subjectKeyToCode } from "@/lib/question-no";
+import { termSearchVariants } from "@/lib/grade-term";
 import { pickRandomEmoji } from "@/lib/emoji-mark";
 
 const logger = createLogger("api:review-volumes");
+
+/** 【2026-10-09】列表单次份数：默认给多少、最多给多少（只限单次，不限总量） */
+const VOLUME_PAGE_DEFAULT = 50;
+const VOLUME_PAGE_MAX = 200;
 
 /**
  * POST /api/review-volumes —— **组建一份卷**（复练卷 RE… / 积累卷 BU…）。
@@ -143,8 +149,23 @@ export async function POST(request: Request) {
 }
 
 /**
- * GET /api/review-volumes?kind=review&semester=2026-秋&limit=50
- * 列出已组的卷（他问的"到哪里去找已经打印出来的复练纸"就靠这一支）。
+ * GET /api/review-volumes —— 列出已组的卷（"到哪里去找已经打印出来的复练纸"就靠这一支）。
+ *
+ * 筛选：
+ *   `?kind=review|build`
+ *   `?semester=2026-秋`        老口径（标签，按学期翻卷）
+ *   `?term=五年级上`           【2026-10-09】年级·学期（规范键，如 `五年级上`）
+ *   `?subject=math`            【2026-10-09】学科（按卷内题号的 2 字简拼匹配）
+ *   `?q=第五单元`               【2026-10-09】关键词（搜卷号 / 名字 / 年级学期）
+ *
+ * 翻页（【2026-10-09】加的）：
+ *   `?limit=`   一次给多少份（默认 50，上限 200）
+ *   `?cursor=`  上一批最后一份的 id（原样带回）；返回里的 `nextCursor` 非 null ⇒ 还有更早的
+ *
+ * ⚠️ **这次改动修掉一个隐患**：原来前端写死 `limit=200` 并且**在拿到的那批里做本地筛选**
+ *    ⇒ 卷一旦超过 200 份，第 201 份及更早的**既看不到、也搜不到**（页面上凭空消失）。
+ *    现在筛选全部在服务端做、单次只给一页、滚到底再要下一页 ⇒ **总量不再有上限**。
+ *    ⚠️ 所以"筛选必须在服务端"是这套翻页的**配套条件**，只加翻页不改筛选等于没修。
  */
 export async function GET(request: Request) {
     const session = await getServerSession(authOptions);
@@ -153,19 +174,80 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const kindParam = searchParams.get("kind");
     const semester = searchParams.get("semester");
+    const term = (searchParams.get("term") || "").trim();
+    const subject = (searchParams.get("subject") || "").trim();
+    const q = (searchParams.get("q") || "").trim();
+    const cursor = searchParams.get("cursor");
     const limitParam = Number(searchParams.get("limit"));
-    const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(200, Math.round(limitParam)) : 50;
+    const limit = Number.isFinite(limitParam) && limitParam > 0
+        ? Math.min(VOLUME_PAGE_MAX, Math.round(limitParam))
+        : VOLUME_PAGE_DEFAULT;
 
     try {
-        const volumes = await prisma.reviewVolume.findMany({
-            where: {
-                ...(kindParam && VOLUME_KINDS.includes(kindParam as VolumeKind)
-                    ? { kind: kindParam }
-                    : {}),
-                ...(semester ? { semester } : {}),
-            },
-            orderBy: { createdAt: "desc" },
-            take: limit,
+        const filters: Prisma.ReviewVolumeWhereInput[] = [];
+        if (kindParam && VOLUME_KINDS.includes(kindParam as VolumeKind)) {
+            filters.push({ kind: kindParam });
+        }
+        if (semester) filters.push({ semester });
+
+        /**
+         * 年级·学期：库里那句"年级学期"可能是**跨本组卷**（`六年级上·五年级上`），
+         * 也可能用别名写法（`小五上` / `5年级上`）。SQL 只会做字符串包含，
+         * 所以把这一学期的**各种写法**都列出来 OR 一遍
+         *（口径与客户端那个 `volumeMatchesTerm` 等价 —— 见 `lib/grade-term.ts`）。
+         */
+        if (term) {
+            const variants = termSearchVariants(term);
+            if (variants.length) {
+                filters.push({ OR: variants.map((v) => ({ gradeSemester: { contains: v } })) });
+            }
+        }
+
+        /**
+         * 学科：卷里只存了**题号**（`SX20260928013`），学科要从题号前缀反推。
+         * 这里直接查"卷内**是否存在**一道该学科的题" —— 比前端那种"取前 20 条采样"更准
+         *（跨本组卷里两种学科都会命中，正是想要的行为）。
+         */
+        if (subject) {
+            filters.push({ items: { some: { itemNo: { startsWith: subjectKeyToCode(subject) } } } });
+        }
+
+        if (q) {
+            filters.push({
+                OR: [
+                    { volumeNo: { contains: q } },
+                    { title: { contains: q } },
+                    { gradeSemester: { contains: q } },
+                ],
+            });
+        }
+
+        /**
+         * 游标 = 上一批最后一份的 id。
+         * 排序是 `(createdAt desc, id desc)` —— **必须带 id 这个第二关键字**：
+         * 同一毫秒建的两份卷 createdAt 可能相同，只按它排，翻页时那两份的先后是不确定的，
+         * 于是"上一批的最后一份"可能在下一批里**再出现一次**（重复）或直接**跳过**。
+         */
+        if (cursor) {
+            const anchor = await prisma.reviewVolume.findUnique({
+                where: { id: cursor },
+                select: { createdAt: true, id: true },
+            });
+            if (anchor) {
+                filters.push({
+                    OR: [
+                        { createdAt: { lt: anchor.createdAt } },
+                        { AND: [{ createdAt: anchor.createdAt }, { id: { lt: anchor.id } }] },
+                    ],
+                });
+            }
+        }
+
+        const rows = await prisma.reviewVolume.findMany({
+            where: filters.length ? { AND: filters } : {},
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+            // 多要一条来判断"还有没有"
+            take: limit + 1,
             select: {
                 id: true,
                 volumeNo: true,
@@ -181,14 +263,19 @@ export async function GET(request: Request) {
                  * 【2026-09-30】复练卷页要按**学科**筛卷，而卷里只存了题号（如 `SX20260928013`）
                  * ⇒ 取题号前 2 位反推学科。只取题号、限量 20 条：一份卷里学科基本是一致的，
                  * 拿前几条足够定学科，不必把整卷条目读出来。
+                 * （【2026-10-09】这只是**显示**用的采样；真正筛选已改到服务端，见上面 subject 那段。）
                  */
                 items: { select: { itemNo: true }, orderBy: { seqInVolume: "asc" }, take: 20 },
             },
         });
 
+        const hasMore = rows.length > limit;
+        const page = hasMore ? rows.slice(0, limit) : rows;
+        const last = page[page.length - 1];
+
         // 卷号格式有问题的，在这里就被 parseVolumeNo 挡掉了（不猜、不抛）
         return NextResponse.json({
-            volumes: volumes.map((v) => ({
+            volumes: page.map((v) => ({
                 ...v,
                 itemCount: v._count.items,
                 /**
@@ -201,6 +288,7 @@ export async function GET(request: Request) {
                 items: undefined,
                 _count: undefined,
             })),
+            nextCursor: hasMore && last ? last.id : null,
         });
     } catch (error) {
         logger.error({ error }, "Failed to list review volumes");
