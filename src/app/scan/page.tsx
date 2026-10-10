@@ -33,6 +33,14 @@ import { useRouter } from "next/navigation";
 import jsQR from "jsqr";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api-client";
 import type { ErrorItem } from "@/types/api";
@@ -41,7 +49,7 @@ import { parsePageCode } from "@/lib/volume-code";
 import { ScanItemPanel } from "@/components/scan-item-panel";
 import { ScanVolumeView } from "@/components/scan-volume-view";
 import { InsightScanView } from "@/components/insight-scan-view";
-import { Camera, CameraOff, Loader2, ScanLine, Search } from "lucide-react";
+import { Camera, CameraOff, Loader2, Link2, ScanLine, Search } from "lucide-react";
 
 interface ScanResponse {
     found: boolean;
@@ -73,6 +81,24 @@ export default function ScanPage() {
     const [busy, setBusy] = useState<string | null>(null);
     const [manualNo, setManualNo] = useState("");
     const [missNo, setMissNo] = useState<string | null>(null);
+
+    /**
+     * 【2026-10-10】"给某道题找关联题"模式（他在"扫到的这道题"页点【关联别的题】→【打开扫码】）。
+     *
+     * 为什么放在这一页：**摄像头那套东西在这儿**（解码循环、video/canvas）。
+     * 他明确要求"扫"必须用软件自己的扫码，而不是手机相机拍照 ——
+     * 所以这一段就是"把扫码结果交给关联流程，而不是跳去看那张卡"。
+     *   · `linkFromId` 非空 = 关联模式：扫到的题**不跳转**，而是问"挂到它下面？"
+     *   · `linkFound`  = 扫到并查询成功的那道题（等他说"添加"）
+     */
+    const [linkFromId, setLinkFromId] = useState<string | null>(null);
+    const [linkFromNo, setLinkFromNo] = useState<string>("");
+    const [linkFound, setLinkFound] = useState<{
+        id: string;
+        no: string;
+        text: string;
+    } | null>(null);
+    const [linkScanBusy, setLinkScanBusy] = useState(false);
 
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -179,22 +205,154 @@ export default function ScanPage() {
         [L, openCard, stopScan],
     );
 
+    /* ===== 【2026-10-10】"给某道题找关联题"：扫到的题**不跳转**，而是问要不要挂上去 ===== */
+
+    /**
+     * 关联模式下扫到一道题：**只查询、不跳转**，把结果交给"要不要挂上去"那个小窗。
+     * ⚠️ 与 `lookupQuestion` 的区别就只有这一句"不跳转" —— 所以他扫完还能接着扫第二道。
+     */
+    const lookupForLink = useCallback(
+        async (rawNo: string) => {
+            const no = rawNo.trim().toUpperCase();
+            if (!no) return;
+            stopScan();
+            setBusy("lookup");
+            try {
+                const res = await apiClient.get<ScanResponse>(`/api/scan?no=${encodeURIComponent(no)}`);
+                if (!res.found || !res.item) {
+                    alert(
+                        L(
+                            "错题本里没找到这道题（它可能还没录入，或者扫的不是题的码）。",
+                            "Not found in the notebook.",
+                        ),
+                    );
+                    return;
+                }
+                if (res.item.id === linkFromId) {
+                    alert(L("这就是当前这道题，不用和自己关联。", "That is the same question."));
+                    return;
+                }
+                const text = (res.item.questionText || "").replace(/\s+/g, " ").trim();
+                setLinkFound({
+                    id: res.item.id,
+                    no: res.item.source || res.item.id,
+                    text: text.length > 60 ? `${text.slice(0, 60)}…` : text,
+                });
+            } catch (error) {
+                console.error(error);
+                alert(L("查询失败", "Lookup failed"));
+            } finally {
+                setBusy(null);
+            }
+        },
+        [L, linkFromId, stopScan],
+    );
+
+    /** 从"扫到的这道题"页进来：回到扫码屏，并记住"给哪道题找关联" */
+    const startLinkScan = useCallback(
+        (id: string, no: string) => {
+            setLinkFromId(id);
+            setLinkFromNo(no);
+            setLinkFound(null);
+            setView("scanner");
+            syncUrl({ vol: null, item: null });
+        },
+        [syncUrl],
+    );
+
+    /** 不找了：退回刚才那道题的卡 */
+    const cancelLinkScan = useCallback(() => {
+        setLinkFromId(null);
+        setLinkFound(null);
+        if (itemId) setView("card");
+    }, [itemId]);
+
+    /**
+     * 确认"把扫到的这道题挂上去"。
+     * ⚠️ 两边各自都已经是一组题的主题时，规则返回 `choice` ⇒ 问一句并**推荐当前这道题当主题**，
+     *    选"是"就带 `chooseRootId` 重发（对方整组接过来）。
+     */
+    const confirmLink = useCallback(
+        async (chooseRootId?: string): Promise<void> => {
+            if (!linkFound || !linkFromId) return;
+            setLinkScanBusy(true);
+            try {
+                const res = await apiClient.post<{
+                    ok: boolean;
+                    message?: string;
+                    choice?: { candidates: { id: string; no: string }[]; recommended: string };
+                }>("/api/error-items/link", {
+                    action: "link",
+                    child: linkFound.id,
+                    target: linkFromId,
+                    ...(chooseRootId ? { chooseRootId } : {}),
+                });
+
+                if (res.choice) {
+                    const ok = window.confirm(
+                        L(
+                            "这两道题各自都已经是一组题的主题了。\n让当前这道题当主题、把对方那一组一起接过来？（点取消 = 什么都不做）",
+                            "Both are already main questions. Make the current one the main question and take over the other group?",
+                        ),
+                    );
+                    if (ok) await confirmLink(linkFromId);
+                    return;
+                }
+                if (!res.ok) {
+                    alert(res.message || L("没有关联成功", "Could not link"));
+                    return;
+                }
+                /** 挂上了：把那道卡放回来，让他看见角标已经变了 */
+                alert(res.message || L("已关联", "Linked"));
+                setLinkFound(null);
+                setLinkFromId(null);
+                setView("card");
+            } catch (error) {
+                console.error(error);
+                alert(L("没有关联成功", "Could not link"));
+            } finally {
+                setLinkScanBusy(false);
+            }
+        },
+        [L, linkFound, linkFromId],
+    );
+
     /**
      * 扫到东西了：**先看是不是卷页码，再当题号查**。
      * 两条路互不干扰（卷页码形如 `RE…-02`、题号是 `SX…`）—— 先试 `parsePageCode`、
      * 不中再走题号（见 `lib/volume-code.ts` 里那段说明）。
+     * 【2026-10-10】开头多一层"关联模式"判断：那是"给某道题找关联题"时，
+     * 扫到的题**只查询、不跳转**（他要求："扫到题 B，点添加，就挂到题 A 下面"）。
      */
     const handleScanned = useCallback(
         (raw: string) => {
             const code = raw.trim().toUpperCase();
             if (!code) return;
+            /**
+             * 【2026-10-10】关联模式优先：扫到的题**不跳去看那张卡**，而是问"要不要挂上去"。
+             * ⚠️ 扫到卷页码在这儿没用（卷不是题）⇒ 明确说一句，别让他以为扫坏了还在那儿反复扫。
+             */
+            if (linkFromId) {
+                if (parsePageCode(code)) {
+                    stopScan();
+                    alert(
+                        L(
+                            "这是卷的二维码，不是题的。请扫那道题纸上的题号码。",
+                            "That's a volume code — scan the question's own code instead.",
+                        ),
+                    );
+                    return;
+                }
+                void lookupForLink(code);
+                return;
+            }
             if (parsePageCode(code)) {
                 openVolume(code);
                 return;
             }
             lookupQuestion(code);
         },
-        [lookupQuestion, openVolume],
+        [L, linkFromId, lookupForLink, lookupQuestion, openVolume, stopScan],
     );
 
     /** 解码：每 250ms 取一帧交给 jsQR（纯 JS，任何浏览器可跑；比 rAF 省电） */
@@ -291,6 +449,8 @@ export default function ScanPage() {
                         onBack={backFromCard}
                         backLabel={volumeCode ? L("回到复练卷", "Back to volume") : L("回到扫码", "Back to scanner")}
                         backTo={currentUrl}
+                        /** 【2026-10-10】他要的"扫"：**走软件自己的扫码**（不是手机相机拍照） */
+                        onScanForLink={(currentNo) => startLinkScan(itemId, currentNo)}
                     />
                 </div>
             </main>
@@ -356,6 +516,22 @@ export default function ScanPage() {
                         </p>
                     </div>
                 </div>
+
+                {/* 【2026-10-10】关联模式提示条：正在为某道题找关联题（他点的【关联别的题】→【打开扫码】） */}
+                {linkFromId && (
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200">
+                        <span className="flex items-center gap-2">
+                            <Link2 className="h-4 w-4" />
+                            {L(
+                                `正在为「${linkFromNo || "当前这道题"}」找关联题：扫那道题纸上的题号码`,
+                                `Finding a question to attach to ${linkFromNo || "the current one"} — scan its code`,
+                            )}
+                        </span>
+                        <Button variant="outline" size="sm" onClick={cancelLinkScan}>
+                            {L("取消", "Cancel")}
+                        </Button>
+                    </div>
+                )}
 
                 {/* ===== 摄像头区 ===== */}
                 <div className="relative rounded-lg overflow-hidden border bg-black aspect-[4/3]">
@@ -452,6 +628,51 @@ export default function ScanPage() {
                         {L("或者：去复练卷页翻一翻", "Or browse all volumes")}
                     </Button>
                 </div>
+
+                {/* 【2026-10-10】扫到题了：问一句要不要挂上去。
+                    ⚠️ **不自动挂** —— 对方若本身就是一组题的主题，它整组都会被接过来，
+                       这种事得他点头（规则层也会把这种情况回成 `choice`）。 */}
+                {linkFound && (
+                    <Dialog
+                        open
+                        onOpenChange={(open) => {
+                            if (!open) setLinkFound(null);
+                        }}
+                    >
+                        <DialogContent className="max-w-md">
+                            <DialogHeader>
+                                <DialogTitle>{L("把这道题挂上去？", "Attach this question?")}</DialogTitle>
+                                <DialogDescription>
+                                    {L(
+                                        `将挂到「${linkFromNo || "当前这道题"}」下面（它当主题）。`,
+                                        `It will attach to ${linkFromNo || "the current question"} as the main one.`,
+                                    )}
+                                </DialogDescription>
+                            </DialogHeader>
+                            <div className="rounded-md border p-3 text-sm">
+                                <div className="font-medium">{linkFound.no}</div>
+                                <p className="mt-1 text-xs text-muted-foreground">{linkFound.text}</p>
+                            </div>
+                            <DialogFooter>
+                                <Button
+                                    variant="outline"
+                                    onClick={() => setLinkFound(null)}
+                                    disabled={linkScanBusy}
+                                >
+                                    {L("取消", "Cancel")}
+                                </Button>
+                                <Button onClick={() => confirmLink()} disabled={linkScanBusy}>
+                                    {linkScanBusy ? (
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    ) : (
+                                        <Link2 className="mr-2 h-4 w-4" />
+                                    )}
+                                    {L("添加到本题", "Attach")}
+                                </Button>
+                            </DialogFooter>
+                        </DialogContent>
+                    </Dialog>
+                )}
             </div>
         </main>
     );

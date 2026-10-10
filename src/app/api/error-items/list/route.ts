@@ -124,9 +124,15 @@ export async function GET(req: Request) {
         // 搜索条件需要使用 AND 包装，避免与其他 OR 条件冲突
         // 最终的 whereClause.AND 会包含所有需要同时满足的条件（声明已提前到函数开头）
         if (query) {
-            // 搜索条件：在题目、解析、知识点中任一匹配即可
+            /**
+             * 搜索条件：任一字段命中即可。
+             * ⚠️【2026-10-10 补】原来**不含 `source`（题号）** —— 于是他"搜题号"永远搜不到
+             *    （列表页的搜索框、以及"关联别的题"里的查找都受影响）。
+             *    题号是他在纸上唯一能看见的编号，必须能搜；`contains` 让"只记得尾号"也能命中。
+             */
             andConditions.push({
                 OR: [
+                    { source: { contains: query } },
                     { questionText: { contains: query } },
                     { analysis: { contains: query } },
                     { wrongAnswerText: { contains: query } },

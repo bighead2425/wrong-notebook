@@ -39,10 +39,11 @@ export type LinkRole =
  * 两种角色在**屏幕上的颜色** —— 只定这一处。
  *
  * 错题卡左上角的角标、详情页标题都取它，免得两处各挑一个红/橙（改一处忘另一处）。
- * ⚠️ 他 2026-10-10 定的：**主题 = 深红、附题 = 橙**；**孤题不着色**（不画角标）。
+ * ⚠️ 他 2026-10-10 定的：**主题 = 深红、附题 = 绿**；**孤题不着色**（不画角标）。
+ *    附题原先是橙色，他实测后反馈"**橙色和红色太相近**"⇒ 改成绿（绿与红在色相上完全分开）。
  */
 export const LINK_ROOT_COLOR = '#9b1c1c';
-export const LINK_CHILD_COLOR = '#dd6b20';
+export const LINK_CHILD_COLOR = '#16a34a';
 
 /** 角色的颜色；孤题返回 `null`（＝不画角标、标题不变色） */
 export function linkRoleColor(role: LinkRole): string | null {

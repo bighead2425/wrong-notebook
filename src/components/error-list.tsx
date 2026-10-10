@@ -718,7 +718,7 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
                     <ErrorItemCard
                         key={item.id}
                         item={item}
-                        /** 【2026-10-10】主题深红 / 附题橙的角标 —— 角色是列表接口算好的 */
+                        /** 【2026-10-10】主题深红 / 附题绿的角标 —— 角色是列表接口算好的 */
                         linkRole={item.linkRole}
                         selectMode={isSelectMode}
                         selected={selectedIds.has(item.id)}

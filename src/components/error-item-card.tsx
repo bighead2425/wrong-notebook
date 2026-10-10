@@ -118,7 +118,7 @@ export function ErrorItemCard({
 
     /**
      * 【2026-10-10】左上角角标：把这题的角"切一刀"，切出来的小三角填色
-     * （**主题深红 / 附题橙**；孤题不画）。
+     * （**主题深红 / 附题绿**；孤题不画）。
      *
      * ⚠️ 多选模式不画：那里左上角是勾选框，两个东西叠在一起谁都看不清。
      * ⚠️ 路径第一段的 `M0 12 A12 12 …` 是**跟着卡片的 `rounded-xl`（12px）走**的 ——
@@ -147,7 +147,7 @@ export function ErrorItemCard({
 
     return (
         <div className="relative">
-            {/* 【2026-10-10】从属关系角标（主题深红 / 附题橙）*/}
+            {/* 【2026-10-10】从属关系角标（主题深红 / 附题绿）*/}
             {cornerColor && !selectMode && (
                 <span
                     className="pointer-events-none absolute left-0 top-0 z-20"

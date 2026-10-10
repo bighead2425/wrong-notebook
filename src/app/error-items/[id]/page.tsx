@@ -753,7 +753,7 @@ export default function ErrorDetailPage() {
                         </Link>
                         <h1
                             className="text-2xl font-bold"
-                            /* 【2026-10-10】"错题详情"四个字按从属角色着色：主题深红 / 附题橙
+                            /* 【2026-10-10】"错题详情"四个字按从属角色着色：主题深红 / 附题绿
                                （颜色只在 lib/item-link.ts 定；孤题不着色 = 保持原样） */
                             style={{ color: (item.link && linkRoleColor(item.link.role)) || undefined }}
                             title={item.link ? linkRoleLabel(item.link.role, language === "zh") : undefined}

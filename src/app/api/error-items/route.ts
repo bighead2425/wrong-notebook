@@ -16,6 +16,9 @@ import {
 } from "@/lib/manage-type";
 import { subjectKeyToCode, formatDateStamp, formatQuestionNo, startOfToday } from "@/lib/question-no";
 import { initialLevelForManageType } from "@/lib/level-linkage";
+// 【2026-10-10】可选的"新建时直接挂到某道题下面"（他原稿："拍照新增一道题并关联到题 A"）
+import { rootOf, type LinkNode } from "@/lib/item-link";
+import { loadLinkNodes, resolveOwnedItem } from "@/lib/item-link-store";
 
 const logger = createLogger('api:error-items');
 
@@ -45,6 +48,11 @@ export async function POST(req: Request) {
             mistakeCategory,
             manageType,
             manageTypeSource,
+            /**
+             * 【2026-10-10】可选：新题**直接挂到哪道题下面**（他在"扫到的这道题"页
+             * 点【关联别的题】→【拍照新增并关联】时带上）。id 或题号都收。
+             */
+            parentId,
         } = body;
 
         /**
@@ -253,6 +261,28 @@ export async function POST(req: Request) {
 
         // 创建错题记录
         try {
+            /**
+             * 【2026-10-10】新题要不要**直接挂到某道题下面**（他原稿里"拍照新增一道题并关联到题 A"）。
+             *
+             * ⚠️ 一律**挂到"主题"上**：传进来的若是**附题**，先往上追到它所属的主题 ——
+             *    不变量是"深度只许一层"，不这么做库里就会出现"附题的附题"。
+             * ⚠️ 认不出 / 不属于本人 / 已进回收箱 ⇒ **当没给**（既不报错、也不挡保存）——
+             *    跟已经定好的 `cropRegions` 同一条原则：题都录好了，不该因为一个附加关系存不下去。
+             */
+            let parentIdForCreate: string | null = null;
+            if (typeof parentId === "string" && parentId.trim()) {
+                try {
+                    const anchor = await resolveOwnedItem(user.id, parentId);
+                    if (anchor) {
+                        const nodes: LinkNode[] = await loadLinkNodes(user.id, [anchor.id]);
+                        const root = rootOf(nodes, anchor.id);
+                        parentIdForCreate = root ? root.id : anchor.id;
+                    }
+                } catch (error) {
+                    logger.error({ error }, 'Failed to resolve link parent on create');
+                }
+            }
+
             const errorItem = await prisma.errorItem.create({
                 data: {
                     userId: user.id,
@@ -284,6 +314,8 @@ export async function POST(req: Request) {
                     // 保持 Prisma 的"未涉及字段不改"语义 —— 详情页改题干重存时不会把原坐标抹掉。
                     cropRegions: finalCropRegions,
                     masteryLevel: 0,
+                    /** 【2026-10-10】建的时候就挂上去（不传 = 孤题，与以前一样） */
+                    parentId: parentIdForCreate,
                     tags: {
                         connect: tagConnections,
                     },

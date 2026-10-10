@@ -46,6 +46,19 @@ export default function AddErrorPage() {
      */
     const [batchMode, setBatchMode] = useState(false);
     const [batchFiles, setBatchFiles] = useState<File[]>([]);
+    /**
+     * 【2026-10-10】"拍照新增并关联"：从"扫到的这道题"页跳过来时带 `?linkTo=<题id>`，
+     * 这一批新题就都挂到那道题下面（他在原稿里写的那条路）。
+     *
+     * ⚠️ 用 `window.location.search` 在挂载时读**一次**，**不用 `useSearchParams`** ——
+     *    后者要求整棵树被 `<Suspense>` 包住，否则 `next build` 直接中断（项目里踩过一次，
+     *    见"构建期错误三道关都拦不住"那条教训）。
+     */
+    const [linkToId, setLinkToId] = useState<string>("");
+    useEffect(() => {
+        const v = new URLSearchParams(window.location.search).get("linkTo");
+        if (v) setLinkToId(v);
+    }, []);
     /** 本页已抠走并入库的区域（整页自然坐标），画在编辑器上避免重复抠同一道 */
     const [doneRects, setDoneRects] = useState<DoneRect[]>([]);
     /**
@@ -442,12 +455,21 @@ export default function AddErrorPage() {
         return (
             <main className="min-h-screen bg-background">
                 <div className="container mx-auto p-4 pb-20">
+                    {/* 【2026-10-10】带 `?linkTo=` 进来的：说明一句，免得他忘了自己在"关联"流程里 */}
+                    {linkToId && (
+                        <div className="mb-3 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
+                            {language === "zh"
+                                ? "这一批新增的题，保存时会自动挂到那道题下面。"
+                                : "Questions saved here will be attached to that question."}
+                        </div>
+                    )}
                     <BatchPipeline
                         language={language}
                         aiTimeout={aiTimeout}
                         defaultNotebookId={notebookId}
                         initialFiles={batchFiles}
                         initialCropRegions={batchCropRegions}
+                        linkToId={linkToId || undefined}
                         onExit={() => { setBatchMode(false); setBatchFiles([]); setBatchCropRegions([]); }}
                     />
                 </div>

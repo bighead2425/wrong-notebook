@@ -102,6 +102,12 @@ interface BatchPipelineProps {
      */
     initialFiles?: File[];
     /**
+     * 【2026-10-10】这一批新题**全部挂到哪道题下面**（他在"扫到的这道题"页点
+     * 【拍照新增并关联】时带过来的题 id）。
+     * ⚠️ 服务端会把它解析成**主题**（给的是附题就往上追一层），所以这里原样传即可。
+     */
+    linkToId?: string;
+    /**
      * 【M1】与 `initialFiles` **同序**的框坐标（已序列化；无框的项为 null）。
      *
      * 为什么必须与 initialFiles 成对传：那两个回调在同一次点击里一起回，
@@ -152,7 +158,7 @@ function looksThrottled(err: unknown): boolean {
     return /429|rate.?limit|too many|限流|限速/.test(s);
 }
 
-export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, initialFiles, initialCropRegions }: BatchPipelineProps) {
+export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, initialFiles, initialCropRegions, linkToId }: BatchPipelineProps) {
     const { t } = useLanguage();
 
     const [items, setItems] = useState<BatchItem[]>([]);
@@ -1000,6 +1006,8 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             const res = await apiClient.post<{ id: string; duplicate?: boolean }>("/api/error-items", {
                 ...data,
                 originalImageUrl: cur.base64 || "",
+                /** 【2026-10-10】"拍照新增并关联"：新题直接挂到那道题下面（不传 = 孤题，与以前一样） */
+                ...(linkToId ? { parentId: linkToId } : {}),
                 // 【M1】这张图自己的框坐标。没有就不带这个键 ——
                 // 后端按"未提供"处理，不会把字段写成空。
                 ...(cur.cropRegions ? { cropRegions: cur.cropRegions } : {}),
