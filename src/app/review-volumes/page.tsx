@@ -26,12 +26,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     Check,
+    Eraser,
     House,
     PanelLeftClose,
     PanelLeftOpen,
     Pencil,
     Printer,
-    RefreshCw,
     ScanLine,
     Search,
     Trash2,
@@ -45,6 +45,15 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { whenImagesDecoded, whenImagesSettled } from "@/lib/print-image-readiness";
 import { makeQrDataUrl } from "@/lib/qr";
 import { ReviewSheet, ReviewQuestionBlock, pageQrPayload } from "@/components/print/review-card";
+import { ImitateSegments, ImitateSheet } from "@/components/print/imitate-card";
+import {
+    buildImitateSegments,
+    imitateLayoutFromSnapshot,
+    readImitateHeights,
+    themeRowOfSnapshot,
+    type ImitateSegment,
+    type ImitateSegmentSpec,
+} from "@/lib/imitate-card";
 import { SheetZoom } from "@/components/print/sheet-zoom";
 import { ScanVolumeView } from "@/components/scan-volume-view";
 import { ScanItemPanel } from "@/components/scan-item-panel";
@@ -74,6 +83,12 @@ import {
     unsavedLeaveMessage,
     type ReviewLayoutBaseline,
 } from "@/lib/unsaved-guard";
+
+/**
+ * 【2026-10-11 他定】"上次检索的年级/学期留在缓存"——
+ * 这个 key 存的是**年级/学期**那一个筛选（学科刻意不存，见下面那两段 effect）。
+ */
+const GRADE_TERM_CACHE_KEY = "wrong-notebook:review-volumes:term";
 
 /** 卷列表里一条（GET /api/review-volumes 的返回） */
 interface VolumeSummary {
@@ -153,8 +168,19 @@ export default function ReviewVolumesPage() {
     /** 列表滚动容器 + 底部哨兵（滚到哨兵露头就自动要下一页） */
     const listScrollRef = useRef<HTMLDivElement | null>(null);
     const listSentinelRef = useRef<HTMLDivElement | null>(null);
+    /**
+     * 【2026-10-11 他定】检索框改成**回车才搜**（"不设为即时检索……省一点计算资源"）：
+     *   `queryDraft` = 输入框里正在打的字，`query` = **已经打给服务端的那一次**。
+     *   两者分开，边上那个「清空条件」才是真的清空（否则清了输入框、列表却还是旧结果）。
+     */
     const [query, setQuery] = useState("");
-    const [kindFilter, setKindFilter] = useState<"all" | VolumeKind>("all");
+    const [queryDraft, setQueryDraft] = useState("");
+    /**
+     * 【2026-10-11 他定】这一页现在管**两种卷**：复练（RE）与模仿（CO）——
+     * 积累纸不进这一页（它单独走「日积月累 → 积累纸·打印」）。
+     * ⚠️ 没有"全部"这一档了：他原话是"一个是'全部'改为'复练'，另一个是'复练'改为'模仿'"。
+     */
+    const [kindFilter, setKindFilter] = useState<VolumeKind>("review");
     /**
      * 【2026-09-30 他拍的板：换成两个筛选】
      *   ① 年级/学期（小一上 … 高三下，18 个）—— 卷快照里有 gradeSemester
@@ -246,7 +272,8 @@ export default function ReviewVolumesPage() {
         (cursor: string | null) => {
             const qs = new URLSearchParams();
             qs.set("limit", String(VOLUME_PAGE_SIZE));
-            if (kindFilter !== "all") qs.set("kind", kindFilter);
+            // 没有"全部"这一档了 ⇒ 每次都要带 kind
+            qs.set("kind", kindFilter);
             if (gradeTermFilter) qs.set("term", gradeTermFilter);
             if (subjectFilter) qs.set("subject", subjectFilter);
             if (query.trim()) qs.set("q", query.trim());
@@ -460,6 +487,87 @@ export default function ReviewVolumesPage() {
         return map;
     }, [items]);
 
+    /* ===== 【T4 · 2026-10-11】模仿卷 =====
+       它与复练卷最大的不同：**左栏是"主题"的内容**（题干 → 图 → 遮挡线 → 参考答案 → 解析）。
+       待遇两条流不一样（他设计稿里写得很准）：
+         · **右栏**（附题）只认快照 —— 页归属锁死，扫码要对得上这一页；
+         · **左栏**（主题）按主题**现算**（快照里只存了主题题号，不存分段结果）。
+       主题被删 ⇒ 整卷作废（`ImitateSheet` 自己出一张"此卷作废"的白纸）。 */
+    const imitateThemeKey = kind === "imitate" ? (themeRowOfSnapshot(snapshotRows)?.key ?? null) : null;
+    /** 主题本体（可能是 null：题已被删） */
+    const imitateTheme = useMemo(
+        () => (imitateThemeKey ? (items.find((i) => i.id === imitateThemeKey) ?? null) : null),
+        [imitateThemeKey, items],
+    );
+    const imitateSpecs = useMemo(
+        () => (imitateTheme ? buildImitateSegments(imitateTheme, { hasFigure: true }) : []),
+        [imitateTheme],
+    );
+    const imitateSegmentByKey = useMemo(() => {
+        const map: Record<string, ImitateSegmentSpec> = {};
+        for (const s of imitateSpecs) map[s.key] = s;
+        return map;
+    }, [imitateSpecs]);
+    /** 右栏那些行（快照里 `columnIndex !== 0` 的），按页序 → 页内序排好 */
+    const imitateRightRows = useMemo(
+        () =>
+            snapshotRows
+                .filter((r) => r.columnIndex !== 0)
+                .sort((a, b) => a.pageIndex - b.pageIndex || a.seqInColumn - b.seqInColumn),
+        [snapshotRows],
+    );
+    /** 左栏的段（量好高度的那一份）—— `null` = 还没量到 */
+    const [imitateSegments, setImitateSegments] = useState<ImitateSegment[] | null>(null);
+    const imitateMeasureRef = useRef<HTMLDivElement | null>(null);
+    const imitateMeasureKey = useMemo(
+        () =>
+            [
+                imitateThemeKey ?? "",
+                imitateSpecs.map((s) => s.key).join("|"),
+                JSON.stringify(figureScales),
+                imitateRightRows.map((r) => r.key).join("|"),
+            ].join("#"),
+        [imitateThemeKey, imitateSpecs, figureScales, imitateRightRows],
+    );
+    useEffect(() => {
+        if (kind !== "imitate") {
+            setImitateSegments(null);
+            return;
+        }
+        // 主题没了 ⇒ 左栏一个段都没有（"作废"那张白纸不需要量）
+        if (!imitateTheme) {
+            setImitateSegments([]);
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            await whenImagesSettled();
+            await whenImagesDecoded(imitateMeasureRef.current);
+            if (cancelled) return;
+            const el = imitateMeasureRef.current;
+            if (!el) return;
+            const { segments } = readImitateHeights(
+                el,
+                imitateSpecs,
+                imitateRightRows.map((r) => r.key),
+            );
+            if (!cancelled) setImitateSegments(segments);
+        })();
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [kind, imitateMeasureKey]);
+
+    /** 模仿卷的版面：右栏按快照、左栏按现算好的段 */
+    const imitateLayout = useMemo(
+        () =>
+            kind === "imitate" && imitateSegments
+                ? imitateLayoutFromSnapshot(imitateRightRows, imitateSegments)
+                : null,
+        [kind, imitateRightRows, imitateSegments],
+    );
+
     // ================= 量高度（只为"这一页被撑爆了没有"这个安全阀） =================
 
     const measureKey = useMemo(
@@ -562,18 +670,22 @@ export default function ReviewVolumesPage() {
     }, [dirty]);
 
     /** 页二维码：内容 = 卷号-页码（与打印预览页一模一样，扫回来才能定位到页） */
-    const qrKey = detail ? `${detail.volumeNo}:${layout?.pages.length ?? 0}` : "";
+    /** 【2026-10-11】页数按**纸别**取：复练看 `layout`、模仿看 `imitateLayout` ——
+     * 取错就是"二维码只发了前几页"。 */
+    const layoutPageCount = kind === "imitate" ? (imitateLayout?.sheets.length ?? 0) : (layout?.pages.length ?? 0);
+    const layoutReady = kind === "imitate" ? !!imitateLayout : !!layout;
+    const qrKey = detail ? `${detail.volumeNo}:${layoutPageCount}` : "";
 
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            if (!detail || !layout) {
+            if (!detail || layoutPageCount === 0) {
                 setPageQr({});
                 return;
             }
             const entries: Record<number, string> = {};
             await Promise.all(
-                layout.pages.map(async (_page, i) => {
+                Array.from({ length: layoutPageCount }, async (_x, i) => {
                     try {
                         entries[i + 1] = await makeQrDataUrl(pageQrPayload(detail.volumeNo, i + 1), {
                             width: 120,
@@ -820,10 +932,8 @@ export default function ReviewVolumesPage() {
             /**
              * 【2026-10-01 他定】积累纸（build）**不出现在这一页**。
              * 原话："复练卷页就是复练卷的内容，不和积累交互这么深。复练卷页管理复练卷，
-             * 那么积累纸·打印就管理积累纸。" ⇒ 各管各的，这一页只看复练卷。
-             *
-             * ⚠️ 这一条**必须留在本地**：筛选选"全部类型"时服务端会把两种卷一起给回来，
-             *    挡住积累卷是"这一页只看复练卷"这条产品决定，不是筛选条件。
+             * 那么积累纸·打印就管理积累纸。" ⇒ 各管各的。
+             * 【2026-10-11】这一页现在管**复练 + 模仿**两种（见 `kindFilter`），积累纸仍然挡在外面。
              */
             if (v.kind === "build") return false;
             /**
@@ -832,7 +942,7 @@ export default function ReviewVolumesPage() {
              * 这里留作**兜底**：万一服务端与本地口径有出入，也不会把不该出现的卷摆出来。
              * 谓词与 SQL 那边逐条等价（学期走同一张写法表、关键词走同样的三个字段）。
              */
-            if (kindFilter !== "all" && v.kind !== kindFilter) return false;
+            if (v.kind !== kindFilter) return false;
             // 年级/学期：卷页眉可能是"六年级上·五年级上"（跨本组卷），**任一部分**命中就算
             if (gradeTermFilter && !volumeMatchesTerm(v.gradeSemester, gradeTermFilter)) return false;
             if (!q) return true;
@@ -844,12 +954,44 @@ export default function ReviewVolumesPage() {
         });
     }, [volumes, kindFilter, gradeTermFilter, query]);
 
+    /**
+     * 【2026-10-11 他定】"上次检索的**年级/学期**留在缓存，**学科**不留缓存" ——
+     *   · 年级/学期是"她最近在看哪一册"这种稳定偏好 ⇒ 记住；
+     *   · 学科是"这次想看哪一科" ⇒ 每次进来从"全部学科"开始，不然会看着列表莫名其妙的少。
+     * ⚠️ 在 `useEffect` 里读、**不在 `useState` 初值里读**：那样服务端渲染出空值、
+     *    客户端渲染出缓存值 ⇒ React 会报 hydration 不一致。
+     */
+    useEffect(() => {
+        try {
+            const cached = window.localStorage.getItem(GRADE_TERM_CACHE_KEY);
+            if (cached) setGradeTermFilter(cached);
+        } catch {
+            // 隐私模式/存不下：不影响功能，就是"记不住上次的年级"
+        }
+    }, []);
+    useEffect(() => {
+        try {
+            window.localStorage.setItem(GRADE_TERM_CACHE_KEY, gradeTermFilter);
+        } catch {
+            // 同上：存不下就算了
+        }
+    }, [gradeTermFilter]);
+
+    /** 「清空条件」：他原话"点击后面的'刷新'意为清空所有检索并执行的意思" */
+    const clearFilters = useCallback(() => {
+        setQueryDraft("");
+        setQuery("");
+        setSubjectFilter("");
+        setGradeTermFilter("");
+        // 不需要手动重取：上面那个 effect 盯着 `fetchList`（依赖筛选）会自动再拉一次
+    }, []);
+
     const formatTime = (iso: string) => {
         const d = new Date(iso);
         return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
     };
 
-    const pageCount = layout?.pages.length ?? 0;
+    const pageCount = layoutPageCount;
 
     return (
         <div className="print-preview-shell">
@@ -878,7 +1020,7 @@ export default function ReviewVolumesPage() {
                     >
                         <BackButton fallbackUrl="/" className="shrink-0" />
                     </span>
-                    <h1 className="text-base sm:text-lg font-semibold truncate">{L("复练卷页", "Review volumes")}</h1>
+                    <h1 className="text-base sm:text-lg font-semibold truncate">{L("已有组卷", "Existing volumes")}</h1>
                     <span className="text-xs text-muted-foreground hidden lg:inline">
                         {L("已生成的卷都在这里（新卷请到打印预览页组）", "All built volumes live here")}
                     </span>
@@ -895,7 +1037,7 @@ export default function ReviewVolumesPage() {
                         variant="outline"
                         size="icon"
                         title={L("打印这一卷（会把卷内每道题的复练纸次数 +1）", "Print this volume")}
-                        disabled={!layout}
+                        disabled={!layoutReady}
                         onClick={handlePrint}
                     >
                         <Printer className="h-4 w-4" />
@@ -928,23 +1070,36 @@ export default function ReviewVolumesPage() {
                                         <Search className="absolute left-2 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
                                         <input
                                             className="w-full rounded-md border bg-background pl-7 pr-2 py-1.5 text-sm"
-                                            placeholder={L("搜卷号 / 名字 / 年级学期", "Search no. or name")}
-                                            value={query}
-                                            onChange={(e) => setQuery(e.target.value)}
+                                            /* 他 2026-10-11："不设为即时检索，改为输入后回车进行检索" */
+                                            placeholder={L("搜卷号 / 名字 / 年级学期，回车检索", "Search, press Enter")}
+                                            value={queryDraft}
+                                            onChange={(e) => setQueryDraft(e.target.value)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === "Enter") setQuery(queryDraft);
+                                            }}
                                         />
                                     </div>
-                                    <Button variant="ghost" size="icon" title={L("刷新", "Refresh")} onClick={fetchList}>
-                                        <RefreshCw className="h-4 w-4" />
+                                    {/* 他 2026-10-11：这个按钮的意思是**清空所有检索**并执行，不是"按当前条件重查"
+                                        ⇒ 名字就照它的意思叫「清空条件」（"刷新"会让人以为只是重查一次）。 */}
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        title={L("清空条件（卷号/名字、年级学期、学科全清掉）", "Clear all filters")}
+                                        onClick={clearFilters}
+                                    >
+                                        <Eraser className="h-4 w-4" />
                                     </Button>
                                 </div>
 
                                 <div className="flex flex-wrap items-center gap-2">
-                                    {/* 类型筛选：这里**只剩复练**（积累纸已拆去它自己的打印页，
-                                        2026-10-01 他定："各管各的"）。
-                                        保留"全部/复练"两个按钮而不是直接删掉：留个位置，
-                                        将来若再有第三种卷也不用重排工具栏。 */}
+                                    {/*
+                                        卷的两种入口（他 2026-10-11 定的那两条）：
+                                          ① 原来那个「全部」改成「复练」；
+                                          ② 原来那个「复练」改成「模仿」。
+                                        ⇒ 这一页现在**只管复练卷与模仿卷**（积累纸单独走它自己那条路）。
+                                    */}
                                     <div className="flex items-center gap-1 bg-muted/50 rounded-md p-0.5 w-fit">
-                                        {(["all", "review"] as const).map((k) => (
+                                        {(["review", "imitate"] as const).map((k) => (
                                             <button
                                                 key={k}
                                                 type="button"
@@ -955,9 +1110,7 @@ export default function ReviewVolumesPage() {
                                                     color: kindFilter === k ? "var(--primary-foreground)" : "inherit",
                                                 }}
                                             >
-                                                {k === "all"
-                                                    ? L("全部", "All")
-                                                    : L(VOLUME_KIND_LABEL[k], VOLUME_KIND_LABEL_EN[k])}
+                                                {L(VOLUME_KIND_LABEL[k], VOLUME_KIND_LABEL_EN[k])}
                                             </button>
                                         ))}
                                     </div>
@@ -1028,10 +1181,20 @@ export default function ReviewVolumesPage() {
                                                     background: active ? "var(--accent)" : "transparent",
                                                 }}
                                             >
-                                                {/* 有名字就把名字摆前面（名字是给人认卷用的），卷号退成副标题 */}
+                                                {/* 有名字就把名字摆前面（名字是给人认卷用的），卷号退成副标题。
+                                                    【2026-10-11】卷别那个小标签**两种分支都要有** ——
+                                                    这一页现在同时列复练卷与模仿卷，不标出来分不清。 */}
                                                 {v.title ? (
                                                     <>
-                                                        <div className="text-sm font-semibold truncate">{v.title}</div>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="text-sm font-semibold truncate">{v.title}</span>
+                                                            <span className="text-[10px] px-1 rounded border whitespace-nowrap">
+                                                                {L(
+                                                                    VOLUME_KIND_LABEL[v.kind],
+                                                                    VOLUME_KIND_LABEL_EN[v.kind],
+                                                                )}
+                                                            </span>
+                                                        </div>
                                                         <div className="text-[11px] text-muted-foreground truncate">
                                                             {v.volumeNo} · {v.itemCount} {L("题", "q")} · {v.pageCount}{" "}
                                                             {L("页", "p")}
@@ -1141,7 +1304,7 @@ export default function ReviewVolumesPage() {
                         {/* ⚠️ 量尺**必须留在缩放外面**（`SheetZoom` 的外面）：
                             `getBoundingClientRect()` 拿到的是**缩放后**的像素，
                             装进去量出来的 mm 会整体偏小 ⇒ 分页会以为"一页能装更多"，直接印错版面。 */}
-                        {items.length > 0 && (
+                        {items.length > 0 && kind !== "imitate" && (
                             <div
                                 ref={measureRef}
                                 aria-hidden="true"
@@ -1159,6 +1322,40 @@ export default function ReviewVolumesPage() {
                                         L={L}
                                     />
                                 ))}
+                            </div>
+                        )}
+
+                        {/* 【T4】模仿卷的量尺：左栏的段（主题）+ 右栏的附题，两栏同宽 ⇒ 一个容器够用。
+                            与打印预览页**同一套读法**（`readImitateHeights`），
+                            而且左栏用的是正式版面上那个 `ImitateSegments` —— 量到的就是印出来的。 */}
+                        {kind === "imitate" && imitateTheme && (
+                            <div
+                                ref={imitateMeasureRef}
+                                aria-hidden="true"
+                                className="print-review-measure no-print"
+                                style={{ width: `${VOLUME_VARIANTS.imitate.columnWidthMM}mm` }}
+                            >
+                                <ImitateSegments
+                                    specs={imitateSpecs}
+                                    theme={imitateTheme}
+                                    figureScale={figureScaleOf(imitateTheme.id)}
+                                    L={L}
+                                />
+                                {imitateRightRows.map((r) => {
+                                    const it = reviewItemByKey[r.key];
+                                    if (!it) return null;
+                                    return (
+                                        <ReviewQuestionBlock
+                                            key={r.key}
+                                            item={it}
+                                            seq={r.seq}
+                                            blankLines={blankValueOf(it.id)}
+                                            showDivider={false}
+                                            figureScale={figureScaleOf(it.id)}
+                                            L={L}
+                                        />
+                                    );
+                                })}
                             </div>
                         )}
 
@@ -1187,7 +1384,7 @@ export default function ReviewVolumesPage() {
                                             <Button
                                                 size="sm"
                                                 onClick={updateVolume}
-                                                disabled={busy === "saving" || !layout || overfullPages.length > 0}
+                                                disabled={busy === "saving" || !layoutReady || overfullPages.length > 0}
                                                 title={
                                                     overfullPages.length > 0
                                                         ? L("有页面装不下了，先把那几页调小", "Some page is overfull")
@@ -1203,15 +1400,24 @@ export default function ReviewVolumesPage() {
                                          * 【2026-10-03 需求第 5 条】【扫码图】：
                                          * 进"扫描这份卷第一页"的预览。**改过版面没保存时不可点** ——
                                          * 不然扫出来的是库里那版、屏上是改过的这版，两边对不上。
+                                         * ⚠️【2026-10-11】模仿卷这一屏**还没做**（他设计稿第 8 条：
+                                         * 左栏主题一个蓝框、右栏每题一个蓝框加号、灰圈流水号）——
+                                         * 现在点进去会是**复练纸那套两栏排题**的错版式。
+                                         * 宁可先禁用并说清，也不给一个错的屏（下一版补上）。
                                          */}
                                         <Button
                                             size="sm"
                                             variant="outline"
-                                            disabled={dirty || !layout}
+                                            disabled={dirty || !layoutReady || kind === "imitate"}
                                             title={
-                                                dirty
-                                                    ? L("先保存版面（点【更新组卷】）才能进扫码图", "Save the layout first")
-                                                    : L("看这份卷第一页的扫码预览", "Scan preview of page 1")
+                                                kind === "imitate"
+                                                    ? L(
+                                                          "模仿卷的「扫到的模仿卷」那一屏还没做（下一版补）",
+                                                          "Scan view for imitate volumes is not built yet",
+                                                      )
+                                                    : dirty
+                                                      ? L("先保存版面（点【更新组卷】）才能进扫码图", "Save the layout first")
+                                                      : L("看这份卷第一页的扫码预览", "Scan preview of page 1")
                                             }
                                             onClick={() => {
                                                 if (!detail) return;
@@ -1284,10 +1490,15 @@ export default function ReviewVolumesPage() {
 
                                 {selectedId && (
                                     <p className="mb-3 text-xs text-muted-foreground no-print">
-                                        {L(
-                                            "可以调留白、拖题图右下角把手改大小、拖两道题之间的虚线 —— 但题不会再在页之间移动（卷已定稿，页号要跟纸走）。改完点「更新组卷」覆盖保存。",
-                                            "Adjust spacing / figure size. Questions stay on their page. Press Update volume to save.",
-                                        )}
+                                        {kind === "imitate"
+                                            ? L(
+                                                  "模仿卷是**只读**的：左栏（主题）按主题现算、右栏（附题）按当初印出来的页走。双击纸面空白处可切「适应宽度 / 实际大小」，右上角可打印、可看扫码图。",
+                                                  "Imitate volumes are read-only. Double-click the paper to toggle fit/actual size.",
+                                              )
+                                            : L(
+                                                  "可以调留白、拖题图右下角把手改大小、拖两道题之间的虚线 —— 但题不会再在页之间移动（卷已定稿，页号要跟纸走）。改完点「更新组卷」覆盖保存。",
+                                                  "Adjust spacing / figure size. Questions stay on their page. Press Update volume to save.",
+                                              )}
                                     </p>
                                 )}
 
@@ -1314,8 +1525,36 @@ export default function ReviewVolumesPage() {
                                  * 加过一版"build 卷用积累纸渲染"的分支，但既然积累纸已经拆去
                                  * 它自己的打印页（`/insights/print`）、且本页列表已不再列出 build 卷
                                  * （他："各管各的"），那个分支就成了死路 —— 删掉，别留在代码里误导人。
+                                 *
+                                 * 【2026-10-11】模仿卷（CO）做成**只读**：纸面照快照还原、
+                                 * 可缩放/可打印/可看扫码图，但**不给"更新组卷"** ——
+                                 * 它的左栏是按主题现算的，右栏页归属锁在快照里，
+                                 * "页内调留白"这套对它的意义和复练卷不一样，先不做、不做半套。
                                  */}
-                                {layout?.pages.map((page, i) => (
+                                {kind === "imitate"
+                                    ? imitateLayout?.sheets.map((sheet, i) => (
+                                          <ImitateSheet
+                                              key={i}
+                                              sheet={sheet}
+                                              segmentByKey={imitateSegmentByKey}
+                                              theme={imitateTheme}
+                                              themeNo={imitateThemeKey ? (rowByKey[imitateThemeKey]?.itemNo ?? null) : null}
+                                              pageNo={i + 1}
+                                              pageCount={imitateLayout.sheets.length}
+                                              volumeNo={detail?.volumeNo ?? ""}
+                                              kind="imitate"
+                                              gradeText={detail?.gradeSemester ?? undefined}
+                                              printDate={printDate}
+                                              emojiMark={detail?.emojiMark}
+                                              pageQr={pageQr[i + 1]}
+                                              itemByKey={reviewItemByKey}
+                                              missing={missingMap}
+                                              blankValueOf={blankValueOf}
+                                              figureScaleOf={figureScaleOf}
+                                              L={L}
+                                          />
+                                      ))
+                                    : layout?.pages.map((page, i) => (
                                     <ReviewSheet
                                         key={i}
                                         page={page}

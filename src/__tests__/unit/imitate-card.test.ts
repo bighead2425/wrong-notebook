@@ -3,8 +3,10 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildImitateSegments,
+    imitateLayoutFromSnapshot,
     paginateImitate,
     imitatePageCount,
+    themeRowOfSnapshot,
     type ImitateSegment,
 } from '@/lib/imitate-card';
 import { VOLUME_COLUMN_MM } from '@/lib/review-card';
@@ -202,5 +204,74 @@ describe('模仿纸左栏：主题拆成段', () => {
         expect(a[0].text).toBe('编辑过的题干');
         const b = buildImitateSegments({ id: 'q6', ocrText: 'OCR 原文' });
         expect(b[0].text).toBe('OCR 原文');
+    });
+});
+
+describe('模仿卷 · 按**快照**还原版面（2026-10-11）', () => {
+    const seg = (key: string, h: number): ImitateSegment => ({ key, kind: 'text', heightMM: h });
+
+    it('★ 右栏只认快照：哪一页有哪几道 = 快照说了算，不重排', () => {
+        // 快照：第 1 页有 B、第 2 页有 C（哪怕它们其实放得下同一页，也不许挪）
+        const rows = [
+            { key: 'B', seq: 1, pageIndex: 1, columnIndex: 1, seqInColumn: 1 },
+            { key: 'C', seq: 2, pageIndex: 2, columnIndex: 1, seqInColumn: 1 },
+        ];
+        const layout = imitateLayoutFromSnapshot(rows, []);
+        expect(layout.sheets.length).toBe(2);
+        expect(layout.sheets[0].right.map((r) => r.key)).toEqual(['B']);
+        expect(layout.sheets[1].right.map((r) => r.key)).toEqual(['C']);
+        // 流水号跟着快照走（跨页连号）
+        expect(layout.sheets[1].right[0].seq).toBe(2);
+    });
+
+    it('★ 左栏按主题**现算**（快照里不存分段）：段够长就自己多出一页', () => {
+        const rows = [{ key: 'B', seq: 1, pageIndex: 1, columnIndex: 1, seqInColumn: 1 }];
+        // 每段 0.6 栏高 ⇒ 一页只放得下一段 ⇒ 左栏自己 2 页
+        const layout = imitateLayoutFromSnapshot(rows, [
+            seg('t:stem', VOLUME_COLUMN_MM * 0.6),
+            seg('t:divider', VOLUME_COLUMN_MM * 0.6),
+        ]);
+        expect(layout.sheets.length).toBe(2);
+        expect(layout.sheets[0].left.map((s) => s.key)).toEqual(['t:stem']);
+        expect(layout.sheets[1].left.map((s) => s.key)).toEqual(['t:divider']);
+        // 第 2 页右栏空着（右栏第 1 页就排完了）
+        expect(layout.sheets[1].right).toEqual([]);
+    });
+
+    it('页数取两条流里大的那个（右栏长 ⇒ 左栏后面几页空着）', () => {
+        const rows = [
+            { key: 'B', seq: 1, pageIndex: 1, columnIndex: 1, seqInColumn: 1 },
+            { key: 'C', seq: 2, pageIndex: 2, columnIndex: 1, seqInColumn: 1 },
+            { key: 'D', seq: 3, pageIndex: 3, columnIndex: 1, seqInColumn: 1 },
+        ];
+        const layout = imitateLayoutFromSnapshot(rows, [seg('t:stem', 10)]);
+        expect(layout.sheets.length).toBe(3);
+        expect(layout.sheets[0].left.length).toBe(1);
+        expect(layout.sheets[2].left).toEqual([]);
+    });
+
+    it('左栏那一行（columnIndex 0）**不算右栏**：传进来也不许印成附题', () => {
+        const rows = [
+            { key: 'theme', seq: 0, pageIndex: 1, columnIndex: 0, seqInColumn: 1 },
+            { key: 'B', seq: 1, pageIndex: 1, columnIndex: 1, seqInColumn: 1 },
+        ];
+        const layout = imitateLayoutFromSnapshot(rows, []);
+        expect(layout.sheets[0].right.map((r) => r.key)).toEqual(['B']);
+    });
+
+    it('主题被删（左栏一个段都没有）⇒ 仍然出得来一张纸，只是左栏空着', () => {
+        const rows = [{ key: 'B', seq: 1, pageIndex: 1, columnIndex: 1, seqInColumn: 1 }];
+        const layout = imitateLayoutFromSnapshot(rows, []);
+        expect(layout.sheets.length).toBe(1);
+        expect(layout.sheets[0].left).toEqual([]);
+    });
+
+    it('themeRowOfSnapshot：挑得出左栏那一行，挑不到就 null（不猜）', () => {
+        const rows = [
+            { key: 'B', seq: 1, pageIndex: 1, columnIndex: 1, seqInColumn: 1 },
+            { key: 'theme', seq: 0, pageIndex: 1, columnIndex: 0, seqInColumn: 1 },
+        ];
+        expect(themeRowOfSnapshot(rows)?.key).toBe('theme');
+        expect(themeRowOfSnapshot([rows[0]])).toBeNull();
     });
 });

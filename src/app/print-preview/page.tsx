@@ -29,7 +29,7 @@ import { ImitateSegments, ImitateSheet } from "@/components/print/imitate-card";
 import {
     buildImitateSegments,
     paginateImitate,
-    withHeights,
+    readImitateHeights,
     type ImitateLayout,
     type ImitateSegment,
     type ImitateSegmentSpec,
@@ -527,25 +527,17 @@ function PrintPreviewContent() {
             if (cancelled) return;
             const el = imitateMeasureRef.current;
             if (!el) return;
-            // px → mm：CSS 规定 1in = 96px，1in = 25.4mm
-            const toMM = (px: number) => (px * 25.4) / 96;
-            const heights: Record<string, number> = {};
-            el.querySelectorAll<HTMLElement>("[data-imitate-seg]").forEach((node) => {
-                const key = node.dataset.imitateSeg;
-                if (key) heights[key] = toMM(node.getBoundingClientRect().height);
-            });
-            const blocks: MeasuredBlock[] = [];
-            el.querySelectorAll<HTMLElement>("[data-review-block]").forEach((node) => {
-                const key = node.dataset.reviewBlock;
-                if (key) blocks.push({ key, heightMM: toMM(node.getBoundingClientRect().height) });
-            });
-            if (cancelled) return;
             /**
-             * ⚠️ 左栏的段高度**必须按 key 对齐着取**（`withHeights`）——
-             *    自己去拼 `{key, kind, heightMM}` 就得在这里重新判断 kind，
-             *    那可是"规则抄第二份"的开端。缺的高度给 0 只会让那一段挤在同一页，不会丢。
+             * 读高度这件事**只有一处实现**（`readImitateHeights`）：
+             * 卷管理页也要量同样一份东西，两处各写一遍迟早有一处把 px 当 mm 用。
              */
-            setImitateMeasured({ segments: withHeights(imitateSpecs, (k) => heights[k] ?? 0), blocks });
+            const measured = readImitateHeights(
+                el,
+                imitateSpecs,
+                pickedChildItems.map((i) => i.id),
+            );
+            if (cancelled) return;
+            setImitateMeasured(measured);
         })();
         return () => {
             cancelled = true;

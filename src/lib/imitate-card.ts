@@ -226,3 +226,118 @@ export function withHeights(
         heightMM: heightOf(s.key),
     }));
 }
+
+/* ------------------------------------------------------------------ */
+/* 按**快照**还原模仿卷的版面（卷管理页 / 扫到的模仿卷，2026-10-11）        */
+/* ------------------------------------------------------------------ */
+
+/** 快照里的一行（就是 `ReviewVolumeItem` 里跟排版有关的那几个字段） */
+export interface ImitateSnapshotRow {
+    /** 题在界面里的 key（= 原题 id；题被删了也得有个 key，所以存快照时用它自己那行） */
+    key: string;
+    /** 右栏的流水号（1 起）；**左栏（主题）那一行是 0** */
+    seq: number;
+    pageIndex: number;
+    /** 0 = 左栏（主题那一行）、1 = 右栏（附题） */
+    columnIndex: number;
+    seqInColumn: number;
+}
+
+/**
+ * 按**快照**把模仿卷还原成"每一页印什么" —— 右栏**只认快照**，左栏按主题现算。
+ *
+ * 为什么两条流待遇不同（他在设计稿里写得很准确）：
+ *   · **右栏**："每页的题就固定了，这个和复练纸是一样的" ⇒ 页归属锁死，
+ *     手机扫这一页的二维码要能对回这一页，题在各页之间窜来窜去就白扫了；
+ *   · **左栏**："模仿卷并不记录卷内题的从属关系……这样数据库记录的模仿卷，日后也可以重新生成了"
+ *     ⇒ 左栏的段**不存**，按主题内容现算现排（所以这里要传量好的段）。
+ *
+ * 页数取**两者里大的那个**：右栏排到第 3 页、左栏只用了 1 页 ⇒ 仍然是 3 页（第 2/3 页左栏空着）；
+ * 反过来，主题后来被写长了、左栏多出一页 ⇒ 那多出来的一页右栏空着（纸照印）。
+ *
+ * @param rows         快照里**右栏**那些行（`columnIndex === 1` 的那些；左栏那一行不要传进来）
+ * @param leftSegments 左栏的段（**已量好高度**）—— 传空数组就是"左栏什么都不印"
+ */
+export function imitateLayoutFromSnapshot(
+    rows: readonly ImitateSnapshotRow[],
+    leftSegments: readonly ImitateSegment[],
+): ImitateLayout {
+    const rightRows = rows.filter((r) => (r.columnIndex || 0) !== 0);
+    const rightMaxPage = rightRows.reduce((m, r) => Math.max(m, r.pageIndex || 1), 1);
+
+    /**
+     * 左栏那条流**原样复用 `paginateImitate`**（右栏传空）——
+     * 别在这儿再写一遍"贪心填栏"，那正是"同一套规则两份实现"的开端。
+     */
+    const leftSheets = paginateImitate(leftSegments, []).sheets;
+
+    const pageCount = Math.max(rightMaxPage, leftSheets.length, 1);
+    const sheets: ImitateSheet[] = [];
+    for (let pageNo = 1; pageNo <= pageCount; pageNo += 1) {
+        const onPage = rightRows
+            .filter((r) => (r.pageIndex || 1) === pageNo)
+            .sort((a, b) => (a.seqInColumn || 1) - (b.seqInColumn || 1));
+        sheets.push({
+            left: leftSheets[pageNo - 1]?.left ?? [],
+            right: onPage.map((r) => ({ key: r.key, heightMM: 0, seq: r.seq })),
+        });
+    }
+
+    return { sheets, overflowRight: [] };
+}
+
+/** 从快照行里挑出**左栏那一行**（主题）—— `columnIndex === 0` */
+export function themeRowOfSnapshot(rows: readonly ImitateSnapshotRow[]): ImitateSnapshotRow | null {
+    return rows.find((r) => (r.columnIndex || 0) === 0) ?? null;
+}
+
+/* ------------------------------------------------------------------ */
+/* 量尺：从隐藏容器里读真实高度                                            */
+/* ------------------------------------------------------------------ */
+
+/** 隐藏量尺容器的类名（两处调用共用一个：打印预览 / 卷管理页） */
+export const IMITATE_MEASURE_CLASS = 'print-review-measure no-print';
+/** 左栏每一段的锚点属性（`ImitateSegments` 会给每段加上它） */
+export const IMITATE_SEG_ATTR = 'data-imitate-seg';
+/** 右栏每个附题块的锚点属性（`ReviewQuestionBlock` 自己带的） */
+export const REVIEW_BLOCK_ATTR = 'data-review-block';
+
+/**
+ * 从量尺容器里读出真实高度，配回段规格 / 附题清单。
+ *
+ * ⚠️ 抽出来共用（打印预览与卷管理页都要量）——"逐段读 rect、px 换 mm、按 key 对齐"
+ *    这三件事各写一遍，迟早有一处用 px 当 mm、或者漏掉某一段。
+ *
+ * @param container 量尺容器（必须**在 DOM 里、且已布局**；`display:none` 量出来全是 0）
+ * @param specs     左栏的段规格（顺序即版面顺序）—— 高度按 key 对齐着配回去
+ * @param blockKeys 右栏附题的 key（顺序即卷内顺序）
+ */
+export function readImitateHeights(
+    container: HTMLElement,
+    specs: readonly ImitateSegmentSpec[],
+    blockKeys: readonly string[],
+): { segments: ImitateSegment[]; blocks: MeasuredBlock[] } {
+    const toMM = (px: number) => (px * 25.4) / 96; // CSS 规定 1in = 96px，1in = 25.4mm
+
+    const segHeights: Record<string, number> = {};
+    container.querySelectorAll<HTMLElement>(`[${IMITATE_SEG_ATTR}]`).forEach((node) => {
+        const key = node.dataset.imitateSeg;
+        if (key) segHeights[key] = toMM(node.getBoundingClientRect().height);
+    });
+
+    const blockHeights: Record<string, number> = {};
+    container.querySelectorAll<HTMLElement>(`[${REVIEW_BLOCK_ATTR}]`).forEach((node) => {
+        const key = node.dataset.reviewBlock;
+        if (key) blockHeights[key] = toMM(node.getBoundingClientRect().height);
+    });
+
+    return {
+        /**
+         * 缺的高度给 0：最坏是那一段和别的挤在同一页。
+         * ⚠️ **不能**在这儿自己拼 `{key, kind, heightMM}` —— 那就得重新判断 kind，
+         *    于是"哪种段长什么样"这条规则就有了第二处实现。
+         */
+        segments: withHeights(specs, (k) => segHeights[k] ?? 0),
+        blocks: blockKeys.map((k) => ({ key: k, heightMM: blockHeights[k] ?? 0 })),
+    };
+}

@@ -277,7 +277,15 @@ export async function GET(request: Request) {
         return NextResponse.json({
             volumes: page.map((v) => ({
                 ...v,
-                itemCount: v._count.items,
+                /**
+                 * 这道卷里有几道**题**。
+                 *
+                 * ⚠️【2026-10-11】模仿卷要**减 1**：它的卷内条目里有一行是**左栏的主题**
+                 * （`columnIndex: 0` / `seqInVolume: 0`，只记题号），那不是"这道卷收的题"。
+                 * 不减的话界面上会写成"3 题"而实际只收了 2 道附题 —— 他一眼就会看出来数不对。
+                 * 依据是建卷时的不变量：**模仿卷有且只有一行左栏**（见打印预览的 `buildVolumeItems`）。
+                 */
+                itemCount: Math.max(0, v._count.items - (v.kind === "imitate" ? 1 : 0)),
                 /**
                  * 学科：从题号前缀反推（`SX…` → math）。
                  * 一份卷可能跨学科（跨本组卷），所以回的是**去重后的数组**，
