@@ -1,4 +1,5 @@
 import { VOLUME_COLUMN_MM, type MeasuredBlock } from '@/lib/review-card';
+import { stripMarkdownImages } from '@/lib/markdown-utils';
 
 /**
  * 【2026-10-10】T4 **模仿纸**的版面规则（纯函数，规则只写这一处）。
@@ -135,4 +136,93 @@ export function paginateImitate(
 /** 这份模仿纸一共几张（他界面上"第 X / Y 页"的 Y） */
 export function imitatePageCount(layout: ImitateLayout): number {
     return layout.sheets.length;
+}
+
+/* ------------------------------------------------------------------ */
+/* 左栏的内容：把主题拆成"段"                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 左栏里一段的**内容**（不含高度 —— 高度要靠隐藏量尺按真实渲染量出来）。
+ *
+ * ⚠️ 顺序就是他定的那个：**题干 → 图 → 遮挡线 → 参考答案 → 解析**。
+ *    两张"小标题"（`heading`）是给下面那段定名的，他自己那版设计稿里就写着
+ *    "依次挂上，这道主题详情页的解析、参考答案"。
+ * ⚠️ **没有"错因"**：他 2026-10-10 明确更正过 —— 模仿纸问的是"我如何能对"，
+ *    **不谈"错"这件事**（原稿里写的"错因分析"作废）。
+ */
+export interface ImitateSegmentSpec {
+    key: string;
+    kind: 'text' | 'figure' | 'divider';
+    /**
+     * 这一段是什么：
+     *   · `stem`    题干的正文
+     *   · `heading` 小标题（"参考答案" / "解析"）
+     *   · `answer`  参考答案正文
+     *   · `analysis` 解析正文
+     * （`figure` / `divider` 两段的 role 用 `stem` 占位，渲染层按 kind 画）
+     */
+    role: 'stem' | 'heading' | 'answer' | 'analysis';
+    /** 文字内容（`figure` / `divider` 为空） */
+    text: string;
+}
+
+/** 只取"这几种字段"——不要把整条 `ErrorItem` 拖进纯逻辑里 */
+export interface ImitateSource {
+    id: string;
+    questionText?: string | null;
+    ocrText?: string | null;
+    answerText?: string | null;
+    analysis?: string | null;
+}
+
+/**
+ * 把**主题**拆成左栏的段序列。
+ *
+ * ⚠️ 题干优先用 `questionText`、退回 `ocrText`（与复练纸题块同一口径）；
+ *    并且**去掉文中的 markdown 图片** —— 题图是单独一段（`figure`），
+ *    不然同一张图会印两遍（复练纸那边也踩过这个：`stripMarkdownImages`）。
+ * ⚠️ 空内容不占段：没有答案就**不画**"参考答案"那个小标题，
+ *    免得纸上出现一个孤零零的标题、下面一片空白。
+ * ⚠️ 图要不要那一段由**调用方**决定（`opts.hasFigure`）—— 判断"有没有题图"
+ *    要先解 `cropRegions`，那是另一层的事，不拉进这个纯函数里。
+ */
+export function buildImitateSegments(
+    item: ImitateSource,
+    opts: { hasFigure: boolean } = { hasFigure: false },
+): ImitateSegmentSpec[] {
+    const out: ImitateSegmentSpec[] = [];
+    const stem = stripMarkdownImages((item.questionText || item.ocrText || '').trim());
+    if (stem) {
+        out.push({ key: `${item.id}:stem`, kind: 'text', role: 'stem', text: stem });
+    }
+    if (opts.hasFigure) {
+        out.push({ key: `${item.id}:figure`, kind: 'figure', role: 'stem', text: '' });
+    }
+    /** 遮挡线：把"题目"和"答案"分开的那条线（与深挖纸背面同一个东西） */
+    out.push({ key: `${item.id}:divider`, kind: 'divider', role: 'stem', text: '' });
+
+    const answer = (item.answerText || '').trim();
+    if (answer) {
+        out.push({ key: `${item.id}:answer-h`, kind: 'text', role: 'heading', text: '参考答案' });
+        out.push({ key: `${item.id}:answer`, kind: 'text', role: 'answer', text: answer });
+    }
+    const analysis = (item.analysis || '').trim();
+    if (analysis) {
+        out.push({ key: `${item.id}:analysis-h`, kind: 'text', role: 'heading', text: '解析' });
+        out.push({ key: `${item.id}:analysis`, kind: 'text', role: 'analysis', text: analysis });
+    }
+    return out;
+}
+
+/** 段的内容 → 分页要的 `ImitateSegment`（把量出来的高度配上去） */
+export function withHeights(
+    specs: readonly ImitateSegmentSpec[],
+    heightOf: (key: string) => number,
+): ImitateSegment[] {
+    return specs.map((s) => ({
+        key: s.key,
+        kind: s.kind,
+        heightMM: heightOf(s.key),
+    }));
 }

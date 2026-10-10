@@ -178,14 +178,16 @@ export interface ReviewSheetProps {
  * 那个地址在纸面这个上下文里取不到，浏览器就画一个**破图标 + 替代文字**，
  * 又难看又占地方 —— 他说的"图显示不全"里有一半就是这种假图。
  * 真正的题图是**橙框单独裁出来**的（见 `use-print-images`），不靠这段 markdown。
+ *
+ * ⚠️【2026-10-10】**实现已搬到 `lib/markdown-utils.ts`** —— 因为 `lib/imitate-card.ts`
+ *    （纯逻辑）也要用它，而**纯逻辑不该 import 组件文件**。
+ *    这里既 `import` 进来（本文件内部还要用）、又 `export` 出去（`insight-sheet.tsx`
+ *    与渲染测试都从这儿取）⇒ 既有调用方**一行都不用改**。
+ *    ⚠️ 不能写成 `export { x } from '...'`：那种写法**不会**在本地作用域引入名字，
+ *       本文件里再调用它就是 `Cannot find name`（踩过一次，tsc 立刻抓到）。
  */
-export function stripMarkdownImages(text: string): string {
-    return text
-        .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-        .replace(/[ \t]+\n/g, '\n')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-}
+import { stripMarkdownImages } from '@/lib/markdown-utils';
+export { stripMarkdownImages };
 
 /**
  * 卷头（页眉）——**一排装完**。

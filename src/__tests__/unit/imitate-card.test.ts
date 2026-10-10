@@ -1,7 +1,12 @@
 // @vitest-environment node
 // 纯逻辑测试：不碰 DOM、不碰数据库。
 import { describe, expect, it } from 'vitest';
-import { paginateImitate, imitatePageCount, type ImitateSegment } from '@/lib/imitate-card';
+import {
+    buildImitateSegments,
+    paginateImitate,
+    imitatePageCount,
+    type ImitateSegment,
+} from '@/lib/imitate-card';
 import { VOLUME_COLUMN_MM } from '@/lib/review-card';
 
 /**
@@ -111,5 +116,91 @@ describe('模仿纸分页：左栏（主题内容）能顺延，右栏（附题�
             's4',
             's5',
         ]);
+    });
+});
+
+/**
+ * 左栏的**内容**：把主题拆成段。
+ *
+ * 顺序是他定的（题干 → 图 → 遮挡线 → 参考答案 → 解析），
+ * 而"不印错因"是他 2026-10-10 的**更正**（原稿写过"错因分析"，后来明确作废：
+ * 模仿纸问的是"我如何能对"，不谈"错"）。这条要钉死 ——
+ * 它跟"纸上零 AI 内容"那条铁律正好相反：**这张纸是唯一允许印答案的**，
+ * 所以"哪些能印、哪些不能"必须有测试守着，不能靠记性。
+ */
+describe('模仿纸左栏：主题拆成段', () => {
+    const base = {
+        id: 'q1',
+        questionText: '一个长方形长 8 厘米，宽 5 厘米，求周长。',
+        answerText: '26 厘米',
+        analysis: '先算 2×(8+5)。',
+    };
+
+    it('★ 顺序 = 题干 → 图 → 遮挡线 → 参考答案 → 解析（他定的顺序）', () => {
+        const segs = buildImitateSegments(base, { hasFigure: true });
+        expect(segs.map((s) => s.kind)).toEqual([
+            'text',
+            'figure',
+            'divider',
+            'text',
+            'text',
+            'text',
+            'text',
+        ]);
+        expect(segs.map((s) => s.role)).toEqual([
+            'stem',
+            'stem',
+            'stem',
+            'heading',
+            'answer',
+            'heading',
+            'analysis',
+        ]);
+        // 小标题的文字就是这两个词
+        expect(segs[3].text).toBe('参考答案');
+        expect(segs[5].text).toBe('解析');
+    });
+
+    it('★ 不印错因（他 10-10 的更正：模仿纸不谈"错"）', () => {
+        const segs = buildImitateSegments(
+            { ...base, mistakeAnalysis: '这题错在单位没换算' } as typeof base,
+            { hasFigure: false },
+        );
+        const all = segs.map((s) => s.text).join('\n');
+        expect(all).not.toContain('错');
+        expect(all).not.toContain('单位没换算');
+    });
+
+    it('没有图就不生成图那一段（不留空白段）', () => {
+        const segs = buildImitateSegments(base, { hasFigure: false });
+        expect(segs.some((s) => s.kind === 'figure')).toBe(false);
+    });
+
+    it('没有答案/解析 ⇒ 连那个小标题都不画（不留孤零零的标题）', () => {
+        const segs = buildImitateSegments({ id: 'q2', questionText: '只有题干' }, { hasFigure: false });
+        expect(segs.map((s) => s.role)).toEqual(['stem', 'stem']); // 题干 + 遮挡线
+        expect(segs.some((s) => s.role === 'heading')).toBe(false);
+    });
+
+    it('遮挡线永远在（它就是"题目"与"答案"的分界，题干为空也要有）', () => {
+        const segs = buildImitateSegments({ id: 'q3' }, { hasFigure: false });
+        expect(segs.filter((s) => s.kind === 'divider')).toHaveLength(1);
+    });
+
+    it('题干里的 markdown 图片会被剥掉（题图是单独一段，不然同一张图印两遍）', () => {
+        const segs = buildImitateSegments(
+            { id: 'q4', questionText: '![图](/x.png)\n求阴影面积' },
+            { hasFigure: true },
+        );
+        const stem = segs.find((s) => s.role === 'stem' && s.kind === 'text');
+        expect(stem?.text).toBe('求阴影面积');
+        expect(stem?.text).not.toContain('![图]');
+    });
+
+    it('题干优先用 questionText，没有才退回 OCR 原文（与复练纸题块同一口径）', () => {
+        const a = buildImitateSegments({ id: 'q5', questionText: '编辑过的题干', ocrText: 'OCR 原文' });
+        expect(a[0].text).toBe('编辑过的题干');
+        const b = buildImitateSegments({ id: 'q6', ocrText: 'OCR 原文' });
+        expect(b[0].text).toBe('OCR 原文');
     });
 });
