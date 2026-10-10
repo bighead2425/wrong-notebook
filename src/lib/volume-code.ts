@@ -18,38 +18,49 @@
  * 因为"2026年9月26日组的第一张卷"讲的是用户那天，不是 UTC 那天）。
  */
 
-/** 卷的两类（T2 复练 / T3 积累） */
-export type VolumeKind = 'review' | 'build';
+/**
+ * 卷的三类：T2 复练 / T3 积累 / **T4 模仿**（他 2026-10-10 提的第三种）。
+ *
+ * ⭐ 模仿纸的立意（他的原话）："**我如何能对**" ——
+ *    给自驱力弱的孩子：左栏把主题（题干 + 图 + **参考答案 + 解析**）完整摊开，
+ *    右栏放几道同类的附题，让孩子**照着例子做**。所以它是**唯一允许印 AI 内容**的纸型
+ *    （其余三种纸仍然"纸上零 AI 内容"）。
+ */
+export type VolumeKind = 'review' | 'build' | 'imitate';
 
-export const VOLUME_KINDS: readonly VolumeKind[] = ['review', 'build'];
+export const VOLUME_KINDS: readonly VolumeKind[] = ['review', 'build', 'imitate'];
 
-/** 代号：RE = review、BU = build up */
+/** 代号：RE = review、BU = build up、CO = **co**py（照着做） */
 export const VOLUME_KIND_PREFIX: Record<VolumeKind, string> = {
     review: 'RE',
     build: 'BU',
+    imitate: 'CO',
 };
 
 /** 人话名字（页眉那个阳文框里的字就是它） */
 export const VOLUME_KIND_LABEL: Record<VolumeKind, string> = {
     review: '复练',
     build: '积累',
+    imitate: '模仿',
 };
 
 /** 英文（页眉双语用；不印在纸上，留给将来的英文版面） */
 export const VOLUME_KIND_LABEL_EN: Record<VolumeKind, string> = {
     review: 'Review',
     build: 'Build-up',
+    imitate: 'Imitate',
 };
 
 /**
  * 阳文框的颜色（框 + 字同色，底为白）。
- * 复练 = **暗红**、积累 = **深绿**（他指定的）。
- * ⚠️ 这两种颜色是**区分"卷"与"纸"**的关键：深挖纸是**实底 + 白字**，
+ * 复练 = **暗红**、积累 = **深绿**、模仿 = **蓝**（他原稿写的就是"蓝色框、蓝色字"）。
+ * ⚠️ 这三种颜色是**区分"卷"与"纸"**的关键：深挖纸是**实底 + 白字**，
  *    卷是**阳文（白底、彩框彩字）**—— 印刷时底不上色，省墨也更清爽。
  */
 export const VOLUME_KIND_COLOR: Record<VolumeKind, string> = {
     review: '#8e2b2b',
     build: '#1f5c3a',
+    imitate: '#1e40af',
 };
 
 /** 代号 → 类型；认不出返回 null（不猜） */

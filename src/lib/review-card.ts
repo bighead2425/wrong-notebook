@@ -98,6 +98,11 @@ export const REVIEW_LAYOUT_MM = {
 export const REVIEW_DEFAULT_BLANK_LINES = 5;
 /** 积累纸缺省留白行数（他定的） */
 export const BUILD_DEFAULT_BLANK_LINES = 1;
+/**
+ * 模仿纸缺省留白行数（他 2026-10-10 定的："每道题下面整体留白 5 行，并且每道题都可以调整留白"）。
+ * 与复练纸同值，但**是两个独立的常量** —— 哪天改其中一个不该牵动另一个。
+ */
+export const IMITATE_DEFAULT_BLANK_LINES = 5;
 
 export interface VolumeVariantSpec {
     kind: VolumeKind;
@@ -120,6 +125,21 @@ export const VOLUME_VARIANTS: Record<VolumeKind, VolumeVariantSpec> = {
         kind: 'build',
         columns: 2,
         defaultBlankLines: BUILD_DEFAULT_BLANK_LINES,
+        columnWidthMM: (REVIEW_USABLE_WIDTH_MM - COLUMN_GAP_MM) / 2,
+    },
+    /**
+     * 【2026-10-10】模仿纸（T4）。
+     *
+     * ⚠️ `columns: 2` 说的是**附题占半页宽**（那半页就是右栏）；**左半页归主题**，
+     *    上面依次是：题干 → 题图 → 遮挡线 → **参考答案 → 解析**（不印错因）。
+     *    所以这个 `2` 与积累纸的"两栏排题"几何相同、**语义不同**：
+     *    这里是"左半页被主题占住了，题只能排右半页"。
+     * ⚠️ 左栏是**贯通**的（主题内容可以顺延到下一页），右栏的附题**不跨页**（他要求的）。
+     */
+    imitate: {
+        kind: 'imitate',
+        columns: 2,
+        defaultBlankLines: IMITATE_DEFAULT_BLANK_LINES,
         columnWidthMM: (REVIEW_USABLE_WIDTH_MM - COLUMN_GAP_MM) / 2,
     },
 };
