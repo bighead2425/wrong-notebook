@@ -389,6 +389,13 @@
     page-break-inside: avoid;
   }
 
+  /* 【2026-10-11】模仿纸同理：一张纸 = 一页，整张不许被拆到两页
+     （左侧是"例题"、右侧是"要照着做的题"，拆开两边都对不上了）。 */
+  .print-imitate-sheet {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
   /* 留白微调（「− X ＋」）**只在打印阅览页能看见**，印到纸上就不许有 ——
      它是给用户调版面的工具，不是纸面内容。
      同样道理：它旁边的升降级小框**要印**，所以只藏这一个。 */
@@ -604,11 +611,20 @@
   background: rgb(0 0 0 / 0.04);
 }
 
-/* 复练纸的打孔位：内联只给变量（奇数页左/偶数页右，12mm），
-   这里统一落成 padding —— 与深挖纸 .print-deep-side 同一套（他要求两种纸一致）。 */
-.print-review-sheet {
+/* 卷的打孔位：内联只给变量（奇数页左/偶数页右，12mm），
+   这里统一落成 padding —— 与深挖纸 .print-deep-side 同一套（他要求几种纸一致）。
+   【2026-10-11】模仿纸（.print-imitate-sheet）也走同一套：它同样是"卷"。 */
+.print-review-sheet,
+.print-imitate-sheet {
   padding-left: var(--punch-l, 0mm);
   padding-right: var(--punch-r, 0mm);
+}
+
+/* 模仿纸左右两栏：**两栏等宽**（左栏归主题、右栏归附题）。
+   这里只声明"这栏怎么立"，高度由内容/分页决定，不设固定高度 ——
+   与复练纸同一条规矩：块不设高度，装不下由分页判断，绝不靠 overflow 偷偷切掉。 */
+.print-imitate-column {
+  overflow: hidden;
 }
 
 /* 题图右下角的**缩放把手**：只在屏幕上有，打印绝不出现 */
@@ -656,6 +672,7 @@
      ⚠️ 打孔位（--punch-l/--punch-r，12mm）叠在纸边**里面**：
          纸总宽不变（182mm），内容相应缩到 140mm —— 和真纸上打孔一个道理。 */
   .print-review-sheet,
+  .print-imitate-sheet,
   .print-deep-side {
     box-sizing: content-box;
     margin: 0 -15mm 10mm;
@@ -716,6 +733,7 @@
   }
 
   .print-review-sheet,
+  .print-imitate-sheet,
   .print-deep-side {
     box-sizing: border-box !important;
     margin: 0 !important;

@@ -67,8 +67,12 @@ const VOLUME_QR_COLUMN_MM = 11;
  *    所以：① 自己**不画**任何虚线；② 上方那条虚线跟别的题一样，由 `showDivider`
  *    （本栏内不是第一块）决定。早先版本自己上下各画一条，结果是
  *    页首多一条线、和下一题之间多出一条**双线**。
+ *
+ * 【2026-10-11】加 export：**模仿纸的右栏**也要用它（他定的规矩里有一模一样的一条：
+ *   "如果附题中有哪道题已经删除了，就和复练卷一样，在那道题本来的位置灰色字体写
+ *    题号和'此题已无'"）。理由与 `VolumeHeader` 那次相同 —— 抄第二份迟早走样。
  */
-function MissingQuestionBlock({
+export function MissingQuestionBlock({
     seq,
     itemNo,
     showDivider,
