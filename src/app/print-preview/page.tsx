@@ -25,11 +25,19 @@ import { makeQrDataUrl } from "@/lib/qr";
 import { ErrorCard } from "@/components/print/error-card";
 import { DeepDiveCard } from "@/components/print/deep-dive-card";
 import { ReviewSheet, ReviewQuestionBlock, pageQrPayload } from "@/components/print/review-card";
+import { ImitateSegments, ImitateSheet } from "@/components/print/imitate-card";
+import {
+    buildImitateSegments,
+    paginateImitate,
+    withHeights,
+    type ImitateLayout,
+    type ImitateSegment,
+    type ImitateSegmentSpec,
+} from "@/lib/imitate-card";
+import type { LinkView } from "@/lib/item-link";
 import { SheetZoom } from "@/components/print/sheet-zoom";
 import {
-    BUILD_DEFAULT_BLANK_LINES,
     blankLinesFromDrag,
-    REVIEW_DEFAULT_BLANK_LINES,
     VOLUME_VARIANTS,
     applyGlobalBlankLines,
     effectiveBlankLines,
@@ -62,7 +70,7 @@ import {
  *    **拿不到任何反馈** —— 那不是设计意图，是断档。等 M5/M6 通了，
  *    再把默认切到 deep、旧卡退役（一行改动）。
  */
-type PrintMode = "deep" | "review" | "build" | "card" | "practice" | "explain";
+type PrintMode = "deep" | "review" | "build" | "imitate" | "card" | "practice" | "explain";
 
 function PrintPreviewContent() {
     const searchParams = useSearchParams();
@@ -106,7 +114,7 @@ function PrintPreviewContent() {
        · volume        已**落库**的那份卷（没落库就没有卷号、也不印二维码）
                        —— 卷页眉的码内容是"卷号-页码"，扫回这份卷要它真实存在，
                           所以"组卷"是一次真实的写操作，不是预览的副作用。 */
-    const [blankDefault, setBlankDefault] = useState<number>(REVIEW_DEFAULT_BLANK_LINES);
+    const [blankDefault, setBlankDefault] = useState<number>(VOLUME_VARIANTS.review.defaultBlankLines);
     const [blankOverrides, setBlankOverrides] = useState<Record<string, number | null | undefined>>({});
     const [volume, setVolume] = useState<{
         id: string;
@@ -121,6 +129,23 @@ function PrintPreviewContent() {
 
     /** 复练纸这一页每一页的二维码（key = 页码） */
     const [volumePageQr, setVolumePageQr] = useState<Record<number, string>>({});
+
+    /* ===== 【T4 · 2026-10-11】模仿纸 =====
+       与复练纸最大的不同：**左栏是"主题"的内容**（题干 → 图 → 遮挡线 → 参考答案 → 解析），
+       右栏是挂在主题下的**附题**。所以这一屏多两样东西：
+         · `imitateTree`  —— 当前这棵树（主题 + 名下附题），由链接关系反查得来；
+         · `pickedChildren` —— 这一份模仿纸**收了哪几道附题**（他界面上一个个勾）。
+       ⚠️ 左栏是**贯通**的（放不下顺延下一页），所以分页走 `paginateImitate` 这条单独的流，
+          不能复用复练纸那套"整块绝不跨页"的 `paginateMeasured`。 */
+    const [imitateTree, setImitateTree] = useState<{ theme: ErrorItem; children: ErrorItem[] } | null>(null);
+    const [imitateLoading, setImitateLoading] = useState(false);
+    const [imitateError, setImitateError] = useState("");
+    const [pickedChildren, setPickedChildren] = useState<Set<string>>(new Set());
+    /** 左栏的段 + 右栏附题块（高度都来自隐藏量尺的真实测量） */
+    const [imitateMeasured, setImitateMeasured] = useState<{
+        segments: ImitateSegment[];
+        blocks: MeasuredBlock[];
+    } | null>(null);
 
     /* ===== 【2026-09-28】打印预览页改成左右两栏 =====
        · 左栏 = 控制区（选纸型 / 勾选项 / 留白 / 组卷 / 挑题）
@@ -183,7 +208,7 @@ function PrintPreviewContent() {
     const modePinnedRef = useRef(false);
     useEffect(() => {
         const m = new URLSearchParams(window.location.search).get("mode");
-        if (m === "deep" || m === "review" || m === "build" || m === "card" || m === "practice" || m === "explain") {
+        if (m === "deep" || m === "review" || m === "build" || m === "imitate" || m === "card" || m === "practice" || m === "explain") {
             modePinnedRef.current = true;
             setMode(m);
         }
@@ -252,9 +277,17 @@ function PrintPreviewContent() {
     const isDeep = mode === "deep";
     const isReview = mode === "review";
     const isBuild = mode === "build";
+    /** 【T4】模仿纸：**单独一条排版流**（左栏贯通、右栏附题），不并入下面那套"卷" */
+    const isImitate = mode === "imitate";
     /** 【T2/T3】"卷"两种模式（复练 / 积累）——它们走同一套组件，只是版面参数不同 */
     const isVolume = isReview || isBuild;
     const volumeKind: VolumeKind = isBuild ? "build" : "review";
+    /**
+     * 「纸别」= 决定缺省留白行数与卷别的那一个值（复练 / 积累 / 模仿）。
+     * 复练与积累共用同一套排版组件，模仿纸走它自己那条流，但**留白规则是同一套** ——
+     * 所以调留白的地方一律看这个 `blankKind`，不看 `mode`。
+     */
+    const blankKind: VolumeKind = isImitate ? "imitate" : volumeKind;
 
     /**
      * 【2026-09-28 第三次改版】卷的排版不再"估算高度"，改成**先量真实高度、再分栏分页**。
@@ -271,6 +304,8 @@ function PrintPreviewContent() {
      */
     const [measuredBlocks, setMeasuredBlocks] = useState<MeasuredBlock[] | null>(null);
     const measureRef = useRef<HTMLDivElement | null>(null);
+    /** 【T4】模仿纸的量尺容器（左栏的段 + 右栏的附题都量它这一份） */
+    const imitateMeasureRef = useRef<HTMLDivElement | null>(null);
 
     /** 量尺指纹：题 / 卷别 / 留白 / 题图大小任一变了，就得重量一遍 */
     const measureKey = useMemo(
@@ -348,49 +383,18 @@ function PrintPreviewContent() {
      * 整卷的"年级·学期"（页眉那一句）。
      * ⚠️ 这里**现算**，不要引用 `sheetInfo` —— 它声明在本段之后，
      *    在渲染顺序里会被"先用后声明"打中（TDZ）。跨本组卷时可能不止一个，取前两个。
+     * 【2026-10-11】模仿纸看的是**主题**那道题的年级（不是"选中的那一道"）——
+     * 从附题进来看的这一屏，选中的是附题，而纸上是主题。
      */
     const volumeGradeText = useMemo(() => {
-        const grades = [
-            ...new Set(selectedItems.map((i) => normalizeGrade(i.gradeSemester)).filter(Boolean) as string[]),
-        ];
+        const src = isImitate && imitateTree ? [imitateTree.theme] : selectedItems;
+        const grades = [...new Set(src.map((i) => normalizeGrade(i.gradeSemester)).filter(Boolean) as string[])];
         return grades.slice(0, 2).join(" · ");
-    }, [selectedItems]);
+    }, [isImitate, imitateTree, selectedItems]);
 
     /**
-     * 卷的指纹：选择、卷别、留白任一变了，已组的卷就**过期**了 ——
-     * 提示重新组卷，而不是悄悄印出一份"纸面与库里的卷对不上"的卷。
+     * 复练纸：key（题目 id）→ 题目本体，供卡片取用
      */
-    const volumeSig = useMemo(
-        () =>
-            [
-                volumeKind,
-                selectedItems.map((i) => i.id).join("|"),
-                String(blankDefault),
-                JSON.stringify(blankOverrides),
-                // 【2026-09-29】题图大小也进指纹：改了图就该能用「更新组卷」把新图存回去
-                JSON.stringify(figureScales),
-            ].join("#"),
-        [volumeKind, selectedItems, blankDefault, blankOverrides, figureScales],
-    );
-    const volumeStale = !!volume && volumeSignature !== volumeSig;
-
-    /**
-     * 【2026-09-29】"**选题有没有变**"的指纹（卷别 + 题目 id 顺序）——
-     * "要不要换卷号"这一件事，只由它决定。他定的规则：
-     *   · 选题**没变**（只调了留白 / 题图大小）⇒ 按钮「更新组卷」，点击**原地覆盖**，卷号不动；
-     *   · 选题**变了**（增 / 减 / 换题）⇒ 按钮变回「新生成复练卷」，点击生成新卷号、存成新数据。
-     * 为什么卷号不能随便换：卷号是**已经印在纸上的那个身份**（页眉＋页二维码都是它），
-     * 换了号，先前印出去的纸就再也对不回库里的卷了。
-     */
-    const selectionSig = useMemo(
-        () => [volumeKind, selectedItems.map((i) => i.id).join("|")].join("#"),
-        [volumeKind, selectedItems],
-    );
-    const [volumeSelectionSig, setVolumeSelectionSig] = useState<string>("");
-    /** 库里的卷与当前选题对不上 ⇒ 该走"新生成"（新卷号） */
-    const volumeSelectionChanged = !!volume && volumeSelectionSig !== selectionSig;
-
-    /** 复练纸：key（题目 id）→ 题目本体，供卡片取用 */
     const reviewItemByKey = useMemo(() => {
         const map: Record<string, ErrorItem> = {};
         for (const item of selectedItems) map[item.id] = item;
@@ -398,6 +402,231 @@ function PrintPreviewContent() {
     }, [selectedItems]);
     const isCard = mode === "card";
     const isPractice = mode === "practice";
+
+    /* ===== 【T4 · 2026-10-11】模仿纸：先认树（主题 + 名下附题），再量、再分页 ===== */
+
+    /**
+     * 这一屏的"主题"是谁 —— 由**题间从属关系**决定（他 2026-10-10 定的口径）：
+     *   · 选中的是**主题** ⇒ 它就是主题，附题 = 它名下那些；
+     *   · 选中的是**附题** ⇒ 主题是它所属的那道题，附题 = **那道题**名下的全部；
+     *   · 选中多道 / 选中的是**孤题** ⇒ 生成不了模仿纸
+     *     （他原话："则打印预览页的「模仿纸」无法点击，即无法生成模仿纸"）。
+     */
+    const imitateSourceId = useMemo(() => {
+        if (selectedItems.length !== 1) return null;
+        const cur = selectedItems[0];
+        return cur.linkRole === "root" || cur.linkRole === "child" ? cur.id : null;
+    }, [selectedItems]);
+
+    /** 这一屏能不能用模仿纸（不能就在标签上禁用，并说清为什么） */
+    const imitateAvailable = !!imitateSourceId;
+
+    useEffect(() => {
+        if (!isImitate) return;
+        if (!imitateSourceId) {
+            setImitateTree(null);
+            setImitateError("");
+            return;
+        }
+        let cancelled = false;
+        setImitateLoading(true);
+        setImitateError("");
+        (async () => {
+            try {
+                const detail = await apiClient.get<{ link?: LinkView }>(`/api/error-items/${imitateSourceId}`);
+                const link = detail.link;
+                if (!link || link.role === "lone") {
+                    if (!cancelled) setImitateError(L("这道题现在没有关联题，生成不了模仿纸。", "No linked questions"));
+                    return;
+                }
+                /** 先定"主题是哪道题" —— 选中附题时要往上走一层（与规则里的 `rootOf` 同一口径） */
+                let themeId = imitateSourceId;
+                let childCards = link.children ?? [];
+                if (link.role === "child" && link.parent) {
+                    themeId = link.parent.id;
+                    const parentDetail = await apiClient.get<{ link?: LinkView }>(`/api/error-items/${themeId}`);
+                    childCards = parentDetail.link?.children ?? [];
+                }
+                /**
+                 * 关系视图里给的是**精简卡片**（刻意不带题图 data URL，避免几百 KB 一条）。
+                 * 但纸上要印题图与答案解析 ⇒ 必须按 id 取回**完整**的题。
+                 */
+                const needIds = [themeId, ...childCards.map((c) => c.id)];
+                const full = await apiClient.get<PaginatedResponse<ErrorItem>>(
+                    `/api/error-items/list?pageSize=200&ids=${encodeURIComponent(needIds.join(","))}`,
+                );
+                const byId = new Map(full.items.map((i) => [i.id, i]));
+                const theme = byId.get(themeId);
+                if (!theme) {
+                    if (!cancelled) setImitateError(L("读不到主题那道题（可能已被删除）。", "Theme item missing"));
+                    return;
+                }
+                const children = childCards
+                    .map((c) => byId.get(c.id))
+                    .filter((x): x is ErrorItem => !!x);
+                if (cancelled) return;
+                setImitateTree({ theme, children });
+                /** 默认勾选**未掌握**的（与复练纸同一个口径 `masteryLevel < 2`）：已掌握的仍可手动勾上 */
+                setPickedChildren(new Set(children.filter((c) => (c.masteryLevel ?? 0) < 2).map((c) => c.id)));
+            } catch (error) {
+                console.error("Failed to load imitate tree:", error);
+                if (!cancelled) setImitateError(L("读关联题失败，请重试", "Failed to load"));
+            } finally {
+                if (!cancelled) setImitateLoading(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+        // L 只随语言变，故依赖里放 zh —— 不放 L（inline 箭头函数，每渲染都是新身份 ⇒ 会无限重取）
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isImitate, imitateSourceId, zh]);
+
+    /** 左栏的段规格（内容；高度靠量尺）—— 主题换了就重算 */
+    const imitateSpecs = useMemo<ImitateSegmentSpec[]>(
+        () => (imitateTree ? buildImitateSegments(imitateTree.theme, { hasFigure: true }) : []),
+        [imitateTree],
+    );
+    const imitateSegmentByKey = useMemo(() => {
+        const map: Record<string, ImitateSegmentSpec> = {};
+        for (const s of imitateSpecs) map[s.key] = s;
+        return map;
+    }, [imitateSpecs]);
+
+    /** 这一份模仿纸要收的附题（按树上原顺序，勾掉的不要） */
+    const pickedChildItems = useMemo(
+        () => (imitateTree ? imitateTree.children.filter((c) => pickedChildren.has(c.id)) : []),
+        [imitateTree, pickedChildren],
+    );
+
+    /** 模仿纸的量尺指纹：主题 / 收哪些附题 / 题图大小任一变了都得重量 */
+    const imitateMeasureKey = useMemo(
+        () =>
+            [
+                imitateTree?.theme.id ?? "",
+                pickedChildItems.map((i) => i.id).join("|"),
+                JSON.stringify(figureScales),
+            ].join("#"),
+        [imitateTree, pickedChildItems, figureScales],
+    );
+
+    useEffect(() => {
+        if (!isImitate) {
+            setImitateMeasured(null);
+            return;
+        }
+        if (!imitateTree) {
+            setImitateMeasured(null);
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            // 与复练纸同一条规矩：先等题图裁完、再等解码完，否则"量到的不是印出来的"
+            await whenImagesSettled();
+            await whenImagesDecoded(imitateMeasureRef.current);
+            if (cancelled) return;
+            const el = imitateMeasureRef.current;
+            if (!el) return;
+            // px → mm：CSS 规定 1in = 96px，1in = 25.4mm
+            const toMM = (px: number) => (px * 25.4) / 96;
+            const heights: Record<string, number> = {};
+            el.querySelectorAll<HTMLElement>("[data-imitate-seg]").forEach((node) => {
+                const key = node.dataset.imitateSeg;
+                if (key) heights[key] = toMM(node.getBoundingClientRect().height);
+            });
+            const blocks: MeasuredBlock[] = [];
+            el.querySelectorAll<HTMLElement>("[data-review-block]").forEach((node) => {
+                const key = node.dataset.reviewBlock;
+                if (key) blocks.push({ key, heightMM: toMM(node.getBoundingClientRect().height) });
+            });
+            if (cancelled) return;
+            /**
+             * ⚠️ 左栏的段高度**必须按 key 对齐着取**（`withHeights`）——
+             *    自己去拼 `{key, kind, heightMM}` 就得在这里重新判断 kind，
+             *    那可是"规则抄第二份"的开端。缺的高度给 0 只会让那一段挤在同一页，不会丢。
+             */
+            setImitateMeasured({ segments: withHeights(imitateSpecs, (k) => heights[k] ?? 0), blocks });
+        })();
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isImitate, imitateMeasureKey, imitateSpecs]);
+
+    /** 模仿纸的排版：**两条独立的流**（左栏可顺延、右栏整块不跨页） */
+    const imitateLayout = useMemo<ImitateLayout | null>(() => {
+        if (!isImitate || !imitateMeasured) return null;
+        return paginateImitate(imitateMeasured.segments, imitateMeasured.blocks);
+    }, [isImitate, imitateMeasured]);
+
+    /**
+     * 当前纸别要落库的**页数** —— 复练/积累看 `reviewLayout`，
+     * 模仿纸走它自己那条流（`imitateLayout.sheets`）。
+     * ⚠️ 两处都要用（组卷落库 + 页二维码一页一个），所以声明一次、别各算各的。
+     */
+    const volumePageCount = isImitate ? (imitateLayout?.sheets.length ?? 0) : (reviewLayout?.pages.length ?? 0);
+
+    /** 模仿纸：key → 题目本体（主题 + 收进来的附题）—— 纸面组件按 key 取题 */
+    const imitateItemByKey = useMemo(() => {
+        const map: Record<string, ErrorItem> = {};
+        if (imitateTree) {
+            map[imitateTree.theme.id] = imitateTree.theme;
+            for (const c of pickedChildItems) map[c.id] = c;
+        }
+        return map;
+    }, [imitateTree, pickedChildItems]);
+
+    /**
+     * 排版算好了没 —— 「生成 / 更新组卷」按钮的可用条件，也是"能不能打印"的前置。
+     * 复练/积累看 `reviewLayout`，模仿纸看它自己那条流。
+     */
+    const volumeLayoutReady = isImitate ? !!imitateLayout : !!reviewLayout;
+
+    /**
+     * 卷的指纹：选择、卷别、留白任一变了，已组的卷就**过期**了 ——
+     * 提示重新组卷，而不是悄悄印出一份"纸面与库里的卷对不上"的卷。
+     *
+     * ⚠️【2026-10-11】声明位置**下移到这里**（原来是"选题"那段之后）：
+     *    模仿纸的"选题"是**收哪几道附题**（要等关系查回来才知道），
+     *    所以这三个指纹必须等它算完才能定义 —— 早一步就是 TDZ。
+     */
+    const volumeSig = useMemo(
+        () =>
+            [
+                blankKind,
+                isImitate
+                    ? `${imitateTree?.theme.id ?? ""}#${pickedChildItems.map((i) => i.id).join("|")}`
+                    : selectedItems.map((i) => i.id).join("|"),
+                String(blankDefault),
+                JSON.stringify(blankOverrides),
+                // 【2026-09-29】题图大小也进指纹：改了图就该能用「更新组卷」把新图存回去
+                JSON.stringify(figureScales),
+            ].join("#"),
+        [blankKind, isImitate, imitateTree, pickedChildItems, selectedItems, blankDefault, blankOverrides, figureScales],
+    );
+    const volumeStale = !!volume && volumeSignature !== volumeSig;
+
+    /**
+     * 【2026-09-29】"**选题有没有变**"的指纹（纸别 + 题目 id 顺序）——
+     * "要不要换卷号"这一件事，只由它决定。他定的规则：
+     *   · 选题**没变**（只调了留白 / 题图大小）⇒ 按钮「更新组卷」，点击**原地覆盖**，卷号不动；
+     *   · 选题**变了**（增 / 减 / 换题）⇒ 按钮变回「新生成…卷」，点击生成新卷号、存成新数据。
+     * 为什么卷号不能随便换：卷号是**已经印在纸上的那个身份**（页眉＋页二维码都是它），
+     * 换了号，先前印出去的纸就再也对不回库里的卷了。
+     */
+    const selectionSig = useMemo(
+        () =>
+            [
+                blankKind,
+                isImitate
+                    ? `${imitateTree?.theme.id ?? ""}#${pickedChildItems.map((i) => i.id).join("|")}`
+                    : selectedItems.map((i) => i.id).join("|"),
+            ].join("#"),
+        [blankKind, isImitate, imitateTree, pickedChildItems, selectedItems],
+    );
+    const [volumeSelectionSig, setVolumeSelectionSig] = useState<string>("");
+    /** 库里的卷与当前选题对不上 ⇒ 该走"新生成"（新卷号） */
+    const volumeSelectionChanged = !!volume && volumeSelectionSig !== selectionSig;
 
     // 给选中的题生成二维码（内容是题号，扫码后由 /api/scan 反查）
     const selectedKey = selectedIds.size + ":" + selectedItems.map((i) => i.source || i.id).join("|");
@@ -463,8 +692,12 @@ function PrintPreviewContent() {
          * 印出去就是一张**码扫不回来**的纸（面标记规范要求有角标就该有码）。
          * 宁可拦住这一次，也不要印出一张事后查无此卷的纸。
          */
-        if (isVolume && !volume) {
-            setVolumeError(L("请先点「生成复练卷」再打印", "Build the volume first"));
+        if ((isVolume || isImitate) && !volume) {
+            setVolumeError(
+                isImitate
+                    ? L("请先点「生成模仿卷」再打印", "Build the imitate volume first")
+                    : L("请先点「生成复练卷」再打印", "Build the volume first"),
+            );
             return;
         }
         setPrinting(true);
@@ -473,9 +706,9 @@ function PrintPreviewContent() {
         try {
             await apiClient.post("/api/error-items/mark-printed", {
                 ids: selectedItems.map((i) => i.id),
-                // 【2026-09-30】印的是**卷**（复练/积累）就记"复练纸印刷次数"；
+                // 【2026-09-30】印的是**卷**（复练/积累/模仿）就记"复练纸印刷次数"；
                 // 其余（深挖纸/错题卡/练习卷）沿用深挖口径的 printCount。
-                kind: isVolume ? "review" : "deep",
+                kind: isVolume || isImitate ? "review" : "deep",
             });
         } catch (error) {
             console.error("Failed to record print count:", error);
@@ -495,7 +728,7 @@ function PrintPreviewContent() {
             setPrinting(false);
         }, 120);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedItems, isVolume, volume?.volumeNo, zh]);
+    }, [selectedItems, isVolume, isImitate, volume?.volumeNo, zh]);
 
     /**
      * 【T2/T3 · 2026-09-28】**组建一份卷** —— 落库，拿到卷号（如 `RE20260926001`）。
@@ -515,8 +748,61 @@ function PrintPreviewContent() {
      * 用**函数声明**（不是 useCallback）是有意的：它被上面 `createVolume` 的闭包引用，
      * 声明式能提升，不会踩"先用后声明"的 TDZ。
      */
+    /**
+     * 模仿卷的**右栏**行（一页里第几道、第几页）—— 单独抽出来，好让左栏那一行拼在它前面。
+     * 用**函数声明**（可提升）：上面 `buildVolumeItems` 里先用后声明，声明式不会踩 TDZ。
+     */
+    function imitateRightRows(sheets: ImitateLayout["sheets"]) {
+        return sheets.flatMap((sheet, pi) =>
+            sheet.right.map((b, bi) => {
+                const item = imitateItemByKey[b.key];
+                return {
+                    errorItemId: item?.id ?? null,
+                    seqInVolume: b.seq,
+                    pageIndex: pi + 1,
+                    /** 模仿纸恒为右栏（左栏归主题，见下面那条 `columnIndex: 0`） */
+                    columnIndex: 1,
+                    seqInColumn: bi + 1,
+                    itemNo: item?.source ?? null,
+                    questionText: (item?.questionText || item?.ocrText) ?? null,
+                    manageType: item?.manageType ?? null,
+                    blankLines: blankValueOf(b.key),
+                    figureScale: figureScaleOf(b.key),
+                };
+            }),
+        );
+    }
+
     function buildVolumeItems() {
+        /* ---- 【T4】模仿卷：左栏存**主题那一行**，右栏按页存附题 ---- */
+        if (isImitate) {
+            if (!imitateLayout || !imitateTree) return [];
+            const theme = imitateTree.theme;
+            /**
+             * 左栏那一行（`columnIndex: 0`、`seqInVolume: 0`）：
+             * 记的是**主题题号**（他 2026-10-10 的原话："主要要记的就是左边栏题的题号"）。
+             * 他定的规矩里还有一条靠它实现 —— "如果主题已经删除了，那么整个卷都不用生成了"：
+             * `errorItemId` 是软链接，题没了这一行就断链，卷页据此判"此卷作废"。
+             * ⚠️ 左栏**不存分段结果**（哪几段落在哪一页）：他说了"日后也可以重新生成了"，
+             *    重新生成时按主题现算即可；存下来反而会跟"主题被改了"打架。
+             */
+            const themeRow = {
+                errorItemId: theme.id,
+                seqInVolume: 0,
+                pageIndex: 1,
+                columnIndex: 0,
+                seqInColumn: 1,
+                itemNo: theme.source ?? null,
+                questionText: (theme.questionText || theme.ocrText) ?? null,
+                manageType: theme.manageType ?? null,
+                blankLines: 0,
+                figureScale: figureScaleOf(theme.id),
+            };
+            return [themeRow, ...imitateRightRows(imitateLayout.sheets)];
+        }
+
         if (!reviewLayout) return [];
+
         return reviewLayout.pages.flatMap((page, pi) =>
             page.columns.flatMap((col, ci) =>
                 col.blocks.map((b, bi) => {
@@ -541,7 +827,7 @@ function PrintPreviewContent() {
     }
 
     const createVolume = useCallback(async () => {
-        if (!reviewLayout || selectedItems.length === 0) return;
+        if (!volumeLayoutReady) return;
         setVolumeCreating(true);
         setVolumeError("");
         try {
@@ -549,10 +835,10 @@ function PrintPreviewContent() {
             const res = await apiClient.post<{
                 volume: { id: string; volumeNo: string; pageCount: number; emojiMark?: string | null };
             }>("/api/review-volumes", {
-                kind: volumeKind,
+                kind: blankKind,
                 gradeSemester: volumeGradeText || null,
                 defaultBlankLines: blankDefault,
-                pageCount: reviewLayout.pages.length,
+                pageCount: volumePageCount,
                 items,
             });
             setVolume(res.volume);
@@ -566,7 +852,7 @@ function PrintPreviewContent() {
             setVolumeCreating(false);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [reviewLayout, selectedItems, reviewItemByKey, volumeKind, volumeGradeText, blankDefault, volumeSig, selectionSig, zh]);
+    }, [volumeLayoutReady, volumePageCount, blankKind, volumeGradeText, blankDefault, volumeSig, selectionSig, zh]);
 
     /**
      * 【2026-09-29】「**更新组卷**」= 原地覆盖，**不换卷号**（他定的规则）。
@@ -574,7 +860,7 @@ function PrintPreviewContent() {
      * 走 PATCH：条目整批替换 + 页数刷新，卷号与学期保持不动。
      */
     const updateVolume = useCallback(async () => {
-        if (!volume || !reviewLayout || selectedItems.length === 0) return;
+        if (!volume || !volumeLayoutReady) return;
         setVolumeCreating(true);
         setVolumeError("");
         try {
@@ -582,10 +868,10 @@ function PrintPreviewContent() {
             const res = await apiClient.patch<{
                 volume: { id: string; volumeNo: string; pageCount: number; emojiMark?: string | null };
             }>(`/api/review-volumes/${volume.id}`, {
-                kind: volumeKind,
+                kind: blankKind,
                 gradeSemester: volumeGradeText || null,
                 defaultBlankLines: blankDefault,
-                pageCount: reviewLayout.pages.length,
+                pageCount: volumePageCount,
                 items,
             });
             setVolume(res.volume);
@@ -598,7 +884,7 @@ function PrintPreviewContent() {
             setVolumeCreating(false);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [volume, reviewLayout, selectedItems, reviewItemByKey, volumeKind, volumeGradeText, blankDefault, volumeSig, selectionSig, zh]);
+    }, [volume, volumeLayoutReady, volumePageCount, blankKind, volumeGradeText, blankDefault, volumeSig, selectionSig, zh]);
 
     /**
      * 按下分隔条：开始拖。
@@ -790,8 +1076,8 @@ function PrintPreviewContent() {
 
     /** 某道题当前生效的留白行数（题干旁边那个小胶囊显示的就是它） */
     const blankValueOf = useCallback(
-        (id: string) => effectiveBlankLines(blankOverrides, id, volumeKind),
-        [blankOverrides, volumeKind],
+        (id: string) => effectiveBlankLines(blankOverrides, id, blankKind),
+        [blankOverrides, blankKind],
     );
 
     /** 逐题微调（只在打印阅览页能点；打印时那枚控件被 CSS 隐藏） */
@@ -799,39 +1085,41 @@ function PrintPreviewContent() {
         (id: string, next: number) => {
             setBlankOverrides((prev) => ({
                 ...prev,
-                [id]: normalizeBlankLines(next, VOLUME_VARIANTS[volumeKind].defaultBlankLines),
+                [id]: normalizeBlankLines(next, VOLUME_VARIANTS[blankKind].defaultBlankLines),
             }));
         },
-        [volumeKind],
+        [blankKind],
     );
 
     /**
-     * 换卷别（复练 ⇄ 积累）时：留白缺省与逐题设置**都重来**，已组的卷作废。
-     * 理由：两种纸的缺省行数本就不同（5 vs 1），沿用上一张纸的微调值没有意义。
+     * 换**纸别**（复练 ⇄ 积累 ⇄ 模仿）时：留白缺省与逐题设置**都重来**，已组的卷作废。
+     * 理由：三种纸的缺省行数本就不同（复练 5 / 积累 1 / 模仿 5），沿用上一张纸的微调值没有意义；
+     * 更要紧的是**卷号绝不能串用** —— 模仿卷是 `CO…`、复练卷是 `RE…`，
+     * 拿模仿卷的号去印复练纸，扫出来的码就指到另一份卷上了。
      */
     useEffect(() => {
-        if (!isVolume) return;
-        setBlankDefault(volumeKind === "build" ? BUILD_DEFAULT_BLANK_LINES : REVIEW_DEFAULT_BLANK_LINES);
+        setBlankDefault(VOLUME_VARIANTS[blankKind].defaultBlankLines);
         setBlankOverrides({});
         setVolume(null);
         setVolumeSignature("");
         setVolumeSelectionSig("");
-        // 只在"卷别"变化时重置
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [volumeKind]);
+    }, [blankKind]);
 
-    /** 卷页眉的二维码：一页一个，内容 = 卷号-页码 */
-    const volumeQrKey = volume ? `${volume.volumeNo}:${reviewLayout?.pages.length ?? 0}` : "";
+    /**
+     * 卷页眉的二维码：一页一个，内容 = 卷号-页码。
+     * （页数取 `volumePageCount` —— 上面已经按纸别算好了，这里不再判断一次。）
+     */
+    const volumeQrKey = volume ? `${volume.volumeNo}:${volumePageCount}` : "";
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            if (!volume || !reviewLayout) {
+            if (!volume || volumePageCount === 0) {
                 setVolumePageQr({});
                 return;
             }
             const entries: Record<number, string> = {};
             await Promise.all(
-                reviewLayout.pages.map(async (_page, i) => {
+                Array.from({ length: volumePageCount }, async (_x, i) => {
                     try {
                         entries[i + 1] = await makeQrDataUrl(pageQrPayload(volume.volumeNo, i + 1), {
                             width: 120,
@@ -923,8 +1211,14 @@ function PrintPreviewContent() {
                                 onClick={handlePrint}
                                 size="sm"
                                 className="whitespace-nowrap"
-                                disabled={selectedItems.length === 0 || printing || (isVolume && !volume)}
-                                title={isVolume && !volume ? L("请先「生成复练卷」再打印", "Build the volume first") : undefined}
+                                disabled={selectedItems.length === 0 || printing || ((isVolume || isImitate) && !volume)}
+                                title={
+                                    (isVolume || isImitate) && !volume
+                                        ? isImitate
+                                            ? L("请先「生成模仿卷」再打印", "Build the imitate volume first")
+                                            : L("请先「生成复练卷」再打印", "Build the volume first")
+                                        : undefined
+                                }
                             >
                                 {/* 打印机图标本身就看得懂，窄屏只留图标 */}
                                 <Printer className="h-4 w-4" />
@@ -975,6 +1269,36 @@ function PrintPreviewContent() {
                         ))}
                     </div>
                 )}
+                {/* ===== 【T4】模仿纸的量尺 =====
+                    左右两栏**同宽**（各半页），所以一个量尺容器就够了：
+                    先量左栏那些"段"（题干/图/遮挡线/答案/解析），再量右栏的附题。
+                    左栏用的就是正式版面上那个 `ImitateSegments` —— 两处必然一致。 */}
+                {isImitate && imitateTree && (
+                    <div
+                        ref={imitateMeasureRef}
+                        aria-hidden="true"
+                        className="print-review-measure no-print"
+                        style={{ width: `${VOLUME_VARIANTS.imitate.columnWidthMM}mm` }}
+                    >
+                        <ImitateSegments
+                            specs={imitateSpecs}
+                            theme={imitateTree.theme}
+                            figureScale={figureScaleOf(imitateTree.theme.id)}
+                            L={L}
+                        />
+                        {pickedChildItems.map((item, i) => (
+                            <ReviewQuestionBlock
+                                key={item.id}
+                                item={item}
+                                seq={i + 1}
+                                blankLines={blankValueOf(item.id)}
+                                showDivider={false}
+                                figureScale={figureScaleOf(item.id)}
+                                L={L}
+                            />
+                        ))}
+                    </div>
+                )}
                 {!leftHidden && (
                     <>
                     <aside className="print-preview-left no-print">
@@ -982,27 +1306,48 @@ function PrintPreviewContent() {
 
                             <div className="flex flex-wrap items-center gap-2 sm:gap-4">
                                 <div className="flex items-center gap-1 bg-muted/50 rounded-md p-1">
+                                    {/*
+                                        纸型标签（他 2026-10-10 定的）：
+                                          · **去掉「积累纸 T3」** —— 它单独走「日积月累 → 积累纸·打印」那条路，
+                                            不和习题管理混在一块；
+                                          · **加上「模仿纸」** —— 只有当前这一道是主题/附题时才点得动
+                                            （孤题、或选中多道 ⇒ 没有"主题"可用，禁用并说明原因）。
+                                    */}
                                     {([
                                         ["deep", L("深挖纸 ★", "Deep dive ★")],
                                         ["review", L("复练纸 T2", "Review T2")],
-                                        ["build", L("积累纸 T3", "Build T3")],
+                                        ["imitate", L("模仿纸", "Imitate")],
                                         ["card", L("错题卡", "Error card")],
                                         ["practice", L("练习卷", "Practice")],
                                         ["explain", L("讲解卷", "Study")],
-                                    ] as [PrintMode, string][]).map(([key, label]) => (
-                                        <button
-                                            key={key}
-                                            type="button"
-                                            onClick={() => setMode(key)}
-                                            className="px-3 py-1 rounded text-xs sm:text-sm"
-                                            style={{ background: mode === key ? "var(--primary)" : "transparent", color: mode === key ? "var(--primary-foreground)" : "inherit" }}
-                                        >
-                                            {label}
-                                        </button>
-                                    ))}
+                                    ] as [PrintMode, string][]).map(([key, label]) => {
+                                        const disabled = key === "imitate" && !imitateAvailable;
+                                        return (
+                                            <button
+                                                key={key}
+                                                type="button"
+                                                disabled={disabled}
+                                                title={
+                                                    disabled
+                                                        ? L(
+                                                              "模仿纸要有「主题 + 附题」才做得出来：请只选**一道**已经是主题（或附题）的题。",
+                                                              "Imitate sheets need a main question with attached ones.",
+                                                          )
+                                                        : undefined
+                                                }
+                                                onClick={() => setMode(key)}
+                                                className="px-3 py-1 rounded text-xs sm:text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                                                style={{ background: mode === key ? "var(--primary)" : "transparent", color: mode === key ? "var(--primary-foreground)" : "inherit" }}
+                                            >
+                                                {label}
+                                            </button>
+                                        );
+                                    })}
                                 </div>
 
-                                {!isDeep && !isVolume &&
+                                {/* 这几个勾选项与下面两个滑块只对**错题卡 / 练习卷 / 讲解卷**有意义；
+                                    卷（复练/积累）与**模仿纸**的版面由它们自己那套参数定 ⇒ 不显示。 */}
+                                {!isDeep && !isVolume && !isImitate &&
                                     toggles.map(([label, val, setter]) => (
                                         <label key={label} className="flex items-center gap-1.5 text-xs sm:text-sm cursor-pointer whitespace-nowrap">
                                             <input
@@ -1019,13 +1364,13 @@ function PrintPreviewContent() {
                             <div className="flex flex-wrap items-center gap-2 sm:gap-4">
                                 {/* 深挖纸的留白与图片宽度由版面自己定，不给滑块 ——
                                     一律按 P9 的尺寸算，免得手一滑把"装得下"调坏了 */}
-                                {!isDeep && !isVolume && (
+                                {!isDeep && !isVolume && !isImitate && (
                                     <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-md">
                                         <span className="whitespace-nowrap">{L("留白高度", "Space")}: {spaceMM}mm</span>
                                         <input type="range" min={15} max={80} step={5} value={spaceMM} onChange={(e) => setSpaceMM(Number(e.target.value))} className="w-16 sm:w-20" />
                                     </div>
                                 )}
-                                {!isDeep && !isVolume && (
+                                {!isDeep && !isVolume && !isImitate && (
                                     <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-md">
                                         <span className="whitespace-nowrap">{L("图片宽度", "Image")}: {imageScale}%</span>
                                         <input type="range" min={30} max={100} value={imageScale} onChange={(e) => setImageScale(Number(e.target.value))} className="w-16 sm:w-20" />
@@ -1063,9 +1408,9 @@ function PrintPreviewContent() {
                                     <Button
                                         size="sm"
                                         onClick={volume && !volumeSelectionChanged ? updateVolume : createVolume}
-                                        disabled={volumeCreating || !reviewLayout || selectedItems.length === 0}
+                                        disabled={volumeCreating || !volumeLayoutReady}
                                     >
-                                        {volumeCreating || !reviewLayout
+                                        {volumeCreating || !volumeLayoutReady
                                             ? L("保存中…", "Saving…")
                                             : volume
                                               ? volumeSelectionChanged
@@ -1079,7 +1424,7 @@ function PrintPreviewContent() {
                                         <span className="text-xs sm:text-sm">
                                             {L("卷号", "No.")} <b>{volume.volumeNo}</b>
                                             {" · "}
-                                            {L("共", "total")} {reviewLayout?.pages.length ?? volume.pageCount} {L("页", "pages")}
+                                            {L("共", "total")} {volumePageCount || volume.pageCount} {L("页", "pages")}
                                         </span>
                                     )}
                                     {volumeStale && (
@@ -1093,13 +1438,183 @@ function PrintPreviewContent() {
                                 </div>
                             )}
 
+                            {/* 【T4】模仿纸：主题 + 收哪几道附题 + 组卷（他 2026-10-11 那版设计稿） */}
+                            {isImitate && (
+                                <div className="space-y-2">
+                                    {imitateLoading && (
+                                        <p className="text-xs text-muted-foreground">{L("正在读关联题…", "Loading…")}</p>
+                                    )}
+                                    {!imitateAvailable && (
+                                        <div className="rounded-md border border-amber-500/40 bg-amber-50 p-2 text-xs text-amber-900">
+                                            {L(
+                                                "模仿纸要有「主题 + 附题」才做得出来：请只选**一道**已经是主题（或附题）的题。",
+                                                "Imitate sheets need a main question with attached questions.",
+                                            )}
+                                        </div>
+                                    )}
+                                    {imitateError && (
+                                        <div className="rounded-md border border-amber-500/40 bg-amber-50 p-2 text-xs text-amber-900">
+                                            {imitateError}
+                                        </div>
+                                    )}
+
+                                    {imitateTree && (
+                                        <>
+                                            <div className="rounded-md border bg-muted/40 px-2 py-1.5 text-xs sm:text-sm">
+                                                <div className="font-medium">
+                                                    {L("主题", "Main")}：{imitateTree.theme.source || imitateTree.theme.id}
+                                                </div>
+                                                <p className="mt-0.5 line-clamp-2 text-muted-foreground">
+                                                    {(imitateTree.theme.questionText || imitateTree.theme.ocrText || "").slice(0, 60)}
+                                                </p>
+                                                <p className="mt-1 text-[11px] text-muted-foreground">
+                                                    {L(
+                                                        "左栏印这道题的题干 / 题图 / 遮挡线 / 参考答案 / 解析（模仿纸是唯一印答案的纸）。",
+                                                        "Left column prints this question's stem, figure, cut line, answer and explanation.",
+                                                    )}
+                                                </p>
+                                            </div>
+
+                                            <div className="flex items-center gap-2 text-xs sm:text-sm">
+                                                <span className="whitespace-nowrap">
+                                                    {L("收哪些附题", "Attached")}：{pickedChildren.size}/{imitateTree.children.length}
+                                                </span>
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-6 px-2"
+                                                    onClick={() => setPickedChildren(new Set(imitateTree.children.map((c) => c.id)))}
+                                                >
+                                                    {L("全选", "All")}
+                                                </Button>
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-6 px-2"
+                                                    onClick={() => setPickedChildren(new Set())}
+                                                >
+                                                    {L("清空", "None")}
+                                                </Button>
+                                            </div>
+
+                                            <div className="max-h-[38vh] space-y-1 overflow-y-auto rounded-md border p-1.5">
+                                                {imitateTree.children.length === 0 && (
+                                                    <p className="px-1 py-2 text-xs text-muted-foreground">
+                                                        {L("这道主题名下还没有附题。", "No attached questions yet.")}
+                                                    </p>
+                                                )}
+                                                {imitateTree.children.map((c) => {
+                                                    /** 已掌握的画绿边框（他定的），默认不勾 —— 但仍可手动勾上 */
+                                                    const mastered = (c.masteryLevel ?? 0) >= 2;
+                                                    const on = pickedChildren.has(c.id);
+                                                    return (
+                                                        <label
+                                                            key={c.id}
+                                                            className="flex cursor-pointer items-start gap-2 rounded px-1.5 py-1 text-xs hover:bg-muted/60"
+                                                            style={
+                                                                mastered
+                                                                    ? { border: "0.4mm solid #16a34a", borderRadius: "2mm" }
+                                                                    : undefined
+                                                            }
+                                                        >
+                                                            <input
+                                                                type="checkbox"
+                                                                className="mt-0.5"
+                                                                checked={on}
+                                                                onChange={() =>
+                                                                    setPickedChildren((prev) => {
+                                                                        const next = new Set(prev);
+                                                                        if (next.has(c.id)) next.delete(c.id);
+                                                                        else next.add(c.id);
+                                                                        return next;
+                                                                    })
+                                                                }
+                                                            />
+                                                            <span className="min-w-0 flex-1">
+                                                                <span className="font-medium">{c.source || c.id}</span>
+                                                                {mastered && (
+                                                                    <span className="ml-1.5 rounded bg-emerald-500/15 px-1 py-0.5 text-[10px] text-emerald-700">
+                                                                        {L("已掌握", "mastered")}
+                                                                    </span>
+                                                                )}
+                                                                <span className="mt-0.5 line-clamp-2 block text-muted-foreground">
+                                                                    {(c.questionText || c.ocrText || "").slice(0, 50)}
+                                                                </span>
+                                                            </span>
+                                                        </label>
+                                                    );
+                                                })}
+                                            </div>
+
+                                            <div className="flex flex-wrap items-center gap-2 sm:gap-4">
+                                                <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-md">
+                                                    <span className="whitespace-nowrap">
+                                                        {L("附题留白", "Space")}: {blankDefault} {L("行", "lines")}
+                                                    </span>
+                                                    <Button variant="outline" size="sm" className="h-6 px-2" onClick={() => changeGlobalBlank(blankDefault - 1)}>
+                                                        −
+                                                    </Button>
+                                                    <Button variant="outline" size="sm" className="h-6 px-2" onClick={() => changeGlobalBlank(blankDefault + 1)}>
+                                                        ＋
+                                                    </Button>
+                                                </div>
+                                                <Button
+                                                    size="sm"
+                                                    onClick={volume && !volumeSelectionChanged ? updateVolume : createVolume}
+                                                    disabled={volumeCreating || !volumeLayoutReady}
+                                                >
+                                                    {volumeCreating || !volumeLayoutReady
+                                                        ? L("保存中…", "Saving…")
+                                                        : volume
+                                                          ? volumeSelectionChanged
+                                                              ? L("新生成模仿卷", "Build as new volume")
+                                                              : L("更新组卷", "Update volume")
+                                                          : L("生成模仿卷", "Build volume")}
+                                                </Button>
+                                                {volume && (
+                                                    <span className="text-xs sm:text-sm">
+                                                        {L("卷号", "No.")} <b>{volume.volumeNo}</b>
+                                                        {" · "}
+                                                        {L("共", "total")} {volumePageCount || volume.pageCount} {L("页", "pages")}
+                                                    </span>
+                                                )}
+                                                {volumeStale && (
+                                                    <span className="text-xs text-amber-700">
+                                                        {volumeSelectionChanged
+                                                            ? L("收的附题变过了 —— 点「新生成模仿卷」会得到新卷号。", "Selection changed — build as a new volume.")
+                                                            : L("留白或题图大小改过了 —— 点「更新组卷」存回去（卷号不变）。", "Spacing changed — press Update volume.")}
+                                                    </span>
+                                                )}
+                                                {volumeError && <span className="text-xs text-red-600">{volumeError}</span>}
+                                            </div>
+
+                                            {imitateLayout && imitateLayout.overflowRight.length > 0 && (
+                                                <div className="rounded-md border border-amber-500/40 bg-amber-50 p-2 text-xs text-amber-900">
+                                                    {L(
+                                                        `有 ${imitateLayout.overflowRight.length} 道附题太长，半页都装不下：${imitateLayout.overflowRight
+                                                            .map((o) => imitateItemByKey[o.key]?.source || o.key)
+                                                            .join("、")}。建议这几道改用「深挖纸」。`,
+                                                        "Some attached questions are too long for half a page — use the deep-dive sheet.",
+                                                    )}
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+                            )}
+
                             <p className="text-xs text-muted-foreground">
                                 {isDeep
                                     ? L(
                                           "深挖纸（T1，★ 新版）：一道题占一张纸的正反两面。正面=原题照片+反思留白（框只活在软件里，不印到纸上）；反面=干净题面+遮挡线夹出的重做区+页脚三个日期格（打印日 +1/+7/+21）。纸上不印解析、错因、答案——那是回收之后 AI 的活。",
                                           "Deep-dive sheet (T1, new): one question per double-sided sheet.",
                                       )
-                                    : isVolume
+                                    : isImitate
+                                      ? L(
+                                            "模仿纸 T4 —— 给还没学明白的孩子：**左栏**把主题整个摊开（题干 → 题图 → 遮挡线 → 参考答案 → 解析，一页放不下就顺延下一页），**右栏**放挂在它名下的附题（与复练纸同一套排版，一道题绝不跨页），让孩子照着例题做。它是四种纸里**唯一印答案与解析**的（不印错因）；其余三种仍然纸上零 AI 内容。",
+                                            "Imitate sheet (T4): left column = the main question with its answer and explanation; right column = attached questions to copy-practice.",
+                                        )
+                                      : isVolume
                                         ? L(
                                               "复练纸 T2 / 积累纸 T3 —— 这是一「卷」：页眉是卷头（阳文框 + 卷号 + 第X/Y页 + 页二维码），题从前往后逐题排，每题 = 流水号 + 题干（+ 题干左下角题图）+ 答题留白，题与题之间一条浅灰虚线。留白按「行」算（复练缺省 5 行、积累缺省 1 行），可整卷调、也可逐题微调（微调的小胶囊只在屏幕上，不会印到纸上）。题绝不跨页/跨栏：放不下就整块顺延。纸上零 AI 内容：不印答案 / 解析 / 错因。",
                                               "Review/Build volume: a real volume with a header (badge + volume no. + page x/y + QR); questions laid out in order, space measured in lines.",
@@ -1255,6 +1770,67 @@ function PrintPreviewContent() {
                                     emojiMark={volume?.emojiMark}
                                     pageQr={volumePageQr[i + 1]}
                                     itemByKey={reviewItemByKey}
+                                    blankValueOf={blankValueOf}
+                                    onBlankChange={onBlankChange}
+                                    figureScaleOf={figureScaleOf}
+                                    onFigureScaleStart={handleFigureDown}
+                                    onDividerDragStart={handleDividerDown}
+                                    L={L}
+                                />
+                            ))}
+                        </>
+                    ) : isImitate ? (
+                        <>
+                            {!imitateAvailable && (
+                                <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
+                                    {L(
+                                        "模仿纸要有「主题 + 附题」才做得出来：请只选**一道**已经是主题（或附题）的题（在错题本页多选「建立关联」之后，题卡左上角会有角标）。",
+                                        "Imitate sheets need a main question with attached questions.",
+                                    )}
+                                </div>
+                            )}
+                            {imitateAvailable && !imitateTree && (
+                                <div className="mb-4 rounded-md border border-sky-500/40 bg-sky-50 p-3 text-sm text-sky-900 print:hidden">
+                                    {imitateLoading ? L("正在读关联题…", "Loading…") : imitateError || L("读不出关联题。", "Cannot load")}
+                                </div>
+                            )}
+                            {!volume && imitateTree && (
+                                <div className="mb-4 rounded-md border border-sky-500/40 bg-sky-50 p-3 text-sm text-sky-900 print:hidden">
+                                    {L(
+                                        "还没组卷：卷页眉上的二维码内容是「卷号-页码」，所以要扫得回来，得先把这份卷存下来。点左上「生成模仿卷」之后，卷号与页二维码就会出现。",
+                                        "Not built yet — press “Build volume” to assign a volume number and page QR codes.",
+                                    )}
+                                </div>
+                            )}
+                            {volumeStale && (
+                                <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
+                                    {volumeSelectionChanged
+                                        ? L(
+                                              `收的附题变过了，纸上现在是**新的**排版，而库里的还是 ${volume?.volumeNo ?? ""}。上纸之前请点一次「新生成模仿卷」。`,
+                                              `Selection changed since ${volume?.volumeNo ?? ""} — build as a new volume before printing.`,
+                                          )
+                                        : L(
+                                              `留白或题图大小改过了，而库里的 ${volume?.volumeNo ?? ""} 还是旧的。上纸之前请点一次「更新组卷」（卷号不变）。`,
+                                              "Spacing or figure size changed — press Update volume before printing.",
+                                          )}
+                                </div>
+                            )}
+                            {imitateLayout?.sheets.map((sheet, i) => (
+                                <ImitateSheet
+                                    key={i}
+                                    sheet={sheet}
+                                    segmentByKey={imitateSegmentByKey}
+                                    theme={imitateTree?.theme ?? null}
+                                    themeNo={imitateTree?.theme.source ?? null}
+                                    pageNo={i + 1}
+                                    pageCount={imitateLayout.sheets.length}
+                                    volumeNo={volume ? volume.volumeNo : L("（尚未组卷）", "(not built yet)")}
+                                    kind="imitate"
+                                    gradeText={volumeGradeText || undefined}
+                                    printDate={printDate}
+                                    emojiMark={volume?.emojiMark}
+                                    pageQr={volumePageQr[i + 1]}
+                                    itemByKey={imitateItemByKey}
                                     blankValueOf={blankValueOf}
                                     onBlankChange={onBlankChange}
                                     figureScaleOf={figureScaleOf}
