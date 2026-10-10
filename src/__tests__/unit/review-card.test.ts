@@ -124,16 +124,25 @@ describe('卷 · 题图缩放（他在预览区拖右下角调的）', () => {
         expect(normalizeFigureScale(Number.NaN)).toBe(100);
     });
 
-    it('夹在 30–180：再小也留得下一条边，再大不吃掉写字的地方', () => {
+    it('夹在合法区间：再小也留得下一条边，再大由纸面兜住', () => {
         expect(normalizeFigureScale(1)).toBe(FIGURE_SCALE_MIN);
         expect(normalizeFigureScale(9999)).toBe(FIGURE_SCALE_MAX);
         expect(normalizeFigureScale(120)).toBe(120);
     });
 
-    it('⚠️ 上限 180 的来由：55% × 1.8 = 99%，图列不会吃掉留白那半边', () => {
-        expect(REVIEW_FIGURE_BOX_RATIO * FIGURE_SCALE_MAX).toBeLessThanOrEqual(100);
-        // 再往上放就真的把写字的地方吃掉了（所以必须拦住）
-        expect(REVIEW_FIGURE_BOX_RATIO * 200).toBeGreaterThan(100);
+    it('⚠️ 上限的来由（2026-10-10 改）：宽度交给"栏宽 100%"兜，百分比不再承担封顶职责', () => {
+        /**
+         * 旧版靠"55% × 1.8 ≈ 99%"来保证图列不吃掉留白那半边，所以上限卡在 180。
+         * 但这件事**组件里的 `maxWidth: 100%` 已经兜住了** —— 再往上拉宽度也不会超过栏宽。
+         * 而 180 恰好卡死了另一个场景：**深挖纸正面那张整页照片**
+         * （他 2026-10-10 试印英语阅读题时发现"放不大"，那张图的高度另有天花板，
+         *   180% 换算出来只有 168mm，够不到纸面极限 183mm）⇒ 提到 300。
+         */
+        expect(REVIEW_FIGURE_BOX_RATIO * FIGURE_SCALE_MAX).toBeGreaterThan(100);
+        // 下限的目的没变：再小也留得下一条边
+        expect(FIGURE_SCALE_MIN).toBeGreaterThan(0);
+        // 而且必须**够得到**"图占满栏宽"那一档（55% × 1.82 ≈ 100%）
+        expect(REVIEW_FIGURE_BOX_RATIO * 182).toBeGreaterThanOrEqual(99);
     });
 });
 
@@ -176,7 +185,7 @@ describe('卷 · 拖把手缩放（横竖都能拖）', () => {
         expect(figureScaleFromDrag(S, -40, 60)).toBe(160); // 纵向大 ⇒ 放大
     });
 
-    it('到边界被 clamp：再拖也不越过 30 / 180', () => {
+    it('到边界被 clamp：再拖也不越过上下限', () => {
         expect(figureScaleFromDrag(S, 500, 0)).toBe(FIGURE_SCALE_MAX);
         expect(figureScaleFromDrag(S, -500, 0)).toBe(FIGURE_SCALE_MIN);
         expect(figureScaleFromDrag(S, 0, 500)).toBe(FIGURE_SCALE_MAX);

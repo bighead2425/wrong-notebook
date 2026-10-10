@@ -172,20 +172,40 @@ export function applyGlobalBlankLines(
 
 /** 题图缩放的合法区间（百分比，100 = 版面默认的 55% 宽） */
 export const FIGURE_SCALE_MIN = 30;
-export const FIGURE_SCALE_MAX = 180;
+/**
+ * 上限（2026-10-10 从 180 提到 300）。
+ *
+ * 180 的原意是"图列最多占满答题区宽"（默认 55% × 1.8 ≈ 99%）。
+ * 但**这个目的已经由 `maxWidth: 100%` 兜住了** —— 再往上拉，宽度也不会超过栏宽，
+ * 只是白白挡住了"还要更大"的场景。真正卡死他的是**深挖纸正面那张整页照片**
+ * （他 2026-10-10 试印一道英语阅读题时发现的）：
+ *   · 那张图的高度另有天花板（`maxFrontPhotoHeightHardMM()`，见 deep-dive-card.ts）；
+ *   · 但 180% 换算出来只有 168mm，够不到那个天花板 ⇒ 白留了 15mm 的余量。
+ * 提到 300 之后，**拉到底 = 撞到纸面极限**，语义反而更直接：
+ * "最多能多大"由纸决定，不由这个百分比决定。
+ *
+ * ⚠️ 复练纸那边**不受影响**：它的题图高度另有 `figureMaxHeightMM = 60mm` 的上限、
+ *    宽度受栏宽约束 ⇒ 超过 180% 之后本来就不再变大（实测语义不变）。
+ */
+export const FIGURE_SCALE_MAX = 300;
 export const FIGURE_SCALE_DEFAULT = 100;
 
 /**
  * 夹到合法区间；非法值退回默认。
- * ⚠️ 上限 180 不是随便定的：图列默认占答题区宽的 55%，
- *    55% × 1.8 = 99% —— 再大就会把"她写字的地方"整个吃掉。
+ *
+ * @param max 上限（默认见 `FIGURE_SCALE_MAX`）。深挖纸正面那张整页照片传更宽的值，
+ *            复练纸的题图不传 —— 两者要的"最大"不是一回事。
  */
-export function normalizeFigureScale(value: number | null | undefined): number {
+export function normalizeFigureScale(
+    value: number | null | undefined,
+    max: number = FIGURE_SCALE_MAX,
+): number {
+    const cap = Number.isFinite(max) && max > FIGURE_SCALE_MIN ? max : FIGURE_SCALE_MAX;
     const base =
         value === null || value === undefined || !Number.isFinite(Number(value))
             ? FIGURE_SCALE_DEFAULT
             : Number(value);
-    return Math.min(FIGURE_SCALE_MAX, Math.max(FIGURE_SCALE_MIN, Math.round(base)));
+    return Math.min(cap, Math.max(FIGURE_SCALE_MIN, Math.round(base)));
 }
 
 /**

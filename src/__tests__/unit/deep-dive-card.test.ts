@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     CONTENT_MM,
     CURRENT_PAPER_TYPE,
+    DEEP_CROSSHAIR_FLOOR_MM,
     PAPER_B5_MM,
     PAPER_TYPES,
     PUNCH_GUTTER_MM,
@@ -60,13 +61,52 @@ describe('T1 深挖纸 · 纸张与内容区尺寸', () => {
         expect(T1_LAYOUT_MM.knowledgeRowMax).toBeLessThan(T1_LAYOUT_MM.knowledgeRow * 2);
     });
 
-    it('★ 正面照片"拖把手放大"的天花板 = 纸面空间极限（2026-09-29）', () => {
-        // 他要求正面原题照片也能拖把手调大小。往上放的边界不能随便给：
-        // 顶到天花板时，"知识点占两行"的最坏情况刚好用完富余（= 0），再多就会被裁。
+    it('★ 正面照片"拖把手放大"必须**真的能放大**（2026-10-10 改）', () => {
+        /**
+         * 旧版的 bug（他拿英语阅读题试印时发现的）：
+         * 硬上限写成 `frontPhotoSpaceMM()`，而那个式子把"十字留白 ≥110mm"算在里面，
+         * 110 恰好就是默认尺寸留下的量 ⇒ 硬上限 == 默认上限（93.5mm）⇒ **拉到底也不动**。
+         *
+         * 现在的契约：放大时**允许吃掉下面的空白**，只给分析区留一个小底。
+         */
+        const def = maxFrontPhotoHeightMM();
         const hard = maxFrontPhotoHeightHardMM();
-        expect(hard).toBeGreaterThanOrEqual(maxFrontPhotoHeightMM());
-        expect(frontSideSlackWorstMM(hard)).toBeCloseTo(0, 5);
-        expect(frontSideSlackWorstMM(hard - 0.1)).toBeGreaterThan(0);
+
+        // ① 必须明显比默认值大 —— 这是"能放大"的判据（旧版两者相等）
+        expect(hard).toBeGreaterThan(def + 50);
+        // ② 顶到天花板时，分析区刚好剩 DEEP_CROSSHAIR_FLOOR_MM（不是 0，也不能是负的）
+        const leftForAnalysis =
+            SIDE_HEIGHT_MM -
+            T1_LAYOUT_MM.identityBar -
+            T1_LAYOUT_MM.knowledgeRowMax -
+            T1_LAYOUT_MM.frontGaps -
+            hard;
+        expect(leftForAnalysis).toBeCloseTo(DEEP_CROSSHAIR_FLOOR_MM, 5);
+        expect(leftForAnalysis).toBeGreaterThan(0);
+        // ③ 天花板不能超过整面高度（那是纸，不是橡皮筋）
+        expect(hard).toBeLessThan(SIDE_HEIGHT_MM);
+    });
+
+    it('★ 默认尺寸仍按 P9 走：照片 ≤95mm、分析区 ≥110mm —— **只有手动放大才吃空白**（2026-10-10）', () => {
+        const maxH = maxFrontPhotoHeightMM();
+        expect(maxH).toBeLessThanOrEqual(95);
+        expect(frontSideSlackMM(maxH)).toBeGreaterThanOrEqual(0);
+        expect(SIDE_HEIGHT_MM - 9 - 6 - maxH).toBeGreaterThanOrEqual(110);
+        // 知识点折两行时也不许裁掉分析区下沿（四角标识在那儿，OCR 靠它定方向）
+        expect(frontSideSlackWorstMM(maxH)).toBeGreaterThanOrEqual(0);
+    });
+
+    it('★ 反面：留白是"最后保障"的 —— 它的下限必须远小于页脚（2026-10-10）', () => {
+        /**
+         * 他的原话："我建议留白部分是最后保障的。"
+         * 起因：拿阅读题试印时**整块页脚没了**（二维码 / 横线 / 三个日期格 / 虚线框）——
+         * 旧值 let 手写区先占 60mm，题干一长就把页脚顶出纸外。
+         * 判据：留白让得比页脚狠（下限小），而页脚是硬指标（不能被压）。
+         */
+        expect(T1_LAYOUT_MM.writingMin).toBeLessThanOrEqual(20);
+        expect(T1_LAYOUT_MM.writingMin).toBeLessThan(T1_LAYOUT_MM.footer);
+        // 页脚高度是扫回定位要用的，一处都不能省
+        expect(T1_LAYOUT_MM.footer).toBeGreaterThanOrEqual(26);
     });
 
     it('反面末尾的虚线框：比颜色格宽得多、略高一点，且**不写用途**', () => {

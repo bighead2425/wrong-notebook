@@ -47,6 +47,7 @@ import { ErrorItem } from '@/types/api';
 import { formatIsoDate } from '@/lib/date-format';
 import { getNotebookPrintInfo, getTags } from '@/lib/print-preview';
 import {
+    DEEP_CROSSHAIR_FLOOR_MM,
     DEEP_FIGURE_BASE_MM,
     SIDE_HEIGHT_MM,
     SLOT_COLORS,
@@ -186,8 +187,10 @@ export function DeepDiveCard({
 
     /**
      * 正面**原题照片**的缩放（2026-09-29）。100% = 版面默认（= `photoMaxMM`，P9 定的 95mm）。
-     * 往上放的**天花板**是 `maxFrontPhotoHeightHardMM()`：纸面还能匀出来的那点空间，
-     * 再大就把下面的分析区压穿（见那个函数的注释）。
+     * 往上放的**天花板**是 `maxFrontPhotoHeightHardMM()`（2026-10-10 抬到约 183mm）：
+     * 放大时会**吃掉下面的空白**，只给分析区留一个 20mm 的小底 ——
+     * 他 2026-10-10 的原话："阅读类题目的图片本来就很大，如果不能持续调整大小，
+     * 就会出现完全看不清的问题"。
      */
     const photoScale = normalizeFigureScale(photoScaleOf ? photoScaleOf(item.id) : 100);
     const photoHeightMM = Math.max(
@@ -351,7 +354,15 @@ export function DeepDiveCard({
                     className="print-deep-analysis"
                     style={{
                         flex: 1,
-                        minHeight: `${T1_LAYOUT_MM.crosshairMin}mm`,
+                        /**
+                         * 【2026-10-10】下限从 `crosshairMin`(110mm) 改成"一个小底"(20mm)。
+                         *
+                         * 原来写 110mm ⇒ 照片一放大，这一块就撑住 110mm 不肯让，
+                         * 整面必然溢出纸外（溢出的部分被裁掉）。
+                         * 现在它先让，照片才能真正长到纸面极限；默认尺寸下它
+                         * 本来就分到 110mm（`flex: 1` 撑满剩余空间），所以**表现不变**。
+                         */
+                        minHeight: `${DEEP_CROSSHAIR_FLOOR_MM}mm`,
                         position: 'relative',
                         marginTop: '1.5mm',
                         border: '0.3mm solid #d8d8d8',
@@ -403,8 +414,31 @@ export function DeepDiveCard({
 
                 {/* ⚠️ 反面**没有身份条**：有身份条就分不清哪面是正、哪面是反了 */}
 
-                {/* 文字题干（OCR） */}
-                <div className="print-deep-question" style={{ flexShrink: 0, marginTop: '2mm', fontSize: '10pt' }}>
+                {/*
+                    【2026-10-10】反面**内容组**：题干 + 题图 + 遮挡线 + 手写区 全包在里面。
+                    它 `flex: 1 1 auto + minHeight: 0 + overflow: hidden`，
+                    页脚（26mm）在外面、`flexShrink: 0`。
+
+                    为什么非这么包一层：他拿一道英语阅读题试印，**整块页脚不见了**
+                    （二维码 / 横线 / 三个日期格 / 虚线框全没了）。原因是旧结构里
+                    各块按"手写区先占 60mm"的顺序排，题干一长，60 + 26 就把一面吃满，
+                    页脚被顶到纸外、打印时被切掉。
+                    他的裁定："**留白部分是最后保障的**" ⇒ 空间不够时**先让留白**。
+                    包一层之后优先级就固定了：先扣出页脚，剩下的给内容组，
+                    内容组装不下就**裁自己**（裁掉的是最下面的手写区，不是页脚）。
+                */}
+                <div
+                    className="print-deep-body"
+                    style={{
+                        flex: '1 1 auto',
+                        minHeight: 0,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        overflow: 'hidden',
+                    }}
+                >
+                    {/* 文字题干（OCR） */}
+                    <div className="print-deep-question" style={{ flexShrink: 0, marginTop: '2mm', fontSize: '10pt' }}>
                     {item.questionText || item.ocrText ? (
                         <MarkdownRenderer content={(item.questionText || item.ocrText) as string} />
                     ) : (
@@ -521,6 +555,9 @@ export function DeepDiveCard({
                 >
                     <PromoteBox manageType={item.manageType} L={L} />
                 </div>
+                </div>
+                {/* ↑ 反面"内容组"到此为止（题干 + 图 + 遮挡线 + 手写区）；
+                    它下面是页脚，**永远留在纸内** —— 详见上面那一大段注释。 */}
 
                 {/*
                     页脚（2026-09-28 二改：上下结构 → **左右结构**）——
