@@ -15,6 +15,9 @@ import {
     levelDeltaForTypeSwitch,
     serializeLevelEntry,
 } from "@/lib/level-linkage";
+// 【2026-10-10】"已掌握"要过一遍题间从属关系规则（人工标记才断开关联、主题向下传播）
+import { planMastery, type LinkOp } from "@/lib/item-link";
+import { applyLinkOps, applyMastery, loadLinkNodes } from "@/lib/item-link-store";
 import {
     canAutoRewrite,
     normalizeManageType,
@@ -197,6 +200,39 @@ export async function PUT(
             const m = Number(masteryLevel);
             if (Number.isFinite(m) && m >= 0 && m <= 2) {
                 updateData.masteryLevel = Math.round(m);
+            }
+        }
+
+        /**
+         * 【2026-10-10】点"已掌握"要**过一遍从属关系规则**（`lib/item-link.ts`）。
+         *
+         * ── 为什么必须走规则，而不是直接改这个数字 ──────────────────────────
+         * 他定的两条（2026-10-10 拍板）：
+         *   · **人工**把**附题**标已掌握 ⇒ 它**断开**与主题的关联（变孤题），但**能一键恢复**；
+         *   · **主题**标已掌握 ⇒ 名下所有附题**跟着标已掌握**，而**关系一动不动**
+         *     （他原稿里"附题已掌握就断开"与"主题传播"会打架，讨论后定案：
+         *      **只有人工标记才断开**，传播来的不算 —— 否则点一次主题就把整棵树拆了）。
+         * 这个接口正是"人点的那个地方"（界面上的已掌握按钮打的就是它），所以 `manual: true`。
+         *
+         * ⚠️ 只有**值真的变了**才算一次：同一份表单重复提交不该反复触发断开。
+         * ⚠️ 断开/传播都不是"顺手"的事：留痕在 `applyLinkOps` / `applyMastery` 里写。
+         */
+        let linkOps: LinkOp[] = [];
+        let masteryPropagate: string[] = [];
+        let linkNote = '';
+        if (typeof updateData.masteryLevel === 'number') {
+            const nextMastered = updateData.masteryLevel === 2;
+            if ((errorItem.masteryLevel === 2) !== nextMastered) {
+                try {
+                    const nodes = await loadLinkNodes(user.id, [id]);
+                    const plan = planMastery(nodes, id, nextMastered, { manual: true });
+                    linkOps = plan.ops;
+                    masteryPropagate = plan.masteryIds.filter((x) => x !== id);
+                    linkNote = plan.message;
+                } catch (error) {
+                    // 关系规则出问题**不该让"改掌握状态"整个失败**，但必须被看见
+                    logger.error({ error, itemId: id }, 'Failed to plan item link on mastery change');
+                }
             }
         }
 
@@ -445,10 +481,31 @@ export async function PUT(
             }
         }
 
+        /**
+         * 【2026-10-10】把上一步算好的从属关系改动落地（断开 / 向附题传播）。
+         * 放在主更新**之后**：主字段先写成功，再动关系 —— 关系那步失败也不会让
+         * "已掌握"这个主操作回滚（它会记 error 日志，界面上的字段仍然是对的）。
+         */
+        if (linkOps.length > 0) {
+            try {
+                await applyLinkOps(user.id, linkOps);
+            } catch (error) {
+                logger.error({ error, itemId: id }, 'Failed to apply link ops on mastery change');
+            }
+        }
+        if (masteryPropagate.length > 0) {
+            try {
+                await applyMastery(user.id, masteryPropagate, updateData.masteryLevel === 2);
+            } catch (error) {
+                logger.error({ error, itemId: id }, 'Failed to propagate mastery to children');
+            }
+        }
+
         // 注：按用户要求，保存错题时**不再自动导出**到 Obsidian。
         //     需要导出时走错题详情页的「导出到 ob」按钮（本文件的 export-obsidian 路由）。
 
-        return NextResponse.json(updated);
+        /** `linkNote` 只是"这次顺带发生了什么"的一句人话，界面可选地弹一下；没有就不加这个键 */
+        return NextResponse.json(linkNote ? { ...updated, linkNote } : updated);
     } catch (error) {
         logger.error({ error }, 'Error updating item');
         return internalError("Failed to update error item");

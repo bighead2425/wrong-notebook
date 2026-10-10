@@ -1,19 +1,17 @@
 import { NextResponse } from "next/server";
-import type { Prisma } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
 import { badRequest, internalError, unauthorized } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { planLink, planPromote, planRestore, planUnlink, roleOf, type LinkNode } from "@/lib/item-link";
+// 碰数据库那一半抽在 lib 里共用（PATCH 的"已掌握"也要用同一套装载/写库/留痕）
 import {
-    planLink,
-    planPromote,
-    planRestore,
-    planUnlink,
-    roleOf,
-    type LinkNode,
-    type LinkOp,
-} from "@/lib/item-link";
+    applyLinkOps,
+    lastDetachedFrom,
+    loadLinkNodes,
+    resolveOwnedItem,
+} from "@/lib/item-link-store";
 
 const logger = createLogger("api:error-items:link");
 
@@ -57,40 +55,14 @@ export async function POST(request: Request) {
 
     try {
         /** 把"界面上的一个指代"（题号或 id）换成库里的题 */
-        const resolve = async (v: unknown) => resolveItem(user.id, v);
+        const resolve = async (v: unknown) => resolveOwnedItem(user.id, v);
         /**
-         * 需要参与判定的题：**两道题 + 各自的主题 + 各自的附题**。
-         * 只装这一片就够了 —— 规则只看"谁挂谁"，深度只有一层（见 lib/item-link.ts）。
+         * 参与判定的题：**两道题 + 各自的主题 + 各自的附题（含兄弟）**。
+         * ⚠️ 装在 `lib/item-link-store.ts` 里，与 PATCH 的"已掌握"共用同一套
+         *    —— 少装一层就会在库里造出"附题的附题"，而规则层看不见它。
          */
-        const loadTree = async (seeds: (string | null)[]): Promise<LinkNode[]> => {
-            const ids = new Set<string>();
-            for (const s of seeds) if (s) ids.add(s);
-            const direct = await prisma.errorItem.findMany({
-                where: { userId: user.id, id: { in: [...ids] }, deletedAt: null },
-                select: { id: true, source: true, parentId: true, createdAt: true, masteryLevel: true },
-            });
-            // 往上：各自的主题
-            const parentIds = direct.map((d) => d.parentId).filter((v): v is string => !!v);
-            // 往下：各自名下的附题
-            const kidRows = await prisma.errorItem.findMany({
-                where: { userId: user.id, parentId: { in: [...ids] }, deletedAt: null },
-                select: { id: true, source: true, parentId: true, createdAt: true, masteryLevel: true },
-            });
-            const roots = await prisma.errorItem.findMany({
-                where: { userId: user.id, id: { in: parentIds }, deletedAt: null },
-                select: { id: true, source: true, parentId: true, createdAt: true, masteryLevel: true },
-            });
-            /** 主题的**兄弟附题**也要装（升变/并入时要一起改挂，否则会造出"附题的附题"） */
-            const siblings = await prisma.errorItem.findMany({
-                where: { userId: user.id, parentId: { in: roots.map((r) => r.id) }, deletedAt: null },
-                select: { id: true, source: true, parentId: true, createdAt: true, masteryLevel: true },
-            });
-            const byId = new Map<string, LinkNode>();
-            for (const r of [...direct, ...kidRows, ...roots, ...siblings]) {
-                byId.set(r.id, toNode(r));
-            }
-            return [...byId.values()];
-        };
+        const loadTree = async (seeds: (string | null)[]): Promise<LinkNode[]> =>
+            loadLinkNodes(user.id, seeds.filter((x): x is string => !!x));
 
         if (action === "link") {
             const child = await resolve(raw.child ?? raw.childId);
@@ -110,7 +82,7 @@ export async function POST(request: Request) {
                 });
             }
             if (!plan.ok) return NextResponse.json({ ok: false, message: plan.message, state: stateOf(nodes) });
-            await applyOps(user.id, plan.ops);
+            await applyLinkOps(user.id, plan.ops);
             const after = await loadTree([child.id, target.id]);
             return NextResponse.json({ ok: true, message: plan.message, state: stateOf(after) });
         }
@@ -130,90 +102,13 @@ export async function POST(request: Request) {
 
         if (!plan) return badRequest(`Unknown action: ${action || "(empty)"}`);
         if (!plan.ok) return NextResponse.json({ ok: false, message: plan.message, state: stateOf(nodes) });
-        await applyOps(user.id, plan.ops);
+        await applyLinkOps(user.id, plan.ops);
         const after = await loadTree([one.id]);
         return NextResponse.json({ ok: true, message: plan.message, state: stateOf(after) });
     } catch (error) {
         logger.error({ error, action }, "Failed to change item link");
         return internalError("Failed to change item link");
     }
-}
-
-type ItemRow = {
-    id: string;
-    source: string | null;
-    parentId: string | null;
-    createdAt: Date;
-    masteryLevel: number;
-};
-
-function toNode(r: ItemRow): LinkNode {
-    return {
-        id: r.id,
-        /** ⚠️ 老题可能没有题号 ⇒ 用 id 兜底（与打印那边 `source || id` 同一口径） */
-        no: r.source || r.id,
-        parentId: r.parentId,
-        createdAt: r.createdAt.toISOString(),
-        mastered: r.masteryLevel === 2,
-    };
-}
-
-/** 把界面上给的"题号或 id"换成库里那一道题（必须属于当前用户、未软删） */
-async function resolveItem(userId: string, v: unknown): Promise<ItemRow | null> {
-    const key = typeof v === "string" ? v.trim() : "";
-    if (!key) return null;
-    const hit = await prisma.errorItem.findFirst({
-        where: { userId, deletedAt: null, OR: [{ id: key }, { source: key }] },
-        select: { id: true, source: true, parentId: true, createdAt: true, masteryLevel: true },
-    });
-    return hit;
-}
-
-/** 写库：逐条改 parentId，并**留痕**（恢复关联与排查都靠它） */
-async function applyOps(userId: string, ops: LinkOp[]): Promise<void> {
-    if (!ops.length) return;
-    const ids = ops.map((o) => o.id);
-    /** ⚠️ 只改**自己的**题（ops 来自按 userId 过滤后的数据，这里是第二道闸） */
-    const owned = await prisma.errorItem.findMany({
-        where: { userId, id: { in: ids } },
-        select: { id: true, parentId: true },
-    });
-    const ownedIds = new Set(owned.map((o) => o.id));
-    const fromById = new Map(owned.map((o) => [o.id, o.parentId]));
-
-    await prisma.$transaction(
-        ops
-            .filter((o) => ownedIds.has(o.id))
-            .flatMap((o) => [
-                prisma.errorItem.update({ where: { id: o.id }, data: { parentId: o.parentId } }),
-                prisma.stateChangeLog.create({
-                    data: {
-                        errorItemId: o.id,
-                        field: "parentId",
-                        fromValue: fromById.get(o.id) ?? null,
-                        toValue: o.parentId,
-                        actor: "user",
-                        actorUserId: userId,
-                        note: "题间从属关系变动（主题/附题）",
-                    } satisfies Prisma.StateChangeLogUncheckedCreateInput,
-                }),
-            ]),
-    );
-}
-
-/**
- * 找"当初被断开时挂在谁下面" —— 恢复关联的唯一依据。
- *
- * ⚠️ 只看 `field='parentId' && toValue IS NULL` 的**最后一条**：
- *    那正是"人工标已掌握 ⇒ 断开"留下的那条。别去翻更早的账（那是别的操作留下的）。
- */
-async function lastDetachedFrom(userId: string, itemId: string): Promise<string | null> {
-    const row = await prisma.stateChangeLog.findFirst({
-        where: { errorItemId: itemId, field: "parentId", toValue: null, actorUserId: userId },
-        orderBy: { createdAt: "desc" },
-        select: { fromValue: true },
-    });
-    return row?.fromValue ?? null;
 }
 
 /** 把那棵树现在的样子回给前端（题号 / 角色 / 挂谁），界面据此直接刷新 */
