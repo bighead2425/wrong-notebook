@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseVolumeItems, resolvePageCount, normalizeVolumeTitle } from '@/lib/volume-input';
+import { FIGURE_SCALE_DEFAULT, FIGURE_SCALE_MAX, FIGURE_SCALE_MIN } from '@/lib/review-card';
 
 /**
  * 卷内条目的规范化 —— **建卷（POST）与更新组卷（PATCH）共用这一处**。
@@ -45,12 +46,23 @@ describe('卷内条目 · parseVolumeItems', () => {
         expect(items[0].figureUrls).toBe('["/a.png","/b.png"]');
     });
 
-    it('★ 题图缩放：缺省 = 100、越界夹到 30~180（他拖把手能拖到的范围）', () => {
+    it('★ 题图缩放：缺省 = 100、越界夹到合法区间（他拖把手能拖到的范围）', () => {
         const items = parseVolumeItems(
             [{ errorItemId: 'a' }, { errorItemId: 'b', figureScale: 5 }, { errorItemId: 'c', figureScale: 999 }],
             5,
         );
-        expect(items.map((i) => i.figureScale)).toEqual([100, 30, 180]);
+        /**
+         * ⚠️ 断言里**引用常量、不写死数字**（2026-10-10 改）。
+         * 原来写的是 `[100, 30, 180]`，而上限当天从 180 提到 300
+         * （深挖纸正面那张整页照片要能放大到纸面极限）⇒ 这条当场就红了。
+         * 写死数字的断言会让"改一个上限"变成"改 N 处测试"，
+         * 而真正要钉住的是**这条规则本身**（缺省 100、越界夹到区间两端），不是那个数字。
+         */
+        expect(items.map((i) => i.figureScale)).toEqual([
+            FIGURE_SCALE_DEFAULT,
+            FIGURE_SCALE_MIN,
+            FIGURE_SCALE_MAX,
+        ]);
     });
 
     it('留白：没给/给了垃圾值 ⇒ 退回这张卷的默认行数；越界夹到合法区间', () => {
