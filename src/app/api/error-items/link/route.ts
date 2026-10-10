@@ -87,8 +87,57 @@ export async function POST(request: Request) {
             return NextResponse.json({ ok: true, message: plan.message, state: stateOf(after) });
         }
 
-        /** 另外三个动作都只需要一道题 */
-        const one = await resolve(raw.id ?? raw.itemId ?? raw.child ?? raw.childId);
+        if (action === "linkGroup") {
+            /**
+             * 【2026-10-10】批量建立关联（列表页"多选 → 建立关联"用）。
+             * 语义：`root` 那道当**主题**，`children` 全部挂到它名下。
+             *
+             * ⚠️ 逐条调用**同一个规则**（`planLink`），而且**每条之后重新装载一次**数据 ——
+             *    前一条可能刚把一整棵小树并了过来，拿旧快照算第二条就会漏
+             *    （老规矩：规则只写一处，且喂给它的数据必须是当下这一刻的）。
+             * ⚠️ 传 `chooseRootId = root`：他已经明确指定了主题，所以两边都是主题时也不要停下来问。
+             * ⚠️ 一次最多 20 条 —— 这是"人点一下"的批处理，不是导入接口。
+             */
+            const rawChildren = Array.isArray(raw.children) ? raw.children : [];
+            if (!rawChildren.length) return badRequest("children is required");
+            if (rawChildren.length > 20) return badRequest("一次最多关联 20 道题");
+
+            const root = await resolve(raw.root ?? raw.target ?? raw.targetId);
+            if (!root) return NextResponse.json({ ok: false, message: "主题那道题找不到（可能已被删除）" });
+
+            const linked: string[] = [];
+            const failed: { no: string; message: string }[] = [];
+            for (const candidate of rawChildren) {
+                const child = await resolve(candidate);
+                if (!child) {
+                    failed.push({ no: String(candidate), message: "这道题找不到（可能已被删除）" });
+                    continue;
+                }
+                if (child.id === root.id) continue;
+
+                const nodes = await loadTree([child.id, root.id]);
+                const plan = planLink(nodes, child.id, root.id, root.id);
+                if (!plan.ok || plan.choice) {
+                    failed.push({ no: child.source || child.id, message: plan.message });
+                    continue;
+                }
+                await applyLinkOps(user.id, plan.ops);
+                linked.push(child.source || child.id);
+            }
+
+            const after = await loadTree([root.id]);
+            return NextResponse.json({
+                ok: true,
+                message: linked.length
+                    ? `已把 ${linked.length} 道题挂到「${root.source || root.id}」名下。`
+                    : "没有需要新挂的题。",
+                linked,
+                failed,
+                state: stateOf(after),
+            });
+        }
+
+        /** 另外三个动作都只需要一道题 */        const one = await resolve(raw.id ?? raw.itemId ?? raw.child ?? raw.childId);
         if (!one) return NextResponse.json({ ok: false, message: "这道题找不到（可能已被删除）" });
         const nodes = await loadTree([one.id]);
         const plan =

@@ -1,10 +1,18 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Filter, ChevronDown, Printer, ListChecks, Trash2, X, Plus } from "lucide-react";
+import { Search, Filter, ChevronDown, Printer, ListChecks, Trash2, X, Plus, Link2, Loader2 } from "lucide-react";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -31,6 +39,7 @@ import { AttentionMultiSelect } from "@/components/attention-multi-select";
 import { ErrorItemCard } from "@/components/error-item-card";
 import { DatePickerCalendar } from "@/components/date-picker-calendar";
 import { countByDay, dayBoundsISO, rangeBoundsISO } from "@/lib/calendar-grid";
+import { cleanMarkdown } from "@/lib/markdown-utils";
 
 /**
  * 【2026-09-30】时间筛选扩到 7 档 + 「其他日期」。
@@ -101,7 +110,14 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
     const [isSelectMode, setIsSelectMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [isDeleting, setIsDeleting] = useState(false);
-    const [isMerging, setIsMerging] = useState(false);
+    /**
+     * 【2026-10-10】「建立关联」——多选 ≥2 道时，把它们挂到同一道**主题**下面。
+     * 这是他 2026-10-10 拍板的题间从属关系（第一期的界面部分只做了"显示与取关/升变"，
+     * 这里补上**建立**的入口；扫纸那条路在第二期后半段）。
+     */
+    const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+    const [linkRootId, setLinkRootId] = useState<string>("");
+    const [isLinking, setIsLinking] = useState(false);
     const { t, language } = useLanguage();
     const router = useRouter();
     /** 本页新文案的双语助手（跟复练卷页一个写法，不再往 translations 里塞碎键） */
@@ -324,36 +340,62 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
     };
 
     /**
-     * #14 / T6：多选后合并错题
-     * 把几道同源错题打包重送 AI，生成一道新题（新题号），原来几道进回收箱。
+     * 选中的题，**按列表自身的顺序**取（`Set` 的迭代顺序不可靠；列表是"新的在前"，
+     * 所以第一道就是最近录的那一道）。对话框按这个顺序列，默认让它当主题。
+     * ⚠️ 只含**本页**的题：跨页全选时，别的页那些照样会被挂上，但没法在这里当"主题"选
+     *    （界面只列看得见的），所以下面还会提示一句"另有 N 道"。
      */
-    const handleBatchMerge = async () => {
-        if (selectedIds.size < 2) {
-            alert(t.notebook?.mergeNeedTwo || "请至少选择 2 道题合并");
-            return;
-        }
+    const selectedItems = useMemo(
+        () => items.filter((it) => selectedIds.has(it.id)),
+        [items, selectedIds],
+    );
 
-        const confirmMsg = (t.notebook?.confirmMerge || "Merge {count} items into one new question? The originals go to trash.")
-            .replace("{count}", selectedIds.size.toString());
-        if (!confirm(confirmMsg)) return;
-
-        setIsMerging(true);
+    /**
+     * 【2026-10-10】「建立关联」：把选中的题挂到同一道**主题**下面。
+     *
+     * 为什么先做在列表页：他原稿里那条路是"打印出来 → 扫纸 → 互扫"，**要打印机**；
+     * 而列表页本来就能多选 ⇒ 一步到位，不用纸也能用（打印机月底才回来）。
+     * 扫纸那条路归第二期后半段。
+     *
+     * 服务端一次收 `root + children[]` 批处理，内部逐条走**同一个规则**
+     * （见 `api/error-items/link` 的 `linkGroup`）。
+     */
+    const handleLinkGroup = async () => {
+        if (!linkRootId || selectedIds.size < 2) return;
+        setIsLinking(true);
         try {
-            const res = await apiClient.post<{ item: { id: string; source?: string | null } }>(
-                "/api/error-items/merge",
-                { ids: Array.from(selectedIds) },
-                { timeout: 180000 },
-            );
-            alert((t.notebook?.mergeSuccess || "Merged. New question no: {no}")
-                .replace("{no}", res.item.source || res.item.id));
+            const children = Array.from(selectedIds).filter((x) => x !== linkRootId);
+            const res = await apiClient.post<{
+                ok: boolean;
+                message?: string;
+                failed?: { no: string; message: string }[];
+            }>("/api/error-items/link", { action: "linkGroup", root: linkRootId, children });
+
+            if (!res?.ok) {
+                alert(res?.message || L("建立关联没有完成", "Could not link the questions"));
+                return;
+            }
+            /** 成功**不弹窗**：界面刷新后角标就出来了；只有"有几道没挂上"才说一声 */
+            if (res.failed?.length) {
+                alert(
+                    L(
+                        `有 ${res.failed.length} 道没能挂上：\n${res.failed.map((f) => `${f.no} — ${f.message}`).join("\n")}`,
+                        `${res.failed.length} could not be linked:\n${res.failed.map((f) => `${f.no} — ${f.message}`).join("\n")}`,
+                    ),
+                );
+            }
+            setLinkDialogOpen(false);
             setIsSelectMode(false);
             setSelectedIds(new Set());
             fetchItems();
         } catch (error) {
             console.error(error);
-            alert((error as { data?: { message?: string } })?.data?.message || t.notebook?.mergeFailed || "Merge failed");
+            alert(
+                (error as { data?: { message?: string } })?.data?.message ||
+                    L("建立关联没有完成", "Could not link the questions"),
+            );
         } finally {
-            setIsMerging(false);
+            setIsLinking(false);
         }
     };
 
@@ -714,6 +756,19 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
                             {(t.notebook?.selectedCount || "{count} selected").replace("{count}", selectedIds.size.toString())}
                         </span>
                         <div className="flex items-center gap-3">
+                            {/* 【2026-10-10】建立关联：选中 ≥2 道才有意义（一道题没有"跟谁关联"可言） */}
+                            <Button
+                                variant="outline"
+                                onClick={() => {
+                                    /** 默认让"列表里的第一道"当主题（最新录的那道），他可以在对话框里改 */
+                                    setLinkRootId(selectedItems[0]?.id ?? "");
+                                    setLinkDialogOpen(true);
+                                }}
+                                disabled={selectedIds.size < 2 || isLinking}
+                            >
+                                <Link2 className="mr-2 h-4 w-4" />
+                                {L("建立关联", "Link")}
+                            </Button>
                             {/* 【2026-09-29】他要的「清除」：蓝色文字，摆在「取消」左边，一点全不选 */}
                             <button
                                 type="button"
@@ -742,6 +797,93 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
                     </div>
                 </div>
             )}
+
+            {/* 【2026-10-10】「建立关联」对话框：选一道当主题，其余挂到它下面。
+                ⚠️ 主题**只能从本页看得见的题里选**（跨页选中的那些照样会被挂上，
+                   但没法在这里当主题），所以下面给一句提示。 */}
+            <Dialog
+                open={linkDialogOpen}
+                onOpenChange={(open) => {
+                    if (!open) setLinkDialogOpen(false);
+                }}
+            >
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>{L("建立关联", "Link questions")}</DialogTitle>
+                        <DialogDescription>
+                            {L(
+                                "选一道当「主题」，其余挂到它下面。以后做模仿纸时，就以主题的答案和解析当范例。",
+                                "Pick one as the main question; the others attach to it.",
+                            )}
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="max-h-[50vh] space-y-1.5 overflow-y-auto py-1">
+                        {selectedItems.map((it) => {
+                            const active = it.id === linkRootId;
+                            const no = it.source || it.id;
+                            const text = cleanMarkdown((it.questionText || "").split("\n\n")[0] || "");
+                            const preview = text.length > 46 ? `${text.slice(0, 46)}…` : text;
+                            return (
+                                <button
+                                    key={it.id}
+                                    type="button"
+                                    onClick={() => setLinkRootId(it.id)}
+                                    className={`flex w-full items-start gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                                        active ? "border-primary bg-primary/5" : "hover:bg-muted"
+                                    }`}
+                                >
+                                    <span
+                                        className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                                            active ? "border-primary" : "border-muted-foreground/40"
+                                        }`}
+                                    >
+                                        {active && <span className="h-2 w-2 rounded-full bg-primary" />}
+                                    </span>
+                                    <span className="min-w-0">
+                                        <span className="font-medium">{no}</span>
+                                        {active && (
+                                            <span className="ml-1.5 text-xs text-primary">
+                                                {L("（主题）", "(main)")}
+                                            </span>
+                                        )}
+                                        <span className="block truncate text-xs text-muted-foreground">
+                                            {preview}
+                                        </span>
+                                    </span>
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    {selectedIds.size > selectedItems.length && (
+                        <p className="text-xs text-muted-foreground">
+                            {L(
+                                `另有 ${selectedIds.size - selectedItems.length} 道在别的页，也会一起挂上（但只有本页的题能选作主题）。`,
+                                `${selectedIds.size - selectedItems.length} more on other pages will be attached too (only this page's can be the main one).`,
+                            )}
+                        </p>
+                    )}
+
+                    <DialogFooter>
+                        <Button
+                            variant="outline"
+                            onClick={() => setLinkDialogOpen(false)}
+                            disabled={isLinking}
+                        >
+                            {t.common?.cancel || "取消"}
+                        </Button>
+                        <Button onClick={handleLinkGroup} disabled={!linkRootId || isLinking}>
+                            {isLinking ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                                <Link2 className="mr-2 h-4 w-4" />
+                            )}
+                            {L("建立关联", "Link")}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {/* 【2026-09-30】录入日期日历（「其他日期」）。
                 确认后：**日历消失但记住选择**（绿点/蓝区间留在 state 里），

@@ -23,8 +23,18 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import jsQR from "jsqr";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, ExternalLink, Loader2 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
+import { ArrowLeft, Camera, ExternalLink, Link2, Loader2, Search } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import type { ErrorItem } from "@/types/api";
@@ -71,6 +81,140 @@ export function ScanItemPanel({
     useEffect(() => {
         fetchItem();
     }, [fetchItem]);
+
+    /* ===== 【2026-10-10】关联别的题（把题 B 挂到当前这道题下面）===== */
+
+    const [linkOpen, setLinkOpen] = useState(false);
+    const [linkNo, setLinkNo] = useState("");
+    const [linkLooking, setLinkLooking] = useState(false);
+    const [linkBusy, setLinkBusy] = useState(false);
+    const [linkNote, setLinkNote] = useState("");
+    const [linkCandidate, setLinkCandidate] = useState<{
+        id: string;
+        no: string;
+        text: string;
+        trash: boolean;
+    } | null>(null);
+
+    /**
+     * 按题号找那道题 —— 走的是扫码页**同一个接口**（`GET /api/scan?no=`），
+     * 所以"扫到的"和"手工输的"在这儿是同一回事，不用两套查法。
+     * ⚠️ 刻意**不包 useCallback**：它只被事件（点查找 / 回车 / 拍照）调用，
+     *    包起来反而会把 `L`（每次渲染都变）拖进依赖数组里报警告，纯粹自找麻烦。
+     */
+    const findCandidate = async (raw: string) => {
+        const no = raw.trim().toUpperCase();
+        if (!no) return;
+        setLinkLooking(true);
+        setLinkNote("");
+        setLinkCandidate(null);
+        try {
+            const res = await apiClient.get<{
+                found: boolean;
+                source?: string;
+                item?: { id: string; source?: string | null; questionText?: string | null };
+            }>(`/api/scan?no=${encodeURIComponent(no)}`);
+            if (!res.found || !res.item) {
+                setLinkNote(L("没找到这道题（题号是不是敲错了？）", "Not found — check the number"));
+                return;
+            }
+            if (res.item.id === itemId) {
+                setLinkNote(L("这就是当前这道题，不用和自己关联。", "That is this question itself."));
+                return;
+            }
+            const text = (res.item.questionText || "").replace(/\s+/g, " ").trim();
+            setLinkCandidate({
+                id: res.item.id,
+                no: res.item.source || res.item.id,
+                text: text.length > 60 ? `${text.slice(0, 60)}…` : text,
+                trash: res.source === "trash",
+            });
+        } catch (error) {
+            console.error(error);
+            alert(L("查询失败", "Lookup failed"));
+        } finally {
+            setLinkLooking(false);
+        }
+    };
+
+    /**
+     * 拍照认纸上的二维码（**只解一张，不常开摄像头**）。
+     * 他原稿里"调用扫描仪扫码"那半句：在手机上就是"拍一下那道题的码"，
+     * 比手敲题号稳（他的码本来就是给机器读的）。
+     */
+    const scanQrFromPhoto = async (file: File) => {
+        try {
+            const bitmap = await createImageBitmap(file);
+            const canvas = document.createElement("canvas");
+            canvas.width = bitmap.width;
+            canvas.height = bitmap.height;
+            const ctx = canvas.getContext("2d", { willReadFrequently: true });
+            if (!ctx) return;
+            ctx.drawImage(bitmap, 0, 0);
+            const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
+            if (!code?.data) {
+                setLinkNote(
+                    L("这张照片里没读出二维码，换个角度再拍一次。", "No QR code found in that photo."),
+                );
+                return;
+            }
+            setLinkNo(code.data.trim().toUpperCase());
+            await findCandidate(code.data);
+        } catch (error) {
+            console.error(error);
+            setLinkNote(L("照片读不出来，改成手输题号试试。", "Could not read it — type the number instead."));
+        }
+    };
+
+    /**
+     * 把查到的题挂到**当前这道题**下面（当前这道题 = 主题）。
+     *
+     * ⚠️ 两边各自都已经是一组题的主题时，规则不肯替他决定（`plan.choice`）——
+     *    这里问一句，**推荐"当前这道题继续当主题"**（他此刻正看着这一屏），
+     *    选"是"就带 `chooseRootId` 重发一次，对方那一组会整棵接过来。
+     */
+    const doLink = async (chooseRootId?: string): Promise<void> => {
+        if (!linkCandidate) return;
+        setLinkBusy(true);
+        try {
+            const res = await apiClient.post<{
+                ok: boolean;
+                message?: string;
+                choice?: { candidates: { id: string; no: string }[]; recommended: string };
+            }>("/api/error-items/link", {
+                action: "link",
+                child: linkCandidate.id,
+                target: itemId,
+                ...(chooseRootId ? { chooseRootId } : {}),
+            });
+
+            if (res.choice) {
+                const ok = window.confirm(
+                    L(
+                        "这两道题各自都已经是一组题的主题了。\n让当前这道题当主题、把对方那一组一起接过来？（点取消 = 什么都不做）",
+                        "Both are already main questions. Make the current one the main question and take over the other group?",
+                    ),
+                );
+                if (ok) await doLink(itemId);
+                return;
+            }
+            if (!res.ok) {
+                alert(res.message || L("没有关联成功", "Could not link"));
+                return;
+            }
+            setLinkNote(res.message || L("已关联", "Linked"));
+            setLinkCandidate(null);
+            setLinkNo("");
+            /** 刷新本题：卡片角标与"名下几道"要跟着变 */
+            fetchItem();
+        } catch (error) {
+            console.error(error);
+            alert(L("没有关联成功", "Could not link"));
+        } finally {
+            setLinkBusy(false);
+        }
+    };
 
     /** 乐观更新 + 失败回正（与列表页 `patchItemFields` 同一条规矩） */
     const patch = async (body: Record<string, unknown>, optimistic: Partial<ErrorItem>) => {
@@ -157,6 +301,20 @@ export function ScanItemPanel({
                     </span>
                 )}
                 <span className="flex-1" />
+                {/* 【2026-10-10】把别的题挂到这道题下面（他原稿："扫到题 A → 在题 A 里关联题 B"） */}
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                        setLinkNote("");
+                        setLinkCandidate(null);
+                        setLinkNo("");
+                        setLinkOpen(true);
+                    }}
+                >
+                    <Link2 className="mr-1.5 h-4 w-4" />
+                    {L("关联别的题", "Link a question")}
+                </Button>
                 <Link href={detailHref}>
                     <Button variant="outline" size="sm">
                         <ExternalLink className="mr-1.5 h-4 w-4" />
@@ -212,6 +370,108 @@ export function ScanItemPanel({
                     L={L}
                 />
             </div>
+
+            {/* ===== 【2026-10-10】"关联别的题"对话框 =====
+                两条路都留着：**手输题号**（纸上有）与**拍那张纸的码**（他原本就想这么用）。
+                查到之后先给他看一眼是哪道题，点「添加到本题」才真挂 ——
+                关联是"牵一发动全身"的事（对方若是主题，整组都会被接过来），不能查完就自动生效。 */}
+            <Dialog
+                open={linkOpen}
+                onOpenChange={(open) => {
+                    if (!open) setLinkOpen(false);
+                }}
+            >
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>{L("关联别的题", "Link a question")}</DialogTitle>
+                        <DialogDescription>
+                            {L(
+                                `查到的那道题会挂到「${item.source || item.id}」下面，这道题就是主题。`,
+                                `The question you pick will attach to ${item.source || item.id} (the main one).`,
+                            )}
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                            <div className="relative flex-1">
+                                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                    className="pl-8"
+                                    placeholder={L("题号，如 SX20261010001", "Question no.")}
+                                    value={linkNo}
+                                    onChange={(e) => setLinkNo(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") findCandidate(linkNo);
+                                    }}
+                                />
+                            </div>
+                            <Button
+                                variant="outline"
+                                onClick={() => findCandidate(linkNo)}
+                                disabled={!linkNo.trim() || linkLooking}
+                            >
+                                {linkLooking ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                    L("查找", "Find")
+                                )}
+                            </Button>
+                        </div>
+
+                        {/* 拍照认码：手机上一按就成（`capture` 让手机直接调后置摄像头） */}
+                        <label className="inline-flex cursor-pointer items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+                            <Camera className="h-4 w-4" />
+                            {L("或拍一下那道题纸上的二维码", "Or photograph that sheet's QR code")}
+                            <input
+                                type="file"
+                                accept="image/*"
+                                capture="environment"
+                                className="hidden"
+                                onChange={(e) => {
+                                    const f = e.target.files?.[0];
+                                    if (f) scanQrFromPhoto(f);
+                                    e.target.value = "";
+                                }}
+                            />
+                        </label>
+
+                        {linkNote && (
+                            <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                                {linkNote}
+                            </p>
+                        )}
+
+                        {linkCandidate && (
+                            <div className="rounded-md border p-3 text-sm">
+                                <div className="flex items-center gap-2">
+                                    <span className="font-medium">{linkCandidate.no}</span>
+                                    {linkCandidate.trash && (
+                                        <span className="rounded bg-rose-500/15 px-1.5 py-0.5 text-xs text-rose-700">
+                                            {L("在回收箱里", "In trash")}
+                                        </span>
+                                    )}
+                                </div>
+                                <p className="mt-1 text-xs text-muted-foreground">{linkCandidate.text}</p>
+                            </div>
+                        )}
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setLinkOpen(false)} disabled={linkBusy}>
+                            {L("关闭", "Close")}
+                        </Button>
+                        <Button onClick={() => doLink()} disabled={!linkCandidate || linkBusy}>
+                            {linkBusy ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                                <Link2 className="mr-2 h-4 w-4" />
+                            )}
+                            {L("添加到本题", "Attach")}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
