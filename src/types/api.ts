@@ -114,6 +114,20 @@ export interface ErrorItem {
     redoCount?: number;
     mergeSource?: string | null;
     /**
+     * 【2026-10-10】题间从属关系（主题 / 附题）。
+     * `parentId` = 一个指针（附题指向主题）；"主题有哪些附题"**反查**得出，不存第二份。
+     * `linkRole` 由**接口算好**发下来（列表接口按这一页算一次；详情页走返回里的 `link` 对象）
+     * —— 前端不去猜"有没有人挂我名下"，那件事猜不出来。
+     */
+    parentId?: string | null;
+    linkRole?: 'lone' | 'root' | 'child';
+    /**
+     * 【2026-10-10】从属关系的**完整视图** —— 只有单条详情接口（`GET /api/error-items/[id]`）
+     * 会带它（主题卡 / 附题清单 / 能否恢复）；列表接口只带上面的 `linkRole`（省流量）。
+     * 这里只声明界面用得到的角色，完整形状见 `lib/item-link.ts` 的 `LinkView`。
+     */
+    link?: { role: 'lone' | 'root' | 'child' } | null;
+    /**
      * 【2026-10-03 需求第 10 条】这道题**深挖纸**的随机 emoji 标识
      * （印在页眉「印于 …」左边，一题一张纸给一个）。
      * 拿不到时由 `/api/error-items/emoji-marks` 惰性生成写回；取值见 `lib/emoji-mark.ts`。

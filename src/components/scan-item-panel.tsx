@@ -180,6 +180,8 @@ export function ScanItemPanel({
                 <ErrorItemCard
                     item={item}
                     href={null}
+                    /** 【2026-10-10】扫到的这道题是主题还是附题 —— 照详情接口回的 `link.role` 画角标 */
+                    linkRole={item.link?.role ?? null}
                     onToggleMastery={() =>
                         patch(
                             { masteryLevel: item.masteryLevel > 0 ? 0 : 2 },

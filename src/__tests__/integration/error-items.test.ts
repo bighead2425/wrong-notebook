@@ -733,8 +733,8 @@ describe('/api/error-items', () => {
             expect(data.masteryLevel).toBe(0);
         });
 
-        it('应该支持不同级别的掌握程度', async () => {
-            const levels = [0, 1, 2, 3];
+        it('应该支持 0 / 1 / 2 三档掌握程度', async () => {
+            const levels = [0, 1, 2];
 
             for (const level of levels) {
                 // Mock ownership check (findUnique)
@@ -757,6 +757,34 @@ describe('/api/error-items', () => {
                 const response = await PATCH_MASTERY(request, { params: Promise.resolve({ id: 'error-item-1' }) });
                 expect(response.status).toBe(200);
             }
+        });
+
+        it('★ 超出 0~2 的值必须被拒绝（不能让脏值进库）', async () => {
+            /**
+             * 【2026-10-10】这条钉的是**新契约**，也是对旧断言的修正。
+             *
+             * 原来这条用例是 `levels = [0, 1, 2, 3]` 全部断言 200 —— 即"原样写进库"，
+             * 于是一个 `3` 能落进数据库。而界面判断"已掌握"用的是 `masteryLevel > 0`、
+             * 系统内部判断用的是 `=== 2`，**3 会让两边结论相反**
+             * （卡片上显示"已掌握"，程序却认为没掌握）。这类值就是脏值，不该进库。
+             * 现在：三档以外一律 400，且**一个字都不写库**。
+             * （`PATCH /api/error-items/[id]` 也认这个口径，但那里是"静默忽略" ——
+             *   因为那条路由是一堆字段一起保存，为一个非法值让整次保存失败不划算。）
+             */
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({
+                id: 'error-item-1',
+                userId: 'user-123',
+            });
+
+            const request = new Request('http://localhost/api/error-items/error-item-1/mastery', {
+                method: 'PATCH',
+                body: JSON.stringify({ masteryLevel: 3 }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await PATCH_MASTERY(request, { params: Promise.resolve({ id: 'error-item-1' }) });
+            expect(response.status).toBe(400);
+            expect(mocks.mockPrismaErrorItem.update).not.toHaveBeenCalled();
         });
 
         it('应该拒绝未登录用户', async () => {

@@ -16,8 +16,8 @@ import {
     serializeLevelEntry,
 } from "@/lib/level-linkage";
 // 【2026-10-10】"已掌握"要过一遍题间从属关系规则（人工标记才断开关联、主题向下传播）
-import { planMastery, type LinkOp } from "@/lib/item-link";
-import { applyLinkOps, applyMastery, loadLinkNodes } from "@/lib/item-link-store";
+import type { LinkOp } from "@/lib/item-link";
+import { applyLinkOps, applyMastery, loadLinkView, planMasteryChange } from "@/lib/item-link-store";
 import {
     canAutoRewrite,
     normalizeManageType,
@@ -65,7 +65,14 @@ export async function GET(
             return forbidden("Not authorized to access this item");
         }
 
-        return NextResponse.json(errorItem);
+        /**
+         * 【2026-10-10】把"这道题在从属关系里的样子"一起带回去（主题 / 附题 / 可否恢复）。
+         * 在这里读而不是让页面再发一次请求：详情页一打开就要它，两次往返纯属浪费；
+         * 而且**角色是这道题的属性**，跟这条记录一起给最不容易对不上。
+         */
+        const link = await loadLinkView(user.id, errorItem.id);
+
+        return NextResponse.json({ ...errorItem, link });
     } catch (error) {
         logger.error({ error }, 'Error fetching item');
         return internalError("Failed to fetch error item");
@@ -221,18 +228,19 @@ export async function PUT(
         let masteryPropagate: string[] = [];
         let linkNote = '';
         if (typeof updateData.masteryLevel === 'number') {
-            const nextMastered = updateData.masteryLevel === 2;
-            if ((errorItem.masteryLevel === 2) !== nextMastered) {
-                try {
-                    const nodes = await loadLinkNodes(user.id, [id]);
-                    const plan = planMastery(nodes, id, nextMastered, { manual: true });
-                    linkOps = plan.ops;
-                    masteryPropagate = plan.masteryIds.filter((x) => x !== id);
-                    linkNote = plan.message;
-                } catch (error) {
-                    // 关系规则出问题**不该让"改掌握状态"整个失败**，但必须被看见
-                    logger.error({ error, itemId: id }, 'Failed to plan item link on mastery change');
-                }
+            try {
+                /**
+                 * ⚠️ 这段**抽到 `planMasteryChange` 里了**，与 `PATCH .../mastery`
+                 * （卡片与详情页那个按钮打的路由）共用同一份 —— 两处各写一遍迟早不一致。
+                 * 它内部自己会判"值没变就什么都不做"。
+                 */
+                const plan = await planMasteryChange(user.id, id, updateData.masteryLevel === 2);
+                linkOps = plan.ops;
+                masteryPropagate = plan.propagateIds;
+                linkNote = plan.message;
+            } catch (error) {
+                // 关系规则出问题**不该让"改掌握状态"整个失败**，但必须被看见
+                logger.error({ error, itemId: id }, 'Failed to plan item link on mastery change');
             }
         }
 

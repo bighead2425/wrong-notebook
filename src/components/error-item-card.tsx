@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CheckCircle, Clock, Printer, Trash2 } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
-import type { ErrorItem } from "@/types/api";
 import {
     DEEP_NUDGE_COLOR,
     getManageTypeLabel,
@@ -18,9 +17,26 @@ import {
 } from "@/lib/manage-type";
 import { getMistakeCategoryLabel, normalizeMistakeCategory } from "@/lib/mistake-category";
 import { attentionLevelOf } from "@/lib/attention-level";
+import { linkRoleColor, linkRoleLabel, type LinkRole } from "@/lib/item-link";
 import { cleanMarkdown } from "@/lib/markdown-utils";
 import { PrintCounts } from "@/components/print-counts";
 import { ReviewDots } from "@/components/review-dots";
+
+export type ErrorItemCardData = {
+    id: string;
+    questionText?: string | null;
+    knowledgePoints?: string | null;
+    tags?: { id: string; name: string }[];
+    masteryLevel: number;
+    createdAt: string | Date;
+    mistakeCategory?: string | null;
+    manageType?: string | null;
+    printCount?: number | null;
+    reviewPrintCount?: number | null;
+    attention?: number | null;
+    reviewOutcomes?: string | null;
+    deepNudgeDismissed?: boolean | null;
+};
 
 /**
  * 【2026-10-01 抽出来的共享组件】**错题卡**。
@@ -45,7 +61,7 @@ import { ReviewDots } from "@/components/review-dots";
  *   按钮套在链接里点一下会连跳转一起触发（早先踩过）。外面这些各自 `preventDefault`。
  */
 export interface ErrorItemCardProps {
-    item: ErrorItem;
+    item: ErrorItemCardData;
     /**
      * 点卡片去哪；默认进这道题的详情页。
      * **传 `null` = 整卡不可点**（显式关掉跳转）—— 扫码结果页用它，理由见下面 `linkDisabled`。
@@ -68,6 +84,13 @@ export interface ErrorItemCardProps {
     onTagClick?: (tag: string, e: ReactMouseEvent) => void;
     /** 当前选中的标签（高亮用）；不传 = 不高亮 */
     selectedTag?: string | null;
+
+    /**
+     * 【2026-10-10】这道题在**题间从属关系**里的角色（主题 / 附题 / 孤题）。
+     * 传了就在左上角画角标：**主题 = 深红、附题 = 橙**（颜色只在 `lib/item-link.ts` 定）。
+     * 不传 / 传 `'lone'` ⇒ 不画（孤题保持现状，他要求的）。
+     */
+    linkRole?: LinkRole | null;
 }
 
 export function ErrorItemCard({
@@ -85,12 +108,23 @@ export function ErrorItemCard({
     onToggleTagsExpanded,
     onTagClick,
     selectedTag = null,
+    linkRole = null,
 }: ErrorItemCardProps) {
     const { t, language } = useLanguage();
     const L = (zh: string, en: string) => (language === "zh" ? zh : en);
 
     /** "深挖了还没印"要不要提醒（判定只有一处，详情页那个黄底计数用的是同一个函数） */
     const nudge = needsDeepPrintNudge(item);
+
+    /**
+     * 【2026-10-10】左上角角标：把这题的角"切一刀"，切出来的小三角填色
+     * （**主题深红 / 附题橙**；孤题不画）。
+     *
+     * ⚠️ 多选模式不画：那里左上角是勾选框，两个东西叠在一起谁都看不清。
+     * ⚠️ 路径第一段的 `M0 12 A12 12 …` 是**跟着卡片的 `rounded-xl`（12px）走**的 ——
+     *    不加这段直角边会从圆角里戳出去，变成"卡片缺了个方角"。
+     */
+    const cornerColor = linkRole ? linkRoleColor(linkRole) : null;
 
     // 优先使用 tags 关联，回退到 knowledgePoints
     let tags: string[] = [];
@@ -113,6 +147,20 @@ export function ErrorItemCard({
 
     return (
         <div className="relative">
+            {/* 【2026-10-10】从属关系角标（主题深红 / 附题橙）*/}
+            {cornerColor && !selectMode && (
+                <span
+                    className="pointer-events-none absolute left-0 top-0 z-20"
+                    title={linkRoleLabel(linkRole!, language === "zh")}
+                >
+                    <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M0 12 A12 12 0 0 1 12 0 L24 0 L0 24 Z" fill={cornerColor} />
+                        {/* 那道"切口"：让色块与纸面之间有一条清楚的线 */}
+                        <path d="M0 24 L24 0" stroke="#ffffff" strokeWidth="1" strokeOpacity="0.85" />
+                    </svg>
+                </span>
+            )}
+
             {/* 选择模式下的复选框 */}
             {selectMode && (
                 <div className="absolute top-2 left-2 z-10" onClick={onToggleSelect}>

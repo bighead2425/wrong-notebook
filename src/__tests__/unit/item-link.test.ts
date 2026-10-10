@@ -2,8 +2,12 @@
 // 纯逻辑测试：不碰 DOM、不碰数据库。
 import { describe, expect, it } from 'vitest';
 import {
+    LINK_CHILD_COLOR,
+    LINK_ROOT_COLOR,
     childrenOf,
     linkInvariantViolations,
+    linkRoleColor,
+    linkRoleLabel,
     planDelete,
     planLink,
     planMastery,
@@ -363,5 +367,37 @@ describe('不变量自检（这套规则最该有的看门测试）', () => {
         expect(roleOf(nodes, 'c')).toBe('root');
         expect(roleOf(nodes, 'd')).toBe('lone');
         expect(childrenOf(nodes, 'c').map((x) => x.id).sort()).toEqual(['a', 'b']);
+    });
+});
+
+/**
+ * 【2026-10-10】角色在**界面上的样子** —— 他定的：**主题深红、附题橙、孤题不着色**。
+ *
+ * 为什么值得钉：颜色与说法**只在这一处定义**，而用它的地方有两个
+ * （错题卡左上角的角标、详情页"错题详情"那四个字）。哪天有人改了这边忘了那边，
+ * 就会出现"卡片是橙的、详情页是红的"这种只有肉眼才看得出的错。
+ */
+describe('角色在界面上的样子（角标 / 标题配色）', () => {
+    it('主题深红、附题橙、孤题不着色', () => {
+        expect(linkRoleColor('root')).toBe(LINK_ROOT_COLOR);
+        expect(linkRoleColor('child')).toBe(LINK_CHILD_COLOR);
+        // 孤题必须"没有颜色" —— 界面据此决定不画角标（他要求："孤题保持现状"）
+        expect(linkRoleColor('lone')).toBeNull();
+    });
+
+    it('两个颜色是不同的合法色值（不然主题和附题在屏幕上分不出来）', () => {
+        expect(LINK_ROOT_COLOR).not.toBe(LINK_CHILD_COLOR);
+        expect(LINK_ROOT_COLOR).toMatch(/^#[0-9a-f]{6}$/i);
+        expect(LINK_CHILD_COLOR).toMatch(/^#[0-9a-f]{6}$/i);
+    });
+
+    it('三种角色都有中英两种说法，而且中英不同（不能只写一种语言）', () => {
+        for (const role of ['root', 'child', 'lone'] as const) {
+            const zh = linkRoleLabel(role, true);
+            const en = linkRoleLabel(role, false);
+            expect(zh.length).toBeGreaterThan(0);
+            expect(en.length).toBeGreaterThan(0);
+            expect(zh).not.toBe(en);
+        }
     });
 });

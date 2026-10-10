@@ -36,6 +36,29 @@ export type LinkRole =
     | 'child';
 
 /**
+ * 两种角色在**屏幕上的颜色** —— 只定这一处。
+ *
+ * 错题卡左上角的角标、详情页标题都取它，免得两处各挑一个红/橙（改一处忘另一处）。
+ * ⚠️ 他 2026-10-10 定的：**主题 = 深红、附题 = 橙**；**孤题不着色**（不画角标）。
+ */
+export const LINK_ROOT_COLOR = '#9b1c1c';
+export const LINK_CHILD_COLOR = '#dd6b20';
+
+/** 角色的颜色；孤题返回 `null`（＝不画角标、标题不变色） */
+export function linkRoleColor(role: LinkRole): string | null {
+    if (role === 'root') return LINK_ROOT_COLOR;
+    if (role === 'child') return LINK_CHILD_COLOR;
+    return null;
+}
+
+/** 角色的一句话说明（界面上的提示/标题旁批都用它） */
+export function linkRoleLabel(role: LinkRole, zh: boolean): string {
+    if (role === 'root') return zh ? '主题（这组题的中心）' : 'Main (center of this group)';
+    if (role === 'child') return zh ? '附题（从属于主题）' : 'Attached (belongs to a main)';
+    return zh ? '独立题目' : 'Standalone';
+}
+
+/**
  * 参与判定的题目。**只带规则用得到的字段** —— 这样单测里造数据不用把一整道题拼齐，
  * 也让"规则只吃这些输入"这件事在类型上就看得见。
  */
@@ -79,6 +102,53 @@ export interface LinkPlan {
     choice?: LinkChoice;
     /** 给人看的一句话（成功 / 拒绝 / 要拍板，都说清） */
     message: string;
+}
+
+/* ------------------------------------------------------------------ */
+/* 关联卡片的形状（装载层与界面共用）                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 关联题目在**界面上**要用的那几个字段。
+ *
+ * ⚠️ 刻意**不带 `originalImageUrl`**：那是 data URL，一条几百 KB，
+ *    而关联卡只显示题干摘要 + 几个徽章 —— 一次带三张就把详情页拖慢。
+ *    真要看图，点进那道题自己的详情页。
+ * ⚠️ 也**不带 notebook / gradeSemester 那些表单字段**：这里只是"展示一张卡"，
+ *    不是"编辑它"。少带一个字段就少一处将来对不上的机会。
+ */
+export interface LinkCard {
+    id: string;
+    /** 题号（老题可能没有 —— 界面按 `source || id` 兜底） */
+    source: string | null;
+    questionText: string | null;
+    masteryLevel: number;
+    /** ISO 字符串（装载层统一转好，界面直接 `new Date()`） */
+    createdAt: string;
+    manageType: string | null;
+    mistakeCategory: string | null;
+    attention: number | null;
+    printCount: number | null;
+    reviewPrintCount: number | null;
+    reviewOutcomes: string | null;
+    knowledgePoints: string | null;
+    parentId: string | null;
+    deepNudgeDismissed: boolean | null;
+    tags: { id: string; name: string }[];
+}
+
+/** 一道题在从属关系里的**界面视图**（详情页返回里的 `link` 就是它） */
+export interface LinkView {
+    role: LinkRole;
+    /** 它所属的主题（`role === 'child'` 时有值） */
+    parent: LinkCard | null;
+    /** 挂在它名下的附题，**按录入时间升序**（与"排序第一"同一口径） */
+    children: LinkCard[];
+    /**
+     * 曾经挂过的主题 —— 只在"人工标已掌握 ⇒ 断开"之后才有值。
+     * 有它就说明可以**一键恢复关联**（他 2026-10-10 要的那条：不翻旧账、不占额外字段）。
+     */
+    detachedFrom: LinkCard | null;
 }
 
 /* ------------------------------------------------------------------ */

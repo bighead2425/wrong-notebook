@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import type { LinkNode, LinkOp } from "@/lib/item-link";
+import { planMastery } from "@/lib/item-link";
+import type { LinkCard, LinkNode, LinkOp, LinkRole, LinkView } from "@/lib/item-link";
 
 /**
  * 【2026-10-10】题间从属关系的**数据库那一半**（规则在 `lib/item-link.ts`，纯函数）。
@@ -107,6 +108,40 @@ export async function applyLinkOps(userId: string, ops: readonly LinkOp[]): Prom
     );
 }
 
+/* ------------------------------------------------------------------ */
+/* 写：改"已掌握"要连带做的从属关系动作                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 给"改成已掌握 / 改回未掌握"算一遍**从属关系**要连带做的事。
+ *
+ * ⚠️ 为什么单独一个函数：**会改掌握状态的入口有两个** ——
+ *   ① `PATCH /api/error-items/[id]`（保存表单，表单里带 masteryLevel）；
+ *   ② `PATCH /api/error-items/[id]/mastery`（卡片与详情页那个"已掌握"按钮）。
+ *    不抽出来就是同一套规则抄两份，两处迟早不一致。
+ *
+ * ⚠️ **必须在写库之前调用**：规则看的是"现在是不是已掌握"，值没变就什么都不做
+ *    （同一份表单重复提交不该反复触发断开、也不该刷出一堆假留痕）。
+ * ⚠️ 只**规划**不写库：主字段、关系改动、向下传播三者的写入顺序由调用方决定。
+ */
+export async function planMasteryChange(
+    userId: string,
+    itemId: string,
+    nextMastered: boolean,
+): Promise<{ ops: LinkOp[]; propagateIds: string[]; message: string }> {
+    const empty = { ops: [] as LinkOp[], propagateIds: [] as string[], message: "" };
+    const nodes = await loadLinkNodes(userId, [itemId]);
+    const self = nodes.find((n) => n.id === itemId);
+    if (!self || self.mastered === nextMastered) return empty;
+    const plan = planMastery(nodes, itemId, nextMastered, { manual: true });
+    return {
+        ops: plan.ops,
+        /** 要跟着改状态的（= 主题名下的附题，去掉它自己） */
+        propagateIds: plan.masteryIds.filter((x) => x !== itemId),
+        message: plan.message,
+    };
+}
+
 /**
  * 找"当初被断开时挂在谁下面" —— 恢复关联的唯一依据。
  *
@@ -160,4 +195,91 @@ export async function applyMastery(
         ]),
     );
     return changed.length;
+}
+
+/* ------------------------------------------------------------------ */
+/* 读：详情页要的"这道题在从属关系里的样子"                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 关联卡片要显示的字段。
+ * ⚠️ **刻意不带 `originalImageUrl`**：那是 data URL（几百 KB 一条），
+ *    而这批卡片只显示题干摘要 + 几个徽章 —— 一次带三张就把详情页拖慢。
+ *    真要看图点进那道题自己的详情页。
+ */
+const CARD_SELECT = {
+    id: true,
+    source: true,
+    questionText: true,
+    masteryLevel: true,
+    createdAt: true,
+    manageType: true,
+    mistakeCategory: true,
+    attention: true,
+    printCount: true,
+    reviewPrintCount: true,
+    reviewOutcomes: true,
+    knowledgePoints: true,
+    parentId: true,
+    deepNudgeDismissed: true,
+    tags: { select: { id: true, name: true } },
+} as const;
+
+type CardRow = Prisma.ErrorItemGetPayload<{ select: typeof CARD_SELECT }>;
+
+/** 库里的行 → 界面用的卡片（`createdAt` 统一成 ISO，免得客户端拿到 Date 又被序列化一次） */
+function toCard(r: CardRow): LinkCard {
+    return { ...r, createdAt: r.createdAt.toISOString() };
+}
+
+/**
+ * 取"这道题在从属关系里的样子"：角色 + 主题 + 附题（+ 可恢复的原主题）。
+ *
+ * 只读一次、只读一小片（我自己 + 我的主题 + 我的附题），**不做全表扫描** ——
+ * 这个函数会被详情页每打开一道题就调一次。
+ */
+export async function loadLinkView(userId: string, itemId: string): Promise<LinkView | null> {
+    const self = await prisma.errorItem.findFirst({
+        where: { id: itemId, userId, deletedAt: null },
+        select: { id: true, parentId: true, masteryLevel: true },
+    });
+    if (!self) return null;
+
+    const parentRow = self.parentId
+        ? await prisma.errorItem.findFirst({
+              where: { id: self.parentId, userId, deletedAt: null },
+              select: CARD_SELECT,
+          })
+        : null;
+    const parent = parentRow ? toCard(parentRow) : null;
+
+    /** 附题不用列附题（深度只有一层）；主题才列 */
+    const childRows = self.parentId
+        ? []
+        : await prisma.errorItem.findMany({
+              where: { userId, parentId: self.id, deletedAt: null },
+              orderBy: { createdAt: "asc" },
+              select: CARD_SELECT,
+          });
+    const children = childRows.map(toCard);
+
+    const role: LinkRole = self.parentId ? "child" : children.length ? "root" : "lone";
+
+    /**
+     * "曾经挂在哪" —— **只有"孤题且已掌握"才去查**：那正是"人工标已掌握 ⇒ 断开"留下的痕迹。
+     * 平时（绝大多数题）一次都不多查。
+     */
+    let detachedFrom: LinkCard | null = null;
+    if (role === "lone" && self.masteryLevel === 2) {
+        const from = await lastDetachedFrom(userId, self.id);
+        if (from) {
+            const row = await prisma.errorItem.findFirst({
+                where: { id: from, userId, deletedAt: null },
+                select: CARD_SELECT,
+            });
+            detachedFrom = row ? toCard(row) : null;
+        }
+    }
+
+    return { role, parent, children, detachedFrom };
 }

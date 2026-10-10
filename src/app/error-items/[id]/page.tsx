@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X, Sparkles, Loader2, Printer, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X, Sparkles, Loader2, Printer, ChevronLeft, ChevronRight, Unlink, ArrowUp, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { MdEditor } from "@/components/md-editor";
@@ -38,6 +38,9 @@ import { GRADE_SEMESTER_OPTIONS as GRADE_SEMESTER_OPTIONS_SHARED } from "@/lib/g
 import { ReviewOutcomeEditor } from "@/components/review-outcome-editor";
 import { serializeReviewOutcomes, type ReviewOutcomes } from "@/lib/review-outcomes";
 import { dayKey } from "@/lib/calendar-grid";
+import { ErrorItemCard } from "@/components/error-item-card";
+// 【2026-10-10】题间从属关系：颜色/说法只在 lib/item-link.ts 定一处；视图类型也在那儿（纯类型，不会把服务端代码带进来）
+import { linkRoleColor, linkRoleLabel, type LinkView } from "@/lib/item-link";
 
 interface KnowledgeTag {
     id: string;
@@ -86,6 +89,11 @@ interface ErrorItemDetail {
      * 规则全在 `lib/review-outcomes.ts`（计划内同步 last、计划外只动 last）。
      */
     reviewOutcomes?: string | null;
+    /**
+     * 【2026-10-10】这道题在**题间从属关系**里的样子（主题 / 附题 / 孤题 + 关联题清单）。
+     * 由详情接口顺带返回（见 `lib/item-link-store.ts` 的 `loadLinkView`），**不用再发一次请求**。
+     */
+    link?: LinkView | null;
 }
 
 /**
@@ -160,6 +168,17 @@ export default function ErrorDetailPage() {
     const [reanalyzeData, setReanalyzeData] = useState<ParsedQuestion | null>(null);
     const [isReanalyzing, setIsReanalyzing] = useState(false);
 
+    /**
+     * 【2026-10-10】题间从属关系（主题 / 附题）：
+     *   · `linkNote` —— 服务端在做完"取关/升变/恢复"后回的那句话（显示在关联区里，**不弹窗**）
+     *   · `linkBusy` —— 哪个动作正在跑（防止连点两次）
+     * ⚠️ 这两个 state **必须声明在顶部这一批里**：组件中间有 `if (loading) return …`
+     *    那种早退，写在后面会让"从加载中变成加载完"时 hook 数量变化 ⇒ React 直接报错
+     *    （2026-10-09 踩过一模一样的坑）。
+     */
+    const [linkNote, setLinkNote] = useState("");
+    const [linkBusy, setLinkBusy] = useState<null | "unlink" | "promote" | "restore">(null);
+
     const [educationStage, setEducationStage] = useState<string | undefined>(undefined);
 
     useEffect(() => {
@@ -173,6 +192,8 @@ export default function ErrorDetailPage() {
             .catch(err => console.error("Failed to fetch user info:", err));
 
         if (params.id) {
+            /** 换了一道题 ⇒ 上一条"关联操作"的提示就不该再挂着了 */
+            setLinkNote("");
             fetchItem(params.id as string);
         }
     }, [params.id]);
@@ -208,14 +229,76 @@ export default function ErrorDetailPage() {
         }
     };
 
+    /* ================= 【2026-10-10】题间从属关系：取关 / 升变 / 恢复 ================= */
+
+    /**
+     * 三个动作打的是**同一个接口**（`POST /api/error-items/link`）——
+     * 规则、写库、留痕全在服务端那一处（见 `lib/item-link.ts`），界面只负责"点了哪个"。
+     *
+     * ⚠️ 成功后**不弹窗**：只把服务端回的那句话显示在关联区里。
+     *    因为界面本身会立刻变（标题颜色、关联清单、按钮都跟着换），
+     *    再弹一个"操作成功"纯属多一次点击（他的偏好：界面反馈代替成功提示，失败才弹）。
+     */
+    const actOnLink = async (action: "unlink" | "promote" | "restore") => {
+        if (!item) return;
+        // 这两件事"牵一发动全身"（会连带改别的题），先问一句 —— 恢复关联不改变任何题，不用问
+        if (action === "unlink") {
+            const ok = window.confirm(
+                L(
+                    '取关后这道题变成独立题目，主题那边的清单也会少一条。要继续吗？',
+                    'Detach this question? It becomes standalone and leaves the main question’s list.',
+                ),
+            );
+            if (!ok) return;
+        }
+        if (action === "promote") {
+            const ok = window.confirm(
+                L(
+                    '升变后：这道题成为主题，原主题降为附题，原主题名下的其他附题一并转过来。要继续吗？',
+                    'This question becomes the main one; the previous main and its other attached questions come along. Continue?',
+                ),
+            );
+            if (!ok) return;
+        }
+        setLinkBusy(action);
+        try {
+            const res = await apiClient.post<{ ok: boolean; message?: string }>("/api/error-items/link", {
+                action,
+                id: item.id,
+            });
+            if (!res?.ok) {
+                alert(res?.message || L("操作没有完成，请重试", "The action could not be completed."));
+                return;
+            }
+            setLinkNote(res.message || "");
+            /** 重新拉一次：角色、关联清单、标题颜色都跟着服务端的最新状态走 */
+            await fetchItem(item.id);
+        } catch (error) {
+            console.error(error);
+            alert(L("操作没有完成，请重试", "The action could not be completed."));
+        } finally {
+            setLinkBusy(null);
+        }
+    };
+
     const toggleMastery = async () => {
         if (!item) return;
 
         const newLevel = item.masteryLevel > 0 ? 0 : 1;
 
         try {
-            await apiClient.patch(`/api/error-items/${item.id}/mastery`, { masteryLevel: newLevel });
+            const res = await apiClient.patch<{ linkNote?: string }>(`/api/error-items/${item.id}/mastery`, { masteryLevel: newLevel });
             setItem({ ...item, masteryLevel: newLevel });
+            /**
+             * 【2026-10-10】标"已掌握"现在可能**顺带动了关联**（人工标附题 ⇒ 断开；
+             * 标主题 ⇒ 附题跟着标）。服务端会把这件事用一句话回在 `linkNote` 里 ——
+             * 显示出来，并**重新拉一次这道题**，否则页面上的角标/关联区还是旧的
+             * （那就会变成"我点了一下，它自己动了，但界面没跟上"）。
+             */
+            if (res?.linkNote) {
+                setLinkNote(res.linkNote);
+                await fetchItem(item.id);
+            }
             alert(newLevel > 0 ? (t.common?.messages?.markMastered || 'Marked as mastered') : (t.common?.messages?.unmarkMastered || 'Unmarked'));
         } catch (error) {
             console.error(error);
@@ -615,6 +698,15 @@ export default function ErrorDetailPage() {
     /** 【2026-10-01】"深挖了还没印"要不要提醒（题号右边那个计数要不要黄底）—— 判定只有一处 */
     const deepNudge = needsDeepPrintNudge(item);
 
+    /**
+     * 【2026-10-10】关联区要显示"对面那张卡"：
+     *   附题 ⇒ 它的**主题**；被"已掌握"断开过的孤题 ⇒ 它**曾经的主题**（好给一个"恢复"）。
+     */
+    const linkPeerCard =
+        item.link?.role === "child" ? item.link.parent : (item.link?.detachedFrom ?? null);
+    /** 从关联区跳走时带上"从这道题来的"，这样对方的返回键会回到这里（而不是回错题本） */
+    const linkBackQuery = `?back=${encodeURIComponent(`/error-items/${item.id}`)}`;
+
     // 需求六：AI 重新分析 → 先过审核页，点保存才写回
     if (reanalyzeData) {
         return (
@@ -659,7 +751,15 @@ export default function ErrorDetailPage() {
                                 <ArrowLeft className="w-4 h-4" />
                             </Button>
                         </Link>
-                        <h1 className="text-2xl font-bold">{t.detail.title}</h1>
+                        <h1
+                            className="text-2xl font-bold"
+                            /* 【2026-10-10】"错题详情"四个字按从属角色着色：主题深红 / 附题橙
+                               （颜色只在 lib/item-link.ts 定；孤题不着色 = 保持原样） */
+                            style={{ color: (item.link && linkRoleColor(item.link.role)) || undefined }}
+                            title={item.link ? linkRoleLabel(item.link.role, language === "zh") : undefined}
+                        >
+                            {t.detail.title}
+                        </h1>
                         {/* 【2026-10-03 他要求】"错题详情"后面两颗三角：跳上一题 / 下一题 */}
                         {siblingItemIds.length > 1 && (
                             <div className="flex items-center gap-1">
@@ -1311,6 +1411,130 @@ export default function ErrorDetailPage() {
                                 </div>
                             </CardContent>
                         </Card>
+
+                        {/* ===== 【2026-10-10】关联题目（主题 / 附题）=====
+                            他那天定的规矩：
+                              · **主题** ⇒ 这里列它名下**所有附题**的错题卡；
+                              · **附题** ⇒ 这里显示它的**主题**卡，旁边给「取关」「升变」两个按钮；
+                              · **孤题**  ⇒ 不显示（保持现状）。
+                            例外：曾被"人工标已掌握"断开过的 ⇒ 显示原主题 + 「恢复关联」
+                                  （他 2026-10-10 拍板：只有人工标记才断、而且能一键恢复）。 */}
+                        {item.link && (item.link.role !== "lone" || linkPeerCard) && (
+                            <Card className="mt-6">
+                                <CardHeader className="pb-3">
+                                    <CardTitle className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-lg">
+                                        <span className="flex items-center gap-2">
+                                            <span
+                                                className="inline-block h-3 w-3 rounded-[3px]"
+                                                style={{
+                                                    backgroundColor:
+                                                        linkRoleColor(item.link.role) || undefined,
+                                                }}
+                                            />
+                                            {L("关联题目", "Related questions")}
+                                        </span>
+                                        <span className="text-sm font-normal text-muted-foreground">
+                                            {item.link.role === "root"
+                                                ? L(
+                                                      `这道题是主题，名下挂着 ${item.link.children.length} 道附题`,
+                                                      `This is the main question — ${item.link.children.length} attached`,
+                                                  )
+                                                : item.link.role === "child"
+                                                  ? L(
+                                                        "这道题是附题，从属于下面这道主题",
+                                                        "This question is attached to the main question below",
+                                                    )
+                                                  : L(
+                                                        "它曾经关联到下面这道题",
+                                                        "It used to be attached to the question below",
+                                                    )}
+                                        </span>
+                                    </CardTitle>
+                                </CardHeader>
+                                <CardContent className="space-y-4">
+                                    {/* 操作结果就显示在这儿 —— 不弹窗（界面本身已经变了，弹窗纯属多一步） */}
+                                    {linkNote && (
+                                        <p className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
+                                            {linkNote}
+                                        </p>
+                                    )}
+
+                                    {/* 主题：列出名下所有附题 */}
+                                    {item.link.role === "root" && (
+                                        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                                            {item.link.children.map((kid) => (
+                                                <ErrorItemCard
+                                                    key={kid.id}
+                                                    item={kid}
+                                                    /** 名下的当然是附题 ⇒ 角标橙 */
+                                                    linkRole="child"
+                                                    href={`/error-items/${kid.id}${linkBackQuery}`}
+                                                />
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {/* 附题 / 曾断开的孤题：显示对面那张卡 + 按钮 */}
+                                    {linkPeerCard && (
+                                        <>
+                                            <div className="max-w-xl">
+                                                <ErrorItemCard
+                                                    item={linkPeerCard}
+                                                    linkRole="root"
+                                                    href={`/error-items/${linkPeerCard.id}${linkBackQuery}`}
+                                                />
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                {item.link.role === "child" ? (
+                                                    <>
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            className="text-destructive hover:text-destructive"
+                                                            disabled={linkBusy !== null}
+                                                            onClick={() => actOnLink("unlink")}
+                                                        >
+                                                            {linkBusy === "unlink" ? (
+                                                                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                                                            ) : (
+                                                                <Unlink className="mr-1 h-3.5 w-3.5" />
+                                                            )}
+                                                            {L("取关", "Detach")}
+                                                        </Button>
+                                                        <Button
+                                                            size="sm"
+                                                            disabled={linkBusy !== null}
+                                                            onClick={() => actOnLink("promote")}
+                                                        >
+                                                            {linkBusy === "promote" ? (
+                                                                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                                                            ) : (
+                                                                <ArrowUp className="mr-1 h-3.5 w-3.5" />
+                                                            )}
+                                                            {L("升变", "Promote")}
+                                                        </Button>
+                                                    </>
+                                                ) : (
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        disabled={linkBusy !== null}
+                                                        onClick={() => actOnLink("restore")}
+                                                    >
+                                                        {linkBusy === "restore" ? (
+                                                            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                                                        ) : (
+                                                            <RotateCcw className="mr-1 h-3.5 w-3.5" />
+                                                        )}
+                                                        {L("恢复关联", "Restore link")}
+                                                    </Button>
+                                                )}
+                                            </div>
+                                        </>
+                                    )}
+                                </CardContent>
+                            </Card>
+                        )}
                         {/* 操作按钮 */}
 
                     </div>

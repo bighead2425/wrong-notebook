@@ -321,8 +321,30 @@ export async function GET(req: Request) {
 
         const totalPages = Math.ceil(total / pageSize);
 
+        /**
+         * 【2026-10-10】每道题在从属关系里的角色 —— 让**列表页的错题卡也能画角标**。
+         *
+         * 为什么在这里算而不是让前端自己判：
+         *   · 附题好判（`parentId != null`），但**主题判不出来** —— 得知道"有没有人挂我名下"；
+         *   · 一次 `parentId IN (这一页的 id)` 就够了（只查一页、只取一列），
+         *     比前端逐题再问一次便宜得多。
+         * ⚠️ 口径与详情页的 `loadLinkView` 严格一致：有主题 ⇒ child；没主题但名下有附题 ⇒ root；
+         *    都没有 ⇒ lone。**只认未删的**（回收箱里的题不参与从属判定）。
+         */
+        const pageIds = errorItems.map((it) => it.id);
+        const kidRows = pageIds.length
+            ? await prisma.errorItem.findMany({
+                  where: { userId: user.id, parentId: { in: pageIds }, deletedAt: null },
+                  select: { parentId: true },
+              })
+            : [];
+        const hasChildren = new Set(kidRows.map((r) => r.parentId as string));
+
         return NextResponse.json({
-            items: errorItems,
+            items: errorItems.map((it) => ({
+                ...it,
+                linkRole: it.parentId ? "child" : hasChildren.has(it.id) ? "root" : "lone",
+            })),
             total,
             page,
             pageSize,
