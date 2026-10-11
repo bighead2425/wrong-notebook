@@ -21,6 +21,8 @@ import {
 } from '@/lib/volume-code';
 import { useFigureImages } from './use-print-images';
 import { PromoteBox } from './promote-box';
+// 【2026-10-11】扫码那两件控件抽到共用件（模仿纸也要同一套，见该文件头的说明）
+import { ScanBlockFrame, ScanPlusButton } from './scan-overlay';
 import { PROMOTE_BOX, promoteDirectionFor, type PromoteDirection } from '@/lib/manage-type';
 import {
     PROMOTE_APPLIED_BG,
@@ -972,51 +974,11 @@ export function ReviewSheet({
                                             reviewMark={reviewMarkOf ? reviewMarkOf(item) : undefined}
                                             L={L}
                                         />
-                                        <span
-                                            aria-hidden="true"
-                                            className="no-print"
-                                            style={{
-                                                position: 'absolute',
-                                                inset: '0.8mm 1mm',
-                                                border: '0.45mm solid #38bdf8',
-                                                borderRadius: '1.6mm',
-                                                boxSizing: 'border-box',
-                                                pointerEvents: 'none',
-                                            }}
-                                        />
-                                        <button
-                                            type="button"
-                                            className="no-print"
-                                            title={plusTitle}
+                                        <ScanBlockFrame />
+                                        <ScanPlusButton
                                             onClick={() => onQuestionPlusClick(item)}
-                                            style={{
-                                                position: 'absolute',
-                                                left: '50%',
-                                                top: '50%',
-                                                transform: 'translate(-50%, -50%)',
-                                                width: '10mm',
-                                                height: '10mm',
-                                                borderRadius: '9999px',
-                                                background: '#2563eb',
-                                                border: 'none',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'center',
-                                                cursor: 'pointer',
-                                                zIndex: 6,
-                                                boxShadow: '0 0.4mm 1.2mm rgba(0,0,0,0.35)',
-                                            }}
-                                        >
-                                            <svg viewBox="0 0 24 24" style={{ width: '5.5mm', height: '5.5mm' }} aria-hidden="true">
-                                                <path
-                                                    d="M12 5v14M5 12h14"
-                                                    stroke="#ffffff"
-                                                    strokeWidth={3.4}
-                                                    strokeLinecap="round"
-                                                    fill="none"
-                                                />
-                                            </svg>
-                                        </button>
+                                            title={plusTitle}
+                                        />
                                     </div>
                                 ) : (
                                     <Fragment key={b.key}>

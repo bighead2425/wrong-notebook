@@ -30,9 +30,20 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import type { ErrorItem, PaginatedResponse } from "@/types/api";
 import {
     ReviewSheet,
+    ReviewQuestionBlock,
     pageQrPayload,
 } from "@/components/print/review-card";
-import { layoutFromSnapshot, type SnapshotRow } from "@/lib/review-card";
+import { ImitateSegments, ImitateSheet } from "@/components/print/imitate-card";
+import {
+    buildImitateSegments,
+    imitateLayoutFromSnapshot,
+    readImitateHeights,
+    themeRowOfSnapshot,
+    type ImitateSegment,
+    type ImitateSegmentSpec,
+} from "@/lib/imitate-card";
+import { layoutFromSnapshot, VOLUME_VARIANTS, type SnapshotRow } from "@/lib/review-card";
+import { whenImagesDecoded, whenImagesSettled } from "@/lib/print-image-readiness";
 import type { VolumeKind } from "@/lib/volume-code";
 import type { ManageType, PromoteDirection } from "@/lib/manage-type";
 import {
@@ -182,7 +193,14 @@ export function ScanVolumeView({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [code]);
 
-    const kind: VolumeKind = volume?.kind === "build" ? "build" : "review";
+    /**
+     * 【2026-10-11】模仿卷（CO）也要能扫进来 —— 他设计稿第 8 条：
+     * "我们在主页上如果扫描二维码，是也是可以扫描到这个'模仿卷'的，
+     *  这一点和扫描到复练卷的是一致的。"
+     */
+    const kind: VolumeKind =
+        volume?.kind === "build" ? "build" : volume?.kind === "imitate" ? "imitate" : "review";
+    const isImitate = kind === "imitate";
 
     /** 快照行（页归属的**唯一依据**） */
     const snapshotRows = useMemo<SnapshotRow[]>(() => {
@@ -199,8 +217,8 @@ export function ScanVolumeView({
     }, [volume]);
 
     const layout = useMemo(
-        () => (volume ? layoutFromSnapshot(snapshotRows, kind) : null),
-        [volume, snapshotRows, kind],
+        () => (volume && !isImitate ? layoutFromSnapshot(snapshotRows, kind) : null),
+        [volume, snapshotRows, kind, isImitate],
     );
 
     const itemByKey = useMemo(() => {
@@ -208,6 +226,92 @@ export function ScanVolumeView({
         for (const it of items) map[it.id] = it;
         return map;
     }, [items]);
+
+    /* ===== 【T4】模仿卷：左栏（主题）按主题现算、右栏（附题）只认快照 =====
+       与卷管理页同一套读法（`readImitateHeights` / `imitateLayoutFromSnapshot`），
+       差别只在"要不要罩蓝框加号"（这一屏要，见下面的渲染）。 */
+    const imitateThemeKey = isImitate ? (themeRowOfSnapshot(snapshotRows)?.key ?? null) : null;
+    const imitateTheme = useMemo(
+        () => (imitateThemeKey ? (itemByKey[imitateThemeKey] ?? null) : null),
+        [imitateThemeKey, itemByKey],
+    );
+    /** 主题的题号（只给"主题已删 ⇒ 此卷作废"那张白纸用） */
+    const imitateThemeNo = useMemo(() => {
+        if (!imitateThemeKey) return null;
+        const row = (volume?.items || []).find(
+            (r) => (r.errorItemId ?? missingKeyOf(r.id)) === imitateThemeKey,
+        );
+        return row?.itemNo ?? null;
+    }, [imitateThemeKey, volume]);
+    const imitateSpecs = useMemo(
+        () => (imitateTheme ? buildImitateSegments(imitateTheme, { hasFigure: true }) : []),
+        [imitateTheme],
+    );
+    const imitateSegmentByKey = useMemo(() => {
+        const map: Record<string, ImitateSegmentSpec> = {};
+        for (const s of imitateSpecs) map[s.key] = s;
+        return map;
+    }, [imitateSpecs]);
+    const imitateRightRows = useMemo(
+        () =>
+            snapshotRows
+                .filter((r) => r.columnIndex !== 0)
+                .sort((a, b) => a.pageIndex - b.pageIndex || a.seqInColumn - b.seqInColumn),
+        [snapshotRows],
+    );
+    const [imitateSegments, setImitateSegments] = useState<ImitateSegment[] | null>(null);
+    const imitateMeasureRef = useRef<HTMLDivElement | null>(null);
+    const imitateMeasureKey = useMemo(
+        () =>
+            [
+                imitateThemeKey ?? "",
+                imitateSpecs.map((s) => s.key).join("|"),
+                imitateRightRows.map((r) => r.key).join("|"),
+            ].join("#"),
+        [imitateThemeKey, imitateSpecs, imitateRightRows],
+    );
+    useEffect(() => {
+        if (!isImitate) {
+            setImitateSegments(null);
+            return;
+        }
+        if (!imitateTheme) {
+            setImitateSegments([]);
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            await whenImagesSettled();
+            await whenImagesDecoded(imitateMeasureRef.current);
+            if (cancelled) return;
+            const el = imitateMeasureRef.current;
+            if (!el) return;
+            const { segments } = readImitateHeights(
+                el,
+                imitateSpecs,
+                imitateRightRows.map((r) => r.key),
+            );
+            if (!cancelled) setImitateSegments(segments);
+        })();
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isImitate, imitateMeasureKey]);
+
+    const imitateLayout = useMemo(
+        () =>
+            isImitate && imitateSegments ? imitateLayoutFromSnapshot(imitateRightRows, imitateSegments) : null,
+        [isImitate, imitateRightRows, imitateSegments],
+    );
+
+    /**
+     * 本屏要渲染几页、以及"排版算好没"。
+     * ⚠️【2026-10-11】按**纸别**取：复练/积累看 `layout`、模仿看 `imitateLayout` ——
+     *    取错就是页码写着"共 3 页"而实际只画了两页。
+     */
+    const pageTotal = isImitate ? (imitateLayout?.sheets.length ?? 0) : (layout?.pages.length ?? 0);
+    const layoutReady = isImitate ? !!imitateLayout : !!layout;
 
     /* ══════════════════════════════════════════════════════════════════
      * 【2026-10-02 他要求】扫到的卷页上**直接录入**：
@@ -454,6 +558,24 @@ export function ScanVolumeView({
     }, [volume]);
 
     /**
+     * 【2026-10-11】每题在**这一卷里**的留白行数（卷内快照的 `blankLines`）。
+     *
+     * 与上面 `figureScaleOf` 同一个道理：扫码这屏是**看印出去的那张纸**，
+     * 留白也得按卷里记的值渲染，否则"纸上题与题之间空 5 行、屏上却挤在一起"，对不上。
+     * ⚠️ 目前**只给模仿卷用**（模仿纸右栏的"每题留白 5 行"是他明确要的，
+     *    不留出来版面就不对）。复练卷那条路仍按 0 行渲染 ——
+     *    那是 2026-10-01 起就有的行为，**不在这里顺手改**（改了他熟悉的那一屏就变了），
+     *    已经把这个差异单独提给他确认。
+     */
+    const blankOf = useMemo(() => {
+        const map: Record<string, number> = {};
+        for (const r of volume?.items || []) {
+            if (r.errorItemId) map[r.errorItemId] = r.blankLines ?? 0;
+        }
+        return (id: string) => map[id] ?? 0;
+    }, [volume]);
+
+    /**
      * 【2026-10-01】**每题答案文本**（多行已用 `§` 并成一行、md 已清成纯文本）。
      * 先算成一张表：`cleanMarkdown` 内部要跑 remark，放在渲染里每题每帧算一次太亏
      * （一页 5 道题就是 5 次解析，且每次滚动重渲都会重算）。
@@ -519,15 +641,17 @@ export function ScanVolumeView({
      */
     const jumpedKeyRef = useRef<string | null>(null);
     useEffect(() => {
-        if (!layout || loading) return;
+        // 【2026-10-11】条件改成 `layoutReady`（两个纸别都认）——
+        // 原来写 `!layout`，模仿卷那条路上它是 null，会直接 return（永远不滚到那一页）。
+        if (!layoutReady || loading) return;
         const key = `${volume?.id ?? ""}#${pageNo}`;
         if (jumpedKeyRef.current === key) return;
-        const el = pageRefs.current[Math.min(pageNo, layout.pages.length)];
+        const el = pageRefs.current[Math.min(pageNo, pageTotal)];
         if (!el) return;
         jumpedKeyRef.current = key;
         const raf = requestAnimationFrame(() => el.scrollIntoView({ block: "start" }));
         return () => cancelAnimationFrame(raf);
-    }, [layout, loading, pageNo, volume?.id]);
+    }, [layoutReady, pageTotal, loading, pageNo, volume?.id]);
 
     /**
      * 电脑端"按住空白处拖动 = 平移"。
@@ -565,7 +689,7 @@ export function ScanVolumeView({
         );
     }
 
-    if (error || !volume || !layout) {
+    if (error || !volume || !layoutReady) {
         return (
             <div className="space-y-3 py-10 text-center">
                 <p className="text-sm text-muted-foreground">{error || L("打开失败", "Failed to open")}</p>
@@ -587,7 +711,7 @@ export function ScanVolumeView({
                 </Button>
                 <span className="font-mono text-sm font-semibold">{volume.volumeNo}</span>
                 <span className="text-sm text-muted-foreground">
-                    {L(`第 ${Math.min(pageNo, layout.pages.length)} 页 / 共 ${layout.pages.length} 页`, `Page ${Math.min(pageNo, layout.pages.length)} of ${layout.pages.length}`)}
+                    {L(`第 ${Math.min(pageNo, pageTotal)} 页 / 共 ${pageTotal} 页`, `Page ${Math.min(pageNo, pageTotal)} of ${pageTotal}`)}
                 </span>
                 <span className="flex-1" />
                 <span className="text-xs text-muted-foreground">
@@ -613,6 +737,34 @@ export function ScanVolumeView({
                 onPointerUp={endDrag}
                 onPointerLeave={endDrag}
             >
+                {/* 【T4】模仿卷的隐藏量尺 —— **必须在 `SheetZoom` 外面**：
+                    缩放会让 `getBoundingClientRect()` 拿到缩放后的像素，量出来的 mm 整体偏小，
+                    左栏分页就会以为"一页能装更多"。左栏用的是正式版面那个 `ImitateSegments`。 */}
+                {isImitate && imitateTheme && (
+                    <div
+                        ref={imitateMeasureRef}
+                        aria-hidden="true"
+                        className="print-review-measure no-print"
+                        style={{ width: `${VOLUME_VARIANTS.imitate.columnWidthMM}mm` }}
+                    >
+                        <ImitateSegments specs={imitateSpecs} theme={imitateTheme} L={L} />
+                        {imitateRightRows.map((r) => {
+                            const it = itemByKey[r.key];
+                            if (!it) return null;
+                            return (
+                                <ReviewQuestionBlock
+                                    key={r.key}
+                                    item={it}
+                                    seq={r.seq}
+                                    blankLines={blankOf(it.id)}
+                                    showDivider={false}
+                                    figureScale={figureScaleOf(it.id)}
+                                    L={L}
+                                />
+                            );
+                        })}
+                    </div>
+                )}
                 {/*
                  * ⚠️【2026-10-01 修】**`print-sheet` 这层不能少**。
                  *   它负责把纸定成 **152mm 宽**。少了它，纸就被拉成整个容器的宽度 ——
@@ -627,7 +779,46 @@ export function ScanVolumeView({
                     L={L}
                 >
                     <div className="print-sheet">
-                    {layout.pages.map((page, i) => (
+                    {isImitate
+                        ? imitateLayout?.sheets.map((sheet, i) => (
+                              <div
+                                  key={i}
+                                  ref={(el) => {
+                                      pageRefs.current[i + 1] = el;
+                                  }}
+                                  className="mb-4"
+                              >
+                                  <ImitateSheet
+                                      sheet={sheet}
+                                      segmentByKey={imitateSegmentByKey}
+                                      theme={imitateTheme}
+                                      themeNo={imitateThemeNo}
+                                      pageNo={i + 1}
+                                      pageCount={imitateLayout.sheets.length}
+                                      volumeNo={volume.volumeNo}
+                                      kind="imitate"
+                                      printDate={new Date()}
+                                      emojiMark={volume.emojiMark}
+                                      pageQr={pageQr[i + 1]}
+                                      itemByKey={itemByKey}
+                                      missing={missingMap}
+                                      blankValueOf={blankOf}
+                                      figureScaleOf={figureScaleOf}
+                                      /* 他设计稿第 8 条：右栏每道附题一个蓝框加号；
+                                         左栏的主题**只有第 1 页**有 —— 由组件自己判（见 `themeOverlay`）。 */
+                                      onQuestionPlusClick={onPickItem}
+                                      onThemePlusClick={onPickItem}
+                                      plusTitle={L("点这里 → 打开这道题的错题卡", "Open this question's card")}
+                                      answerOf={answerOf}
+                                      onPromoteToggle={onPromoteToggle}
+                                      promoteOverrideOf={promoteOverrideOf}
+                                      onReviewMarkTap={onReviewMarkTap}
+                                      reviewMarkOf={markOfItem}
+                                      L={L}
+                                  />
+                              </div>
+                          ))
+                        : layout?.pages.map((page, i) => (
                         <div
                             key={i}
                             ref={(el) => {

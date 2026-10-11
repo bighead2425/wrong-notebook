@@ -10,8 +10,11 @@ import {
 } from '@/lib/review-card';
 import type { ImitateSegmentSpec, ImitateSheet as ImitateSheetLayout } from '@/lib/imitate-card';
 import type { VolumeKind } from '@/lib/volume-code';
+import type { PromoteDirection } from '@/lib/manage-type';
+import type { ReviewMark } from '@/lib/scan-marking';
 import { useFigureImages } from './use-print-images';
 import { MissingQuestionBlock, ReviewQuestionBlock, VolumeHeader } from './review-card';
+import { ScanBlockFrame, ScanPlusButton } from './scan-overlay';
 
 /**
  * T4 **模仿纸**的纸面（2026-10-11）。
@@ -208,6 +211,25 @@ export interface ImitateSheetProps {
     onFigureScaleStart?: (itemId: string) => (e: ReactPointerEvent) => void;
     /** 按住两题之间的虚线（调上面那道附题的留白行数） */
     onDividerDragStart?: (aboveItemId: string, startLines: number) => (e: ReactPointerEvent) => void;
+    /**
+     * 【2026-10-11 他设计稿第 8 条】**扫到的模仿卷**那一屏的三样屏幕控件：
+     *   · `onQuestionPlusClick` ⇒ **右栏每道附题**罩一个天蓝框 + 蓝圆白加号（点它进这道题）；
+     *   · `onThemePlusClick`    ⇒ **左栏主题**同样罩一个 —— ⚠️ **只有第 1 页有**（他原话：
+     *     "只有第一页有一个蓝框，中间放蓝底白加号，其他页左边栏不再放蓝框"）；
+     *   · 都不传 ⇒ 与"纸面/打印"那一路**一字不差**（纸上一个框一个加号都不许冒出来）。
+     */
+    onQuestionPlusClick?: (item: ErrorItem) => void;
+    onThemePlusClick?: (item: ErrorItem) => void;
+    /** 加号的悬停提示（可选） */
+    plusTitle?: string;
+    /** 每题正确答案（扫码浏览时给；不传 ⇒ 纸上完全没有这个标签） */
+    answerOf?: (item: ErrorItem) => string | null;
+    /** 点升降框 ⇒ 直接改类型（扫码录入那一路） */
+    onPromoteToggle?: (item: ErrorItem) => void;
+    promoteOverrideOf?: (item: ErrorItem) => { direction: PromoteDirection; checked: boolean } | undefined;
+    /** 点右侧灰圆 ⇒ 循环记录对/错/清空（扫码录入那一路） */
+    onReviewMarkTap?: (item: ErrorItem) => void;
+    reviewMarkOf?: (item: ErrorItem) => ReviewMark;
     L: (zh: string, en: string) => string;
 }
 
@@ -231,6 +253,14 @@ export function ImitateSheet({
     figureScaleOf,
     onFigureScaleStart,
     onDividerDragStart,
+    onQuestionPlusClick,
+    onThemePlusClick,
+    plusTitle,
+    answerOf,
+    onPromoteToggle,
+    promoteOverrideOf,
+    onReviewMarkTap,
+    reviewMarkOf,
     L,
 }: ImitateSheetProps) {
     /** 打孔位：**奇数页留左、偶数页留右**（与复练纸同一条物理边） */
@@ -295,6 +325,14 @@ export function ImitateSheet({
         .map((seg) => segmentByKey[seg.key])
         .filter((s): s is ImitateSegmentSpec => !!s);
 
+    /**
+     * 左栏（主题）要不要罩那个天蓝框 + 加号 ——
+     * ⚠️ 他 2026-10-10 的原话："左边栏的主题，**只有第一页**有一个蓝框……
+     *    其他页左边栏不再放蓝框"。因为主题是顺着页往下接的，
+     *    每页都画一个框会让人以为"每页各有一道主题"。
+     */
+    const themeOverlay = pageNo === 1 && !!onThemePlusClick;
+
     return shell(
         <>
             {/* ===== 左栏：主题（贯通，可顺延到下一页） ===== */}
@@ -302,13 +340,28 @@ export function ImitateSheet({
                 className="print-imitate-column print-imitate-left"
                 style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}
             >
-                <ImitateSegments
-                    specs={leftSpecs}
-                    theme={theme}
-                    figureScale={figureScaleOf ? figureScaleOf(theme.id) : 100}
-                    onFigureScaleStart={onFigureScaleStart}
-                    L={L}
-                />
+                {themeOverlay ? (
+                    /* 罩框的外层只是为了给绝对定位一个参照系，尺寸与左栏内容一致 ⇒ 布局不变 */
+                    <div style={{ position: 'relative', flex: '0 0 auto', display: 'flex', flexDirection: 'column' }}>
+                        <ImitateSegments
+                            specs={leftSpecs}
+                            theme={theme}
+                            figureScale={figureScaleOf ? figureScaleOf(theme.id) : 100}
+                            onFigureScaleStart={onFigureScaleStart}
+                            L={L}
+                        />
+                        <ScanBlockFrame />
+                        <ScanPlusButton onClick={() => onThemePlusClick!(theme)} title={plusTitle} />
+                    </div>
+                ) : (
+                    <ImitateSegments
+                        specs={leftSpecs}
+                        theme={theme}
+                        figureScale={figureScaleOf ? figureScaleOf(theme.id) : 100}
+                        onFigureScaleStart={onFigureScaleStart}
+                        L={L}
+                    />
+                )}
             </div>
 
             <span
@@ -345,6 +398,34 @@ export function ImitateSheet({
                     }
                     const blank = blankValueOf ? blankValueOf(item.id) : 0;
                     const above = bi > 0 ? itemByKey[sheet.right[bi - 1].key] : null;
+
+                    /**
+                     * 【2026-10-11】扫码浏览那一路（传了 `onQuestionPlusClick`）：
+                     * 每题罩天蓝框 + 蓝圆白加号 —— 与复练纸**同一套控件**（`scan-overlay`），
+                     * 只是这里的"半栏"比复练纸窄（模仿纸一页两栏，题只在右栏）。
+                     */
+                    if (onQuestionPlusClick) {
+                        return (
+                            <div key={b.key} style={{ position: 'relative', flex: '0 0 auto' }}>
+                                <ReviewQuestionBlock
+                                    item={item}
+                                    seq={b.seq}
+                                    blankLines={blank}
+                                    showDivider={bi > 0}
+                                    figureScale={figureScaleOf ? figureScaleOf(item.id) : 100}
+                                    answerLabel={answerOf ? answerOf(item) : undefined}
+                                    onPromoteToggle={onPromoteToggle ? () => onPromoteToggle(item) : undefined}
+                                    promoteOverride={promoteOverrideOf ? promoteOverrideOf(item) : undefined}
+                                    onReviewMarkTap={onReviewMarkTap ? () => onReviewMarkTap(item) : undefined}
+                                    reviewMark={reviewMarkOf ? reviewMarkOf(item) : undefined}
+                                    L={L}
+                                />
+                                <ScanBlockFrame />
+                                <ScanPlusButton onClick={() => onQuestionPlusClick(item)} title={plusTitle} />
+                            </div>
+                        );
+                    }
+
                     return (
                         <ReviewQuestionBlock
                             key={b.key}

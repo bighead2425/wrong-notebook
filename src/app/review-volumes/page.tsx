@@ -1400,24 +1400,18 @@ export default function ReviewVolumesPage() {
                                          * 【2026-10-03 需求第 5 条】【扫码图】：
                                          * 进"扫描这份卷第一页"的预览。**改过版面没保存时不可点** ——
                                          * 不然扫出来的是库里那版、屏上是改过的这版，两边对不上。
-                                         * ⚠️【2026-10-11】模仿卷这一屏**还没做**（他设计稿第 8 条：
-                                         * 左栏主题一个蓝框、右栏每题一个蓝框加号、灰圈流水号）——
-                                         * 现在点进去会是**复练纸那套两栏排题**的错版式。
-                                         * 宁可先禁用并说清，也不给一个错的屏（下一版补上）。
+                                         * 【2026-10-11】模仿卷的「扫到的模仿卷」那一屏也做好了
+                                         * （他设计稿第 8 条：右栏每题一个蓝框加号、左栏主题只在第 1 页有框），
+                                         * 所以这里不再对它特殊处理。
                                          */}
                                         <Button
                                             size="sm"
                                             variant="outline"
-                                            disabled={dirty || !layoutReady || kind === "imitate"}
+                                            disabled={dirty || !layoutReady}
                                             title={
-                                                kind === "imitate"
-                                                    ? L(
-                                                          "模仿卷的「扫到的模仿卷」那一屏还没做（下一版补）",
-                                                          "Scan view for imitate volumes is not built yet",
-                                                      )
-                                                    : dirty
-                                                      ? L("先保存版面（点【更新组卷】）才能进扫码图", "Save the layout first")
-                                                      : L("看这份卷第一页的扫码预览", "Scan preview of page 1")
+                                                dirty
+                                                    ? L("先保存版面（点【更新组卷】）才能进扫码图", "Save the layout first")
+                                                    : L("看这份卷第一页的扫码预览", "Scan preview of page 1")
                                             }
                                             onClick={() => {
                                                 if (!detail) return;

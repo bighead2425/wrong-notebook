@@ -60,6 +60,8 @@ interface RenderOptions {
     /** 每道附题占一栏高度的比例（默认 0.9 ⇒ 一页 1 道） */
     blockRatio?: number;
     withTweak?: boolean;
+    /** 【扫码那一屏】传了就画蓝框 + 蓝圆白加号（复练纸同一套控件） */
+    withScan?: boolean;
 }
 
 /** 按真实的分页函数排一遍，把每一页都渲染出来（返回每页的 HTML） */
@@ -102,6 +104,9 @@ function renderSheets(slots: RightSlot[], opts: RenderOptions = {}): string[] {
                 missing={missing}
                 blankValueOf={opts.withTweak ? () => 5 : undefined}
                 onBlankChange={opts.withTweak ? () => undefined : undefined}
+                onQuestionPlusClick={opts.withScan ? () => undefined : undefined}
+                onThemePlusClick={opts.withScan ? () => undefined : undefined}
+                plusTitle="加号"
                 L={(zh) => zh}
             />,
         ),
@@ -233,6 +238,38 @@ describe('模仿纸 · 右栏（附题）', () => {
     it('留白微调（− X ＋）只在传了回调时才有（打印那一路完全没有它）', () => {
         expect(renderAll(real('b1'), { withTweak: true })).toContain('print-review-tweak');
         expect(renderAll(real('b1'))).not.toContain('print-review-tweak');
+    });
+});
+
+describe('模仿纸 · 扫到的模仿卷（他设计稿第 8 条）', () => {
+    /** 加号那枚 svg 的路径 —— 与复练纸/积累纸同一个字符串（共用件 `scan-overlay`） */
+    const PLUS_PATH = 'M12 5v14M5 12h14';
+    const plusCount = (html: string) => (html.match(new RegExp(PLUS_PATH, 'g')) ?? []).length;
+
+    it('★ 右栏每道附题一个蓝框 + 蓝圆白加号（与复练纸同一套控件）', () => {
+        const pages = renderSheets(real('b1'), { withScan: true, blockRatio: 0.9 });
+        // 左栏 6 段 ÷ 每页 2 段 ⇒ 3 页；那 1 道附题落在第 1 页
+        expect(pages.length).toBe(3);
+        // 第 1 页 = 主题那一个 + 附题那一个
+        expect(plusCount(pages[0])).toBe(2);
+        expect(pages[0]).toContain('#38bdf8'); // 天蓝框
+        expect(pages[0]).toContain('#2563eb'); // 蓝圆
+        expect(pages[0]).toContain('#ffffff'); // 白加号
+    });
+
+    it('★★ 左栏的主题**只有第 1 页**有蓝框加号（他原话："其他页左边栏不再放蓝框"）', () => {
+        // 3 道附题 ⇒ 右栏 3 页；左栏 6 段 ÷ 每页 2 段 = 3 页 ⇒ 一共 3 页
+        const pages = renderSheets(real('b1', 'b2', 'b3'), { withScan: true, blockRatio: 0.9 });
+        expect(pages.length).toBe(3);
+        expect(plusCount(pages[0])).toBe(2); // 主题 + 第 1 页那道附题
+        expect(plusCount(pages[1])).toBe(1); // 第 2 页只剩附题 —— 主题的框**不跟着往下发**
+        expect(plusCount(pages[2])).toBe(1);
+    });
+
+    it('★★ 不传回调（纸面 / 打印那一路）⇒ 一个框、一个加号都不许冒出来', () => {
+        const html = renderAll(real('b1'));
+        expect(html).not.toContain(PLUS_PATH);
+        expect(html).not.toContain('#38bdf8');
     });
 });
 
