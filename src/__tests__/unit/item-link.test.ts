@@ -9,6 +9,7 @@ import {
     linkRoleColor,
     linkRoleLabel,
     planDelete,
+    planDissolve,
     planLink,
     planMastery,
     planPromote,
@@ -331,6 +332,79 @@ describe('删除主题：附题怎么处理', () => {
         const plan = planDelete([n('a')], 'a');
         expect(plan.trashIds).toEqual(['a']);
         expect(plan.ops).toEqual([]);
+    });
+});
+
+/**
+ * 【2026-10-12】解散：把这一组题的主附关系**一次全断**。
+ * 他原话："点击后所有主题、附题关系全部解除。"
+ */
+describe('解散（整组一次断干净）', () => {
+    /**
+     * ⚠️ 比 ops 时**先排序**：`childrenOf` 按**录入时间**升序，而本文件的假数据里
+     *    createdAt 是按题号字符推出来的（c 可能比 b 早）。断言的意图是"断的是哪几道"，
+     *    不是"按什么顺序断" —— 把顺序写死在断言里，只会让将来改假数据时莫名变红。
+     */
+    const opsOf = (plan: { ops: { id: string; parentId: string | null }[] }) =>
+        [...plan.ops].sort((x, y) => x.id.localeCompare(y.id));
+
+    it('★ 从**主题**点解散 ⇒ 名下每一道附题的指针都置空', () => {
+        const nodes = [n('a'), n('b', { parentId: 'a' }), n('c', { parentId: 'a' })];
+        const plan = planDissolve(nodes, 'a');
+        expect(plan.ok).toBe(true);
+        expect(opsOf(plan)).toEqual([
+            { id: 'b', parentId: null },
+            { id: 'c', parentId: null },
+        ]);
+        const after = apply(nodes, plan.ops);
+        expectHealthy(after);
+        for (const id of ['a', 'b', 'c']) expect(roleOf(after, id)).toBe('lone');
+        expect(plan.message).toContain('2 道');
+    });
+
+    it('★ 从**附题**点解散 ⇒ 断的是它所属的**整组**（不是只断它自己）', () => {
+        const nodes = [n('a'), n('b', { parentId: 'a' }), n('c', { parentId: 'a' })];
+        const plan = planDissolve(nodes, 'b');
+        expect(opsOf(plan)).toEqual([
+            { id: 'b', parentId: null },
+            { id: 'c', parentId: null },
+        ]);
+        const after = apply(nodes, plan.ops);
+        expect(roleOf(after, 'c')).toBe('lone');
+    });
+
+    it('只碰**这一棵树**：同一批数据里别的组一动不动', () => {
+        const nodes = [
+            n('a'),
+            n('b', { parentId: 'a' }),
+            n('x'),
+            n('y', { parentId: 'x' }),
+        ];
+        const plan = planDissolve(nodes, 'a');
+        expect(plan.ops.every((o) => o.id === 'b')).toBe(true);
+        const after = apply(nodes, plan.ops);
+        expect(roleOf(after, 'x')).toBe('root');
+        expect(childrenOf(after, 'x').map((k) => k.id)).toEqual(['y']);
+    });
+
+    it('本来就是孤题 ⇒ 明确说"不用解散"，不写任何东西', () => {
+        const plan = planDissolve([n('a'), n('b')], 'a');
+        expect(plan.ok).toBe(false);
+        expect(plan.ops).toEqual([]);
+    });
+
+    it('主题不在（题被删了）⇒ 只断它自己，别悬着', () => {
+        const nodes = [n('b', { parentId: 'gone' })];
+        const plan = planDissolve(nodes, 'b');
+        expect(plan.ok).toBe(true);
+        expect(plan.ops).toEqual([{ id: 'b', parentId: null }]);
+    });
+
+    it('解散之后每一道题都还在（**不删题**）、题号一个不少', () => {
+        const nodes = [n('a'), n('b', { parentId: 'a' }), n('c', { parentId: 'a' })];
+        const after = apply(nodes, planDissolve(nodes, 'a').ops);
+        expect(after.map((x) => x.id).sort()).toEqual(['a', 'b', 'c']);
+        expect(after.every((x) => x.parentId === null)).toBe(true);
     });
 });
 

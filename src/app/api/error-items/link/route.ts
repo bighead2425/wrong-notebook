@@ -4,7 +4,15 @@ import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
 import { badRequest, internalError, unauthorized } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
-import { planLink, planPromote, planRestore, planUnlink, roleOf, type LinkNode } from "@/lib/item-link";
+import {
+    planDissolve,
+    planLink,
+    planPromote,
+    planRestore,
+    planUnlink,
+    roleOf,
+    type LinkNode,
+} from "@/lib/item-link";
 // 碰数据库那一半抽在 lib 里共用（PATCH 的"已掌握"也要用同一套装载/写库/留痕）
 import {
     applyLinkOps,
@@ -28,6 +36,7 @@ const logger = createLogger("api:error-items:link");
  *   · `unlink`  取关（附题变孤题）
  *   · `promote` 升变（附题顶掉原主题，原主题降为附题）
  *   · `restore` 一键恢复（人工标已掌握断开的那些，写回原主题 —— 依据留痕，不翻旧账）
+ *   · `dissolve`【2026-10-12】解散（把这一组题的主附关系一次全断，都变成独立题目）
  *
  * Body（题号与 id 都收：**他在界面上说的是题号**，扫出来的也是题号）：
  *   `{ action, child?: string, childId?: string, target?, targetId?, chooseRootId? , id?/itemId? }`
@@ -137,7 +146,8 @@ export async function POST(request: Request) {
             });
         }
 
-        /** 另外三个动作都只需要一道题 */        const one = await resolve(raw.id ?? raw.itemId ?? raw.child ?? raw.childId);
+        /** 另外几个动作都只需要一道题 */
+        const one = await resolve(raw.id ?? raw.itemId ?? raw.child ?? raw.childId);
         if (!one) return NextResponse.json({ ok: false, message: "这道题找不到（可能已被删除）" });
         const nodes = await loadTree([one.id]);
         const plan =
@@ -147,7 +157,9 @@ export async function POST(request: Request) {
                   ? planPromote(nodes, one.id)
                   : action === "restore"
                     ? planRestore(nodes, one.id, await lastDetachedFrom(user.id, one.id))
-                    : null;
+                    : action === "dissolve"
+                      ? planDissolve(nodes, one.id)
+                      : null;
 
         if (!plan) return badRequest(`Unknown action: ${action || "(empty)"}`);
         if (!plan.ok) return NextResponse.json({ ok: false, message: plan.message, state: stateOf(nodes) });

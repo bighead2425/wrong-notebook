@@ -154,25 +154,32 @@ export function ImitateSegments({
                             ))}
                         </div>
                     ) : (
-                        <div
-                            /**
-                             * ⚠️ 小标题（"参考答案" / "解析"）**用蓝竖条 + 粗体**，
-                             *    与右栏附题的"流水号 + 题干"一眼分开 ——
-                             *    左栏是"给他看的例题"，右栏是"他要动笔的题"。
-                             */
-                            style={
-                                s.role === 'heading'
-                                    ? {
-                                          borderLeft: '0.8mm solid #1e40af',
-                                          paddingLeft: '1.5mm',
-                                          fontSize: '10pt',
-                                          fontWeight: 700,
-                                      }
-                                    : { fontSize: '10.5pt' }
-                            }
-                        >
-                            <MarkdownRenderer content={s.text} />
-                        </div>
+                        /**
+                         * ⚠️ 小标题（"参考答案" / "解析"）与它的正文是**同一段里的两个盒子**
+                         *    （小标题：蓝竖条 + 粗体，与右栏附题一眼分开；
+                         *      正文：10.5pt）。之所以不再各占一段，见 `ImitateSegmentSpec.heading`：
+                         *    分成两段就会被分页拆到两页去（"标题在第 1 页、正文在第 2 页"）。
+                         *    合成一段之后，它们要么一起留在这一页，要么一起挪到下一页。
+                         * ⚠️ 小标题这次是**普通块**（不是绝对定位），所以它占的高度**算在这一段里** ——
+                         *    量尺读的就是这一段的矩形，印出来的也就是这一段，两边同源。
+                         */
+                        <>
+                            {s.heading ? (
+                                <div
+                                    style={{
+                                        borderLeft: '0.8mm solid #1e40af',
+                                        paddingLeft: '1.5mm',
+                                        fontSize: '10pt',
+                                        fontWeight: 700,
+                                    }}
+                                >
+                                    {s.heading}
+                                </div>
+                            ) : null}
+                            <div style={{ fontSize: '10.5pt' }}>
+                                <MarkdownRenderer content={s.text} />
+                            </div>
+                        </>
                     )}
                 </div>
             ))}
@@ -230,6 +237,15 @@ export interface ImitateSheetProps {
     /** 点右侧灰圆 ⇒ 循环记录对/错/清空（扫码录入那一路） */
     onReviewMarkTap?: (item: ErrorItem) => void;
     reviewMarkOf?: (item: ErrorItem) => ReviewMark;
+    /**
+     * 【2026-10-12】右栏的**附题**上移 / 下移一位（与相邻那道附题交换顺序与流水号）。
+     * 与复练纸那套**同一份**（`ReviewSheet` 也是这两个名字）——
+     * 只给打印预览；卷管理页不给（附题的页归属锁在快照里）。
+     * ⚠️ 判边界用 `seq`（它在**整卷**里连续），不看"这一页里有没有邻居"。
+     */
+    onMoveQuestion?: (item: ErrorItem, dir: -1 | 1) => void;
+    /** 整卷一共几道附题（判"最后一道"能不能下移） */
+    totalSeq?: number;
     L: (zh: string, en: string) => string;
 }
 
@@ -261,6 +277,8 @@ export function ImitateSheet({
     promoteOverrideOf,
     onReviewMarkTap,
     reviewMarkOf,
+    onMoveQuestion,
+    totalSeq,
     L,
 }: ImitateSheetProps) {
     /** 打孔位：**奇数页留左、偶数页留右**（与复练纸同一条物理边） */
@@ -271,6 +289,15 @@ export function ImitateSheet({
     } as CSSProperties;
 
     const canDragDivider = !!onBlankChange && !!blankValueOf && !!onDividerDragStart;
+
+    /** 这道附题能不能上移 / 下移 —— 与复练纸同一套判据（见 `ReviewSheet` 里那段） */
+    const movePropsFor = (item: ErrorItem, seq: number) =>
+        onMoveQuestion
+            ? {
+                  onMoveUp: seq > 1 ? () => onMoveQuestion(item, -1) : undefined,
+                  onMoveDown: !totalSeq || seq < totalSeq ? () => onMoveQuestion(item, 1) : undefined,
+              }
+            : {};
 
     /** 页面骨架（页眉 + 左右两栏）—— 作废那一版也用它，保证"还是这张纸"。 */
     const shell = (body: ReactNode) => (
@@ -418,6 +445,7 @@ export function ImitateSheet({
                                     promoteOverride={promoteOverrideOf ? promoteOverrideOf(item) : undefined}
                                     onReviewMarkTap={onReviewMarkTap ? () => onReviewMarkTap(item) : undefined}
                                     reviewMark={reviewMarkOf ? reviewMarkOf(item) : undefined}
+                                    {...movePropsFor(item, b.seq)}
                                     L={L}
                                 />
                                 <ScanBlockFrame />
@@ -442,6 +470,7 @@ export function ImitateSheet({
                                     ? (e) => onDividerDragStart!(above.id, blankValueOf!(above.id))(e)
                                     : undefined
                             }
+                            {...movePropsFor(item, b.seq)}
                             L={L}
                         />
                     );

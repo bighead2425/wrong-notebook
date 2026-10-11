@@ -23,13 +23,26 @@ import { stripMarkdownImages } from '@/lib/markdown-utils';
  *   · **右栏（附题）**：与复练纸同一套规矩 —— **一道题绝不跨页**。
  *   · **总页数 = 两条流里大的那个**（某一侧先放完，那侧后面的页就是空的）。
  *
- * ⚠️ 段**不切开**：装不下就整段挪到下一页（他原话："如果一页放不下，就顺延到第二页"）。
- *    真的"切开一个字"需要文本级测量，而他要的效果是"接着往下印"，整段顺延就够了。
+ * ⚠️ 段**不再切开**（同一个段内部不拆），但"段"划得比以前细得多：
+ *    长答案 / 长解析在 `buildImitateSegments` 里就按**语义边界**（空行、`【…】`小标题）
+ *    切成了几块（`splitImitateBlocks`）—— 于是"接着往下印"是在**块**这一级发生的，
+ *    而不必去拆一个字（真要拆字得做文本级测量，得不偿失）。
+ *    他 2026-10-12 的原话："一页放不下的时候后面的部分到第二页，第二页也满了后再往第三页去。"
+ *
+ * ⚠️ 另一个必须记住的前提：**量尺与纸面必须同一套排版**。
+ *    2026-10-12 查出来的真 bug 就在这儿 —— 量尺容器在 `.print-sheet` 外面，
+ *    继承了根节点的 `line-height: 1.5`，而纸面是 1.7，于是"量的"比"印的"矮约 12%，
+ *    分页以为还排得下、继续往这一页塞，印的时候被 `overflow: hidden` 裁掉。
+ *    修在 `globals.css` 的 `.print-review-measure`（那里有完整说明），这里只留一句提醒。
  */
 
 /** 左栏里的一段（题干段落 / 题图 / 遮挡线 / 参考答案段落 / 解析段落，都是段） */
 export interface ImitateSegment {
-    /** 唯一键：渲染与"量尺"都靠它对齐 */
+    /**
+     * 唯一键：渲染与"量尺"都靠它对齐。
+     * ⚠️ 形状是 `${题 id}:${stem|figure|divider|answer#n|analysis#n}` ——
+     *    长文切成多块之后，**同一种 role 会有多个 key**（`#0`、`#1`…）。
+     */
     key: string;
     /**
      * 画法（**分页算法不关心它**，只给渲染层看）：
@@ -52,9 +65,19 @@ export interface ImitateLayout {
     sheets: ImitateSheet[];
     /**
      * 一栏都装不下的附题（key + 高度）—— 调用方拿它提示"这道题改用深挖纸"。
-     * ⚠️ **左栏的段不会进这里**：段再高也独占一页（宁可溢一点，也不能把内容丢掉）。
      */
     overflowRight: { key: string; heightMM: number }[];
+    /**
+     * 【2026-10-12】**比一整栏还高**的左栏段 —— 调用方拿它提示
+     * "主题里有一段太长，纸上看不全，把它拆成两段"。
+     *
+     * ⚠️ 为什么不干脆静默让它溢出去：纸上看不到的等于没印，而**不声不响地少印**
+     *    正是他 2026-10-12 报上来的那类问题。宁可提示一句。
+     * ⚠️ 为什么左栏不再"独占一页就完事"：独占一页确实保住了"不被别的段挤掉"，
+     *    但一段只要**本身就比一栏高**，独占一页照样会把尾巴裁掉 ——
+     *    所以长文要先按语义边界切块（`splitImitateBlocks`），切完还超高的才进这里。
+     */
+    overflowLeft: { key: string; heightMM: number }[];
 }
 
 /**
@@ -74,14 +97,21 @@ export function paginateImitate(
 
     /* ── 流①：左栏。段不切开，装不下就整段顺延下一页 ── */
     const leftPages: ImitateSegment[][] = [];
+    const overflowLeft: { key: string; heightMM: number }[] = [];
     let curLeft: ImitateSegment[] = [];
     let usedLeft = 0;
     for (const seg of leftSegments) {
+        /** 量出来的高度 + 一点余量（吸收"量完再渲染"的取整差，见 `IMITATE_SEG_SLACK_MM`） */
+        const h = seg.heightMM + IMITATE_SEG_SLACK_MM;
         /**
-         * 单段比整栏还高（极长的一段解析）⇒ 让它**独占一页**。
-         * 宁可这一页溢出一点，也不把内容丢掉 —— 纸上看不到的东西等于没印。
+         * 单段比整栏还高 ⇒ 让它**独占一页**（先保住"不被别的段挤掉"），
+         * 同时**记进 `overflowLeft`** 让界面提示他"这段太长、纸上看不全，请拆成两段"。
+         * ⚠️ 正常情况轮不到这里：长答案/长解析在 `buildImitateSegments` 里已经按
+         *    语义边界切成几块了（`splitImitateBlocks`）。这里兜的是"一整块本身就超长"
+         *    （比如一段从头到尾没有空行、也没有【…】小标题的长文）。
          */
-        if (seg.heightMM > usableMM) {
+        if (h > usableMM) {
+            overflowLeft.push({ key: seg.key, heightMM: seg.heightMM });
             if (curLeft.length) {
                 leftPages.push(curLeft);
                 curLeft = [];
@@ -90,13 +120,13 @@ export function paginateImitate(
             leftPages.push([seg]);
             continue;
         }
-        if (usedLeft + seg.heightMM > usableMM) {
+        if (usedLeft + h > usableMM) {
             leftPages.push(curLeft);
             curLeft = [];
             usedLeft = 0;
         }
         curLeft.push(seg);
-        usedLeft += seg.heightMM;
+        usedLeft += h;
     }
     if (curLeft.length) leftPages.push(curLeft);
 
@@ -108,18 +138,20 @@ export function paginateImitate(
     let seq = 0;
     for (const block of rightBlocks) {
         seq += 1;
-        if (block.heightMM > usableMM) {
+        /** 同样加余量（右栏的题块里也有题干文字，量矮了就会被顶出纸外） */
+        const h = block.heightMM + IMITATE_SEG_SLACK_MM;
+        if (h > usableMM) {
             /** 流水号照样往前走：它是"卷里的第几道"，不该因为排不下就断号 */
             overflowRight.push({ key: block.key, heightMM: block.heightMM });
             continue;
         }
-        if (usedRight + block.heightMM > usableMM) {
+        if (usedRight + h > usableMM) {
             rightPages.push(curRight);
             curRight = [];
             usedRight = 0;
         }
         curRight.push({ key: block.key, heightMM: block.heightMM, seq });
-        usedRight += block.heightMM;
+        usedRight += h;
     }
     if (curRight.length) rightPages.push(curRight);
 
@@ -130,7 +162,7 @@ export function paginateImitate(
         sheets.push({ left: leftPages[i] ?? [], right: rightPages[i] ?? [] });
     }
 
-    return { sheets, overflowRight };
+    return { sheets, overflowRight, overflowLeft };
 }
 
 /** 这份模仿纸一共几张（他界面上"第 X / Y 页"的 Y） */
@@ -156,15 +188,97 @@ export interface ImitateSegmentSpec {
     kind: 'text' | 'figure' | 'divider';
     /**
      * 这一段是什么：
-     *   · `stem`    题干的正文
-     *   · `heading` 小标题（"参考答案" / "解析"）
-     *   · `answer`  参考答案正文
-     *   · `analysis` 解析正文
+     *   · `stem`     题干的正文
+     *   · `answer`   参考答案（**包着它的小标题一起**）
+     *   · `analysis` 解析（同上）
      * （`figure` / `divider` 两段的 role 用 `stem` 占位，渲染层按 kind 画）
      */
-    role: 'stem' | 'heading' | 'answer' | 'analysis';
-    /** 文字内容（`figure` / `divider` 为空） */
+    role: 'stem' | 'answer' | 'analysis';
+    /** 这一段的正文（`figure` / `divider` 为空） */
     text: string;
+    /**
+     * 【2026-10-12】小标题（"参考答案" / "解析"）—— 与正文**同属一段**。
+     *
+     * ⚠️ 为什么把它并进正文那一段（原来是"标题一段、正文一段"）：
+     *    分成两段，分页就能把它们**拆到两页**去 —— 他 2026-10-12 给的 PDF 里
+     *    满页都是"第 1 页末尾孤零零一个『解析』、正文跑到了第 2 页"
+     *    （他的原话："遮挡线下面的内容是断的"）。
+     *    合成一段之后，标题与正文**在 DOM 里就是同一个盒子**，
+     *    分页只有"整段留下"与"整段挪走"两种结局 ——
+     *    结构上就不可能再拆开，不靠"记得别拆"这种约定。
+     */
+    heading?: string;
+}
+
+/**
+ * 每段（以及右栏每道附题）在分页时**多算**这么一点高度。
+ *
+ * 与复练纸那个 `REVIEW_BLOCK_SLACK_MM` 是同一条道理，只是这里给得更宽：
+ * 模仿纸的左栏是**长文**（题干 / 答案 / 解析，里面全是 LaTeX 分式），
+ * 它跟复练纸那种"以留白行数为主"的块不一样 —— 行数占高度的大头，文字那点误差看不出来；
+ * 左栏反过来，**文字就是全部内容**，量矮一点点就会把末尾几行顶出纸外被 `overflow` 裁掉。
+ *
+ * 他 2026-10-12 明确过取舍："留白部分是最后保障的" ——
+ * 多留一点白（页尾空几毫米）他接受，**少印一段内容他绝不接受**。
+ * ⚠️ 2026-10-12 同一天还修掉了量尺与纸面**行高不一致**（1.5 vs 1.7）这个真 bug
+ *    （见 `globals.css` 的 `.print-review-measure`）。那才是"少印"的主因；
+ *    这个 slack 是第二道保险，两样都要。
+ */
+export const IMITATE_SEG_SLACK_MM = 2;
+
+/**
+ * 【2026-10-12】把一段长文按**语义边界**切成几块（段内再分块）。
+ *
+ * ── 为什么必须有它（他 2026-10-12 报的那个"余数页"问题）─────────────
+ * 主题的解析常常比一整栏还高。原来它是**一个段**，分页只有两条路：
+ * "整段留在这一页"（装不下 ⇒ 被 `overflow: hidden` 裁掉尾巴）或"整段挪到下一页"。
+ * 他原话："一页放不下的时候后面的部分到第二页，第二页也满了后再往第三页去。"
+ * ⇒ 那就得让**长文自己能被分**，而不是只能"整块搬"。
+ *
+ * ── 只在两种地方切（都是作者自己标出来的"这里换一节"）─────────────
+ *   ① **空行**：markdown 里就是"另一个段落"；
+ *   ② **整行的 `【…】` 小标题**：他这套 AI 解析就是这么分节的
+ *      （【解题思路】/【正确解答推导】/【易错提醒】…）。
+ *
+ * ⚠️ **绝不切进列表中间**：markdown 的"1. 2. 3."分成两块渲染，数字会**从 1 重来**，
+ *    纸上就成了"1. 2. 3. 1. 2." —— 那不是排版问题，是把内容改错了。
+ * ⚠️ **绝不切进 `$$ … $$` 公式**：公式被切成两半直接渲染不出来。
+ *    所以进公式之后，里面的空行不算块边界（公式内部常常有空行）。
+ */
+export function splitImitateBlocks(text: string): string[] {
+    const raw = (text ?? '').replace(/\r\n/g, '\n').trim();
+    if (!raw) return [];
+
+    const chunks: string[] = [];
+    let cur: string[] = [];
+    /** 在 `$$ … $$` 里面吗（在里面时空行与【…】都不算边界） */
+    let inDisplayMath = false;
+
+    const flush = () => {
+        const body = cur.join('\n').trim();
+        if (body) chunks.push(body);
+        cur = [];
+    };
+
+    for (const line of raw.split('\n')) {
+        const t = line.trim();
+        /**
+         * `$$` 独占一行 = 公式开始/结束（他这套编辑器里公式必须独占一行，见项目铁律）。
+         * ⚠️ `$$x=1$$` 这种**一行写完**的不能当成"开关" —— 否则后面的边界全乱。
+         */
+        const isMathFence = t === '$$' || (t.startsWith('$$') && !t.endsWith('$$'));
+
+        if (!t && !inDisplayMath) {
+            flush();
+            continue;
+        }
+        if (!inDisplayMath && /^【.+】$/.test(t) && cur.length) flush();
+
+        cur.push(line);
+        if (isMathFence) inDisplayMath = !inDisplayMath;
+    }
+    flush();
+    return chunks;
 }
 
 /** 只取"这几种字段"——不要把整条 `ErrorItem` 拖进纯逻辑里 */
@@ -202,16 +316,25 @@ export function buildImitateSegments(
     /** 遮挡线：把"题目"和"答案"分开的那条线（与深挖纸背面同一个东西） */
     out.push({ key: `${item.id}:divider`, kind: 'divider', role: 'stem', text: '' });
 
-    const answer = (item.answerText || '').trim();
-    if (answer) {
-        out.push({ key: `${item.id}:answer-h`, kind: 'text', role: 'heading', text: '参考答案' });
-        out.push({ key: `${item.id}:answer`, kind: 'text', role: 'answer', text: answer });
-    }
-    const analysis = (item.analysis || '').trim();
-    if (analysis) {
-        out.push({ key: `${item.id}:analysis-h`, kind: 'text', role: 'heading', text: '解析' });
-        out.push({ key: `${item.id}:analysis`, kind: 'text', role: 'analysis', text: analysis });
-    }
+    /**
+     * 答案与解析：**小标题 + 正文同属第一块**，长文再按语义边界切成几块
+     * （见 `ImitateSegmentSpec.heading` 与 `splitImitateBlocks` 两处的说明）。
+     */
+    const pushText = (role: 'answer' | 'analysis', heading: string, value: string | null | undefined) => {
+        const chunks = splitImitateBlocks(value ?? '');
+        chunks.forEach((chunk, i) => {
+            out.push({
+                key: `${item.id}:${role}#${i}`,
+                kind: 'text',
+                role,
+                text: chunk,
+                /** ⚠️ 小标题只挂在**第一块**上 —— 它跟着第一块走，不会孤零零留在页尾 */
+                ...(i === 0 ? { heading } : {}),
+            });
+        });
+    };
+    pushText('answer', '参考答案', item.answerText);
+    pushText('analysis', '解析', item.analysis);
     return out;
 }
 
@@ -283,7 +406,7 @@ export function imitateLayoutFromSnapshot(
         });
     }
 
-    return { sheets, overflowRight: [] };
+    return { sheets, overflowRight: [], overflowLeft: [] };
 }
 
 /** 从快照行里挑出**左栏那一行**（主题）—— `columnIndex === 0` */

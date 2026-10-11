@@ -24,7 +24,6 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
     Dialog,
     DialogContent,
@@ -33,7 +32,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog";
-import { ArrowLeft, Camera, ExternalLink, Link2, Loader2, Plus, Search } from "lucide-react";
+import { ArrowLeft, Camera, ExternalLink, Link2, Loader2, Plus } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import type { ErrorItem } from "@/types/api";
@@ -89,121 +88,18 @@ export function ScanItemPanel({
         fetchItem();
     }, [fetchItem]);
 
-    /* ===== 【2026-10-10】关联别的题（把题 B 挂到当前这道题下面）===== */
+    /* ===== 【2026-10-10】关联别的题（把题 B 挂到当前这道题下面）=====
+       【2026-10-12 他去掉了"搜题式关联"】
+       他原话："上面的『题号里的几位，或题干里的一个词』并后面『查找』按钮，全部去掉，
+       因为实际上不会这样关联题……手机端还会自动跳出键盘来，这种搜题的方式就不要了。"
+       ⇒ 这个框里只剩两条**他真会用的**路：
+         · **打开扫码**：用软件自己的摄像头扫那道题的二维码（和主页"扫一扫"同一个东西）；
+         · **拍照新增**：题库里根本没有那道题时，拍一张、新增并顺手挂上来。
+       ⚠️ 顺带删掉的还有"搜出来的候选列表"与它带的 `doLink`（**只被那个列表用过**）——
+          留着就是死代码，只会让下一个人以为还有第三条路。 */
 
     const [linkOpen, setLinkOpen] = useState(false);
-    const [linkQuery, setLinkQuery] = useState("");
-    const [linkSearching, setLinkSearching] = useState(false);
-    const [linkBusy, setLinkBusy] = useState<string | null>(null);
     const [linkNote, setLinkNote] = useState("");
-    /**
-     * 搜出来的候选（**搜索式**，不是"精确题号"）。
-     * ⚠️ 他 2026-10-10 实测反馈："输入题号查找失败" —— 上一版走的是 `GET /api/scan?no=`，
-     *    那条路要求**一字不差的完整题号**；纸上少看一位、少个前缀就查不到。
-     *    ⇒ 改成"给关键词就出候选，他自己挑"。
-     */
-    const [linkResults, setLinkResults] = useState<
-        { id: string; no: string; text: string; mastered: boolean }[]
-    >([]);
-
-    /**
-     * 按关键词找要关联的题 —— 走**列表接口**（题号片段 / 题干里的词都行）。
-     * ⚠️ 用 `scope=all`：要关联的题可能在"已掌握"里，主库默认口径搜不到它。
-     * ⚠️ 同批把列表接口的搜索补上了 `source`（题号）—— 原来它**不搜题号**，
-     *    所以"搜题号搜不到"这件事在错题本页的搜索框里同样存在，一并修掉。
-     * ⚠️ 刻意**不包 useCallback**（只被事件调用），免得把 `L` 拖进依赖数组。
-     */
-    const searchCandidates = async (raw: string) => {
-        const q = raw.trim();
-        if (!q) return;
-        setLinkSearching(true);
-        setLinkNote("");
-        setLinkResults([]);
-        try {
-            const res = await apiClient.get<{
-                items?: {
-                    id: string;
-                    source?: string | null;
-                    questionText?: string | null;
-                    masteryLevel?: number;
-                }[];
-            }>(`/api/error-items/list?query=${encodeURIComponent(q)}&scope=all&pageSize=10`);
-            const rows = (res.items || []).filter((it) => it.id !== itemId);
-            if (!rows.length) {
-                setLinkNote(
-                    L(
-                        "没搜到可以关联的题。换个关键词试试：题号里的几位、或题干里的一个词。",
-                        "No match — try part of the number, or a word from the question.",
-                    ),
-                );
-                return;
-            }
-            setLinkResults(
-                rows.map((it) => {
-                    const text = (it.questionText || "").replace(/\s+/g, " ").trim();
-                    return {
-                        id: it.id,
-                        no: it.source || it.id,
-                        text: text.length > 56 ? `${text.slice(0, 56)}…` : text,
-                        mastered: (it.masteryLevel ?? 0) >= 2,
-                    };
-                }),
-            );
-        } catch (error) {
-            console.error(error);
-            alert(L("搜索失败，请重试", "Search failed"));
-        } finally {
-            setLinkSearching(false);
-        }
-    };
-
-    /**
-     * 把某道题挂到**当前这道题**下面（当前这道题 = 主题）。
-     *
-     * ⚠️ 两边各自都已经是一组题的主题时，规则不肯替他决定（`plan.choice`）——
-     *    这里问一句，**推荐"当前这道题继续当主题"**（他此刻正看着这一屏），
-     *    选"是"就带 `chooseRootId` 重发一次，对方那一组会整棵接过来。
-     * ⚠️ 成功后**不关对话框**，只把这条从候选里摘掉 —— 他常常要一次挂好几道。
-     */
-    const doLink = async (childId: string, chooseRootId?: string): Promise<void> => {
-        setLinkBusy(childId);
-        try {
-            const res = await apiClient.post<{
-                ok: boolean;
-                message?: string;
-                choice?: { candidates: { id: string; no: string }[]; recommended: string };
-            }>("/api/error-items/link", {
-                action: "link",
-                child: childId,
-                target: itemId,
-                ...(chooseRootId ? { chooseRootId } : {}),
-            });
-
-            if (res.choice) {
-                const ok = window.confirm(
-                    L(
-                        "这两道题各自都已经是一组题的主题了。\n让当前这道题当主题、把对方那一组一起接过来？（点取消 = 什么都不做）",
-                        "Both are already main questions. Make the current one the main question and take over the other group?",
-                    ),
-                );
-                if (ok) await doLink(childId, itemId);
-                return;
-            }
-            if (!res.ok) {
-                alert(res.message || L("没有关联成功", "Could not link"));
-                return;
-            }
-            setLinkNote(res.message || L("已关联", "Linked"));
-            setLinkResults((prev) => prev.filter((r) => r.id !== childId));
-            /** 刷新本题：卡片角标与"名下几道"要跟着变 */
-            fetchItem();
-        } catch (error) {
-            console.error(error);
-            alert(L("没有关联成功", "Could not link"));
-        } finally {
-            setLinkBusy(null);
-        }
-    };
 
     /** 乐观更新 + 失败回正（与列表页 `patchItemFields` 同一条规矩） */
     const patch = async (body: Record<string, unknown>, optimistic: Partial<ErrorItem>) => {
@@ -296,8 +192,6 @@ export function ScanItemPanel({
                     size="sm"
                     onClick={() => {
                         setLinkNote("");
-                        setLinkResults([]);
-                        setLinkQuery("");
                         setLinkOpen(true);
                     }}
                 >
@@ -360,12 +254,12 @@ export function ScanItemPanel({
                 />
             </div>
 
-            {/* ===== 【2026-10-10】"关联别的题"对话框（**搜索式**）=====
-                他实测反馈过两条，这一版都改了：
-                  ① "输题号查找失败" ⇒ 改成**按关键词搜**（题号里的几位、题干里的一个词都行），
-                     给一串候选人他自己挑 —— 精确题号那条路太脆（少一位就查不到）；
-                  ② "拍照调的是手机相机，不是软件里的扫码" ⇒ **撤掉拍照入口**，
-                     改成「打开扫码」：走软件自己的摄像头（和主页"扫一扫"同一个东西）。 */}
+            {/* ===== "关联别的题"对话框 =====
+                【2026-10-12 他去掉了"搜题式关联"】这里原来有"题号里的几位 / 题干里的一个词"
+                + 「查找」+ 一串候选。他的原话："实际上不会这样关联题……手机端还会自动跳出
+                键盘来，这种搜题的方式就不要了。" ⇒ 现在只剩两条他真会用的路：
+                  · **打开扫码**（软件自己的摄像头，和主页"扫一扫"同一个东西）；
+                  · **拍照新增**（题库里没有 ⇒ 拍一张、新增、顺手挂上来）。 */}
             <Dialog
                 open={linkOpen}
                 onOpenChange={(open) => {
@@ -377,42 +271,13 @@ export function ScanItemPanel({
                         <DialogTitle>{L("关联别的题", "Link a question")}</DialogTitle>
                         <DialogDescription>
                             {L(
-                                `找到的那道题会挂到「${item.source || item.id}」下面，这道题就是主题。`,
-                                `The question you pick will attach to ${item.source || item.id} (the main one).`,
+                                `扫到或新增的那道题会挂到「${item.source || item.id}」下面，这道题就是主题。`,
+                                `The question you scan or add will attach to ${item.source || item.id} (the main one).`,
                             )}
                         </DialogDescription>
                     </DialogHeader>
 
                     <div className="space-y-3">
-                        <div className="flex items-center gap-2">
-                            <div className="relative flex-1">
-                                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                                <Input
-                                    className="pl-8"
-                                    placeholder={L(
-                                        "题号里的几位，或题干里的一个词",
-                                        "Part of the number, or a word",
-                                    )}
-                                    value={linkQuery}
-                                    onChange={(e) => setLinkQuery(e.target.value)}
-                                    onKeyDown={(e) => {
-                                        if (e.key === "Enter") searchCandidates(linkQuery);
-                                    }}
-                                />
-                            </div>
-                            <Button
-                                variant="outline"
-                                onClick={() => searchCandidates(linkQuery)}
-                                disabled={!linkQuery.trim() || linkSearching}
-                            >
-                                {linkSearching ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                    L("查找", "Find")
-                                )}
-                            </Button>
-                        </div>
-
                         {/* 【他要求】扫就走**软件自己的扫码**（不是手机相机拍照） */}
                         {onScanForLink && (
                             <Button
@@ -461,47 +326,10 @@ export function ScanItemPanel({
                             </p>
                         )}
 
-                        {linkResults.length > 0 && (
-                            <div className="max-h-[42vh] space-y-1.5 overflow-y-auto">
-                                {linkResults.map((r) => (
-                                    <div
-                                        key={r.id}
-                                        className="flex items-start gap-2 rounded-md border px-3 py-2 text-sm"
-                                    >
-                                        <div className="min-w-0 flex-1">
-                                            <div className="flex items-center gap-2">
-                                                <span className="font-medium">{r.no}</span>
-                                                {r.mastered && (
-                                                    <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-xs text-emerald-700">
-                                                        {L("已掌握", "Mastered")}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <p className="mt-1 text-xs text-muted-foreground">{r.text}</p>
-                                        </div>
-                                        <Button
-                                            size="sm"
-                                            disabled={linkBusy !== null}
-                                            onClick={() => doLink(r.id)}
-                                        >
-                                            {linkBusy === r.id ? (
-                                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                            ) : (
-                                                L("添加", "Attach")
-                                            )}
-                                        </Button>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
                     </div>
 
                     <DialogFooter>
-                        <Button
-                            variant="outline"
-                            onClick={() => setLinkOpen(false)}
-                            disabled={linkBusy !== null}
-                        >
+                        <Button variant="outline" onClick={() => setLinkOpen(false)}>
                             {L("关闭", "Close")}
                         </Button>
                     </DialogFooter>

@@ -23,6 +23,8 @@ import { useFigureImages } from './use-print-images';
 import { PromoteBox } from './promote-box';
 // 【2026-10-11】扫码那两件控件抽到共用件（模仿纸也要同一套，见该文件头的说明）
 import { ScanBlockFrame, ScanPlusButton } from './scan-overlay';
+// 【2026-10-12】题块右上角那对"上移/下移"（复练纸与模仿纸共用同一份，见该文件头）
+import { MOVE_BUTTONS_RESERVE_MM, MoveButtons } from './move-buttons';
 import { PROMOTE_BOX, promoteDirectionFor, type PromoteDirection } from '@/lib/manage-type';
 import {
     PROMOTE_APPLIED_BG,
@@ -174,6 +176,17 @@ export interface ReviewSheetProps {
      * 传了就在这里渲染"此题已无"占位块；不传就照旧什么都不画。
      */
     missing?: Record<string, string | null>;
+    /**
+     * 【2026-10-12】某道题要**上移 / 下移一位**（与相邻那道题交换顺序与流水号）。
+     *
+     * 只在"还没定稿"的打印预览里给（卷管理页不给 —— 卷是印出去的凭证，
+     * 页归属锁在快照里，挪题会让手机扫到的页与库里那一页对不上）。
+     * ⚠️ 边界判定用 `seq`（它在**整卷**里连续），不看"这一页/这一栏里有没有邻居" ——
+     *    挪位的范围是**整卷**，跨页也要能挪。
+     */
+    onMoveQuestion?: (item: ErrorItem, dir: -1 | 1) => void;
+    /** 整卷一共几道题（判"最后一道"能不能下移）；不给 onMoveQuestion 时无所谓 */
+    totalSeq?: number;
     L: (zh: string, en: string) => string;
 }
 
@@ -539,6 +552,8 @@ export function ReviewQuestionBlock({
     promoteOverride,
     onReviewMarkTap,
     reviewMark,
+    onMoveUp,
+    onMoveDown,
     L,
 }: {
     item: ErrorItem;
@@ -593,6 +608,13 @@ export function ReviewQuestionBlock({
     onReviewMarkTap?: () => void;
     /** 这颗圆当前该是什么态（none/right/wrong）；由调用方按复习结果推 */
     reviewMark?: ReviewMark;
+    /**
+     * 【2026-10-12】右上角那对**上移 / 下移**（只在屏幕上）。
+     * 不给 = 这一路不需要排序（量尺、卷管理页、扫码浏览），按钮根本不画。
+     * 到边界那一头由调用方**不给相应回调** ⇒ 按钮灰着在位（见 `MoveButtons`）。
+     */
+    onMoveUp?: () => void;
+    onMoveDown?: () => void;
     L: (zh: string, en: string) => string;
 }) {
     const figures = useFigureImages(item);
@@ -623,8 +645,18 @@ export function ReviewQuestionBlock({
                     onPointerDown={onDividerDragStart}
                 />
             )}
-            {/* 题干：左边一个流水号（1. 2. 3. …），它是这份卷的排序号，不是题号 */}
-            <div className="print-review-stem" style={{ position: 'relative', paddingLeft: '6mm', flex: '0 0 auto' }}>
+            {/* 题干：左边一个流水号（1. 2. 3. …），它是这份卷的排序号，不是题号。
+                ⚠️ `paddingRight` **永远**留着那条带子（`MOVE_BUTTONS_RESERVE_MM`）——
+                   量尺那一路不画按钮，只有两边都留同样的宽度，量到的高度才等于印出来的。 */}
+            <div
+                className="print-review-stem"
+                style={{
+                    position: 'relative',
+                    paddingLeft: '6mm',
+                    paddingRight: `${MOVE_BUTTONS_RESERVE_MM}mm`,
+                    flex: '0 0 auto',
+                }}
+            >
                 <span
                     style={{
                         position: 'absolute',
@@ -637,6 +669,12 @@ export function ReviewQuestionBlock({
                 >
                     {seq}.
                 </span>
+                <MoveButtons
+                    onMoveUp={onMoveUp}
+                    onMoveDown={onMoveDown}
+                    titleUp={L('上移一位（和上一题交换顺序与流水号）', 'Move up (swap with the previous question)')}
+                    titleDown={L('下移一位（和下一题交换顺序与流水号）', 'Move down (swap with the next question)')}
+                />
                 {stem ? (
                     <MarkdownRenderer content={stem} />
                 ) : (
@@ -864,6 +902,8 @@ export function ReviewSheet({
     promoteOverrideOf,
     onReviewMarkTap,
     reviewMarkOf,
+    onMoveQuestion,
+    totalSeq,
     L,
 }: ReviewSheetProps) {
     /**
@@ -886,6 +926,20 @@ export function ReviewSheet({
 
     /** 拖虚线调留白只在"能改"时才有（量尺/正式打印那两处没有 onBlankChange） */
     const canDragDivider = !!onBlankChange && !!blankValueOf && !!onDividerDragStart;
+
+    /**
+     * 这道题能不能上移 / 下移 —— **只看它在整卷里的流水号**。
+     * 边界那一头**不给回调**（按钮灰着在位，他能一眼看出"到头了"）。
+     * ⚠️ 判据是 `seq` 而不是"这一栏里有没有邻居"：挪位的范围是整卷，跨页也要能挪
+     *    （第 1 页第 1 道点"上移"没反应、第 2 页第 1 道却挪得动，那才叫怪）。
+     */
+    const movePropsFor = (item: ErrorItem, seq: number) =>
+        onMoveQuestion
+            ? {
+                  onMoveUp: seq > 1 ? () => onMoveQuestion(item, -1) : undefined,
+                  onMoveDown: !totalSeq || seq < totalSeq ? () => onMoveQuestion(item, 1) : undefined,
+              }
+            : {};
 
     return (
         <div
@@ -972,6 +1026,7 @@ export function ReviewSheet({
                                                 onReviewMarkTap ? () => onReviewMarkTap(item) : undefined
                                             }
                                             reviewMark={reviewMarkOf ? reviewMarkOf(item) : undefined}
+                                            {...movePropsFor(item, b.seq)}
                                             L={L}
                                         />
                                         <ScanBlockFrame />
@@ -996,6 +1051,7 @@ export function ReviewSheet({
                                                     ? (e) => onDividerDragStart!(above.id, blankValueOf!(above.id))(e)
                                                     : undefined
                                             }
+                                            {...movePropsFor(item, b.seq)}
                                             L={L}
                                         />
                                     </Fragment>

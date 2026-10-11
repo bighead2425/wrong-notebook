@@ -72,6 +72,16 @@ import {
  */
 type PrintMode = "deep" | "review" | "build" | "imitate" | "card" | "practice" | "explain";
 
+/**
+ * 【2026-10-12】**"已掌握"的绿** —— 只在这一屏用（模仿纸"收哪些附题"里，已掌握那道题的题号）。
+ *
+ * ⚠️ 与"附题角标"那个颜色**不是一件事**，别合并：
+ *    角标颜色是"这题在从属关系里的角色"（`LINK_CHILD_COLOR`，2026-10-12 起是**黄**），
+ *    而这个是"这道题已经会了"。他 2026-10-12 同一天里分别要了这两个颜色
+ *    （"已掌握的题号用绿色" / "附题角标改成黄色"）—— 混起来就会把其中一个做错。
+ */
+const MASTERED_GREEN = "#16a34a";
+
 function PrintPreviewContent() {
     const searchParams = useSearchParams();
     const { t, language } = useLanguage();
@@ -272,6 +282,47 @@ function PrintPreviewContent() {
     const toggleSolo = toggle(setSoloIds);
 
     const selectedItems = getSelectedPrintItems(items, selectedIds);
+
+    /**
+     * 【2026-10-12】**卷内顺序 = `items` 的数组顺序**（不是另开一份 order 状态）。
+     * 卷里那道题的流水号、右栏能不能上移/下移、左栏"选择题目"列表的次序，
+     * 全都从这一份顺序推出来 —— 一份顺序，三处显示自然一致。
+     */
+    const volumeSerialOf = useMemo(() => {
+        const map: Record<string, number> = {};
+        let n = 0;
+        for (const it of items) if (selectedIds.has(it.id)) map[it.id] = (n += 1);
+        return map;
+    }, [items, selectedIds]);
+
+    /**
+     * 把某道题**上移 / 下移一位**：和"卷里相邻的那一道"交换位置。
+     *
+     * ⚠️ 邻居要从**被选中的那些**里找（没勾的题不在这份卷里，不该被当成邻居）——
+     *    所以是"跨过没勾的、找到最近的那道被选中的题"再交换。
+     * ⚠️ 交换的是**数组里的位置**（不是另存一份序），所以左栏列表、量尺顺序、
+     *    分页结果**下一次渲染就全都跟着变了**，不用三处各维护一遍。
+     */
+    const moveReviewItem = useCallback(
+        (item: ErrorItem, dir: -1 | 1) => {
+            setItems((prev) => {
+                const i = prev.findIndex((x) => x.id === item.id);
+                if (i < 0) return prev;
+                let j = -1;
+                for (let k = i + dir; k >= 0 && k < prev.length; k += dir) {
+                    if (selectedIds.has(prev[k].id)) {
+                        j = k;
+                        break;
+                    }
+                }
+                if (j < 0) return prev;
+                const next = [...prev];
+                [next[i], next[j]] = [next[j], next[i]];
+                return next;
+            });
+        },
+        [selectedIds],
+    );
     const countLabel = getPrintPreviewCountLabel(items.length, selectedItems.length);
     const emptyState = getPrintPreviewEmptyState(items.length, selectedItems.length);
     const isDeep = mode === "deep";
@@ -499,15 +550,67 @@ function PrintPreviewContent() {
         [imitateTree, pickedChildren],
     );
 
-    /** 模仿纸的量尺指纹：主题 / 收哪些附题 / 题图大小任一变了都得重量 */
+    /**
+     * 【2026-10-12】附题的**卷内流水号**（只有勾上的才有）—— 左栏"收哪些附题"列表照它显示，
+     * 他挪完一眼就能看出顺序变没变。与复练纸那套同源（顺序就是 `imitateTree.children` 的顺序）。
+     */
+    const childSerialOf = useMemo(() => {
+        const map: Record<string, number> = {};
+        if (imitateTree) {
+            let n = 0;
+            for (const c of imitateTree.children) if (pickedChildren.has(c.id)) map[c.id] = (n += 1);
+        }
+        return map;
+    }, [imitateTree, pickedChildren]);
+
+    /**
+     * 附题上移 / 下移一位 —— 与复练纸那一套同一个做法（邻居只从**勾上的那些**里找）。
+     * ⚠️ 直接改 `imitateTree.children` 的顺序：`pickedChildItems`、量尺、分页
+     *    都是从这个数组推出来的，改这一处就全都跟着动了。
+     */
+    const moveImitateChild = useCallback(
+        (item: ErrorItem, dir: -1 | 1) => {
+            setImitateTree((prev) => {
+                if (!prev) return prev;
+                const list = prev.children;
+                const i = list.findIndex((x) => x.id === item.id);
+                if (i < 0) return prev;
+                let j = -1;
+                for (let k = i + dir; k >= 0 && k < list.length; k += dir) {
+                    if (pickedChildren.has(list[k].id)) {
+                        j = k;
+                        break;
+                    }
+                }
+                if (j < 0) return prev;
+                const next = [...list];
+                [next[i], next[j]] = [next[j], next[i]];
+                return { ...prev, children: next };
+            });
+        },
+        [pickedChildren],
+    );
+
+    /**
+     * 模仿纸的量尺指纹：主题 / 收哪些附题 / 题图大小 / **留白** 任一变了都得重量。
+     *
+     * ⚠️【2026-10-12 他报的 bug①】原来这里**漏了 `blankOverrides`** ——
+     *    于是他在右栏给某道附题加了留白行数，量尺不重量、分页不重算，
+     *    版面**冻在**上一次的样子里：把后面的题顶出纸外也**不会**挪到下一页、
+     *    把留白改小腾出地方了后面的题也**不会**补上来。
+     *    他的描述一字不差："似乎一旦模仿纸排好后交给用户编辑时，就已经将每道题在哪一页锁定了"。
+     *    复练纸那一路的 `measureKey` 一直带着留白（所以它没这个毛病），
+     *    这里补上就与它对齐了 —— 打印预览本来就是"还没定稿、随便调随便重排"的地方。
+     */
     const imitateMeasureKey = useMemo(
         () =>
             [
                 imitateTree?.theme.id ?? "",
                 pickedChildItems.map((i) => i.id).join("|"),
                 JSON.stringify(figureScales),
+                JSON.stringify(blankOverrides),
             ].join("#"),
-        [imitateTree, pickedChildItems, figureScales],
+        [imitateTree, pickedChildItems, figureScales, blankOverrides],
     );
 
     useEffect(() => {
@@ -1181,24 +1284,27 @@ function PrintPreviewContent() {
                 <div className="space-y-3">
                     <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                         <BackButton fallbackUrl="/notebooks" />
-                        {/* min-w-0 + truncate：窄屏放不下就省略号，**不折行** */}
-                        <h1 className="text-lg sm:text-xl font-bold flex-1 min-w-0 truncate">
-                            {L("打印预览", "Print preview")} ({countLabel} {L("题", "items")})
-                        </h1>
-                        <div className="flex items-center gap-2">
+                        {/* min-w-0 + truncate：窄屏放不下就省略号，**不折行**。
+                            【2026-10-12 他要的】左栏显隐那颗按钮**挪到标题右边**，而且
+                            **只留图标**（"去挑'隐藏左栏'（或显示左栏）的文字，就用图标标识即可"）——
+                            挪了之后它离"被它控制的那一栏"更近，含义反而更清楚。 */}
+                        <div className="flex min-w-0 items-center gap-1">
+                            <h1 className="text-lg sm:text-xl font-bold min-w-0 truncate">
+                                {L("打印预览", "Print preview")} ({countLabel} {L("题", "items")})
+                            </h1>
                             {/* 左栏显隐 —— 图标是他指定的那种"侧栏"样子 */}
                             <Button
-                                variant="outline"
-                                size="sm"
-                                className="whitespace-nowrap"
+                                variant="ghost"
+                                size="icon"
+                                className="shrink-0"
                                 title={leftHidden ? L("显示左栏", "Show panel") : L("隐藏左栏", "Hide panel")}
                                 onClick={() => setLeftHidden((v) => !v)}
                             >
                                 {leftHidden ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-                                <span className="hidden sm:inline sm:ml-2">
-                                    {leftHidden ? L("显示左栏", "Show panel") : L("隐藏左栏", "Hide panel")}
-                                </span>
                             </Button>
+                        </div>
+                        <div className="flex-1" />
+                        <div className="flex items-center gap-2">
                             <Button
                                 onClick={handlePrint}
                                 size="sm"
@@ -1214,8 +1320,9 @@ function PrintPreviewContent() {
                             >
                                 {/* 打印机图标本身就看得懂，窄屏只留图标 */}
                                 <Printer className="h-4 w-4" />
+                                {/* 【2026-10-12 他要的】文案从「打印 / 存为 PDF」改成**「打印」** */}
                                 <span className="hidden sm:inline sm:ml-2">
-                                    {printing ? L("准备中…", "Preparing…") : L("打印 / 存为 PDF", "Print / Save PDF")}
+                                    {printing ? L("准备中…", "Preparing…") : L("打印", "Print")}
                                 </span>
                             </Button>
                             <Link href="/">
@@ -1379,7 +1486,8 @@ function PrintPreviewContent() {
                                 </label>
                             </div>
 
-                            {/* 【T2/T3】卷的设置：整体留白 + 组卷（只在复练/积累纸下出现） */}
+                            {/* 【T2/T3】卷的「整体留白」加减（只在复练/积累纸下出现）。
+                                组卷那颗按钮 2026-10-12 已搬到右栏（见 `<main>` 顶部那个工具条）。 */}
                             {isVolume && (
                                 <div className="flex flex-wrap items-center gap-2 sm:gap-4">
                                     <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-md">
@@ -1393,40 +1501,9 @@ function PrintPreviewContent() {
                                             ＋
                                         </Button>
                                     </div>
-                                    {/* 【2026-09-29】按钮分三种，按他定的规则：
-                                        · 还没组卷 → 生成复练卷 / 生成积累卷（新卷号）
-                                        · 已组卷 + **选题没变**（只调了留白/图大小）→ 「更新组卷」原地覆盖
-                                        · 已组卷 + **选题变了** → 「新生成复练卷」→ 新卷号、存成新数据 */}
-                                    <Button
-                                        size="sm"
-                                        onClick={volume && !volumeSelectionChanged ? updateVolume : createVolume}
-                                        disabled={volumeCreating || !volumeLayoutReady}
-                                    >
-                                        {volumeCreating || !volumeLayoutReady
-                                            ? L("保存中…", "Saving…")
-                                            : volume
-                                              ? volumeSelectionChanged
-                                                ? L("新生成复练卷", "Build as new volume")
-                                                : L("更新组卷", "Update volume")
-                                              : volumeKind === "build"
-                                                ? L("生成积累卷", "Build volume")
-                                                : L("生成复练卷", "Build volume")}
-                                    </Button>
-                                    {volume && (
-                                        <span className="text-xs sm:text-sm">
-                                            {L("卷号", "No.")} <b>{volume.volumeNo}</b>
-                                            {" · "}
-                                            {L("共", "total")} {volumePageCount || volume.pageCount} {L("页", "pages")}
-                                        </span>
-                                    )}
-                                    {volumeStale && (
-                                        <span className="text-xs text-amber-700">
-                                            {volumeSelectionChanged
-                                                ? L("选题变了 —— 点「新生成复练卷」会得到新卷号；现在纸面与库里的卷对不上。", "Selection changed — build as a new volume.")
-                                                : L("留白或题图大小改过了 —— 点「更新组卷」存回去（卷号不变）。", "Spacing or figure size changed — press Update volume.")}
-                                        </span>
-                                    )}
-                                    {volumeError && <span className="text-xs text-red-600">{volumeError}</span>}
+                                    {/* 【2026-10-12 他要求】「生成复练卷」那颗按钮**搬到右栏**去了
+                                        （挨着纸面，点完一眼就能看到纸变了）。
+                                        这一行只留"整体留白"的加减。 */}
                                 </div>
                             )}
 
@@ -1505,7 +1582,7 @@ function PrintPreviewContent() {
                                                             className="flex cursor-pointer items-start gap-2 rounded px-1.5 py-1 text-xs hover:bg-muted/60"
                                                             style={
                                                                 mastered
-                                                                    ? { border: "0.4mm solid #16a34a", borderRadius: "2mm" }
+                                                                    ? { border: `0.4mm solid ${MASTERED_GREEN}`, borderRadius: "2mm" }
                                                                     : undefined
                                                             }
                                                         >
@@ -1522,8 +1599,25 @@ function PrintPreviewContent() {
                                                                     })
                                                                 }
                                                             />
+                                                            {/* 【2026-10-12 他要的】这道附题在**这一卷**里的流水号 ——
+                                                                右栏用箭头挪完，这里跟着挪、跟着改号（与复练纸那条同一个做法）。 */}
+                                                            <span
+                                                                className={`mt-0.5 w-4 shrink-0 text-right tabular-nums ${
+                                                                    on ? "font-semibold" : "text-muted-foreground"
+                                                                }`}
+                                                            >
+                                                                {on ? `${childSerialOf[c.id]}.` : "—"}
+                                                            </span>
                                                             <span className="min-w-0 flex-1">
-                                                                <span className="font-medium">{c.source || c.id}</span>
+                                                                {/* 【2026-10-12 他要的】已掌握的附题：**题号本身**用绿色
+                                                                    （绿 = "已经会了"；与上面那道题的绿边框、右边那枚
+                                                                     "已掌握"小徽章是同一件事的三种说法）。 */}
+                                                                <span
+                                                                    className="font-medium"
+                                                                    style={mastered ? { color: MASTERED_GREEN } : undefined}
+                                                                >
+                                                                    {c.source || c.id}
+                                                                </span>
                                                                 {mastered && (
                                                                     <span className="ml-1.5 rounded bg-emerald-500/15 px-1 py-0.5 text-[10px] text-emerald-700">
                                                                         {L("已掌握", "mastered")}
@@ -1538,6 +1632,8 @@ function PrintPreviewContent() {
                                                 })}
                                             </div>
 
+                                            {/* 【2026-10-12 他要求】「生成模仿纸」那颗按钮**搬到右栏**去了
+                                                （与复练纸那一处同一条改动）。这一行只留"附题留白"的加减。 */}
                                             <div className="flex flex-wrap items-center gap-2 sm:gap-4">
                                                 <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-md">
                                                     <span className="whitespace-nowrap">
@@ -1550,46 +1646,11 @@ function PrintPreviewContent() {
                                                         ＋
                                                     </Button>
                                                 </div>
-                                                <Button
-                                                    size="sm"
-                                                    onClick={volume && !volumeSelectionChanged ? updateVolume : createVolume}
-                                                    disabled={volumeCreating || !volumeLayoutReady}
-                                                >
-                                                    {volumeCreating || !volumeLayoutReady
-                                                        ? L("保存中…", "Saving…")
-                                                        : volume
-                                                          ? volumeSelectionChanged
-                                                              ? L("新生成模仿卷", "Build as new volume")
-                                                              : L("更新组卷", "Update volume")
-                                                          : L("生成模仿卷", "Build volume")}
-                                                </Button>
-                                                {volume && (
-                                                    <span className="text-xs sm:text-sm">
-                                                        {L("卷号", "No.")} <b>{volume.volumeNo}</b>
-                                                        {" · "}
-                                                        {L("共", "total")} {volumePageCount || volume.pageCount} {L("页", "pages")}
-                                                    </span>
-                                                )}
-                                                {volumeStale && (
-                                                    <span className="text-xs text-amber-700">
-                                                        {volumeSelectionChanged
-                                                            ? L("收的附题变过了 —— 点「新生成模仿卷」会得到新卷号。", "Selection changed — build as a new volume.")
-                                                            : L("留白或题图大小改过了 —— 点「更新组卷」存回去（卷号不变）。", "Spacing changed — press Update volume.")}
-                                                    </span>
-                                                )}
-                                                {volumeError && <span className="text-xs text-red-600">{volumeError}</span>}
                                             </div>
 
-                                            {imitateLayout && imitateLayout.overflowRight.length > 0 && (
-                                                <div className="rounded-md border border-amber-500/40 bg-amber-50 p-2 text-xs text-amber-900">
-                                                    {L(
-                                                        `有 ${imitateLayout.overflowRight.length} 道附题太长，半页都装不下：${imitateLayout.overflowRight
-                                                            .map((o) => imitateItemByKey[o.key]?.source || o.key)
-                                                            .join("、")}。建议这几道改用「深挖纸」。`,
-                                                        "Some attached questions are too long for half a page — use the deep-dive sheet.",
-                                                    )}
-                                                </div>
-                                            )}
+                                            {/* 太多/太长那两条提示（附题装不下、主题某段超高）都挪到**右栏纸面上方**了
+                                                —— 与那颗"生成模仿卷"按钮同一趟搬过去的，
+                                                这样"看警告"和"改组卷"在同一个地方，不用左右来回看。 */}
                                         </>
                                     )}
                                 </div>
@@ -1640,12 +1701,18 @@ function PrintPreviewContent() {
                                     </div>
                                 </div>
                                 <div className="grid gap-2 max-h-80 overflow-y-auto pr-1">
-                                    {items.map((item, index) => (
+                                    {items.map((item) => (
                                         <div key={item.id} className="flex items-start gap-2 rounded border bg-background p-2 text-xs">
                                             <input type="checkbox" checked={selectedIds.has(item.id)} onChange={() => toggleSelected(item.id)} className="mt-0.5 rounded border-gray-300" />
-                                            {/* 一道题一行；题干最多两行（清掉 markdown/LaTeX 记号，不然全是 $ 和 \quad） */}
+                                            {/* 一道题一行；题干最多两行（清掉 markdown/LaTeX 记号，不然全是 $ 和 \quad）。
+                                                【2026-10-12 他要的】行首那个数字是**这一卷里的流水号**（不是"列表里的第几行"）——
+                                                他在右栏用箭头挪题之后，这里必须**跟着挪、跟着改号**，
+                                                否则"最上面那道是 3 号"这种状态在左栏里根本看不出来。
+                                                没勾上的题不在这份卷里 ⇒ 不给号（一个灰短横，免得看起来像"第 0 题"）。 */}
                                             <span className="line-clamp-2 flex-1 min-w-0 break-words">
-                                                <span className="font-semibold">{index + 1}.</span>
+                                                <span className={`font-semibold ${volumeSerialOf[item.id] ? "" : "text-muted-foreground"}`}>
+                                                    {volumeSerialOf[item.id] ? `${volumeSerialOf[item.id]}.` : "—"}
+                                                </span>
                                                 {item.questionText ? ` ${cleanMarkdown(item.questionText)}` : ""}
                                             </span>
                                             {isCard && (
@@ -1671,6 +1738,53 @@ function PrintPreviewContent() {
                 )}
 
                 <main className="print-preview-right">
+                    {/* ===== 【2026-10-12 他要求】「生成复练卷 / 生成模仿纸」搬到**右栏**（纸面上方）=====
+                        他的原话："……无论复练纸页左边栏的『生成复练卷』按钮，还是模仿纸左边栏的
+                        『生成模仿纸』按钮，都移到右边栏中去。"
+                        搬过来的好处很直接：**按钮挨着它要改变的东西**（纸面），点完不用来回看。
+                        ⚠️ `no-print`：它是操作，不是纸上的内容。 */}
+                    {(isVolume || isImitate) && (
+                        <div className="no-print mx-auto w-full max-w-[1600px] px-4 md:px-8">
+                            <div className="flex flex-wrap items-center gap-2 rounded-md border bg-background/95 px-3 py-2 shadow-sm">
+                                <Button
+                                    size="sm"
+                                    onClick={volume && !volumeSelectionChanged ? updateVolume : createVolume}
+                                    disabled={volumeCreating || !volumeLayoutReady}
+                                >
+                                    {volumeCreating || !volumeLayoutReady
+                                        ? L("保存中…", "Saving…")
+                                        : volume
+                                          ? volumeSelectionChanged
+                                              ? isImitate
+                                                  ? L("新生成模仿卷", "Build as new volume")
+                                                  : L("新生成复练卷", "Build as new volume")
+                                              : L("更新组卷", "Update volume")
+                                          : isImitate
+                                            ? L("生成模仿卷", "Build volume")
+                                            : volumeKind === "build"
+                                              ? L("生成积累卷", "Build volume")
+                                              : L("生成复练卷", "Build volume")}
+                                </Button>
+                                {volume && (
+                                    <span className="text-xs sm:text-sm">
+                                        {L("卷号", "No.")} <b>{volume.volumeNo}</b>
+                                        {" · "}
+                                        {L("共", "total")} {volumePageCount || volume.pageCount} {L("页", "pages")}
+                                    </span>
+                                )}
+                                {volumeStale && (
+                                    <span className="text-xs text-amber-700">
+                                        {volumeSelectionChanged
+                                            ? isImitate
+                                                ? L("收的附题变过了 —— 点「新生成模仿卷」会得到新卷号。", "Selection changed — build as a new volume.")
+                                                : L("选题变了 —— 点「新生成复练卷」会得到新卷号；现在纸面与库里的卷对不上。", "Selection changed — build as a new volume.")
+                                            : L("留白或题图大小改过了 —— 点「更新组卷」存回去（卷号不变）。", "Spacing or figure size changed — press Update volume.")}
+                                    </span>
+                                )}
+                                {volumeError && <span className="text-xs text-red-600">{volumeError}</span>}
+                            </div>
+                        </div>
+                    )}
                     {/* 跟主页一个口径：居中 + 最大宽 + 左右留白，别顶进浏览器边上。
                         `SheetZoom` 再包一层：双击纸面空白处可在**适应宽度 / 实际大小**两档之间切。
                         【2026-10-03 他要求】**打开就是"适应大小"** —— 原来默认实际大小，
@@ -1767,6 +1881,9 @@ function PrintPreviewContent() {
                                     figureScaleOf={figureScaleOf}
                                     onFigureScaleStart={handleFigureDown}
                                     onDividerDragStart={handleDividerDown}
+                                    /* 【2026-10-12】右上角那对"上移/下移"（跨页也能挪，范围是整卷） */
+                                    onMoveQuestion={moveReviewItem}
+                                    totalSeq={selectedItems.length}
                                     L={L}
                                 />
                             ))}
@@ -1807,6 +1924,37 @@ function PrintPreviewContent() {
                                           )}
                                 </div>
                             )}
+                            {/* 半页都装不下的附题：明确提示改用深挖纸 —— **不静默丢题**
+                                （原来这条在左栏，2026-10-12 生成按钮搬过来时一并挪到纸面上方）。 */}
+                            {imitateLayout && imitateLayout.overflowRight.length > 0 && (
+                                <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
+                                    {L(
+                                        `有 ${imitateLayout.overflowRight.length} 道附题太长，半页都装不下：${imitateLayout.overflowRight
+                                            .map((o) => imitateItemByKey[o.key]?.source || o.key)
+                                            .join("、")}。建议这几道改用「深挖纸」。`,
+                                        "Some attached questions are too long for half a page — use the deep-dive sheet.",
+                                    )}
+                                </div>
+                            )}
+                            {/* 主题里有一段比一整栏还高 ⇒ 纸上看不全。
+                                **绝不静默少印**：说清是哪一段、怎么改（空一行 / 加个【小标题】就行）。 */}
+                            {imitateLayout && imitateLayout.overflowLeft.length > 0 && (
+                                <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
+                                    {L(
+                                        `主题里有 ${imitateLayout.overflowLeft.length} 段太长，一整栏都放不下（${imitateLayout.overflowLeft
+                                            .map((o) => {
+                                                const role = o.key.includes(':analysis')
+                                                    ? "解析"
+                                                    : o.key.includes(':answer')
+                                                      ? "参考答案"
+                                                      : "题干";
+                                                return role;
+                                            })
+                                            .join("、")}）—— 纸上看不全。把这一段拆开就好：在要断的地方**空一行**，或者加一行**【小节标题】**。`,
+                                        "A section of the main question is taller than a full column — split it into paragraphs (blank line) or add 【section】 headings.",
+                                    )}
+                                </div>
+                            )}
                             {imitateLayout?.sheets.map((sheet, i) => (
                                 <ImitateSheet
                                     key={i}
@@ -1828,6 +1976,9 @@ function PrintPreviewContent() {
                                     figureScaleOf={figureScaleOf}
                                     onFigureScaleStart={handleFigureDown}
                                     onDividerDragStart={handleDividerDown}
+                                    /* 【2026-10-12】右栏附题的"上移/下移"（与复练纸同一套） */
+                                    onMoveQuestion={moveImitateChild}
+                                    totalSeq={pickedChildItems.length}
                                     L={L}
                                 />
                             ))}

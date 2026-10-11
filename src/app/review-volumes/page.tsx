@@ -583,13 +583,18 @@ export default function ReviewVolumesPage() {
         }
         let cancelled = false;
         (async () => {
+            /**
+             * ⚠️【2026-10-12】量哪个容器要**按纸别**挑：模仿卷一共只有**一个**量尺容器
+             *    （左栏的段 + 右栏的附题都在里面，见右栏顶部那个 `imitateMeasureRef`），
+             *    而复练卷用的是 `measureRef`。挑错就是"量出 0 ⇒ 安全阀永远不报警"。
+             */
+            const container = kind === "imitate" ? imitateMeasureRef.current : measureRef.current;
             await whenImagesSettled();
-            await whenImagesDecoded(measureRef.current);
+            await whenImagesDecoded(container);
             if (cancelled) return;
-            const el = measureRef.current;
-            if (!el) return;
+            if (!container) return;
             const out: Record<string, number> = {};
-            el.querySelectorAll<HTMLElement>("[data-review-block]").forEach((node) => {
+            container.querySelectorAll<HTMLElement>("[data-review-block]").forEach((node) => {
                 const key = node.dataset.reviewBlock;
                 if (!key) return;
                 out[key] = (node.getBoundingClientRect().height * 25.4) / 96;
@@ -600,7 +605,7 @@ export default function ReviewVolumesPage() {
             cancelled = true;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [measureKey]);
+    }, [measureKey, kind, imitateMeasureKey]);
 
     /**
      * 安全阀：**页内锁定**之后，放大留白/题图不再自动分页 ⇒ 得自己盯着"别把一页撑爆"。
@@ -619,6 +624,30 @@ export default function ReviewVolumesPage() {
         });
         return out;
     }, [layout, measuredByKey]);
+
+    /**
+     * 【2026-10-12】**模仿卷**的安全阀：右栏那半页装不装得下。
+     *
+     * 与复练卷那本账同一个口径（`pageUsageMM` / `pageFits`），只是算的是**右栏**：
+     *   ⚠️ 左栏（主题的段）**不参与**这个判定 —— 它本来就允许"一段独占一页、宁可溢一点"，
+     *      那是分页算法自己的事（`overflowLeft` 会另外提示）。
+     *   ⚠️ 附题的页归属锁在快照里（扫码要对得上这一页）⇒ 放大了留白只会把这一页撑爆，
+     *      不会自动挪到下一页。所以必须有人盯着，撑爆就点名。
+     */
+    const imitateOverfullPages = useMemo(() => {
+        if (kind !== "imitate" || !imitateLayout) return [] as number[];
+        if (Object.keys(measuredByKey).length === 0) return [] as number[];
+        const out: number[] = [];
+        imitateLayout.sheets.forEach((sheet, i) => {
+            const keys = sheet.right.map((b) => b.key).filter((k) => k in measuredByKey);
+            if (!keys.length) return;
+            if (!pageFits(pageUsageMM(keys, (k) => measuredByKey[k] ?? 0))) out.push(i + 1);
+        });
+        return out;
+    }, [kind, imitateLayout, measuredByKey]);
+
+    /** 当前纸别下"哪几页被撑爆了"—— 复练看 `overfullPages`、模仿看上面那个 */
+    const overfullForKind = kind === "imitate" ? imitateOverfullPages : overfullPages;
 
     /**
      * 【2026-10-03 需求第 4 条】复练卷页原来**没有脏检查**（只有积累纸页有）—— 这里补齐：
@@ -783,35 +812,60 @@ export default function ReviewVolumesPage() {
      * ⚠️ 占位行（原题已删）也要原样回写：不然这次保存会把"此题已无"那格从卷里抹掉。
      */
     const updateVolume = useCallback(async () => {
-        if (!detail || !layout || overfullPages.length > 0) return;
+        if (!detail || !layoutReady || overfullForKind.length > 0) return;
         setBusy("saving");
         setNotice("");
         try {
-            const payload = layout.pages.flatMap((page, pi) =>
-                page.columns.flatMap((col, ci) =>
-                    col.blocks.map((b, bi) => {
-                        const item = reviewItemByKey[b.key];
-                        const row = rowByKey[b.key];
-                        return {
-                            errorItemId: item?.id ?? null,
-                            seqInVolume: b.seq,
-                            pageIndex: pi + 1,
-                            columnIndex: ci,
-                            seqInColumn: bi + 1,
-                            itemNo: item?.source ?? row?.itemNo ?? null,
-                            questionText: (item?.questionText || item?.ocrText || row?.questionText) ?? null,
-                            manageType: item?.manageType ?? row?.manageType ?? null,
-                            blankLines: blankValueOf(b.key),
-                            figureScale: figureScaleOf(b.key),
-                        };
-                    }),
-                ),
-            );
+            /**
+             * 【2026-10-12】模仿卷的回写走**快照**那条路（不是 `layout.pages`）：
+             * 它的页归属锁在快照里（扫码要能对回这一页），这次保存只改
+             * **主题的题图大小**与**每道附题的留白/题图大小**，
+             * 页号、栏、页内序一个都不动 —— 这正是他说的"锁定在页里"。
+             */
+            const payload =
+                kind === "imitate"
+                    ? snapshotRows.map((r) => {
+                          const item = reviewItemByKey[r.key];
+                          const row = rowByKey[r.key];
+                          return {
+                              errorItemId: item?.id ?? null,
+                              seqInVolume: r.seq,
+                              pageIndex: r.pageIndex,
+                              columnIndex: r.columnIndex,
+                              seqInColumn: r.seqInColumn,
+                              itemNo: item?.source ?? row?.itemNo ?? null,
+                              questionText: (item?.questionText || item?.ocrText || row?.questionText) ?? null,
+                              manageType: item?.manageType ?? row?.manageType ?? null,
+                              /** 主题那一行（左栏）没有"留白行数"这个东西，原样回写别乱改 */
+                              blankLines: r.columnIndex === 0 ? (row?.blankLines ?? 0) : blankValueOf(r.key),
+                              figureScale: figureScaleOf(r.key),
+                          };
+                      })
+                    : layout!.pages.flatMap((page, pi) =>
+                          page.columns.flatMap((col, ci) =>
+                              col.blocks.map((b, bi) => {
+                                  const item = reviewItemByKey[b.key];
+                                  const row = rowByKey[b.key];
+                                  return {
+                                      errorItemId: item?.id ?? null,
+                                      seqInVolume: b.seq,
+                                      pageIndex: pi + 1,
+                                      columnIndex: ci,
+                                      seqInColumn: bi + 1,
+                                      itemNo: item?.source ?? row?.itemNo ?? null,
+                                      questionText: (item?.questionText || item?.ocrText || row?.questionText) ?? null,
+                                      manageType: item?.manageType ?? row?.manageType ?? null,
+                                      blankLines: blankValueOf(b.key),
+                                      figureScale: figureScaleOf(b.key),
+                                  };
+                              }),
+                          ),
+                      );
             const res = await apiClient.patch<{ volume: VolumeSummary }>(`/api/review-volumes/${detail.id}`, {
                 kind,
                 gradeSemester: detail.gradeSemester ?? null,
                 defaultBlankLines: blankDefault,
-                pageCount: layout.pages.length,
+                pageCount: layoutPageCount,
                 items: payload,
             });
             setDetail((prev) => (prev ? { ...prev, ...res.volume } : prev));
@@ -839,7 +893,10 @@ export default function ReviewVolumesPage() {
     }, [
         detail,
         layout,
-        overfullPages.length,
+        layoutReady,
+        layoutPageCount,
+        overfullForKind.length,
+        snapshotRows,
         reviewItemByKey,
         rowByKey,
         blankValueOf,
@@ -1384,9 +1441,9 @@ export default function ReviewVolumesPage() {
                                             <Button
                                                 size="sm"
                                                 onClick={updateVolume}
-                                                disabled={busy === "saving" || !layoutReady || overfullPages.length > 0}
+                                                disabled={busy === "saving" || !layoutReady || overfullForKind.length > 0}
                                                 title={
-                                                    overfullPages.length > 0
+                                                    overfullForKind.length > 0
                                                         ? L("有页面装不下了，先把那几页调小", "Some page is overfull")
                                                         : undefined
                                                 }
@@ -1486,8 +1543,8 @@ export default function ReviewVolumesPage() {
                                     <p className="mb-3 text-xs text-muted-foreground no-print">
                                         {kind === "imitate"
                                             ? L(
-                                                  "模仿卷是**只读**的：左栏（主题）按主题现算、右栏（附题）按当初印出来的页走。双击纸面空白处可切「适应宽度 / 实际大小」，右上角可打印、可看扫码图。",
-                                                  "Imitate volumes are read-only. Double-click the paper to toggle fit/actual size.",
+                                                  "可以调**主题的题图大小**、也可以调**每道附题的留白与题图**（拖右下角把手 / 拖两题之间的虚线）—— 但附题**不会再在页之间移动**（卷已定稿，页号要跟纸走）。改完点「更新组卷」覆盖保存。",
+                                                  "Adjust the main question's figure and each attached question's spacing/figure. Questions stay on their page. Press Update volume to save.",
                                               )
                                             : L(
                                                   "可以调留白、拖题图右下角把手改大小、拖两道题之间的虚线 —— 但题不会再在页之间移动（卷已定稿，页号要跟纸走）。改完点「更新组卷」覆盖保存。",
@@ -1502,12 +1559,13 @@ export default function ReviewVolumesPage() {
                                     </p>
                                 )}
 
-                                {/* 安全阀：页内锁定之后没人替你分页了，撑爆必须点名 */}
-                                {overfullPages.length > 0 && (
+                                {/* 安全阀：页内锁定之后没人替你分页了，撑爆必须点名。
+                                    ⚠️ 复练卷算的是"整栏"，模仿卷算的是**右栏那半页**（`overfullForKind`）。 */}
+                                {overfullForKind.length > 0 && (
                                     <div className="mb-3 rounded-md border border-red-500/50 bg-red-50 p-2 text-xs text-red-800 no-print">
                                         {L(
-                                            `第 ${overfullPages.join("、")} 页装不下了（页内锁定后题不会自动挪到下一页）—— 请把这几页里的留白行数或题图调小，然后才能「更新组卷」。`,
-                                            `Page(s) ${overfullPages.join(", ")} overflow — reduce spacing or figure size first.`,
+                                            `第 ${overfullForKind.join("、")} 页装不下了（页内锁定后题不会自动挪到下一页）—— 请把这几页里的留白行数或题图调小，然后才能「更新组卷」。`,
+                                            `Page(s) ${overfullForKind.join(", ")} overflow — reduce spacing or figure size first.`,
                                         )}
                                     </div>
                                 )}
@@ -1520,10 +1578,12 @@ export default function ReviewVolumesPage() {
                                  * 它自己的打印页（`/insights/print`）、且本页列表已不再列出 build 卷
                                  * （他："各管各的"），那个分支就成了死路 —— 删掉，别留在代码里误导人。
                                  *
-                                 * 【2026-10-11】模仿卷（CO）做成**只读**：纸面照快照还原、
-                                 * 可缩放/可打印/可看扫码图，但**不给"更新组卷"** ——
-                                 * 它的左栏是按主题现算的，右栏页归属锁在快照里，
-                                 * "页内调留白"这套对它的意义和复练卷不一样，先不做、不做半套。
+                                 * 【2026-10-12 他要求】模仿卷（CO）**不再是只读**了：
+                                 *   左栏主题的题图可缩放、右栏每道附题的题图与留白可调
+                                 *   （照复练卷那一套），改完点「更新组卷」存回去。
+                                 *   唯一没变的是**页归属**：附题锁在快照的那一页里
+                                 *   （卷是印出去的凭证，手机扫页二维码要能对回这一页），
+                                 *   所以只调页内高度 —— 撑爆了由上面那个安全阀点名。
                                  */}
                                 {kind === "imitate"
                                     ? imitateLayout?.sheets.map((sheet, i) => (
@@ -1545,6 +1605,16 @@ export default function ReviewVolumesPage() {
                                               missing={missingMap}
                                               blankValueOf={blankValueOf}
                                               figureScaleOf={figureScaleOf}
+                                              /* 【2026-10-12 他要的】模仿卷也要能调：
+                                                 · **左栏（主题）的题图大小** —— 走 `onFigureScaleStart`
+                                                   （`ImitateSheet` 把它转交给 `ImitateSegments`）；
+                                                 · **右栏每道附题的题图 / 留白** —— 与复练卷**同一套**控件
+                                                   （加减号、拖右下角把手、拖两题之间的虚线）；
+                                                 · 附题的**页归属仍然锁在快照里**（`imitateLayoutFromSnapshot`），
+                                                   调大调小只改页内高度 —— 页号要跟着纸走，手机扫页才扫得回来。 */
+                                              onBlankChange={onBlankChange}
+                                              onFigureScaleStart={handleFigureDown}
+                                              onDividerDragStart={handleDividerDown}
                                               L={L}
                                           />
                                       ))

@@ -118,11 +118,14 @@ export function ErrorItemCard({
 
     /**
      * 【2026-10-10】左上角角标：把这题的角"切一刀"，切出来的小三角填色
-     * （**主题深红 / 附题绿**；孤题不画）。
+     * （**主题深红 / 附题黄**；孤题不画）。
      *
-     * ⚠️ 多选模式不画：那里左上角是勾选框，两个东西叠在一起谁都看不清。
      * ⚠️ 路径第一段的 `M0 12 A12 12 …` 是**跟着卡片的 `rounded-xl`（12px）走**的 ——
      *    不加这段直角边会从圆角里戳出去，变成"卡片缺了个方角"。
+     * ⚠️【2026-10-12 他要求】多选时**照样画**角标，只是**勾选框压在它上面** ——
+     *    原来多选时干脆不画，他反馈"多选框需要覆盖角标，并使多选框显示在角标上方"。
+     *    两个东西本来就都蹲在左上角：让框在上、角标在下"露个边"，
+     *    既能一眼看出选中了没，又不丢掉"这题是主题还是附题"这条信息。
      */
     const cornerColor = linkRole ? linkRoleColor(linkRole) : null;
 
@@ -147,8 +150,8 @@ export function ErrorItemCard({
 
     return (
         <div className="relative">
-            {/* 【2026-10-10】从属关系角标（主题深红 / 附题绿）*/}
-            {cornerColor && !selectMode && (
+            {/* 【2026-10-10】从属关系角标（主题深红 / 附题黄） */}
+            {cornerColor && (
                 <span
                     className="pointer-events-none absolute left-0 top-0 z-20"
                     title={linkRoleLabel(linkRole!, language === "zh")}
@@ -161,9 +164,10 @@ export function ErrorItemCard({
                 </span>
             )}
 
-            {/* 选择模式下的复选框 */}
+            {/* 选择模式下的复选框 —— `z-30`：**压在角标（z-20）上面**
+                （他 2026-10-12："多选框需要覆盖角标，并使多选框显示在角标上方"） */}
             {selectMode && (
-                <div className="absolute top-2 left-2 z-10" onClick={onToggleSelect}>
+                <div className="absolute top-2 left-2 z-30" onClick={onToggleSelect}>
                     <Checkbox checked={selected} className="h-5 w-5 border-2 bg-background shadow-sm" />
                 </div>
             )}

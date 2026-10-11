@@ -171,35 +171,49 @@ describe('模仿纸 · 左栏（主题）：该印的与**不该印**的', () =>
         const html = renderAll(real('b1'));
         expect(html).toContain('data-imitate-seg="e1:stem"');
         expect(html).toContain('data-imitate-seg="e1:divider"');
-        expect(html).toContain('data-imitate-seg="e1:analysis"');
+        // 长文按语义边界切块之后，同一种 role 会有多个 key（`#0`、`#1`…）
+        expect(html).toContain('data-imitate-seg="e1:analysis#0"');
     });
 });
 
 describe('模仿纸 · 左栏贯通（与另外三种纸最大的不同）', () => {
     it('★ 一页放不下 ⇒ 顺延到下一页（不是被裁掉）', () => {
-        // 6 段 × 0.35 栏高 ⇒ 每页 2 段 ⇒ 3 页
+        // ⚠️ 主题一共 **4 段**：题干 → 遮挡线 → 参考答案（标题+正文一段）→ 解析（同上）。
+        //    2026-10-12 把"小标题"并进正文那一段了（原来各占一段、能被拆到两页去，正是他报的 bug）。
+        //    4 段 × 0.35 栏高 ⇒ 每页 2 段 ⇒ 2 页。
         const pages = renderSheets(real('b1'), { segRatio: 0.35 });
-        expect(pages.length).toBe(3);
+        expect(pages.length).toBe(2);
         expect(pages[0]).toContain('STEM-TEXT-9CM');
         expect(pages[0]).toContain('遮挡线');
         expect(pages[1]).toContain('A-ANSWER-TEXT'); // 答案在第 2 页
-        expect(pages[2]).toContain('A-ANALYSIS-TEXT'); // 解析在第 3 页
+        expect(pages[1]).toContain('A-ANALYSIS-TEXT'); // 解析也在第 2 页（一页容得下）
     });
 
     it('★ 段**不切开**：一段装不下就整段挪走（不做文本级切分）', () => {
-        // 每段 0.6 栏高 ⇒ 一页只放得下一段；遮挡线自己占一页
+        // 每段 0.6 栏高 ⇒ 一页只放得下一段 ⇒ 4 段 = 4 页；遮挡线自己占一页
         const pages = renderSheets(real('b1'), { segRatio: 0.6 });
-        expect(pages.length).toBe(6);
+        expect(pages.length).toBe(4);
         expect(pages[0]).toContain('STEM-TEXT-9CM');
         expect(pages[0]).not.toContain('遮挡线'); // 没被硬塞进上一页
         expect(pages[1]).toContain('遮挡线');
         expect(pages[1]).not.toContain('STEM-TEXT-9CM'); // 题干也不重复印
     });
 
+    it('★ 小标题与它的正文在同一页（不会"标题在页尾、正文跑到下一页"）', () => {
+        // 每段 0.9 栏高 ⇒ 一段独占一页；标题和正文必须**同页**
+        const pages = renderSheets(real('b1'), { segRatio: 0.9 });
+        const answerPage = pages.findIndex((p) => p.includes('参考答案'));
+        const analysisPage = pages.findIndex((p) => p.includes('解析'));
+        expect(answerPage).toBeGreaterThan(-1);
+        expect(analysisPage).toBeGreaterThan(-1);
+        expect(pages[answerPage]).toContain('A-ANSWER-TEXT');
+        expect(pages[analysisPage]).toContain('A-ANALYSIS-TEXT');
+    });
+
     it('★ 某侧先排完，那侧后面的页就空着（页数取两侧大的那个）', () => {
-        // 左栏 3 页、右栏 1 道（1 页）⇒ 第 2/3 页右栏为空，但纸照样出
+        // 左栏 2 页、右栏 1 道（1 页）⇒ 第 2 页右栏为空，但纸照样出
         const pages = renderSheets(real('b1'));
-        expect(pages.length).toBe(3);
+        expect(pages.length).toBe(2);
         expect(pages[1]).not.toContain('print-promote-box'); // 第 2 页右栏空
         expect(pages[1]).toContain('A-ANSWER-TEXT'); // 但左栏接着印
     });
@@ -208,11 +222,10 @@ describe('模仿纸 · 左栏贯通（与另外三种纸最大的不同）', () 
 describe('模仿纸 · 右栏（附题）', () => {
     it('附题沿用复练纸那套：流水号 + 每题一个升降级小框', () => {
         const pages = renderSheets(real('b1', 'b2'));
-        // 左栏 3 页、右栏 2 道（每页 1 道 ⇒ 2 页）⇒ 一共 3 页
-        expect(pages.length).toBe(3);
+        // 左栏 2 页、右栏 2 道（每页 1 道 ⇒ 2 页）⇒ 一共 2 页
+        expect(pages.length).toBe(2);
         expect(pages[0]).toContain('data-review-block="b1"');
         expect(pages[1]).toContain('data-review-block="b2"');
-        expect(pages[2]).not.toContain('data-review-block'); // 第 3 页右栏空
         // 流水号连号（跨页也不断）
         expect(pages[0]).toContain('1.');
         expect(pages[1]).toContain('2.');
@@ -248,8 +261,8 @@ describe('模仿纸 · 扫到的模仿卷（他设计稿第 8 条）', () => {
 
     it('★ 右栏每道附题一个蓝框 + 蓝圆白加号（与复练纸同一套控件）', () => {
         const pages = renderSheets(real('b1'), { withScan: true, blockRatio: 0.9 });
-        // 左栏 6 段 ÷ 每页 2 段 ⇒ 3 页；那 1 道附题落在第 1 页
-        expect(pages.length).toBe(3);
+        // 右栏 1 道（1 页）、左栏 4 段 ÷ 每页 2 段 = 2 页 ⇒ 一共 2 页；那 1 道附题落在第 1 页
+        expect(pages.length).toBe(2);
         // 第 1 页 = 主题那一个 + 附题那一个
         expect(plusCount(pages[0])).toBe(2);
         expect(pages[0]).toContain('#38bdf8'); // 天蓝框
@@ -258,7 +271,7 @@ describe('模仿纸 · 扫到的模仿卷（他设计稿第 8 条）', () => {
     });
 
     it('★★ 左栏的主题**只有第 1 页**有蓝框加号（他原话："其他页左边栏不再放蓝框"）', () => {
-        // 3 道附题 ⇒ 右栏 3 页；左栏 6 段 ÷ 每页 2 段 = 3 页 ⇒ 一共 3 页
+        // 3 道附题 ⇒ 右栏 3 页；左栏 4 段 ÷ 每页 2 段 = 2 页 ⇒ 页数取大的那个 = 3 页
         const pages = renderSheets(real('b1', 'b2', 'b3'), { withScan: true, blockRatio: 0.9 });
         expect(pages.length).toBe(3);
         expect(plusCount(pages[0])).toBe(2); // 主题 + 第 1 页那道附题
@@ -278,7 +291,7 @@ describe('模仿纸 · 卷头与作废', () => {
         const html = renderSheets(real('b1'))[0];
         expect(html).toContain('模仿');
         expect(html).toContain('CO20261011001');
-        expect(html).toContain('1/3'); // 3 页：左栏 6 段 ÷ 每页 2 段
+        expect(html).toContain('1/2'); // 2 页：左栏 4 段 ÷ 每页 2 段（右栏 1 道只占 1 页）
         expect(html).toContain('data:image/png;base64,AAAA');
         expect(html).toContain('#1e40af'); // 模仿 = 蓝（他原稿写的"蓝色框、蓝色字"）
     });

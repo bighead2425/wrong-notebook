@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X, Sparkles, Loader2, Printer, ChevronLeft, ChevronRight, Unlink, ArrowUp, RotateCcw } from "lucide-react";
+import { ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X, Sparkles, Loader2, Printer, ChevronLeft, ChevronRight, Unlink, ArrowUp, RotateCcw, Link2Off } from "lucide-react";
 import Link from "next/link";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { MdEditor } from "@/components/md-editor";
@@ -177,7 +177,7 @@ export default function ErrorDetailPage() {
      *    （2026-10-09 踩过一模一样的坑）。
      */
     const [linkNote, setLinkNote] = useState("");
-    const [linkBusy, setLinkBusy] = useState<null | "unlink" | "promote" | "restore">(null);
+    const [linkBusy, setLinkBusy] = useState<null | "unlink" | "promote" | "restore" | "dissolve">(null);
 
     const [educationStage, setEducationStage] = useState<string | undefined>(undefined);
 
@@ -239,9 +239,19 @@ export default function ErrorDetailPage() {
      *    因为界面本身会立刻变（标题颜色、关联清单、按钮都跟着换），
      *    再弹一个"操作成功"纯属多一次点击（他的偏好：界面反馈代替成功提示，失败才弹）。
      */
-    const actOnLink = async (action: "unlink" | "promote" | "restore") => {
+    const actOnLink = async (action: "unlink" | "promote" | "restore" | "dissolve") => {
         if (!item) return;
-        // 这两件事"牵一发动全身"（会连带改别的题），先问一句 —— 恢复关联不改变任何题，不用问
+        // 这几件事"牵一发动全身"（会连带改别的题），先问一句 —— 恢复关联不改变任何题，不用问
+        if (action === "dissolve") {
+            const count = item.link?.role === "root" ? item.link.children.length : 1;
+            const ok = window.confirm(
+                L(
+                    `解散后：这一组题的主附关系会**全部解除**（主题「${linkRootLabel}」与名下 ${count} 道附题），都变回互不相干的独立题目。错题本身一道都不会少。要继续吗？`,
+                    `Dissolve this group? The main question and its ${count} attached question(s) all become standalone. No question is deleted. Continue?`,
+                ),
+            );
+            if (!ok) return;
+        }
         if (action === "unlink") {
             const ok = window.confirm(
                 L(
@@ -706,6 +716,17 @@ export default function ErrorDetailPage() {
         item.link?.role === "child" ? item.link.parent : (item.link?.detachedFrom ?? null);
     /** 从关联区跳走时带上"从这道题来的"，这样对方的返回键会回到这里（而不是回错题本） */
     const linkBackQuery = `?back=${encodeURIComponent(`/error-items/${item.id}`)}`;
+
+    /**
+     * 这一组的**主题**叫什么 —— 「解散」的确认框要点名说清"解散的是哪一组"，
+     * 不能只说"这一组"（他可能同时开着好几道题的页面）。
+     */
+    const linkRootLabel =
+        item.link?.role === "root"
+            ? item.source || item.id
+            : item.link?.parent
+              ? item.link.parent.source || item.link.parent.id
+              : item.source || item.id;
 
     // 需求六：AI 重新分析 → 先过审核页，点保存才写回
     if (reanalyzeData) {
@@ -1433,6 +1454,28 @@ export default function ErrorDetailPage() {
                                             />
                                             {L("关联题目", "Related questions")}
                                         </span>
+                                        {/* 【2026-10-12 他要的】「解散」= 这一组的主附关系**一次全断**。
+                                            只在"这一组真的有关联"时出现（孤题、以及"被断开过"的那种都没有可解散的）。 */}
+                                        {(item.link.role === "root" || item.link.role === "child") && (
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                className="h-6 px-2 text-xs text-destructive hover:text-destructive"
+                                                disabled={linkBusy !== null}
+                                                title={L(
+                                                    "把这一组题的主附关系全部解除（错题本身一道都不会少）",
+                                                    "Dissolve this whole group — no question is deleted",
+                                                )}
+                                                onClick={() => actOnLink("dissolve")}
+                                            >
+                                                {linkBusy === "dissolve" ? (
+                                                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                                ) : (
+                                                    <Link2Off className="mr-1 h-3 w-3" />
+                                                )}
+                                                {L("解散", "Dissolve")}
+                                            </Button>
+                                        )}
                                         <span className="text-sm font-normal text-muted-foreground">
                                             {item.link.role === "root"
                                                 ? L(
