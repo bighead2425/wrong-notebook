@@ -65,6 +65,7 @@ import {
     Layers,
     PanelLeftClose,
     PanelLeftOpen,
+    PenLine,
     Plus,
     Printer,
     Save,
@@ -686,7 +687,11 @@ export default function InsightsPage() {
                         从积累纸预览页跳来的要**退回那张纸**，平时还是回主页。
                         （`backTo` 已在挂载时校验过是站内路径。） */}
                     <BackButton fallbackUrl={backTo || "/"} className="shrink-0" />
-                    <h1 className="text-lg font-semibold">{L('日积月累', 'Takeaways')}</h1>
+                    {/* 【2026-10-13】标题加上「· 管理」——
+                        他自己就是这么叫这一页的（原话："原日积月累页，现在我叫其『日积月累·管理』页"）。
+                        录入已经搬到 `/insights/write`（进门就写），这一页的职责只剩**管**，
+                        标题不写清楚，他会以为"日积月累"有两页是同一个东西。 */}
+                    <h1 className="text-lg font-semibold">{L('日积月累 · 管理', 'Takeaways · Manage')}</h1>
                     {/* 【2026-10-01 加】隐藏 / 显示左栏（手机上价值最大 —— 见 leftOpen 的说明）。
                         【2026-10-12 需求第 3 条】从右上角挪到**标题后面**：它管的是左栏，
                         站在左栏这一侧才找得到（与打印预览页、复练卷页同一版式）。 */}
@@ -706,8 +711,14 @@ export default function InsightsPage() {
                             <PanelLeftOpen className="h-4 w-4" />
                         )}
                     </Button>
+                    {/* 【2026-10-13 他重新定位】日积月累**不绑定题**，是一本笔记：
+                        教科书、教辅、课堂一句话、同学一句话、自己想到的都能进。
+                        旧文案（"从错题里攒下来的一句话"）把入口写窄了，他 10-13 特意纠正过。 */}
                     <span className="hidden text-xs text-muted-foreground sm:inline">
-                        {L('从错题里攒下来的一句话，一条一个编号', 'One line per takeaway, one code each')}
+                        {L(
+                            '攒下来的都在这里：错题里的、书上划的、课上听到的、自己想到的',
+                            'Everything you collected — from mistakes, books, class, or your own head',
+                        )}
                     </span>
                     <span className="flex-1" />
                     {/* 【2026-10-02 他要求】窄屏/手机上**只留图标**（文字藏起来）——
@@ -717,6 +728,15 @@ export default function InsightsPage() {
                         <Plus className="h-4 w-4 sm:mr-1.5" />
                         <span className="hidden sm:inline">{L('新建一条', 'New')}</span>
                     </Button>
+                    {/* 【2026-10-13】回**录入页**的入口 —— 他要的那条环："进门就录入，
+                        从录入到管理和打印，管理返回录入" ⇒ 管理页必须能再回去写。
+                        （页内的「新建一条」保留：那是"顺手记一条"，不动位置。） */}
+                    <Link href="/insights/write">
+                        <Button variant="outline" size="sm" title={L('去录入页（进门就写的那一页）', 'Go to the writing page')}>
+                            <PenLine className="h-4 w-4 sm:mr-1.5" />
+                            <span className="hidden sm:inline">{L('去写', 'Write')}</span>
+                        </Button>
+                    </Link>
                     {/* 【2026-10-01 第三轮】**打印另开一屏**（他担心的对）：
                         编辑与打印是两种状态（未保存的改动、量高、分页、页码），
                         硬塞进同一个右栏久了必然互相打架。 */}
