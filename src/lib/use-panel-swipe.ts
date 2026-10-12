@@ -44,6 +44,19 @@ export function usePanelSwipe(opts: {
 
     return {
         onTouchStart: (e: React.TouchEvent) => {
+            /**
+             * ⚠️ **从滑块 / 输入框 / 按钮上开始的这一下，不算划栏手势。**
+             *
+             * 这几个左栏里全是滑块（留白高度、题图宽度都是 `<input type="range">`），
+             * 手机上"按住滑块往右拖"既够长、又够平、也够快 —— 三条判据全都满足，
+             * 于是**每次调滑块都会把左栏收掉**。这条是专门堵它的：
+             * 手指落在表单控件上，就不记起点（自然也不会触发）。
+             */
+            const el = e.target as HTMLElement | null;
+            if (el?.closest?.("input, select, textarea, button, a, [role='slider']")) {
+                start.current = null;
+                return;
+            }
             const t = e.touches[0];
             if (!t) return;
             start.current = { x: t.clientX, y: t.clientY, t: Date.now() };
