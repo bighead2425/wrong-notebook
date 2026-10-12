@@ -95,6 +95,15 @@ interface InsightRow {
 /** 选中的条目单独取详情时，接口额外给的（图片本体 + 活题） */
 interface InsightDetail extends InsightRow {
     photo: string | null;
+    /**
+     * 【2026-10-13 第 6 条】**"入版"开关** —— 组成积累纸时这张图跟不跟着进去。
+     *
+     * 他原话："点中入版，则表示在组成积累纸的时候，这个图片是跟随进入的，
+     *          如果这个按钮开关是关着的……在排版积累纸的时候，这个图片是不跟随进入的。"
+     * ⇒ 关掉**不等于删图**（图还在库里、这里还看得见），只是**这一版纸不排它**。
+     * ⚠️ 这一条**没有图**时后端给 `true`（与 schema 默认一致）⇒ 前端按 `!== false` 读。
+     */
+    photoIncludedInPrint?: boolean;
     question: ErrorItem | null;
 }
 
@@ -280,6 +289,12 @@ export default function InsightsPage() {
     const [subjectDraft, setSubjectDraft] = useState('');
     const [content, setContent] = useState('');
     const [photo, setPhoto] = useState<string | null>(null);
+    /**
+     * 【2026-10-13 第 6 条】"入版"开关的当前值（默认开）。
+     * ⚠️ 它**不参与"脏判断"**：开关是**点一下就立即存**的（与四圆点同一路数）——
+     *    一个开关还要"按保存才生效"，他会以为开关坏了。
+     */
+    const [photoIncluded, setPhotoIncluded] = useState(true);
     /** 打开这条时**库里的**图片长什么样（脏判断的基准；改了图没保存 ⇒ photo !== loadedPhoto） */
     const [loadedPhoto, setLoadedPhoto] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
@@ -428,6 +443,8 @@ export default function InsightsPage() {
                 setContent(d.content ?? '');
                 setLoadedPhoto(d.photo ?? null);
                 setPhoto(d.photo ?? null);
+                /** 【2026-10-13 第 6 条】入版开关跟着这一条走（没图时后端给 true） */
+                setPhotoIncluded(d.photoIncludedInPrint !== false);
             })
             .catch((error) => console.error(error));
         return () => {
@@ -452,6 +469,12 @@ export default function InsightsPage() {
             setGradeDraft(inheritGrade);
             setSelectedRow(created);
             setCurrentId(created.id);
+            /**
+             * 【2026-10-13】新建的这条**没有图** ⇒ 开关回到默认「入版」。
+             * ⚠️ 不重置的话它会**沿用上一条的值**（上一条关了入版，新的一条也显示关着），
+             *    而库里新行其实是默认开 —— 界面与库不一致，他一看就以为没生效。
+             */
+            setPhotoIncluded(true);
         } catch (error) {
             console.error(error);
             alert(t.common?.messages?.saveFailed || 'Create failed');
@@ -556,6 +579,26 @@ export default function InsightsPage() {
      * "在日积月累·管理页中用标识标出等待后续整理（或删除）" ⇒ **整理完要能定稿**。
      */
     const finalizeDraft = () => persist({ status: 'final' });
+
+    /**
+     * 【2026-10-13 第 6 条】点「入版」开关 —— **立即落库**（不经过"保存"）。
+     *
+     * 为什么不等"保存"：开关是**开关**，点一下就该变。要按保存才生效，
+     * 他会以为开关坏了（与四圆点改一格即存、类型轮转点一下就存同一套手感）。
+     * 失败照旧**还原 + 提示**（这个项目从不静默吞失败）。
+     */
+    const togglePhotoIncluded = async () => {
+        if (!current) return;
+        const next = !photoIncluded;
+        setPhotoIncluded(next);
+        try {
+            await apiClient.patch(`/api/insights/${current.id}`, { photoIncludedInPrint: next });
+        } catch (error) {
+            console.error(error);
+            setPhotoIncluded(!next);
+            alert(t.common?.messages?.saveFailed || 'Save failed');
+        }
+    };
 
     const discard = () => {
         if (!current) return;
@@ -1100,6 +1143,27 @@ export default function InsightsPage() {
                                                 onClick={() => setPhoto(null)}
                                             >
                                                 {L('去掉这张图', 'Remove photo')}
+                                            </button>
+                                            {/*
+                                              * 【2026-10-13 第 6 条】「入版」开关。
+                                              * 他原话："点中入版，则表示在组成积累纸的时候，这个图片是跟随进入的；
+                                              *          如果这个按钮开关是关着的，就代表虽然这个日积月累有图片，
+                                              *          但在排版积累纸的时候，这个图片是不跟随进入的。"
+                                              * ⇒ 「去掉这张图」是**不要了**（删库里的图）；
+                                              *    「入版」是**这次不印**（图还在，随时能开回来）—— 两件事，别混。
+                                              * 点一下立即生效（不走"保存"）。
+                                              */}
+                                            <button
+                                                type="button"
+                                                onClick={() => void togglePhotoIncluded()}
+                                                title={
+                                                    photoIncluded
+                                                        ? L('入版中：组积累纸时会带上这张图（点一下改成不带）', 'In print — click to exclude it')
+                                                        : L('未入版：组积累纸时不带这张图，图仍在库里（点一下恢复）', 'Not printed — the photo is still kept')
+                                                }
+                                                className={`text-xs hover:underline ${photoIncluded ? 'text-emerald-600' : 'text-muted-foreground'}`}
+                                            >
+                                                {photoIncluded ? L('入版 ✓', 'In print ✓') : L('不入版', 'Not printed')}
                                             </button>
                                         </span>
                                     )}

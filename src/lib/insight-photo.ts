@@ -31,3 +31,20 @@ export async function readPhoto(insightId: string): Promise<string | null> {
     });
     return row?.data ?? null;
 }
+
+/**
+ * 【2026-10-13 第 6 条】**"入版"开关** —— 组成积累纸时这张图跟不跟着进去。
+ *
+ * 他原话："点中入版，则表示在组成积累纸的时候，这个图片是跟随进入的，
+ *          如果这个按钮开关是关着的……在排版积累纸的时候，这个图片是不跟随进入的。"
+ * ⇒ 关掉**不等于删图**（图还在库里、编辑区还看得见），只是**这一版纸不排它**。
+ *
+ * ⚠️ 用 `updateMany` 而不是 `update`：这一条**没有图**时会命中 0 行 ——
+ *    那不算错（他可能先在没图的一条上点了开关），不该抛出去打断这次保存。
+ */
+export async function setPhotoPrintIncluded(insightId: string, includedInPrint: boolean): Promise<void> {
+    await prisma.insightPhoto.updateMany({
+        where: { insightId },
+        data: { includedInPrint },
+    });
+}

@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { unauthorized, badRequest, notFound, forbidden, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
-import { writePhoto } from "@/lib/insight-photo";
+import { writePhoto, setPhotoPrintIncluded } from "@/lib/insight-photo";
 
 const logger = createLogger('api:insights:id');
 
@@ -76,7 +76,16 @@ export async function PATCH(
             data.status = body.status;
         }
 
-        if (Object.keys(data).length === 0 && !('photo' in body)) {
+        /**
+         * ⚠️ 守卫必须把 `photoIncludedInPrint` 也算进来：他只动那个开关时
+         *    `data` 是空的（那个字段存在 InsightPhoto 表上，不在主表）——
+         *    漏了它，点一下开关会收到 400 "nothing to update"。
+         */
+        if (
+            Object.keys(data).length === 0 &&
+            !('photo' in body) &&
+            !('photoIncludedInPrint' in body)
+        ) {
             return badRequest("nothing to update");
         }
 
@@ -90,6 +99,15 @@ export async function PATCH(
         if ('photo' in body) {
             const photo = typeof body.photo === 'string' && body.photo ? body.photo : null;
             await writePhoto(id, photo);
+        }
+
+        /**
+         * 【2026-10-13 第 6 条】「入版」开关 —— **与 `photo` 分开传**：
+         *   `photo` 是"图是什么"，这个是"这张图要不要进纸"。合成一个字段
+         *   会逼前端每次点开关都重传几百 KB 的 data URL。
+         */
+        if ('photoIncludedInPrint' in body) {
+            await setPhotoPrintIncluded(id, body.photoIncludedInPrint === true);
         }
 
         logger.info({ userId: user.id, id }, 'Insight updated');
@@ -120,7 +138,7 @@ export async function GET(
 
         const row = await prisma.insight.findUnique({
             where: { id },
-            include: { photo: { select: { data: true } } },
+            include: { photo: { select: { data: true, includedInPrint: true } } },
         });
         if (!row) return notFound("Insight not found");
         if (row.userId !== user.id) return forbidden("Not authorized to read this insight");
@@ -141,6 +159,12 @@ export async function GET(
         return NextResponse.json({
             ...rest,
             photo: photo?.data ?? null,
+            /**
+             * 【2026-10-13 第 6 条】"入版"开关 —— 组成积累纸时这张图跟不跟着进去。
+             * ⚠️ 没有图时给 `true`（与 schema 默认一致）：打印页据此判断"要不要排这张图"，
+             *    没图时反正排不出来，给 true 才不会让"有没有开关"这件事变得不可预测。
+             */
+            photoIncludedInPrint: photo?.includedInPrint ?? true,
             question,
         });
     } catch (error) {

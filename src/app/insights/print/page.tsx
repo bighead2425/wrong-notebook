@@ -476,9 +476,15 @@ function NewVolume({ ids }: { ids: string[] }) {
                 const list = await Promise.all(
                     ids.map((id) =>
                         apiClient
-                            .get<{ id: string; code: string; content?: string | null; photo?: string | null; gradeSemester?: string | null }>(
-                                `/api/insights/${id}`,
-                            )
+                            .get<{
+                                id: string;
+                                code: string;
+                                content?: string | null;
+                                photo?: string | null;
+                                /** 【2026-10-13 第 6 条】"入版"开关 */
+                                photoIncludedInPrint?: boolean;
+                                gradeSemester?: string | null;
+                            }>(`/api/insights/${id}`)
                             .catch(() => null),
                     ),
                 );
@@ -488,10 +494,23 @@ function NewVolume({ ids }: { ids: string[] }) {
                     code: string;
                     content?: string | null;
                     photo?: string | null;
+                    photoIncludedInPrint?: boolean;
                     gradeSemester?: string | null;
                 }>;
                 setRows(
-                    ok.map((r) => ({ id: r.id, code: r.code, content: r.content || '', photoUrl: r.photo || null })),
+                    ok.map((r) => ({
+                        id: r.id,
+                        code: r.code,
+                        content: r.content || '',
+                        /**
+                         * 【2026-10-13 第 6 条】他原话："如果这个按钮开关是关着的，就代表
+                         * 虽然这个日积月累有图片，但在排版积累纸的时候，这个图片是不跟随进入的。"
+                         * ⇒ 关掉 = **这一版纸不排这张图**（图还在库里，不是删除）。
+                         * ⚠️ 只把 `photoUrl` 置 null，**完全不碰分页** ——
+                         *    少一张图只会让版面更松，不会溢出（改分页才是危险动作）。
+                         */
+                        photoUrl: r.photoIncludedInPrint === false ? null : r.photo || null,
+                    })),
                 );
                 setGradeSemester(ok.find((r) => r.gradeSemester)?.gradeSemester ?? null);
                 if (ok.length === 0) setFailed(L('这些条目读不到了', 'Entries not found'));
