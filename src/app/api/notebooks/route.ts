@@ -47,11 +47,20 @@ export async function GET(req: Request) {
             },
         };
 
+        /**
+         * 【2026-10-12 需求第 6 条】列表顺序 = **手工排序位优先，其次新的在前**。
+         * `sortOrder` 默认 0 ⇒ 没手工排过的用户拿到的是**和以前一模一样**的顺序
+         * （全是 0，于是完全由 createdAt desc 决定）。拖过一次之后，那一组被重写成 0..n-1。
+         * ⚠️ 这条顺序还被「错题本详情页的上一个/下一个」用着（它拉的就是这一份列表）——
+         *    改顺序等于同时改了那对按钮的去向，这是**有意**的：两处必须是同一个顺序。
+         */
+        const listOrder = [{ sortOrder: 'asc' as const }, { createdAt: 'desc' as const }];
+
         if (onlyArchived) {
             const archived = await prisma.notebook.findMany({
                 where: { userId: user.id, archiveStatus: "archived" },
                 include: { _count: countSelect },
-                orderBy: { createdAt: 'desc' },
+                orderBy: listOrder,
             });
             return NextResponse.json(archived);
         }
@@ -64,9 +73,7 @@ export async function GET(req: Request) {
             include: {
                 _count: countSelect,
             },
-            orderBy: {
-                createdAt: 'desc',
-            },
+            orderBy: listOrder,
         });
 
         // If no notebooks exist, create default ones (教科书级：学科 × 学期)
@@ -96,7 +103,7 @@ export async function GET(req: Request) {
                 notebooks = await prisma.notebook.findMany({
                     where: { userId: user.id, archiveStatus: { not: "archived" } },
                     include: { _count: countSelect },
-                    orderBy: { createdAt: 'desc' },
+                    orderBy: listOrder,
                 });
             }
         }

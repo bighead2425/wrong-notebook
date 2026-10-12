@@ -7,7 +7,7 @@ import { BackButton } from "@/components/ui/back-button";
 import { ChevronLeft, ChevronRight, House, Pencil, Printer, Sparkles, ArchiveRestore, Layers } from "lucide-react";
 import Link from "next/link";
 import { ErrorList } from "@/components/error-list";
-import { RenameNotebookDialog } from "@/components/rename-notebook-dialog";
+import { EditNotebookDialog, type EditNotebookPayload } from "@/components/edit-notebook-dialog";
 import { NotebookAnalyzeDialog } from "@/components/notebook-analyze-dialog";
 
 import { Notebook } from "@/types/api";
@@ -30,15 +30,23 @@ export default function NotebookDetailPage() {
      * 拿不到（接口失败/没权限）就整组按钮不显示 —— 导航是锦上添花，不能挡路。
      */
     const [siblingIds, setSiblingIds] = useState<string[]>([]);
+    /** 【2026-10-12 需求第 9 条】同一份列表顺带留下"现有名字"，给重调整对话框当场拦重名 */
+    const [siblingNames, setSiblingNames] = useState<string[]>([]);
     useEffect(() => {
         let alive = true;
         (async () => {
             try {
                 const res = await apiClient.get<{ notebooks?: Notebook[] } | Notebook[]>("/api/notebooks");
                 const list = Array.isArray(res) ? res : res.notebooks || [];
-                if (alive) setSiblingIds(list.map((n) => n.id));
+                if (alive) {
+                    setSiblingIds(list.map((n) => n.id));
+                    setSiblingNames(list.map((n) => n.displayName));
+                }
             } catch {
-                if (alive) setSiblingIds([]);
+                if (alive) {
+                    setSiblingIds([]);
+                    setSiblingNames([]);
+                }
             }
         })();
         return () => {
@@ -81,10 +89,15 @@ export default function NotebookDetailPage() {
         }
     };
 
-    const handleRename = async (name: string) => {
+    /**
+     * 【2026-10-12 需求第 9 条】这里也从"只改名字"换成「重调整」（四字段 + 名字都能改）。
+     * 与「我的错题本」页那个笔按钮打开的是**同一个**对话框 —— 一处改样、两处一致。
+     */
+    const handleSaveEdit = async (payload: EditNotebookPayload) => {
         if (!notebook) return;
-        const updated = await apiClient.put<Notebook>(`/api/notebooks/${notebook.id}`, { displayName: name });
+        const updated = await apiClient.put<Notebook>(`/api/notebooks/${notebook.id}`, payload);
         setNotebook(updated);
+        setSiblingNames((prev) => prev.map((n) => (n === notebook.displayName ? updated.displayName : n)));
     };
 
     /** B15：按本拉回（归档粒度在 Notebook，题不自持归档位） */
@@ -262,11 +275,12 @@ export default function NotebookDetailPage() {
                     onCountChange={setCounts}
                 />
 
-                <RenameNotebookDialog
+                <EditNotebookDialog
                     open={renameDialogOpen}
                     onOpenChange={setRenameDialogOpen}
-                    currentName={notebook.displayName}
-                    onRename={handleRename}
+                    notebook={notebook}
+                    existingNames={siblingNames.filter((n) => n !== notebook.displayName)}
+                    onSave={handleSaveEdit}
                 />
 
                 <NotebookAnalyzeDialog

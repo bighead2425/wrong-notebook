@@ -54,6 +54,8 @@ import { ImageCropper } from '@/components/image-cropper';
 import { ImageZoomViewer } from '@/components/image-zoom-viewer';
 import { cycleAttentionLevel } from '@/lib/attention-level';
 import { cycleManageType } from '@/lib/manage-type';
+// 【2026-10-12 需求第 2 条】手机端划一下就收 / 叫左栏（三个页面共用这一份）
+import { usePanelSwipe } from '@/lib/use-panel-swipe';
 import type { ErrorItem } from '@/types/api';
 import {
     ExternalLink,
@@ -181,6 +183,13 @@ export default function InsightsPage() {
      * ⇒ 手机上是单列堆叠，隐藏左栏就直接落在编辑区；宽屏时右栏自动占满。
      */
     const [leftOpen, setLeftOpen] = useState(true);
+
+    /**
+     * 【2026-10-12 需求第 2 条】手机端：左栏上向左划 ⇒ 收起；右栏上向右划 ⇒ 叫回来。
+     * 判据与"为什么用 touch 事件"见 `lib/use-panel-swipe.ts` 文件头。
+     */
+    const leftSwipe = usePanelSwipe({ onSwipeLeft: () => setLeftOpen(false) });
+    const rightSwipe = usePanelSwipe({ onSwipeRight: () => setLeftOpen(true) });
 
     /**
      * 【2026-10-03 需求第 11 条】从**扫到的积累纸预览页**点圆圈跳过来时会带：
@@ -645,11 +654,9 @@ export default function InsightsPage() {
                         （`backTo` 已在挂载时校验过是站内路径。） */}
                     <BackButton fallbackUrl={backTo || "/"} className="shrink-0" />
                     <h1 className="text-lg font-semibold">{L('日积月累', 'Takeaways')}</h1>
-                    <span className="hidden text-xs text-muted-foreground sm:inline">
-                        {L('从错题里攒下来的一句话，一条一个编号', 'One line per takeaway, one code each')}
-                    </span>
-                    <span className="flex-1" />
-                    {/* 【2026-10-01 加】隐藏 / 显示左栏（手机上价值最大 —— 见 leftOpen 的说明） */}
+                    {/* 【2026-10-01 加】隐藏 / 显示左栏（手机上价值最大 —— 见 leftOpen 的说明）。
+                        【2026-10-12 需求第 3 条】从右上角挪到**标题后面**：它管的是左栏，
+                        站在左栏这一侧才找得到（与打印预览页、复练卷页同一版式）。 */}
                     <Button
                         variant="outline"
                         size="icon"
@@ -666,6 +673,10 @@ export default function InsightsPage() {
                             <PanelLeftOpen className="h-4 w-4" />
                         )}
                     </Button>
+                    <span className="hidden text-xs text-muted-foreground sm:inline">
+                        {L('从错题里攒下来的一句话，一条一个编号', 'One line per takeaway, one code each')}
+                    </span>
+                    <span className="flex-1" />
                     {/* 【2026-10-02 他要求】窄屏/手机上**只留图标**（文字藏起来）——
                         "当浏览器变窄，或者在手机端屏幕比较窄的时候，右上角的新建一条按钮，
                         文字隐藏，只留前面的加号既可"。打印按钮同样处理。 */}
@@ -695,7 +706,7 @@ export default function InsightsPage() {
                 <div className={`grid gap-4 ${leftOpen ? 'lg:grid-cols-[360px_1fr]' : 'lg:grid-cols-[1fr]'}`}>
                     {/* ===== 左栏：筛选 + 条目清单（**可隐藏**，见 leftOpen） ===== */}
                     {leftOpen && (
-                    <aside className="space-y-2">
+                    <aside className="space-y-2" {...leftSwipe}>
                         {/* 【2026-10-01 他定的】筛选：年级/学期 + 学科**多选**；日期只排先后不筛 */}
                         <Select value={grade || '__all__'} onValueChange={(v) => setGrade(v === '__all__' ? '' : v)}>
                             <SelectTrigger className="h-9 w-[150px] text-sm">
@@ -863,7 +874,7 @@ export default function InsightsPage() {
                     )}
 
                     {/* ===== 右栏：编辑区 ===== */}
-                    <section className="min-w-0">
+                    <section className="min-w-0" {...rightSwipe}>
                         {!current ? (
                             <div className="rounded-md border border-dashed px-6 py-16 text-center text-sm text-muted-foreground">
                                 {L('左边选一条，或者右上角新建一条。', 'Pick one on the left, or create a new entry.')}

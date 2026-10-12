@@ -24,7 +24,7 @@ import { PromoteBox } from './promote-box';
 // 【2026-10-11】扫码那两件控件抽到共用件（模仿纸也要同一套，见该文件头的说明）
 import { ScanBlockFrame, ScanPlusButton } from './scan-overlay';
 // 【2026-10-12】题块右上角那对"上移/下移"（复练纸与模仿纸共用同一份，见该文件头）
-import { MOVE_BUTTONS_RESERVE_MM, MoveButtons } from './move-buttons';
+import { MoveButtons } from './move-buttons';
 import { PROMOTE_BOX, promoteDirectionFor, type PromoteDirection } from '@/lib/manage-type';
 import {
     PROMOTE_APPLIED_BG,
@@ -646,14 +646,14 @@ export function ReviewQuestionBlock({
                 />
             )}
             {/* 题干：左边一个流水号（1. 2. 3. …），它是这份卷的排序号，不是题号。
-                ⚠️ `paddingRight` **永远**留着那条带子（`MOVE_BUTTONS_RESERVE_MM`）——
-                   量尺那一路不画按钮，只有两边都留同样的宽度，量到的高度才等于印出来的。 */}
+                ⚠️【2026-10-12 需求第 13 条】这里**不再**给那对上移/下移箭头留位子：
+                   它们改挂到题块右缘**外面**（纸的页边距里，见 `move-buttons.tsx`），
+                   题干因此拿到**和没有这个功能时一模一样**的宽度。 */}
             <div
                 className="print-review-stem"
                 style={{
                     position: 'relative',
                     paddingLeft: '6mm',
-                    paddingRight: `${MOVE_BUTTONS_RESERVE_MM}mm`,
                     flex: '0 0 auto',
                 }}
             >

@@ -17,16 +17,28 @@ interface NotebookCardProps {
     /** 归档 / 拉回（B15：逐本归档 + 按本拉回，不做批量按钮） */
     onToggleArchive?: (id: string) => void;
     itemLabel?: string;
+    /**
+     * 【2026-10-12 需求第 6/7 条】拖动时那几个**临时外观**由外面算好传进来：
+     *   · 正在被拖的那张 ⇒ 红边框
+     *   · 指针停在它身上（落点）⇒ 粉色填充
+     *   · 双击选中的"目标本" ⇒ 黄边框
+     * 卡片自己**不判断**这些状态（判断只在页面那一处），这里只负责把它画出来。
+     */
+    className?: string;
+    /** 双击（页面用它做"选目标本 / 并入哪一本"，已归档的卡片不传） */
+    onDoubleClick?: () => void;
 }
 
 export function NotebookCard({
     id, displayName, errorCount, meta, archived = false,
     onClick, onRename, onDelete, onToggleArchive, itemLabel = "items",
+    className = "", onDoubleClick,
 }: NotebookCardProps) {
     return (
         <Card
-            className={`cursor-pointer hover:border-primary/50 transition-colors relative group ${archived ? "opacity-60" : ""}`}
+            className={`cursor-pointer hover:border-primary/50 transition-colors relative group ${archived ? "opacity-60" : ""} ${className}`}
             onClick={onClick}
+            onDoubleClick={onDoubleClick}
         >
             <CardHeader className="pb-3">
                 <div className="flex items-start justify-between">

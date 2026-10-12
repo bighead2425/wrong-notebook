@@ -70,6 +70,8 @@ import { SheetZoom } from '@/components/print/sheet-zoom';
 import { InsightScanView } from '@/components/insight-scan-view';
 import { buildPageCode } from '@/lib/volume-code';
 import { shouldWarnBeforeLeaving, unsavedLeaveMessage } from '@/lib/unsaved-guard';
+// 【2026-10-12 需求第 2 条】手机端划一下就收 / 叫左栏（三个页面共用这一份）
+import { usePanelSwipe } from '@/lib/use-panel-swipe';
 
 /** 卷列表里的一项 */
 interface VolumeSummary {
@@ -165,6 +167,15 @@ function PrintWorkspace({ volId }: { volId: string }) {
     const L = (a: string, b: string) => (zh ? a : b);
 
     const [listOpen, setListOpen] = useState(true);
+
+    /**
+     * 【2026-10-12 需求第 2 条】手机端：左栏上向左划 ⇒ 收起；右栏上向右划 ⇒ 叫回来。
+     * 判据与"为什么用 touch 事件"见 `lib/use-panel-swipe.ts` 文件头。
+     * ⚠️ 右栏（`<section>`）里有**题图缩放把手**这类 pointer 拖拽；
+     *    手势那边"慢拖不算手势"那条正是为了不跟它抢（见那个文件头第 ③ 条）。
+     */
+    const leftSwipe = usePanelSwipe({ onSwipeLeft: () => setListOpen(false) });
+    const rightSwipe = usePanelSwipe({ onSwipeRight: () => setListOpen(true) });
     const [volumes, setVolumes] = useState<VolumeSummary[]>([]);
     const [loading, setLoading] = useState(true);
     const [notice, setNotice] = useState('');
@@ -281,15 +292,18 @@ function PrintWorkspace({ volId }: { volId: string }) {
                     <h1 className="text-base font-semibold sm:text-lg">
                         {L('积累纸 · 打印', 'Takeaways · print')}
                     </h1>
-                    <span className="flex-1" />
+                    {/* 【2026-10-12 需求第 3 条】从右上角挪到**标题后面**（它管的是左栏） */}
                     <Button
                         variant="outline"
                         size="icon"
-                        title={listOpen ? L('隐藏左栏', 'Hide list') : L('显示左栏', 'Show list')}
+                        title={listOpen
+                            ? L('隐藏左栏（手机上也能在左栏往左划一下收起）', 'Hide list')
+                            : L('显示左栏（手机上也能在右栏往右划一下叫出来）', 'Show list')}
                         onClick={() => setListOpen((v) => !v)}
                     >
                         {listOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
                     </Button>
+                    <span className="flex-1" />
                     <Link
                         href="/"
                         onClick={(e) => {
@@ -315,7 +329,7 @@ function PrintWorkspace({ volId }: { volId: string }) {
                 现在积累纸·打印页面左右又顶在左右边上了"）——与日积月累页同一个包裹。 */}
             <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-3 px-4 py-3 md:px-8 lg:flex-row">
                 {listOpen && (
-                    <aside className="w-full shrink-0 lg:w-[300px]">
+                    <aside className="w-full shrink-0 lg:w-[300px]" {...leftSwipe}>
                         <div className="flex max-h-[76vh] flex-col gap-2 overflow-y-auto rounded-md border bg-background p-2">
                             {loading ? (
                                 <div className="flex items-center justify-center py-10 text-muted-foreground">
@@ -379,7 +393,7 @@ function PrintWorkspace({ volId }: { volId: string }) {
                     </aside>
                 )}
 
-                <section className="min-w-0 flex-1">
+                <section className="min-w-0 flex-1" {...rightSwipe}>
                     {scanCode ? (
                         /* 【2026-10-03 需求第 5 条】【扫码图】那一屏：复用扫码页的 `InsightScanView`
                            （只多传了个 backLabel）。返回按钮文案改成"回到预览"，

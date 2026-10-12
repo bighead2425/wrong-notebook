@@ -290,6 +290,16 @@ export function ImitateSheet({
 
     const canDragDivider = !!onBlankChange && !!blankValueOf && !!onDividerDragStart;
 
+    /**
+     * 【2026-10-12】这一栏里有没有**探到栏外去**的屏幕控件？
+     *   · 扫码浏览：每道附题右边那个灰圆圈（`right: -11mm`）；
+     *   · 组建期：题块右上角那对上移 / 下移箭头（`right: -6mm`）。
+     * 有 ⇒ 给栏加 `print-imitate-column-no-clip`，否则它们会被栏自己的 `overflow: hidden` 裁掉
+     * （这就是他报的"模仿卷的附题没有灰圆圈"的真因 —— 画了，但被裁了）。
+     * ⚠️ 打印不受影响：那些控件都是 `no-print`，且纵向越界本来就被纸的外框裁在同一行（详见 globals.css）。
+     */
+    const hasOutsideOverlay = !!onQuestionPlusClick || !!onMoveQuestion;
+
     /** 这道附题能不能上移 / 下移 —— 与复练纸同一套判据（见 `ReviewSheet` 里那段） */
     const movePropsFor = (item: ErrorItem, seq: number) =>
         onMoveQuestion
@@ -364,7 +374,7 @@ export function ImitateSheet({
         <>
             {/* ===== 左栏：主题（贯通，可顺延到下一页） ===== */}
             <div
-                className="print-imitate-column print-imitate-left"
+                className={`print-imitate-column print-imitate-left${hasOutsideOverlay ? ' print-imitate-column-no-clip' : ''}`}
                 style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}
             >
                 {themeOverlay ? (
@@ -403,7 +413,7 @@ export function ImitateSheet({
 
             {/* ===== 右栏：附题（一道题绝不跨页） ===== */}
             <div
-                className="print-imitate-column print-imitate-right"
+                className={`print-imitate-column print-imitate-right${hasOutsideOverlay ? ' print-imitate-column-no-clip' : ''}`}
                 style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}
             >
                 {sheet.right.map((b, bi) => {

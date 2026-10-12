@@ -405,6 +405,32 @@ export default function ScanPage() {
     useEffect(() => () => stopScan(), [stopScan]);
 
     /**
+     * 【2026-10-12 需求第 14 条】进「扫一扫」**直接调摄像头**，不用再点一下按钮。
+     *
+     * 他原话："每次点击『扫一扫』，跳出『扫一扫』页面时，调用摄像头总要点击一下
+     *          『打开摄像头开始扫描』或『开始扫描』按钮，这是不必要的……如果点击停止扫描了，
+     *          再关闭摄像头。"
+     *
+     * ⚠️ 只在**挂载时试一次**（`autoStartedRef`），不能跟着任何状态重跑 ——
+     *    否则他点了「停止扫描」之后会被立刻强行打开，那就成了"关不掉"。
+     *    想重开就按那个按钮，按钮照旧留着（并顺手把文案说清楚）。
+     * ⚠️ 走**深链**进来的（`?vol=` / `?item=`）不进这一屏，当然也不开摄像头：
+     *    那时扫码画面根本没渲染，拿到流也没地方显示，只会白白亮着摄像头。
+     * ⚠️ 拿不到权限（旧浏览器 / 非 HTTPS / 他点了拒绝）⇒ `startScan` 内部已经兜住了：
+     *    显示原因 + 下面还有「手动输入」那条路，不会白屏。
+     */
+    const autoStartedRef = useRef(false);
+    useEffect(() => {
+        if (autoStartedRef.current) return;
+        autoStartedRef.current = true;
+        const qs = new URLSearchParams(window.location.search);
+        if (qs.get("vol") || qs.get("item")) return;
+        void startScan();
+        // `startScan` 是 useCallback([L, startDecodeLoop])：进依赖会随语言切换重建 ⇒ 只在挂载时跑一次
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    /**
      * 进来时**先看地址栏**有没有 vol / item：有就直接进那一屏。
      * 这一步就是三层返回能成立的关键（从详情页退回来时，URL 里带着 `item=`）。
      */
@@ -421,6 +447,15 @@ export default function ScanPage() {
             setView("volume");
         }
     }, []);
+
+    /**
+     * 【2026-10-12 需求第 5 条】"回到××卷"这句也跟着卷别走 ——
+     * 扫的明明是模仿卷、退回去却写着"回到复练卷"，与标题那个错是同一类（他指出的）。
+     */
+    const backToVolumeLabel =
+        parsePageCode(volumeCode)?.kind === "imitate"
+            ? L("回到模仿卷", "Back to the imitate volume")
+            : L("回到复练卷", "Back to the volume");
 
     /** 当前这一屏的 URL（给详情页的 `?back=` 用） */
     const currentUrl = (() => {
@@ -447,7 +482,7 @@ export default function ScanPage() {
                         itemId={itemId}
                         source={itemSource}
                         onBack={backFromCard}
-                        backLabel={volumeCode ? L("回到复练卷", "Back to volume") : L("回到扫码", "Back to scanner")}
+                        backLabel={volumeCode ? backToVolumeLabel : L("回到扫码", "Back to scanner")}
                         backTo={currentUrl}
                         /** 【2026-10-10】他要的"扫"：**走软件自己的扫码**（不是手机相机拍照） */
                         onScanForLink={(currentNo) => startLinkScan(itemId, currentNo)}
@@ -464,13 +499,23 @@ export default function ScanPage() {
          * 只是以前不管哪种卷都拿 `ReviewSheet`（题块）渲染，积累纸的条目就画错了。
          * 这里按**卷号里的代号**分流：积累纸走 `InsightScanView`（画框 + 圆圈加号那套）。
          */
-        const isBuild = parsePageCode(volumeCode)?.kind === "build";
+        /**
+         * 【2026-10-12 需求第 5 条】卷号里的代号决定这是哪种卷：
+         * `RE…` 复练卷 / `CO…` **模仿卷** / `BU…` 积累纸。
+         * 以前只分了"积累纸 / 不是积累纸"，于是模仿卷也叫"扫到的复练卷" —— 他指出来了。
+         */
+        const scannedKind = parsePageCode(volumeCode)?.kind;
+        const isBuild = scannedKind === "build";
         return (
             <main className="min-h-screen bg-background p-4 md:p-6">
                 <div className="mx-auto w-full max-w-6xl space-y-4">
                     <h1 className="flex items-center gap-2 text-xl font-bold">
                         <ScanLine className="h-5 w-5" />
-                        {isBuild ? L("扫到的积累纸", "Scanned takeaway sheet") : L("扫到的复练卷", "Scanned volume")}
+                        {isBuild
+                            ? L("扫到的积累纸", "Scanned takeaway sheet")
+                            : scannedKind === "imitate"
+                              ? L("扫到的模仿卷", "Scanned imitate volume")
+                              : L("扫到的复练卷", "Scanned volume")}
                     </h1>
                     {isBuild ? (
                         <InsightScanView

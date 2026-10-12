@@ -84,7 +84,26 @@ export async function GET(req: Request) {
                 whereClause.deletedAt = { not: null };
             } else {
                 whereClause.deletedAt = null;
-                if (scope === "archived") {
+                /**
+                 * 【2026-10-12 需求第 11 条】**点名要某一本时，不按归档与否过滤。**
+                 *
+                 * 他原话："已归档的错题本卡片是能打开的，但打开后里面存的错题卡是看不见的…
+                 *          但如果打开了已归档，点开了已归档错题本详情，那么其应具备的功能还是要有的。"
+                 *
+                 * 原来这里不看 `notebookId`：只要 scope 是 main（默认），就套上
+                 * "本未归档"的过滤 ⇒ 打开一本已归档的本，它**每一道题都被过滤掉**，
+                 * 页面空空如也（这正是他看到的）。而"按本查看"这个动作本身已经说清了范围，
+                 * 再叠一层归档过滤只会把内容拦掉，不会拦出任何他想要的效果。
+                 *
+                 * ⚠️ 只跳过**归档那一层**：`deletedAt = null` 与"已掌握不进主库"这两条照旧，
+                 *    这样已归档本的详情页与在用本的详情页**行为完全一致**，不会多出第二套规矩。
+                 */
+                if (notebookId) {
+                    // 点名了某一本 ⇒ **归不归档都照给**；"已掌握不进主库"那条照旧保留
+                    if (mastery === null) {
+                        andConditions.push({ masteryLevel: { lt: 2 } });
+                    }
+                } else if (scope === "archived") {
                     whereClause.notebook = { is: { archiveStatus: "archived" } };
                 } else if (scope === "main" || !scope) {
                     // 主库：本未归档（无本的题视作在主库，避免旧测试数据凭空消失）

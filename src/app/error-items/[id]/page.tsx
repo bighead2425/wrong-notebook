@@ -41,6 +41,8 @@ import { dayKey } from "@/lib/calendar-grid";
 import { ErrorItemCard } from "@/components/error-item-card";
 // 【2026-10-10】题间从属关系：颜色/说法只在 lib/item-link.ts 定一处；视图类型也在那儿（纯类型，不会把服务端代码带进来）
 import { linkRoleColor, linkRoleLabel, type LinkView } from "@/lib/item-link";
+// 【2026-10-12 需求第 15 条】详情页题号后面那个二维码（载荷与纸上印的同一个 = 题号）
+import { makeQrDataUrl } from "@/lib/qr";
 
 interface KnowledgeTag {
     id: string;
@@ -158,6 +160,34 @@ export default function ErrorDetailPage() {
     const prevItemId = myIdx > 0 ? siblingItemIds[myIdx - 1] : null;
     const nextItemId =
         myIdx >= 0 && myIdx < siblingItemIds.length - 1 ? siblingItemIds[myIdx + 1] : null;
+    /**
+     * 【2026-10-12 需求第 15 条】题号那个二维码的 data URL。
+     * 码的内容 = **题号本身**（`item.source`）—— 与印在纸上的那个码同一个载荷，
+     * 所以扫它由 `/api/scan` 走同一条反查路，落到这一屏，不会多出第二套地址。
+     * ⚠️ 没有题号的老题（`source` 为空）⇒ 不画码（画一个"空码"等于骗人去扫）。
+     */
+    const [itemQr, setItemQr] = useState<string | null>(null);
+    const itemSourceForQr = item?.source ?? null;
+    useEffect(() => {
+        let alive = true;
+        if (!itemSourceForQr) {
+            setItemQr(null);
+            return;
+        }
+        void makeQrDataUrl(itemSourceForQr, { width: 180, margin: 1 })
+            .then((url) => {
+                if (alive) setItemQr(url);
+            })
+            .catch((error) => {
+                // 生成失败就当没有（少一个码，不影响这一页任何别的功能）
+                console.error("Failed to render item QR:", error);
+                if (alive) setItemQr(null);
+            });
+        return () => {
+            alive = false;
+        };
+    }, [itemSourceForQr]);
+
     const [loading, setLoading] = useState(true);
     const [notesInput, setNotesInput] = useState("");
     const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
@@ -893,9 +923,27 @@ export default function ErrorDetailPage() {
                                     （"反正也知道这是题目，还不如把题号放到上面去 —— 既有科目分类又有录入时间"）。
                                     题号是二维码的锚点，只读。右侧放两个打印次数（只读计数，放这儿正好）。 */}
                                 <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <CardTitle className="font-mono text-base">
-                                        {item.source || t.detail.question}
-                                    </CardTitle>
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        <CardTitle className="font-mono text-base">
+                                            {item.source || t.detail.question}
+                                        </CardTitle>
+                                        {/* 【2026-10-12 需求第 15 条】题号后面直接放**这道题的二维码**。
+                                            他原话："目前进入错题详情页后没有这道题的二维码，使用起来很不方便，
+                                            建议在错题详情页，每道错题题号后面直接增加这道题的二维码。"
+                                            ⚠️ 码的内容就是**题号本身**（与印在纸上的那个码同一个载荷，
+                                               见 `lib/qr.ts`）⇒ 手机扫它 = 直接进这一屏，不是另一套地址。 */}
+                                        {itemQr && (
+                                            <img
+                                                src={itemQr}
+                                                alt={item.source || "QR"}
+                                                title={L(
+                                                    "扫这个码 = 直接跳到这道题（与纸上印的同一个码）",
+                                                    "Scan to open this question (same code as printed)",
+                                                )}
+                                                className="h-9 w-9 shrink-0 rounded border bg-white p-0.5"
+                                            />
+                                        )}
+                                    </div>
                                     {/* 【2026-10-01 他要求】「深挖 X | 复练 Y」——
                                         当"类型=深挖 且 深挖打印次数=0"时**底色转黄**（提醒该去印深挖纸了）；
                                         **双击它**表示『这次我知道了』，提醒解除（写 deepNudgeDismissed）。

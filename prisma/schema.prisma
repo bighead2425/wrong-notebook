@@ -85,6 +85,11 @@ model Notebook {
   // 归档状态（H2 四分法 · 归档是本级操作，5.3：题不自持归档标记）
   archiveStatus String @default("active") // active(在用) / archived(已归档)
 
+  /// 【2026-10-12 需求第 6/12 条】卡片**手工排序位**（拖动排序用）。
+  /// 排序键 = `sortOrder ASC, createdAt DESC` —— 默认 0（"没手工排过"）时退回今天的行为。
+  /// 只在"同一用户 + 同一归档状态 + 同一年级组"内比大小（跨组/跨归档不许换位）。
+  sortOrder   Int    @default(0)
+
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -97,6 +102,8 @@ model Notebook {
   @@index([userId])
   @@index([subject])
   @@index([archiveStatus])
+  // 【2026-10-12】列表就是"某个用户的某一类本，按 sortOrder 排"（见同名 migration.sql）
+  @@index([userId, archiveStatus, sortOrder])
 }
 
 model ErrorItem {

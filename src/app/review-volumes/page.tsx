@@ -37,8 +37,18 @@ import {
     Trash2,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
+// 【2026-10-12 需求第 1 条】离开前的"保存 / 不保存 / 取消"三选一（不用原生 confirm —— 它只有两个键）
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api-client";
 import type { ErrorItem, PaginatedResponse } from "@/types/api";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -83,6 +93,8 @@ import {
     unsavedLeaveMessage,
     type ReviewLayoutBaseline,
 } from "@/lib/unsaved-guard";
+// 【2026-10-12 需求第 2 条】手机端划一下就收 / 叫左栏（三个页面共用这一份）
+import { usePanelSwipe } from "@/lib/use-panel-swipe";
 
 /**
  * 【2026-10-11 他定】"上次检索的年级/学期留在缓存"——
@@ -150,12 +162,21 @@ interface VolumeDetail extends VolumeSummary {
 /** 题已不在库里时，用快照行自己的 id 当 key（它必须稳定、且与真题 id 不冲突） */
 const missingKeyOf = (rowId: string) => `missing:${rowId}`;
 
+/** 【2026-10-12 需求第 1 条】离开前那个三选一的答案 */
+type LeaveChoice = "save" | "discard" | "cancel";
+
 export default function ReviewVolumesPage() {
     const { language } = useLanguage();
     const zh = language === "zh";
     const L = useCallback((a: string, b: string) => (zh ? a : b), [zh]);
-    // 【2026-10-03】这里原先有 `const router = useRouter()`：只为【扫码图】里"点加号跳 /scan"。
-    // 那条路已改成**页内叠一层**（见 `scanItemId`），本页再无跳转需求 ⇒ 一并去掉，免得留个没用的变量。
+    /**
+     * 【2026-10-03】这里原先有 `const router = useRouter()`：只为【扫码图】里"点加号跳 /scan"。
+     * 那条路改成了**页内叠一层**（见 `scanItemId`），当时把 router 去掉了。
+     * 【2026-10-12 需求第 1 条】又需要它了：三按钮弹框是**异步**的，
+     * 「返回 / 回主页」不能靠 `<a href>` 自己跳（这一下必须在弹框出来之前就拦掉），
+     * 只能问完他、再由我们**自己** `router.push`。
+     */
+    const router = useRouter();
 
     // ---------- 左栏：卷列表 ----------
     const [volumes, setVolumes] = useState<VolumeSummary[]>([]);
@@ -191,6 +212,13 @@ export default function ReviewVolumesPage() {
     const [gradeTermFilter, setGradeTermFilter] = useState<string>("");
     const [subjectFilter, setSubjectFilter] = useState<string>("");
     const [leftHidden, setLeftHidden] = useState(false);
+
+    /**
+     * 【2026-10-12 需求第 2 条】左栏上向左划 ⇒ 收起；右栏上向右划 ⇒ 叫回来。
+     * 判据（快 / 平 / 够长）与"不当成手势"的取舍见 `lib/use-panel-swipe.ts` 文件头。
+     */
+    const leftSwipe = usePanelSwipe({ onSwipeLeft: () => setLeftHidden(true) });
+    const rightSwipe = usePanelSwipe({ onSwipeRight: () => setLeftHidden(false) });
 
     // ---------- 右栏：选中的那一卷 ----------
     const [selectedId, setSelectedId] = useState<string>("");
@@ -663,26 +691,12 @@ export default function ReviewVolumesPage() {
         });
     }, [detail, savedBaseline, blankDefault, blankOverrides, figureScales]);
 
-    /** 会丢改动的动作先问一句；点取消返回 false（停在原地、改动还在） */
-    const confirmDiscard = useCallback(
-        (actionZh: string, actionEn: string) => {
-            if (!shouldWarnBeforeLeaving(dirty)) return true;
-            return window.confirm(unsavedLeaveMessage(zh, actionZh, actionEn));
-        },
-        [dirty, zh],
-    );
-
-    /** 切换 / 打开另一卷（左栏列表点击）—— 他最常踩的那条，必须拦 */
-    const handleOpenVolume = useCallback(
-        (id: string) => {
-            // 点的是已经打开的这一卷：重载只会白丢草稿，直接不动
-            if (dirty && id === selectedId) return;
-            if (!confirmDiscard("切换卷", "Switch volume")) return;
-            closeScan();
-            void openVolume(id);
-        },
-        [dirty, selectedId, confirmDiscard, openVolume, closeScan],
-    );
+    /**
+     * ⚠️ `confirmDiscard` / `handleOpenVolume` **故意写在 `updateVolume` 之后**（文件下面一点）：
+     *    他 2026-10-12 需求第 1 条要的"三选一"里有一项是**「保存」**，
+     *    那就得调用 `updateVolume`；而 `useCallback` 的依赖数组是在**渲染期**求值的，
+     *    放在它前面会直接踩 TDZ（`Cannot access 'updateVolume' before initialization`）。
+     */
 
     /**
      * 【2026-10-03 需求第 4 条】浏览器**关闭 / 刷新**标签页那一手也拦一下：
@@ -811,8 +825,17 @@ export default function ReviewVolumesPage() {
      * 「更新组卷」= 把**当前纸面**覆盖回这一份卷（**卷号、页归属都不变**）。
      * ⚠️ 占位行（原题已删）也要原样回写：不然这次保存会把"此题已无"那格从卷里抹掉。
      */
-    const updateVolume = useCallback(async () => {
-        if (!detail || !layoutReady || overfullForKind.length > 0) return;
+    const updateVolume = useCallback(async (): Promise<boolean> => {
+        /**
+         * ⚠️【2026-10-12 需求第 1 条】返回 `boolean` 而不是 `void`：离开时的"保存并跳转"
+         *    必须先知道**存成功没**再决定跳不跳 —— 没存成还照跳，等于骗他"存过了"。
+         *    （原来这里只 `return;`，调用方只能靠猜。）
+         */
+        if (!detail || !layoutReady) return false;
+        if (overfullForKind.length > 0) {
+            setNotice(L("有页面装不下了，先把那几页调小再保存", "Some page is overfull — fix it before saving"));
+            return false;
+        }
         setBusy("saving");
         setNotice("");
         try {
@@ -884,9 +907,11 @@ export default function ReviewVolumesPage() {
             setSavedBaseline({ defaultBlankLines: blankDefault, blankLines: savedBlanks, figureScale: savedFigures });
             setNotice(L("已更新组卷（卷号不变）", "Volume updated (same volume no.)"));
             fetchList();
+            return true;
         } catch (error) {
             console.error("Failed to update volume:", error);
             setNotice(L("更新组卷失败，请重试", "Failed to update the volume"));
+            return false;
         } finally {
             setBusy("");
         }
@@ -908,6 +933,75 @@ export default function ReviewVolumesPage() {
         L,
         fetchList,
     ]);
+
+    // ================= 【2026-10-12 需求第 1 条】离开前的三选一 =================
+
+    /**
+     * 改过却没更新就想走 ⇒ 弹这个三按钮的框（他原话）：
+     *   "一是保存，点击即更新组卷再跳转；二是不保存，点击即不更新组卷即跳转；
+     *    三是取消，点击意味不跳转，还在当前卷页。"
+     *
+     * 为什么不用 `window.confirm` 了：原生框只有"确定 / 取消"两个键，
+     * 而"确定"到底等于"保存"还是"丢掉"？他每次都要重新想一遍，还容易点错把改动丢了。
+     * 三个键各说各的，就没有这个歧义。
+     */
+    const [leaveAsk, setLeaveAsk] = useState<{
+        /** 这次要去做的事（如"返回"），嵌进那句话里让他知道自己在离开什么 */
+        action: string;
+        resolve: (choice: LeaveChoice) => void;
+    } | null>(null);
+
+    /** 弹框并等他的选择（Promise 化的"三选一"） */
+    const askLeave = useCallback(
+        (action: string) =>
+            new Promise<LeaveChoice>((resolve) => {
+                setLeaveAsk({ action, resolve });
+            }),
+        [],
+    );
+
+    const answerLeave = useCallback(
+        (choice: LeaveChoice) => {
+            const pending = leaveAsk;
+            setLeaveAsk(null);
+            pending?.resolve(choice);
+        },
+        [leaveAsk],
+    );
+
+    /** 会丢改动的动作先问一句；返回 false = 停在原地（改动还在） */
+    const confirmDiscard = useCallback(
+        async (actionZh: string, actionEn: string): Promise<boolean> => {
+            if (!shouldWarnBeforeLeaving(dirty)) return true;
+            const choice = await askLeave(zh ? actionZh : actionEn);
+            if (choice === "cancel") return false;
+            /** 「保存」：存成了才放行；没存成（比如某页撑爆了）就停在原地，让他自己看着办 */
+            if (choice === "save") return await updateVolume();
+            return true; // 「不保存」= 原样进出，改动丢掉
+        },
+        [dirty, zh, askLeave, updateVolume],
+    );
+
+    /** 先问、放行才跳（所有"离开这一卷"的出口都走它，免得有的拦有的不拦） */
+    const leaveThen = useCallback(
+        async (actionZh: string, actionEn: string, go: () => void) => {
+            if (await confirmDiscard(actionZh, actionEn)) go();
+        },
+        [confirmDiscard],
+    );
+
+    /** 切换 / 打开另一卷（左栏列表点击）—— 他最常踩的那条，必须拦 */
+    const handleOpenVolume = useCallback(
+        (id: string) => {
+            // 点的是已经打开的这一卷：重载只会白丢草稿，直接不动
+            if (dirty && id === selectedId) return;
+            void leaveThen("切换卷", "Switch volume", () => {
+                closeScan();
+                void openVolume(id);
+            });
+        },
+        [dirty, selectedId, leaveThen, openVolume, closeScan],
+    );
 
     /**
      * 打印这一卷：先把"复练纸印刷次数"记上（卷内**所有**还找得到的题各 +1），再调浏览器打印。
@@ -931,9 +1025,8 @@ export default function ReviewVolumesPage() {
 
     /** 【2026-10-03 需求第 4 条】打印前先拦一下：改了没保存就打印，印出来的是改动后的版面、库里却还是旧的 */
     const handlePrint = useCallback(() => {
-        if (!confirmDiscard("打印", "Print")) return;
-        void printVolume();
-    }, [confirmDiscard, printVolume]);
+        void leaveThen("打印", "Print", () => void printVolume());
+    }, [leaveThen, printVolume]);
 
     /** 改名（只存库里、不上纸）：走 PATCH 的"只带 title"那条路 */
     const saveTitle = useCallback(async () => {
@@ -1069,27 +1162,37 @@ export default function ReviewVolumesPage() {
                     <span
                         className="shrink-0 inline-flex"
                         onClickCapture={(e) => {
-                            if (!confirmDiscard("返回", "Go back")) {
-                                e.preventDefault();
-                                e.stopPropagation();
-                            }
+                            /**
+                             * ⚠️【2026-10-12】改成三按钮之后这里**必须先拦、再问**：
+                             * 弹框是异步的，没办法"问完了再决定要不要 preventDefault"
+                             * （那时候事件早就发完了）。所以：没改就原样放行；
+                             * 改过就先把这一下吃掉，再按他的选择决定要不要自己跳。
+                             */
+                            if (!dirty) return;
+                            e.preventDefault();
+                            e.stopPropagation();
+                            void leaveThen("返回", "Go back", () => router.push("/"));
                         }}
                     >
                         <BackButton fallbackUrl="/" className="shrink-0" />
                     </span>
                     <h1 className="text-base sm:text-lg font-semibold truncate">{L("已有组卷", "Existing volumes")}</h1>
-                    <span className="text-xs text-muted-foreground hidden lg:inline">
-                        {L("已生成的卷都在这里（新卷请到打印预览页组）", "All built volumes live here")}
-                    </span>
-                    <span className="flex-1" />
+                    {/* 【2026-10-12 需求第 3 条】"显示 / 隐藏左栏"从右上角挪到**标题后面** ——
+                        它管的是左栏，站在左栏这一侧才找得到（与打印预览页同一版式）。 */}
                     <Button
                         variant="outline"
                         size="icon"
-                        title={L("隐藏 / 显示左栏", "Toggle list")}
+                        title={leftHidden
+                            ? L("显示左栏（手机上也能在右栏往右划一下叫出来）", "Show list")
+                            : L("隐藏左栏（手机上也能在左栏往左划一下收起）", "Hide list")}
                         onClick={() => setLeftHidden((v) => !v)}
                     >
                         {leftHidden ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
                     </Button>
+                    <span className="text-xs text-muted-foreground hidden lg:inline">
+                        {L("已生成的卷都在这里（新卷请到打印预览页组）", "All built volumes live here")}
+                    </span>
+                    <span className="flex-1" />
                     <Button
                         variant="outline"
                         size="icon"
@@ -1102,7 +1205,10 @@ export default function ReviewVolumesPage() {
                     <Link
                         href="/"
                         onClick={(e) => {
-                            if (!confirmDiscard("回主页", "Go home")) e.preventDefault();
+                            // 同上：改过就先吃掉这一下，再按他的选择决定跳不跳
+                            if (!dirty) return;
+                            e.preventDefault();
+                            void leaveThen("回主页", "Go home", () => router.push("/"));
                         }}
                     >
                         <Button variant="ghost" size="icon" title={L("返回主页", "Home")}>
@@ -1120,7 +1226,7 @@ export default function ReviewVolumesPage() {
                 <div className="print-preview-frame mx-auto w-full max-w-[1600px] px-4 md:px-8">
                     {/* ===== 左栏：卷列表 ===== */}
                     {!leftHidden && (
-                        <aside className="print-preview-left no-print">
+                        <aside className="print-preview-left no-print" {...leftSwipe}>
                             <div className="space-y-3">
                                 <div className="flex items-center gap-2">
                                     <div className="relative flex-1">
@@ -1313,7 +1419,7 @@ export default function ReviewVolumesPage() {
                     )}
 
                     {/* ===== 右栏：选中卷的纸面 ===== */}
-                    <main className="print-preview-right">
+                    <main className="print-preview-right" {...rightSwipe}>
                         {scanCode ? (
                             /*
                              * 【2026-10-03 需求第 5 条】【扫码图】那一屏：
@@ -1331,16 +1437,22 @@ export default function ReviewVolumesPage() {
                             <div className="mx-auto w-full max-w-6xl px-4 py-6">
                                 <h1 className="mb-3 flex items-center gap-2 text-lg font-bold">
                                     <ScanLine className="h-5 w-5" />
+                                    {/* 【2026-10-12 需求第 5 条】模仿卷别写成"复练卷"了 ——
+                                        这一页两种卷都能打开，标题得跟着**打开的是哪种卷**走。 */}
                                     {scanItemId
                                         ? L("扫到的这道题", "Scanned question")
-                                        : L("扫到的复练卷", "Scanned volume")}
+                                        : kind === "imitate"
+                                          ? L("扫到的模仿卷", "Scanned imitate volume")
+                                          : L("扫到的复练卷", "Scanned volume")}
                                 </h1>
                                 {scanItemId ? (
                                     <ScanItemPanel
                                         itemId={scanItemId}
                                         source="main"
                                         onBack={() => setScanItemId(null)}
-                                        backLabel={L("回到复练卷", "Back to volume")}
+                                        backLabel={kind === "imitate"
+                                            ? L("回到模仿卷", "Back to the imitate volume")
+                                            : L("回到复练卷", "Back to the volume")}
                                         /**
                                          * 面板里那个【打开详情页】的返回目标：指回**本页 + 扫码图**，
                                          * 这样从详情页退回来时还是这一屏（靠上面读 `?vol=&scan=` 还原）。
@@ -1647,6 +1759,33 @@ export default function ReviewVolumesPage() {
                     </main>
                 </div>
             </div>
+
+            {/* 【2026-10-12 需求第 1 条】离开这一卷（切卷 / 返回 / 回主页 / 打印）时的三选一。
+                三个键的顺序照他说的来：**保存 → 不保存 → 取消**；
+                主按钮做成「保存」（默认样式），另两个是描边 / 幽灵 —— 顺序听他的、轻重看得清。
+                ⚠️ Esc / 点遮罩 = 取消（Radix 的默认关闭回调，落到 `answerLeave("cancel")`）。 */}
+            <Dialog open={!!leaveAsk} onOpenChange={(open) => { if (!open) answerLeave("cancel"); }}>
+                <DialogContent className="no-print">
+                    <DialogHeader>
+                        <DialogTitle>{L("修改组卷未更新", "Unsaved volume changes")}</DialogTitle>
+                        <DialogDescription>{L("是否保存更新？", "Save the changes before leaving?")}</DialogDescription>
+                    </DialogHeader>
+                    <p className="text-sm text-muted-foreground">
+                        {leaveAsk ? unsavedLeaveMessage(zh, leaveAsk.action, leaveAsk.action) : ""}
+                    </p>
+                    <DialogFooter className="gap-2 sm:gap-2">
+                        <Button onClick={() => answerLeave("save")}>
+                            {L("保存", "Save")}
+                        </Button>
+                        <Button variant="outline" onClick={() => answerLeave("discard")}>
+                            {L("不保存", "Don't save")}
+                        </Button>
+                        <Button variant="ghost" onClick={() => answerLeave("cancel")}>
+                            {L("取消", "Cancel")}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

@@ -91,6 +91,28 @@ export function buildDisplayName(params: {
     return `${stageShort}${gradeShort}${semShort}${subjectLabel(params.subject)}`;
 }
 
+/**
+ * 【2026-10-12 需求第 12 条】年级的**全局序号** —— 给"已归档按年级分组、年级**倒序**"排序用。
+ *
+ * 跨学段递增：小学 10..15 → 初中 20..22 → 高中 30..32（留出空档，以后插年级不用改数）。
+ * 认不出的年级（老数据里的空串、手输的怪值）一律 **-1** ⇒ 倒序时自然排在最末，
+ * 也就是界面上那个"未设年级"组永远垫底。
+ *
+ * ⚠️ 为什么用序号而不是直接比中文字符串：`"六年级" > "五年级"` 按字符比是对的，
+ *    但 `"初三" > "初二"` 这种跨学段、混着重名的（"一年级" vs "初一"）就全乱了，
+ *    而"同年级的卡片放在一起、年级之间倒序"是他明确要的**顺序**，不能碰运气。
+ */
+export const GRADE_RANK: Record<string, number> = Object.fromEntries(
+    Object.values(GRADES_BY_STAGE).flatMap((list, si) =>
+        list.map((g, gi) => [g.key, (si + 1) * 10 + gi] as const),
+    ),
+);
+
+export function gradeRankOf(grade?: string | null): number {
+    if (!grade) return -1;
+    return GRADE_RANK[grade] ?? -1;
+}
+
 /** 列表副标题，如 "五年级 · 上 · 数学" */
 export function buildNotebookMeta(nb: {
     gradeStage?: string;
