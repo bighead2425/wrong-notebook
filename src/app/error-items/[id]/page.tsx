@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -43,6 +43,8 @@ import { ErrorItemCard } from "@/components/error-item-card";
 import { linkRoleColor, linkRoleLabel, type LinkView } from "@/lib/item-link";
 // 【2026-10-12 需求第 15 条】详情页题号后面那个二维码（载荷与纸上印的同一个 = 题号）
 import { makeQrDataUrl } from "@/lib/qr";
+// 【2026-10-13 他拍板的设计】"这道题现在该怎么处置"——由四个圆圈的事实现算，不落库
+import { reviewStatusOf, reviewStatusSentence } from "@/lib/review-status";
 
 interface KnowledgeTag {
     id: string;
@@ -187,6 +189,13 @@ export default function ErrorDetailPage() {
             alive = false;
         };
     }, [itemSourceForQr]);
+
+    /**
+     * 【2026-10-13 他拍板的设计】这道题的**状态**（新 / 要练 / 复练中 / 退休）——
+     * 由 `reviewOutcomes`（那四个圆圈里的事实）**现算**，不落库。
+     * ⚠️ 跟着 `item.reviewOutcomes` 走：他在卡片上改圆圈，上面那句话立刻跟着变。
+     */
+    const reviewStatus = useMemo(() => reviewStatusOf(item?.reviewOutcomes), [item?.reviewOutcomes]);
 
     const [loading, setLoading] = useState(true);
     const [notesInput, setNotesInput] = useState("");
@@ -1235,13 +1244,23 @@ export default function ErrorDetailPage() {
                                         {/* 【2026-09-30 他要求】把卡片上那**四个复习结果圆圈**纳进详情页，
                                             摆在试题信息栏的最后（等级后面）。
                                             前三行 = 录入日 +1 / +7 / +21 天（写具体日期），最后一行 = 最近一次情况。 */}
-                                        <div className="pt-2 border-t">
+                                        <div className="pt-2 border-t space-y-2">
                                             <ReviewOutcomeEditor
                                                 value={item.reviewOutcomes}
                                                 createdAt={item.createdAt}
                                                 onChange={saveReviewOutcomes}
                                                 L={L}
                                             />
+                                            {/* 【2026-10-13 他拍板的设计】**这道题现在该怎么处置** ——
+                                                由上面那四个圆圈里的事实**算出来**（`lib/review-status.ts`），
+                                                不落库。他原来纠结的"连对几次该降档/该算已掌握"
+                                                现在不由人判：对就加分、错就清零。
+                                                ⚠️ 句子里**必须带上"已有几次结果"** ——
+                                                   一次两次的判断不值得当真，别让它显得很准。 */}
+                                            <p className="text-xs text-muted-foreground">
+                                                {L("状态：", "Status: ")}
+                                                {reviewStatusSentence(reviewStatus, language === "zh")}
+                                            </p>
                                         </div>
                                     </div>
                                 </div>
