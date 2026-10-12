@@ -68,6 +68,13 @@ export async function PATCH(
         if ('source' in body) {
             data.source = typeof body.source === 'string' && body.source ? body.source : null;
         }
+        /** 【2026-10-13】暂存 ⇄ 正式（录入页的"保存"就是把草稿转正） */
+        if ('status' in body) {
+            if (body.status !== 'draft' && body.status !== 'final') {
+                return badRequest("status must be 'draft' or 'final'");
+            }
+            data.status = body.status;
+        }
 
         if (Object.keys(data).length === 0 && !('photo' in body)) {
             return badRequest("nothing to update");

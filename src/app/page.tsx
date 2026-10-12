@@ -462,8 +462,13 @@ function HomeContent() {
                             </Link>
 
                             {/* 【2026-10-01 他要求】「日积月累」入口，就放在复练卷页旁边。
-                                那一页是"从错题里攒下来的一句话"，条目按 JLyyyymmddxxx 编号。 */}
-                            <Link href="/insights">
+                                那一页是"从错题里攒下来的一句话"，条目按 JLyyyymmddxxx 编号。
+                                【2026-10-13 第 3 条·他改了去向】这个入口现在指向**录入页**
+                                （`/insights/write`）——他原话："在主页点击日积月累，进入日积月累页，
+                                这个页我们要重新设计……一进入日积月累页，就是建立日积月累条目的界面。"
+                                ⇒ 管理页与打印页从那页顶栏的两个按钮进（老路由一个都没动，
+                                   它们被扫码/内阁/错题详情页一串深链用着）。 */}
+                            <Link href="/insights/write">
                                 <Button
                                     variant="outline"
                                     className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"

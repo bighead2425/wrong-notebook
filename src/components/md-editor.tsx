@@ -94,6 +94,12 @@ export interface MdEditorInstance {
     replaceEmojiRange: (from: number, to: number, expected: string, ch: string) => void;
     /** 关闭 emoji 浮层（点面板外时用）：只清状态，**不动文档** */
     closeEmojiPicker: () => void;
+    /**
+     * 【2026-10-13】撤销上一步（日积月累**录入页**顶栏那颗撤销按钮要用）。
+     * 走 Milkdown 自带 history 的 undo 命令 —— 与 Ctrl+Z **同一条路**，
+     * 所以按钮和快捷键的效果永远一致（不自己另造一套历史）。
+     */
+    undo: () => void;
     destroy: () => Promise<void>;
 }
 
@@ -121,8 +127,8 @@ export async function createMdEditorInstance(opts: {
         { commonmark, remarkPreserveEmptyLinePlugin },
         { gfm },
         { listener, listenerCtx },
-        { history },
-        { $markAttr, $markSchema, $remark, $inputRule, $prose, $nodeSchema, getMarkdown },
+        { history, undoCommand },
+        { $markAttr, $markSchema, $remark, $inputRule, $prose, $nodeSchema, getMarkdown, callCommand },
         { markRule },
         { Plugin: ProsePlugin, TextSelection },
         { Fragment },
@@ -760,6 +766,7 @@ export async function createMdEditorInstance(opts: {
             created.action((ctx) => replaceEmojiRange(ctx.get(editorViewCtx), from, to, expected, ch));
         },
         closeEmojiPicker: () => pickerCtl.close?.(),
+        undo: () => created.action(callCommand(undoCommand.key)),
         destroy: () => created.destroy().then(() => undefined),
     };
 }
@@ -780,6 +787,13 @@ export interface MdEditorProps {
      * 保存或取消后父组件的判断变回 false，颜色自动恢复。
      */
     dirty?: boolean;
+    /**
+     * 【2026-10-13】编辑器**就绪**时把实例交出来（卸载时给 `null`）。
+     * 日积月累录入页顶栏那颗「撤销」要用它调 `undo()` ——
+     * 组件本身不是 forwardRef（实例藏在内部），所以用回调这种方式交出去，
+     * 不改动既有用法（不传就跟以前一模一样）。
+     */
+    onReady?: (instance: MdEditorInstance | null) => void;
 }
 
 /**
@@ -802,6 +816,7 @@ export function MdEditor({
     minHeightPx = 140,
     className = '',
     dirty = false,
+    onReady,
 }: MdEditorProps) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     /** 源码模式的 textarea（要按内容"量身高"，见下面的 effect） */
@@ -810,6 +825,8 @@ export function MdEditor({
     /** 自己最近一次吐给父组件的 md（回环护栏的锚点） */
     const emittedRef = useRef<string | null>(null);
     const onChangeRef = useRef(onChange);
+    /** 【2026-10-13】`onReady` 的同步副本（理由同上面那条：在 effect 里同步，不在渲染期写 ref） */
+    const onReadyRef = useRef(onReady);
     /** 父组件最近传进来的 value（异步初始化完成后对账用） */
     const valueRef = useRef(value);
     /** 源码模式：显示原始 md 文本域（不是"编辑态"，只是一个查看/微调的口子） */
@@ -824,8 +841,9 @@ export function MdEditor({
     //    第一个 effect 声明在最前 ⇒ 每次渲染后它先跑，下面依赖它的逻辑读到的都是新值。
     useEffect(() => {
         onChangeRef.current = onChange;
+        onReadyRef.current = onReady;
         valueRef.current = value;
-    }, [onChange, value]);
+    }, [onChange, onReady, value]);
 
     useEffect(() => {
         if (sourceMode) return;
@@ -849,6 +867,7 @@ export function MdEditor({
                     return instance.destroy();
                 }
                 instanceRef.current = instance;
+                onReadyRef.current?.(instance);
                 // 异步加载期间父组件可能已换了 value（挂载初值 ≠ 现值才补灌）
                 if (valueRef.current !== mountValue) {
                     instance.setMarkdown(valueRef.current);
@@ -863,6 +882,7 @@ export function MdEditor({
             disposed = true;
             const instance = instanceRef.current;
             instanceRef.current = null;
+            onReadyRef.current?.(null);
             if (instance) {
                 instance.destroy().catch((error) => console.warn('[MdEditor] destroy failed:', error));
             }

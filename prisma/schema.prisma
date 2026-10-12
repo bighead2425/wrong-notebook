@@ -618,6 +618,13 @@ model Insight {
   /// 这条从哪来的：question（错题送）/ page（日积月累页建）/ external（外部送，留口子）
   source String?
 
+  /// 【2026-10-13 他定的】`draft` = **暂存**（等他后续整理或删除）/ `final` = 正式内容。
+  /// 他原话："点击暂存后目前这一条日积月累直接暂存入数据库，
+  ///          在日积月累·管理页中用标识标出等待后续整理（或删除）。"
+  /// ⇒ 默认 `final`（老数据全是正式内容）；列表/打印/内阁**默认不收草稿**，
+  ///    只有管理页带 `?drafts=1` 才看它们。
+  status String @default("final")
+
   /// ⚠️【2026-10-01 起弃用·保留列】原来存错题内部 id + 图片 data URL。
   /// 弃用原因见迁移 20261001200000：按学期/题号检索时被迫把图片一起搬进内存（"字典每页贴照片"）。
   /// 图片已搬到 `InsightPhoto`；关联改用 `errorItemNo`（题号）。老数据已回填，新代码不再写这两列。
@@ -641,6 +648,8 @@ model Insight {
   @@unique([userId, errorItemNo])
   @@index([userId, createdAt])
   @@index([errorItemId])
+  // 【2026-10-13】列表默认按 `status` 过滤（不收草稿）⇒ 给它一个联合索引
+  @@index([userId, status])
 }
 
 /// 【2026-10-01】日积月累的**配图**（一张积累最多一张图，他定的规则）。
@@ -659,4 +668,10 @@ model InsightPhoto {
   createdAt DateTime @default(now())
 
   @@unique([insightId])
+
+  /// 【2026-10-13 第 6 条】"入版"开关：**组成积累纸时这张图跟不跟着进去**。
+  /// 他原话："点中入版，则表示在组成积累纸的时候，这个图片是跟随进入的，
+  ///          如果这个按钮开关是关着的……在排版积累纸的时候，这个图片是不跟随进入的。"
+  /// ⇒ 默认 **true**（插了图就是要用），关掉=这条只留文字。
+  includedInPrint Boolean @default(true)
 }

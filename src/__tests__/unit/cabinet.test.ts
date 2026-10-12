@@ -8,6 +8,7 @@ import {
     pendingDeepPrint,
     pendingRecoverItems,
     pendingRecoverVolumes,
+    practiceTodayItems,
     unprintedInsights,
     upgradeSuggestions,
     type CabinetInsight,
@@ -275,5 +276,88 @@ describe('⑦ 编排 + 跨任务去重', () => {
         const t = buildCabinetTasks({ questions: [item, item], insights: [], volumes: [], now: NOW });
         expect(t.pendingDeepPrint.count).toBe(1);
         expect(t.pendingDeepPrint.ids).toEqual(['1']);
+    });
+});
+
+/* ==========================================================================
+ * ⑦ 【2026-10-13 他拍板的设计】今天先练这几道
+ *
+ * 判据 = **由复练结果算出来的紧迫度**（`lib/review-status.ts`），与②「该复查」分工：
+ *   ② 看**纸上的日期格**（打印日 +1/+7/+21）；⑦ 看**复练结果**。
+ *   ⭐ ⑦ 补②的窟窿：计划三次做满后②直接 `continue`（判据是"第一个空格"），
+ *      之后要是又错就没人管了 —— 这类题在⑦里捞得回来。
+ * ========================================================================== */
+describe('practiceTodayItems —— 今天先练这几道', () => {
+    const outcomes = (planned: ('right' | 'wrong' | null)[], last: 'right' | 'wrong' | null) =>
+        JSON.stringify({ planned, last });
+
+    it('★ 从没练过的题要收（紧迫度 5）', () => {
+        const out = practiceTodayItems([q({ id: 'A', reviewOutcomes: null })], NOW);
+        expect(out).toHaveLength(1);
+        expect(out[0].reasonZh).toBe('还没练过');
+        expect(out[0].status.urgency).toBe(5);
+    });
+
+    it('★ 连错两次以上 ⇒ 收，而且理由写"连错 N 次"', () => {
+        const out = practiceTodayItems([q({ id: 'A', reviewOutcomes: outcomes(['wrong', 'wrong', null], 'wrong') })], NOW);
+        expect(out).toHaveLength(1);
+        expect(out[0].reasonZh).toBe('连错 2 次');
+    });
+
+    it('★ 上次做错 ⇒ 收（理由"上次做错"）', () => {
+        const out = practiceTodayItems([q({ id: 'A', reviewOutcomes: outcomes([null, null, null], 'wrong') })], NOW);
+        expect(out[0].reasonZh).toBe('上次做错');
+    });
+
+    it('★ 连对 1–2 次的不收（那是"到点再练"，不是"今天必须练"）', () => {
+        const one = q({ id: 'A', reviewOutcomes: outcomes([null, null, null], 'right') });
+        const two = q({ id: 'B', reviewOutcomes: outcomes(['right', 'right', null], 'right') });
+        expect(practiceTodayItems([one, two], NOW)).toHaveLength(0);
+    });
+
+    it('★ 已掌握（masteryLevel=2）一律不收 —— 四分法里它不进主库，也不该催练', () => {
+        const done = q({ id: 'A', reviewOutcomes: null, masteryLevel: 2 });
+        expect(practiceTodayItems([done], NOW)).toHaveLength(0);
+    });
+
+    it('★ 已经在别的任务里催过的题不重复收（传进来的排除集）', () => {
+        const a = q({ id: 'A', reviewOutcomes: null });
+        const b = q({ id: 'B', reviewOutcomes: null });
+        const out = practiceTodayItems([a, b], NOW, new Set(['A']));
+        expect(out.map((x) => x.question.id)).toEqual(['B']);
+    });
+
+    it('★ 排序：紧迫度 desc → 连错多的在前 → 题号升序（确定性，不会今天这样明天那样）', () => {
+        const fresh = q({ id: 'A', source: 'SX202601', reviewOutcomes: null }); // 5
+        const wrong2 = q({ id: 'B', source: 'SX202602', reviewOutcomes: outcomes(['wrong', 'wrong', null], 'wrong') }); // 5，连错 2
+        const wrong1 = q({ id: 'C', source: 'SX202603', reviewOutcomes: outcomes([null, null, null], 'wrong') }); // 4
+        const out = practiceTodayItems([wrong1, fresh, wrong2], NOW);
+        expect(out.map((x) => x.question.id)).toEqual(['B', 'A', 'C']);
+    });
+
+    it('★ 被②「该复查」漏掉的那批（计划三次做满之后又错）能在这里被捞回来', () => {
+        // 计划三格全填 + 最近一次是错 ⇒ dueReviewItems 的判据（第一个空格）找不到它，直接跳过
+        const missed = q({
+            id: 'A',
+            printCount: 3,
+            lastPrintedAt: new Date(2026, 8, 1),
+            reviewOutcomes: outcomes(['right', 'right', 'right'], 'wrong'),
+        });
+        expect(dueReviewItems([missed], NOW)).toHaveLength(0); // ② 看不见它
+        const out = practiceTodayItems([missed], NOW); // ⑦ 看得见
+        expect(out).toHaveLength(1);
+        expect(out[0].status.state).toBe('due');
+    });
+
+    it('★ 汇总进 buildCabinetTasks：与②③去重（同一题不被三块同时催）', () => {
+        const tasks = buildCabinetTasks({
+            questions: [q({ id: 'A', reviewOutcomes: null })],
+            insights: [],
+            volumes: [],
+            now: NOW,
+        });
+        expect(tasks.practiceToday.count).toBe(1);
+        expect(tasks.practiceToday.items[0].reasonZh).toBe('还没练过');
+        expect(tasks.practiceToday.items[0].urgency).toBe(5);
     });
 });

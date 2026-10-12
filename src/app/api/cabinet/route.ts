@@ -85,7 +85,8 @@ export async function GET() {
                 },
             }),
             prisma.insight.findMany({
-                where: { userId },
+                /** 【2026-10-13】草稿（暂存）不算"未打印的日积月累" —— 它还没整理，不是待印内容 */
+                where: { userId, status: { not: 'draft' } },
                 select: {
                     id: true,
                     code: true,
@@ -119,6 +120,8 @@ export async function GET() {
             printCount: it.printCount,
             lastPrintedAt: it.lastPrintedAt,
             reviewOutcomes: it.reviewOutcomes,
+            /** 【2026-10-13】⑦「今天先练」要用它把"已掌握"的排除掉（上面 select 里本来就有） */
+            masteryLevel: it.masteryLevel,
             notebookId: it.notebookId,
         }));
 

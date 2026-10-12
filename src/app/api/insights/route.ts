@@ -90,6 +90,14 @@ export async function GET(req: Request) {
             : null;
 
         const filters: Prisma.InsightWhereInput[] = [{ userId: user.id }];
+        /**
+         * 【2026-10-13 他定的】默认**不返回暂存条**（`status='draft'`）——
+         * 打印页、内阁、"挑条目"都不该看见半成品（他：暂存 = 等待后续整理或删除）。
+         * 管理页要看它们 ⇒ 带 `?drafts=1`。
+         */
+        if (searchParams.get('drafts') !== '1') {
+            filters.push({ status: { not: 'draft' } });
+        }
         if (grade) filters.push({ gradeSemester: grade });
         if (subjects.length) filters.push({ subject: { in: subjects } });
         if (errorItemNo) filters.push({ errorItemNo });
@@ -175,7 +183,13 @@ export async function POST(req: Request) {
                 ? body.errorItemNo.trim().toUpperCase()
                 : null;
 
-        const dataForWrite = { gradeSemester, subject, content, source: src };
+        /**
+         * 【2026-10-13】暂存 / 正式：**只有显式传 'draft' 才当草稿**，
+         * 其余一律 `final` —— 老调用方（错题直送、AI 送）不传也不受影响。
+         */
+        const status = body.status === 'draft' ? 'draft' : 'final';
+
+        const dataForWrite = { gradeSemester, subject, content, source: src, status };
 
         // ★ 题号当钥匙：已有这一题的条目 ⇒ 覆盖（编号不变）。
         // ⚠️ 覆盖时**只动正文和来源**，不动 gradeSemester/subject ——

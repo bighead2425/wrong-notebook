@@ -83,6 +83,11 @@ interface InsightRow {
     errorItemNo: string | null;
     source: string | null;
     createdAt: string;
+    /**
+     * 【2026-10-13 他定的】`draft` = **暂存**（录入页按了暂存、等他整理或删除）/
+     * `final` = 正式内容。这一页**要看得到草稿**并标出来，别处（打印 / 内阁）默认都不收。
+     */
+    status?: string | null;
 }
 
 /** 选中的条目单独取详情时，接口额外给的（图片本体 + 活题） */
@@ -128,6 +133,12 @@ function insightListQuery(p: {
     if (p.subjects.length) qs.set('subjects', p.subjects.join(','));
     if (p.q.trim()) qs.set('q', p.q.trim());
     if (p.cursor) qs.set('cursor', p.cursor);
+    /**
+     * 【2026-10-13】管理页**要看得到暂存条**（他："在日积月累·管理页中用标识标出
+     * 等待后续整理（或删除）"）⇒ 这一页始终带 `drafts=1`；
+     * 打印页/内阁不带 ⇒ 默认看不见草稿。
+     */
+    qs.set('drafts', '1');
     return qs.toString();
 }
 
@@ -825,8 +836,15 @@ export default function InsightsPage() {
                                             onClick={() => selectRow(r.id)}
                                             className="min-w-0 flex-1 text-left"
                                         >
-                                            <div className="flex items-center gap-2">
+                                            <div className="flex flex-wrap items-center gap-2">
                                                 <span className="font-mono text-xs font-semibold">{r.code}</span>
+                                                {/* 【2026-10-13】暂存条一眼认出来 ——
+                                                    他："在管理页中用标识标出等待后续整理（或删除）" */}
+                                                {r.status === 'draft' && (
+                                                    <Badge variant="secondary" className="px-1 py-0 text-[10px]">
+                                                        {L('待整理', 'Draft')}
+                                                    </Badge>
+                                                )}
                                                 {r.errorItemNo && (
                                                     <Badge variant="outline" className="px-1 py-0 text-[10px]">
                                                         {L('题', 'Q')} {r.errorItemNo}

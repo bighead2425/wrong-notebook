@@ -30,6 +30,8 @@ import {
     PLANNED_REVIEW_OFFSET_DAYS,
 } from './review-outcomes';
 import { normalizeManageType } from './manage-type';
+// 【2026-10-13】⑦「今天先练这几道」用状态机算紧迫度（规则只在那一个模块里）
+import { reviewStatusOf, type ReviewStatus } from './review-status';
 
 /* ============================ 输入形状 ============================ */
 
@@ -46,7 +48,24 @@ export interface CabinetQuestion {
     lastPrintedAt: Date | string | null;
     /** 复习结果（JSON 字符串或对象）—— 规则见 review-outcomes.ts */
     reviewOutcomes: unknown;
+    /**
+     * 掌握度（0 新 / 1 复习中 / 2 已掌握）。
+     * 【2026-10-13】⑦「今天先练这几道」要用它把人已掌握的那批**排除掉**
+     * （四分法里已掌握不进主库，也不该催着练）。
+     * 可选：老调用方（测试）不传也能跑 —— 不传按 0 处理。
+     */
+    masteryLevel?: number | null;
     notebookId?: string | null;
+}
+
+/** 【2026-10-13】"今天先练哪几道"的一条 —— 由复练结果算出来（不落库，见 review-status.ts） */
+export interface PracticeTodayItem {
+    question: CabinetQuestion;
+    /** 状态机算出来的那套（状态 / 连对 / 紧迫度 / 建议下次 / 证据条数） */
+    status: ReviewStatus;
+    /** 为什么现在该练它（界面直接拼在题号后面；中英各一句，只在这处生成） */
+    reasonZh: string;
+    reasonEn: string;
 }
 
 /** 一条日积月累（只取判"有没有印进过卷 / 是不是某题的回收记录"要用的） */
@@ -179,6 +198,63 @@ export function dueReviewItems(
             label: PLANNED_REVIEW_LABELS_ZH[idx],
         });
     }
+    return out;
+}
+
+/* ============================ ⑦ 今天先练这几道 ============================ */
+
+/**
+ * 【2026-10-13 他拍板的设计】**"今天先练哪几道"** —— 由复练结果算出来的紧迫度排序。
+ *
+ * ── 它与②「该复查的题」的分工（两块都留着，不互相替代）──────────────
+ *   · ② 该复查 = **纸面驱动**：印过深挖纸、纸上的日期格（+1/+7/+21 天）到了。
+ *   · ⑦ 今天先练 = **证据驱动**：按复练结果算出的紧迫度（新题 / 刚错 / 连错）。
+ *
+ *   ⭐ ⑦ 补的正是②那个窟窿：②的判据是"`planned` 里第一个空格"，
+ *      **三格做满就直接 `continue`** ⇒ "计划三次都做完、之后又做错"的题，
+ *      ②**永远不会再提醒**；而按新规则**错了就必须回来练**。这类题在⑦里捞得回来。
+ *
+ * ── 收谁（判据写死，人和 AI 都别在这里加形容词）──────────────────────
+ *   只收**紧迫度 ≥ 4**：新录入（还没练过）、最近一次错、连错两次以上。
+ *   · ⚠️ `masteryLevel >= 2`（已掌握）一律不收 —— 四分法里它们不进主库，也不该催练。
+ *   · ⚠️ 已在②③（该复查 / 该回录）里出现的题**不重复收**：那两块已经在催它了，
+ *        同一道题被三块同时催，等于没有重点。
+ *
+ * ── 排序（确定性：同样的输入永远同样的顺序，界面不会今天这样明天那样）────
+ *   紧迫度 desc → 连错多的在前 → 题号升序（题号就是录入先后）。
+ */
+export function practiceTodayItems(
+    questions: readonly CabinetQuestion[],
+    now: Date,
+    excludeIds: ReadonlySet<string> = new Set(),
+): PracticeTodayItem[] {
+    const out: PracticeTodayItem[] = [];
+    for (const q of questions) {
+        if (excludeIds.has(q.id)) continue;
+        if ((Number(q.masteryLevel) || 0) >= 2) continue;
+        const status = reviewStatusOf(q.reviewOutcomes, now);
+        if (status.urgency < 4) continue;
+
+        let reasonZh: string;
+        let reasonEn: string;
+        if (status.state === 'new') {
+            reasonZh = '还没练过';
+            reasonEn = 'never practiced';
+        } else if (status.wrongStreak >= 2) {
+            reasonZh = `连错 ${status.wrongStreak} 次`;
+            reasonEn = `wrong ${status.wrongStreak}× in a row`;
+        } else {
+            reasonZh = '上次做错';
+            reasonEn = 'last attempt was wrong';
+        }
+        out.push({ question: q, status, reasonZh, reasonEn });
+    }
+
+    out.sort((a, b) => {
+        if (b.status.urgency !== a.status.urgency) return b.status.urgency - a.status.urgency;
+        if (b.status.wrongStreak !== a.status.wrongStreak) return b.status.wrongStreak - a.status.wrongStreak;
+        return String(a.question.source ?? a.question.id).localeCompare(String(b.question.source ?? b.question.id));
+    });
     return out;
 }
 
@@ -339,6 +415,19 @@ export interface CabinetTasks {
         volumeIds: string[];
     };
     unprintedInsights: CabinetTask<{ id: string; code: string; subject?: string | null }>;
+    /**
+     * 【2026-10-13】"今天先练这几道" —— 由复练结果算出来的紧迫度（`practiceTodayItems`）。
+     * 没有 `count` 上限：**总数如实给**，界面上要显示"共 N 道、这里列前几道"，
+     * 只显示前几道会让人以为只有那几道（项目规矩：统计类界面必须亮出样本量）。
+     */
+    practiceToday: CabinetTask<{
+        id: string;
+        source: string | null;
+        notebookId?: string | null;
+        urgency: number;
+        reasonZh: string;
+        reasonEn: string;
+    }>;
     upgradeSuggestions: CabinetTask<{
         id: string;
         source: string | null;
@@ -388,6 +477,16 @@ export function buildCabinetTasks(input: {
     const recoveredVolumes = pendingRecoverVolumes(volumes, now, options);
     const unprinted = unprintedInsights(insights);
     const upgrades = upgradeSuggestions(questions, options);
+    /**
+     * ⑦ 今天先练：**排除**已经落在别的任务里的题（待打印深挖 / 该复查 / 该回录）——
+     * 那些块已经在催它了，别再催一遍。理由见 `practiceTodayItems` 的文件头。
+     */
+    const alreadyNagged = new Set<string>([
+        ...deep.map((q) => q.id),
+        ...due.map((d) => d.question.id),
+        ...recover.map((r) => r.question.id),
+    ]);
+    const practice = practiceTodayItems(questions, now, alreadyNagged);
 
     return {
         pendingDeepPrint: {
@@ -433,6 +532,18 @@ export function buildCabinetTasks(input: {
             count: unprinted.length,
             ids: unprinted.map((i) => i.id),
             items: unprinted.map((i) => ({ id: i.id, code: i.code, subject: i.subject })),
+        },
+        practiceToday: {
+            count: practice.length,
+            ids: practice.map((p) => p.question.id),
+            items: practice.map((p) => ({
+                id: p.question.id,
+                source: p.question.source,
+                notebookId: p.question.notebookId,
+                urgency: p.status.urgency,
+                reasonZh: p.reasonZh,
+                reasonEn: p.reasonEn,
+            })),
         },
         upgradeSuggestions: {
             count: upgrades.length,

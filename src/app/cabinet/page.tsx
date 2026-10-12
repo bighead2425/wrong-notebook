@@ -44,6 +44,7 @@ import {
     BarChart3,
     BookOpen,
     ClipboardCheck,
+    Dumbbell,
     Landmark,
     Layers,
     Loader2,
@@ -102,6 +103,18 @@ interface CabinetResponse {
         pendingRecoverVolumes: CabinetTask<{ id: string; volumeNo: string; unrecoveredCount: number; daysSinceCreated: number }>;
         unprintedInsights: CabinetTask<{ id: string; code: string; subject?: string | null }>;
         upgradeSuggestions: CabinetTask<{ id: string; source: string | null; notebookId?: string | null; wrongCount: number }>;
+        /**
+         * 【2026-10-13 他拍板的设计】"今天先练这几道"（由复练结果算出来的紧迫度，
+         * 规则在 `lib/review-status.ts` + `lib/cabinet.ts` 的 `practiceTodayItems`）。
+         */
+        practiceToday: CabinetTask<{
+            id: string;
+            source: string | null;
+            notebookId?: string | null;
+            urgency: number;
+            reasonZh: string;
+            reasonEn: string;
+        }>;
     };
 }
 
@@ -383,6 +396,26 @@ export default function CabinetPage() {
 
                     {loading ? null : error ? null : data ? (
                         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                            {/* 【2026-10-13 他拍板的设计 · 放在最前】今天先练这几道 ——
+                                判据 = 由复练结果算出来的**紧迫度**（`lib/review-status.ts`），
+                                与下面「该复查的题」分工明确：那个看纸上的日期格，这个看复练结果。
+                                ⭐ 它专门补「该复查」的窟窿：计划三次做满之后又做错的题，
+                                   原来那一块永远不会再提醒（判据是"第一个空格"），这里捞得回来。 */}
+                            <TaskCard
+                                icon={<Dumbbell className="h-5 w-5" />}
+                                title={L("今天先练这几道", "Practice these today")}
+                                desc={L(
+                                    "按复练结果算的紧迫度排的：没练过的、上次做错的、连错两次以上的（已掌握的、以及上面几块已经在催的，都不重复算）",
+                                    "Sorted by urgency from review results: never practiced / last wrong / wrong twice in a row",
+                                )}
+                                count={data.tasks.practiceToday.count}
+                                unit={L("道", "items")}
+                                samples={data.tasks.practiceToday.items
+                                    .map((i) => `${i.source || i.id}·${zh ? i.reasonZh : i.reasonEn}`)
+                                    .slice(0, 4)}
+                                href={printLink("review", data.tasks.practiceToday.ids)}
+                                cta={L("去组复练卷", "Build a review volume")}
+                            />
                             {/* 待打印深挖题 */}
                             <TaskCard
                                 icon={<Printer className="h-5 w-5" />}
