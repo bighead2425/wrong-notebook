@@ -4,6 +4,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { BookOpen, Pencil, Trash2, Archive, ArchiveRestore, ArrowUpLeft, ArrowDownRight, Merge } from "lucide-react";
 import { Button } from "@/components/ui/button";
+/**
+ * 【2026-10-13 需求第 1 条】学科配色 —— **不新造一套颜色**：
+ * 就用纸面上那套 9 色 + 其他（"明度统一偏深、色相拉开、天然冗余"三条原则见该文件头）。
+ */
+import { getSubjectColorDef } from "@/lib/subject-colors";
 
 interface NotebookCardProps {
     id: string;
@@ -46,6 +51,21 @@ interface NotebookCardProps {
     onMerge?: () => void;
     /** 已选中（黄框 + 按钮高亮） */
     mergeArmed?: boolean;
+    /**
+     * 【2026-10-13 需求第 1 条】学科 `subjectKey`（math/chinese/…/other）。
+     *
+     * 他给了两个方案（换 10 种符号 vs 把符号染色）让我判，我判的是**染色**：
+     *   ① 你们自己定的配色原则里就写着"颜色只是一眼识别的加成，**天然冗余靠 2 字母简拼**"，
+     *      换 10 种符号正好违背它 —— 在 20px 那个大小上，书/卷轴/原子/烧瓶**互相分不出来**，
+     *      等于用更弱的信号换掉更强的信号（副标题本来就印着"数学/语文"）；
+     *   ② 染色 + 左侧一条学科色带是**零维护**（颜色表本来就在 `subject-colors.ts`），
+     *      而 10 套符号要人一个个去认、去记。
+     *
+     * ⚠️ 只染**色**，不改学科名 —— 名字在副标题里（`meta`），不重复。
+     * ⚠️ 传空（未归本）⇒ **不染色**（保持原来那个主题色图标 + 无色带），
+     *    因为"没归本"不是一个学科；`'other'` 是**真学科**，照染（黑）。
+     */
+    subject?: string | null;
 }
 
 export function NotebookCard({
@@ -54,16 +74,34 @@ export function NotebookCard({
     className = "",
     onMoveUp, onMoveDown, canMoveUp = true, canMoveDown = true,
     onMerge, mergeArmed = false,
+    subject,
 }: NotebookCardProps) {
+    /** 有学科才染色（空 = 未归本，保持原样；`'other'` 是合法学科，照染） */
+    const subjectDef = subject && subject.trim() ? getSubjectColorDef(subject) : null;
+
     return (
         <Card
-            className={`cursor-pointer hover:border-primary/50 transition-colors relative group ${archived ? "opacity-60" : ""} ${className}`}
+            className={`cursor-pointer hover:border-primary/50 transition-colors relative overflow-hidden group ${archived ? "opacity-60" : ""} ${className}`}
             onClick={onClick}
         >
+            {/* 【2026-10-13】左侧学科色带 —— 列表里扫一眼就知道"哪本是哪科"最快的一处。
+                ⚠️ 用**绝对定位的条**而不是 `border-l-4`：卡片自带 `hover:border-primary/50`，
+                   走边框的话一悬停色带就被主题色盖掉；绝对定位的条不参与 border 那些变数。 */}
+            {subjectDef && (
+                <span
+                    aria-hidden
+                    className="absolute inset-y-0 left-0 w-1"
+                    style={{ background: subjectDef.hex }}
+                />
+            )}
             <CardHeader className="pb-3">
                 <div className="flex items-start justify-between">
                     <div className="flex items-center gap-2 min-w-0">
-                        <BookOpen className="h-5 w-5 text-primary shrink-0" />
+                        <BookOpen
+                            className={`h-5 w-5 shrink-0${subjectDef ? "" : " text-primary"}`}
+                            // 有学科 ⇒ 用学科色（inline 压过 class 上的颜色）；没学科 ⇒ 保持主题色
+                            style={subjectDef ? { color: subjectDef.hex } : undefined}
+                        />
                         <div className="min-w-0">
                             <CardTitle className="text-lg truncate">{displayName}</CardTitle>
                             {meta && (

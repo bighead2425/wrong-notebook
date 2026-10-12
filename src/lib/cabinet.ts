@@ -32,6 +32,8 @@ import {
 import { normalizeManageType } from './manage-type';
 // 【2026-10-13】⑦「今天先练这几道」用状态机算紧迫度（规则只在那一个模块里）
 import { reviewStatusOf, type ReviewStatus } from './review-status';
+// 【2026-10-13】学情底账（覆盖率）—— 判据在 overview.ts，本文件只负责把它一起返回
+import { buildOverview, type Overview } from './overview';
 
 /* ============================ 输入形状 ============================ */
 
@@ -56,6 +58,14 @@ export interface CabinetQuestion {
      */
     masteryLevel?: number | null;
     notebookId?: string | null;
+    /**
+     * 【2026-10-13 底账】学科 subjectKey（从 **Notebook** 取 —— 题自己不存学科，
+     * 见 schema 里 `ErrorItem.gradeSemester` 那条"由 Notebook 承载"的注释）。
+     * 可选：老调用方（测试）不传 ⇒ 底账里落进「未归本」，不会算错。
+     */
+    subject?: string | null;
+    /** 【2026-10-13 底账】错因（`MistakeCategory` 之一）—— 覆盖率要数它 */
+    mistakeCategory?: string | null;
 }
 
 /** 【2026-10-13】"今天先练哪几道"的一条 —— 由复练结果算出来（不落库，见 review-status.ts） */
@@ -434,6 +444,19 @@ export interface CabinetTasks {
         notebookId?: string | null;
         wrongCount: number;
     }>;
+    /**
+     * 【2026-10-13】学情底账 —— **不是任务，是"这批数据有多厚"的体检报告**。
+     *
+     * 出处：我给他设计状态机时提的那条前置条件 ——
+     *   *"AI 判断的前提是先有覆盖率 …… 只扫了一半，AI 会**很自信地得出错结论**。"*
+     * ⇒ 每个数字都要能看出"这是基于几道题算的"，所以它跟任务卡一起返回，
+     *   界面上一眼看到"一共几道、其中几道有复练结果"（判据在 `lib/overview.ts`）。
+     *
+     * ⚠️ 名字叫 `ledger` 不叫 `overview`：接口返回体里已经有一个 `overview`
+     *    （错题本一览那套 `questionCount / byManageType / byMastery`，页面在用它），
+     *    两个都叫 overview 会让人以为是同一个东西。
+     */
+    ledger: Overview;
 }
 
 /**
@@ -555,5 +578,7 @@ export function buildCabinetTasks(input: {
                 wrongCount: u.wrongCount,
             })),
         },
+        /** 【2026-10-13 底账】与任务卡用**同一批题**算 —— 用户看到"共 N 道"必须处处一致 */
+        ledger: buildOverview(questions, now),
     };
 }

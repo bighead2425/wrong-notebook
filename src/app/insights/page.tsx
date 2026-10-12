@@ -58,6 +58,7 @@ import { cycleManageType } from '@/lib/manage-type';
 import { usePanelSwipe } from '@/lib/use-panel-swipe';
 import type { ErrorItem } from '@/types/api';
 import {
+    Check,
     ExternalLink,
     House,
     Image as ImageIcon,
@@ -510,7 +511,15 @@ export default function InsightsPage() {
         // 只在挂载时跑一次：这段读的是 URL，不随列表/筛选变化
     }, []);
 
-    const save = async () => {
+    /**
+     * 【2026-10-13】保存这一条 —— 抽出来是为了让「保存」与「定稿」走**同一条 PATCH**。
+     *
+     * ⚠️ 之所以必须抽：这两者的差别**只有一个 `status`**。要是各写一遍，
+     *    迟早出现"保存时存了 A、定稿时漏了 B"这种两处不一致（这个项目踩过好几次）。
+     *
+     * @param extra 额外的字段（定稿时传 `{ status: 'final' }`）—— 普通保存不传
+     */
+    const persist = async (extra: Record<string, unknown> = {}) => {
         if (!current) return;
         setSaving(true);
         try {
@@ -519,6 +528,7 @@ export default function InsightsPage() {
                 subject: subjectDraft || null,
                 content,
                 photo,
+                ...extra,
             });
             setRows((prev) => prev.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
             // 兜底那份也要刷新 —— 它不在列表里时，脏判断靠的就是它（见 selectedRow 的说明）
@@ -533,6 +543,18 @@ export default function InsightsPage() {
             setSaving(false);
         }
     };
+
+    const save = () => persist();
+
+    /**
+     * 【2026-10-13】把**暂存条**（`status='draft'`）定稿 —— 顺带把这一屏的改动一起存。
+     *
+     * 为什么非有不可：这一页原来的「保存」**不传 status**，所以暂存条在这里改完再存
+     * **仍然是草稿** ⇒ 它会永远卡在「待整理」，打印页和内阁也永远看不见它
+     * —— 一个我自己挖出来的死结。他第 4 条的原话是
+     * "在日积月累·管理页中用标识标出等待后续整理（或删除）" ⇒ **整理完要能定稿**。
+     */
+    const finalizeDraft = () => persist({ status: 'final' });
 
     const discard = () => {
         if (!current) return;
@@ -969,6 +991,31 @@ export default function InsightsPage() {
                                         </Select>
                                     </div>
                                 </div>
+
+                                {/* 【2026-10-13】暂存条（草稿）的**出口**。
+                                    ⚠️ 它必须独立于下面那对"保存/取消"（那对只在 dirty 时才出现）——
+                                       一条**没被改动**的草稿同样需要能定稿，否则他得先随便改一个字才能定稿。
+                                    颜色沿用录入页"暂存"的琥珀色，一眼认得出是同一件事。 */}
+                                {current.status === 'draft' && (
+                                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2">
+                                        <span className="text-xs">
+                                            {L(
+                                                '这是暂存条（待整理）：定稿后才会进「打印」和「内阁」。',
+                                                'Draft: it reaches Printing and the Cabinet only after you finalize it.',
+                                            )}
+                                        </span>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            className="h-7 shrink-0"
+                                            onClick={() => void finalizeDraft()}
+                                            disabled={saving}
+                                        >
+                                            <Check className="mr-1 h-4 w-4" />
+                                            {L('定稿', 'Finalize')}
+                                        </Button>
+                                    </div>
+                                )}
 
                                 {/* ② 保存 / 取消 —— 【2026-10-01 上移】。
                                     他原话："这个保存和取消的按钮实在是太靠下面了，建议调整到上面去。"

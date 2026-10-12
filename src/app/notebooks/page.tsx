@@ -390,6 +390,8 @@ export default function NotebooksPage() {
                 onToggleArchive={handleArchiveToggle}
                 onDelete={() => handleDelete(notebook.id, notebook._count?.errorItems || 0, notebook.displayName)}
                 itemLabel={t.notebooks?.items || "items"}
+                /* 【第 1 条】学科色（染图标 + 左侧色带）—— 颜色表来自 subject-colors，与本子属性同源 */
+                subject={notebook.subject}
                 /* 【第 3 条】卡片右下角那三个按钮（见 `notebook-card.tsx`） */
                 canMoveUp={idx > 0}
                 canMoveDown={idx >= 0 && idx < group.length - 1}

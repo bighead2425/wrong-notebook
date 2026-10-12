@@ -82,6 +82,10 @@ export async function GET() {
                     reviewOutcomes: true,
                     masteryLevel: true,
                     createdAt: true,
+                    /** 【2026-10-13 底账】错因（覆盖率要数它） */
+                    mistakeCategory: true,
+                    /** 【2026-10-13 底账】学科只在 Notebook 上（题自己不存）⇒ 连本子一起取 */
+                    notebook: { select: { subject: true } },
                 },
             }),
             prisma.insight.findMany({
@@ -123,6 +127,10 @@ export async function GET() {
             /** 【2026-10-13】⑦「今天先练」要用它把"已掌握"的排除掉（上面 select 里本来就有） */
             masteryLevel: it.masteryLevel,
             notebookId: it.notebookId,
+            /** 【2026-10-13 底账】学科从本子来；没归本的题 = null（底账里落「未归本」） */
+            subject: it.notebook?.subject ?? null,
+            /** 【2026-10-13 底账】错因 */
+            mistakeCategory: it.mistakeCategory,
         }));
 
         // 日积月累 → 纯逻辑输入（记下它被编进过哪些卷）

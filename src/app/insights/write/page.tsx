@@ -32,7 +32,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Check, ChevronDown, Inbox, Loader2, Printer, Settings2, Undo2 } from "lucide-react";
+import { ArrowLeft, Check, Inbox, Loader2, Printer, Settings2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MdEditor, type MdEditorInstance } from "@/components/md-editor";
 import { apiClient } from "@/lib/api-client";
@@ -173,8 +173,17 @@ export default function InsightWritePage() {
         return () => window.removeEventListener("beforeunload", onBeforeUnload);
     }, [hasContent]);
 
+    /**
+     * 标签外观。
+     * ⚠️ `relative` + `overflow-hidden` 是**给里面那层透明 select 定位用的**，别删：
+     *    他明确要求"标签**不显示下拉三角**，只要点击标签就下拉" ⇒ 做法是让 `<select>`
+     *    铺满整个标签（`absolute inset-0 opacity-0`），点标签任意位置都命中它本身，
+     *    原生的下拉就会展开。
+     *    ⚠️ 不能用 `sr-only`：那会把 select 缩成 1px，点标签**大概率点不到**它，
+     *       表现就是"点了一下没反应"—— 比留个三角更糟。
+     */
     const tagClass =
-        "inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs hover:bg-accent transition-colors";
+        "relative inline-flex items-center gap-1 overflow-hidden rounded-md border px-2.5 py-1 text-xs hover:bg-accent transition-colors";
 
     return (
         <main className="min-h-screen bg-background">
@@ -236,10 +245,8 @@ export default function InsightWritePage() {
                     <label className={tagClass}>
                         <span className="truncate max-w-[7rem]">
                             {gradeSemester || L("年级学期", "Grade/term")}
-                        </span>
-                        <ChevronDown className="h-3 w-3 opacity-60" />
-                        <select
-                            className="sr-only"
+                        </span>                        <select
+                            className="absolute inset-0 h-full w-full cursor-pointer appearance-none opacity-0"
                             value={gradeSemester}
                             onChange={(e) => setGradeSemester(e.target.value)}
                             aria-label={L("年级学期", "Grade and term")}
@@ -257,10 +264,8 @@ export default function InsightWritePage() {
                             {subject
                                 ? SUBJECT_OPTIONS.find((s) => s.key === subject)?.label ?? subject
                                 : L("学科", "Subject")}
-                        </span>
-                        <ChevronDown className="h-3 w-3 opacity-60" />
-                        <select
-                            className="sr-only"
+                        </span>                        <select
+                            className="absolute inset-0 h-full w-full cursor-pointer appearance-none opacity-0"
                             value={subject}
                             onChange={(e) => setSubject(e.target.value)}
                             aria-label={L("学科", "Subject")}
@@ -298,12 +303,37 @@ export default function InsightWritePage() {
 
                 {(notice || error) && (
                     <div
-                        className={`rounded-md border px-3 py-1.5 text-sm ${error
+                        className={`flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-1.5 text-sm ${error
                             ? "border-destructive/50 text-destructive"
                             : "border-emerald-500/40 bg-emerald-500/10"
                             }`}
                     >
-                        {error || notice}
+                        <span>{error || notice}</span>
+                        {/**
+                         * 【2026-10-13】「另起一条」—— 暂存之后那个**死结**的出口。
+                         *
+                         * 暂存会把这一条的 id 记下来（接着写 = 改它，这是对的：不会攒出一堆重复条）。
+                         * 但他要是想"再记一条新的"，原来只有一条路 —— 手动把内容删光；
+                         * 而删光之后按钮变灰、重新写的内容一按保存又会**盖回那条暂存条**，
+                         * 他会以为"写了半天没存上"。⇒ 给一个明确的脱身按钮。
+                         */}
+                        {draftId && !error && (
+                            <button
+                                type="button"
+                                className="shrink-0 rounded border px-2 py-0.5 text-xs hover:bg-accent"
+                                onClick={() => {
+                                    resetForNext();
+                                    setNotice(
+                                        L(
+                                            "已另起一条（刚暂存的那条在「管理」里等着整理）。",
+                                            "Started a new one — the draft is waiting in Manage.",
+                                        ),
+                                    );
+                                }}
+                            >
+                                {L("另起一条", "New one")}
+                            </button>
+                        )}
                     </div>
                 )}
 

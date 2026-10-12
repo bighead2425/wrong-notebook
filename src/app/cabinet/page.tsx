@@ -39,6 +39,8 @@ import {
     MANAGE_TYPE_SCREEN_COLOR,
     MANAGE_TYPE_UNDECIDED_COLOR,
 } from "@/lib/manage-type";
+/** 【2026-10-13】学情底账（覆盖率）—— 判据只在 `lib/overview.ts`，这里只管显示 */
+import { coverageSentence, type Overview } from "@/lib/overview";
 import {
     ArrowRight,
     BarChart3,
@@ -115,6 +117,12 @@ interface CabinetResponse {
             reasonZh: string;
             reasonEn: string;
         }>;
+        /**
+         * 【2026-10-13】学情底账（覆盖率 / 状态分布）。
+         * ⚠️ 与上面那个 `overview`（错题本一览的 questionCount/byManageType/byMastery）
+         *    **不是一回事**：那个回答"有多少题"，这个回答"**数据有多厚**"。
+         */
+        ledger: Overview;
     };
 }
 
@@ -151,6 +159,20 @@ function StatTile({ label, value, hint }: { label: string; value: number | strin
 }
 
 const MASTERY_COLORS = { fresh: "#2563eb", reviewing: "#d97706", mastered: "#16a34a" };
+
+/**
+ * 【2026-10-13】复习状态四档的色 —— **与上面掌握状态同一套语义**，别另造一套：
+ *   蓝 = 新的（还没起步）／琥珀 = 进行中／绿 = 完成（不必再排）；
+ *   红 = **最急**（"要练" = 昨天该做没做）。
+ * ⚠️ 这里的红是"催办"，不是"报错"，也不是纸面那个"升级 ⇒ 红" —— 但两者方向一致
+ *    （都是"要更用力"），所以同屏不冲突。
+ */
+const REVIEW_STATE_COLORS: Record<string, string> = {
+    new: "#2563eb",
+    due: "#dc2626",
+    practicing: "#d97706",
+    retired: "#16a34a",
+};
 
 /* ============================ 页面 ============================ */
 
@@ -271,20 +293,37 @@ export default function CabinetPage() {
                             <Card>
                                 <CardHeader>
                                     <CardTitle className="text-base">{L("整体构成", "Composition")}</CardTitle>
+                                    {/* 【2026-10-13】覆盖率 —— 判据在 lib/overview.ts。
+                                        放在最显眼处是有意的：下面每个数字都要能看出"基于几道题算的"，
+                                        这也是将来任何 AI 结论必须挂靠的那把尺子。 */}
+                                    <p className="text-xs text-muted-foreground">
+                                        {coverageSentence(data.tasks.ledger.coverage.reviewResult, zh)}
+                                    </p>
                                 </CardHeader>
-                                <CardContent className="grid gap-6 md:grid-cols-3">
+                                <CardContent className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
                                     <div className="space-y-3">
                                         <div className="text-sm font-medium">{L("按学科", "By subject")}</div>
-                                        {data.overview.bySubject.length === 0 ? (
+                                        {data.tasks.ledger.bySubject.length === 0 ? (
                                             <p className="text-xs text-muted-foreground">{L("还没有错题", "No questions yet")}</p>
                                         ) : (
-                                            data.overview.bySubject.map((s) => (
+                                            /**
+                                             * 【2026-10-13】改用底账那一份（原来用 `data.overview.bySubject`）：
+                                             *  ① 颜色改用**真实学科色**（与错题本卡片那条色带同源，同屏同色），
+                                             *     原来 10 个学科一律画成靛蓝，看不出哪科是哪科；
+                                             *  ② 每条**带上"其中 N 道待练"** —— 这是学科与状态机第一次连上，
+                                             *     "哪一科最需要练"从此不用自己去数。
+                                             */
+                                            data.tasks.ledger.bySubject.map((s) => (
                                                 <DistBar
-                                                    key={s.subject}
-                                                    label={s.label}
+                                                    key={s.key || "__unfiled__"}
+                                                    label={
+                                                        s.urgent > 0
+                                                            ? `${s.label} · ${L(`${s.urgent} 待练`, `${s.urgent} due`)}`
+                                                            : s.label
+                                                    }
                                                     value={s.count}
                                                     total={data.overview.questionCount}
-                                                    color="#6366f1"
+                                                    color={s.hex}
                                                 />
                                             ))
                                         )}
@@ -330,6 +369,26 @@ export default function CabinetPage() {
                                             total={data.overview.questionCount}
                                             color={MASTERY_COLORS.mastered}
                                         />
+                                    </div>
+                                    {/*
+                                      * 【2026-10-13】按复习状态 —— 与上面三列**不是同一批口径**：
+                                      * 掌握状态是"他自己标的"（masteryLevel），
+                                      * 复习状态是**由复练结果现算**的（见 lib/review-status.ts），
+                                      * 所以两列数字对不上是**正常**的（一道题可以"已掌握"但状态是"要练"——
+                                      * 后者说明他标了已掌握之后又错了，那正是要看见的事）。
+                                      * 分母仍用 questionCount：ledger 与它是**同一批题**（同一 items 映射出来的）。
+                                      */}
+                                    <div className="space-y-3">
+                                        <div className="text-sm font-medium">{L("按复习状态", "By review state")}</div>
+                                        {data.tasks.ledger.byReviewState.map((s) => (
+                                            <DistBar
+                                                key={s.state}
+                                                label={zh ? s.zh : s.en}
+                                                value={s.count}
+                                                total={data.overview.questionCount}
+                                                color={REVIEW_STATE_COLORS[s.state] ?? "#6b7280"}
+                                            />
+                                        ))}
                                     </div>
                                 </CardContent>
                             </Card>
