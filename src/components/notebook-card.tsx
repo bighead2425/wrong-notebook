@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { BookOpen, Pencil, Trash2, Archive, ArchiveRestore } from "lucide-react";
+import { BookOpen, Pencil, Trash2, Archive, ArchiveRestore, ArrowUpLeft, ArrowDownRight, Merge } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface NotebookCardProps {
@@ -25,20 +25,40 @@ interface NotebookCardProps {
      * 卡片自己**不判断**这些状态（判断只在页面那一处），这里只负责把它画出来。
      */
     className?: string;
-    /** 双击（页面用它做"选目标本 / 并入哪一本"，已归档的卡片不传） */
-    onDoubleClick?: () => void;
+    /**
+     * 【2026-10-12 晚 · 需求第 3 条】卡片**右下角那三个按钮**。
+     *
+     * 他原话："我决定修改操作逻辑，在错题本卡片右下角增加三个按钮，
+     *          一是指向左上方的箭头，点击后错题本卡片向前移动一位；
+     *          二是指向右下方的箭头，点击后错题本卡片向后移动一位；
+     *          三是合并按钮，点击后替代目前双击错题本卡片的操作……"
+     *
+     * ⇒ 上一版给卡片挂的 `onDoubleClick` **已经删掉**（双击与单击互相抢，
+     *    他实测"单击进不去、双击没反应"）。现在这三种操作各有一个明确的按钮，
+     *    单击永远是"进错题本"。
+     */
+    onMoveUp?: () => void;
+    onMoveDown?: () => void;
+    /** 到头了就置灰（第一张不能再往前、最后一张不能再往后） */
+    canMoveUp?: boolean;
+    canMoveDown?: boolean;
+    /** 合并键：点它选中这一本（再点另一张卡并入；再点自己取消）。**已归档不传** */
+    onMerge?: () => void;
+    /** 已选中（黄框 + 按钮高亮） */
+    mergeArmed?: boolean;
 }
 
 export function NotebookCard({
     id, displayName, errorCount, meta, archived = false,
     onClick, onRename, onDelete, onToggleArchive, itemLabel = "items",
-    className = "", onDoubleClick,
+    className = "",
+    onMoveUp, onMoveDown, canMoveUp = true, canMoveDown = true,
+    onMerge, mergeArmed = false,
 }: NotebookCardProps) {
     return (
         <Card
             className={`cursor-pointer hover:border-primary/50 transition-colors relative group ${archived ? "opacity-60" : ""} ${className}`}
             onClick={onClick}
-            onDoubleClick={onDoubleClick}
         >
             <CardHeader className="pb-3">
                 <div className="flex items-start justify-between">
@@ -99,10 +119,65 @@ export function NotebookCard({
                 </div>
             </CardHeader>
             <CardContent>
-                <div className="flex items-center gap-2">
+                {/* 【2026-10-12 晚 需求第 3 条】左下角是"几道题"，**右下角那三个按钮**：
+                    ↖ 往前一位 / ↘ 往后一位 / ⧉ 合并。
+                    ⚠️ 三个都要 `stopPropagation` —— 否则一点它们也顺带把卡片点了（进了错题本）。
+                    ⚠️ 到头的那一个 `disabled`（灰掉但**仍然占位**，免得按钮位置跳来跳去）。 */}
+                <div className="flex items-center justify-between gap-2">
                     <Badge variant="secondary">
                         {errorCount} {itemLabel}
                     </Badge>
+                    {(onMoveUp || onMoveDown || onMerge) && (
+                        <div className="flex items-center gap-0.5 shrink-0">
+                            {onMoveUp && (
+                                <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                    disabled={!canMoveUp}
+                                    title="往前移动一位"
+                                    aria-label="往前移动一位"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onMoveUp();
+                                    }}
+                                >
+                                    <ArrowUpLeft className="h-4 w-4" />
+                                </Button>
+                            )}
+                            {onMoveDown && (
+                                <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                    disabled={!canMoveDown}
+                                    title="往后移动一位"
+                                    aria-label="往后移动一位"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onMoveDown();
+                                    }}
+                                >
+                                    <ArrowDownRight className="h-4 w-4" />
+                                </Button>
+                            )}
+                            {onMerge && (
+                                <Button
+                                    variant={mergeArmed ? "default" : "ghost"}
+                                    size="icon-sm"
+                                    className={`h-7 w-7 ${mergeArmed ? "" : "text-muted-foreground hover:text-foreground"}`}
+                                    title={mergeArmed ? "取消合并" : "把这一本并进另一本"}
+                                    aria-label={mergeArmed ? "取消合并" : "把这一本并进另一本"}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onMerge();
+                                    }}
+                                >
+                                    <Merge className="h-4 w-4" />
+                                </Button>
+                            )}
+                        </div>
+                    )}
                 </div>
             </CardContent>
         </Card>

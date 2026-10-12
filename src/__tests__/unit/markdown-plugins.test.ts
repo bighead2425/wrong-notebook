@@ -13,7 +13,7 @@ import remarkParse from 'remark-parse';
 import remarkRehype from 'remark-rehype';
 import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
-import { preprocess, remarkHighlight, remarkHardBreaks } from '@/lib/markdown-plugins';
+import { preprocess, remarkHighlight, remarkHardBreaks, remarkKeepSpaceRuns } from '@/lib/markdown-plugins';
 
 /** 跑一遍与 MarkdownRenderer 相同的 remark 管道，返回 hast 树 */
 function toHast(md: string) {
@@ -174,5 +174,87 @@ describe('行内代码 vs 代码块（react-markdown 10 的 inline 参数已失�
         const tree = toHast('```\nconst a = 1;\n```');
         expect(tags(tree)).toContain('pre');
         expect(tags(tree)).toContain('code');
+    });
+});
+
+/* ==========================================================================
+ * 【2026-10-12 需求第 17 条（他当晚改成"源码级"的那一版）】连续空格要留住
+ *
+ * 背景：CSS 那条路（`white-space: pre-wrap`）当天试过、翻车了 —— 它不止保留空格，
+ * 还会把这条链路上所有原本不可见的空白全画出来（他："每段前都要渲染成前面有一个空行"）。
+ * 现在改成只在**文本节点**里把「≥2 个连续空格」换成不换行空格（`\u00A0`）：
+ * 不碰换行 ⇒ 段落结构与折行位置一个都不动。
+ * ========================================================================== */
+
+/** 这一小段用得着的树形状（不引第三方类型，免得又欠一个 `any`） */
+interface MiniNode {
+    type?: string;
+    value?: string;
+    tagName?: string;
+    children?: MiniNode[];
+}
+
+/** 只跑"连续空格"这一环 + 到 hast，断言用 */
+function toHastWithSpaces(md: string): MiniNode {
+    const processor = unified()
+        .use(remarkParse)
+        .use(remarkMath)
+        .use(remarkGfm)
+        .use(remarkKeepSpaceRuns)
+        .use(remarkHardBreaks)
+        .use(remarkRehype);
+    return processor.runSync(processor.parse(preprocess(md))) as unknown as MiniNode;
+}
+
+/** 把树里所有文本节点的 value 收起来（断言"到底渲染出了什么字"） */
+function allText(node: MiniNode, out: string[] = []): string[] {
+    if (!node || typeof node !== 'object') return out;
+    if (node.type === 'text' && typeof node.value === 'string') out.push(node.value);
+    if (Array.isArray(node.children)) node.children.forEach((k) => allText(k, out));
+    return out;
+}
+
+describe('remarkKeepSpaceRuns —— 括号里的多个空格要留住（2026-10-12）', () => {
+    const NBSP = '\u00A0';
+
+    it('★ 括号里的 4 个空格 ⇒ 4 个不换行空格（宽度原样保住）', () => {
+        const texts = allText(toHastWithSpaces('在（    ）里填数'));
+        expect(texts.some((t) => t.includes(`（${NBSP.repeat(4)}）`))).toBe(true);
+        // 断言"确实不是普通空格"（普通空格会被 HTML 折叠成一个）
+        expect(texts.join('')).not.toContain('（    ）');
+    });
+
+    it('★ 一个空格不动（那本来就显示得出来，没必要改）', () => {
+        const texts = allText(toHastWithSpaces('甲 乙'));
+        expect(texts).toContain('甲 乙');
+    });
+
+    it('★ 行首缩进照旧交给 markdown 处理（不能把它变成可见空格）', () => {
+        const texts = allText(toHastWithSpaces('甲\n  乙'));
+        expect(texts.join('')).not.toContain(NBSP);
+    });
+
+    it('★ 换行结构一个都不动（这是上一版翻车的反面）', () => {
+        const withFix = tags(toHastWithSpaces('甲\n乙\n\n丙\n丁'));
+        const brs = withFix.filter((t) => t === 'br');
+        expect(brs.length).toBe(2); // 单换行 → 两个 <br>，空行 → 段落切开
+        expect(withFix.filter((t) => t === 'p').length).toBe(2);
+    });
+
+    it('★ 行内代码里的空格不许碰（那是代码，改了就不是原文了）', () => {
+        const texts = allText(toHastWithSpaces('看这段 `a    b` 结束'));
+        expect(texts.some((t) => t.includes('a    b'))).toBe(true);
+    });
+
+    it('★ 公式里的空格不许碰（`\u00A0` 会被 KaTeX 当成奇怪的字符）', () => {
+        const texts = allText(toHastWithSpaces('已知 $a    b$ 求 c'));
+        expect(texts.join('')).not.toContain(NBSP);
+    });
+
+    it('超长空格串封顶（不然那段不能折行，会把整行撑出纸面）', () => {
+        const texts = allText(toHastWithSpaces(`甲${' '.repeat(30)}乙`));
+        const hit = texts.find((t) => t.includes('甲'))!;
+        expect(hit).toContain(NBSP.repeat(24));
+        expect(hit).not.toContain(NBSP.repeat(25));
     });
 });

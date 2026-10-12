@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
 import rehypeKatex from 'rehype-katex';
-import { preprocess, remarkHardBreaks, remarkHighlight } from '@/lib/markdown-plugins';
+import { preprocess, remarkHardBreaks, remarkHighlight, remarkKeepSpaceRuns } from '@/lib/markdown-plugins';
 import 'katex/dist/katex.min.css';
 
 interface MarkdownRendererProps {
@@ -27,7 +27,11 @@ export function MarkdownRenderer({ content, className = '' }: MarkdownRendererPr
     return (
         <div className={`markdown-content overflow-x-auto min-w-0 ${className}`}>
             <ReactMarkdown
-                remarkPlugins={[remarkMath, remarkGfm, remarkHighlight, remarkHardBreaks]}
+                /* 【2026-10-12】`remarkKeepSpaceRuns` 放在 `remarkHighlight` **之后**、
+                   `remarkHardBreaks` **之前**都行（它只认"纯空格"，两条互不干扰）——
+                   这里挑"最后一环"，离 `remarkHardBreaks` 最近，读起来最清楚：
+                   先把换行规整好，再管空格。 */
+                remarkPlugins={[remarkMath, remarkGfm, remarkHighlight, remarkKeepSpaceRuns, remarkHardBreaks]}
                 rehypePlugins={[rehypeKatex]}
                 components={{
                     // 自定义样式

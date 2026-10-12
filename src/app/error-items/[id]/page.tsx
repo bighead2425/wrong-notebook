@@ -923,8 +923,16 @@ export default function ErrorDetailPage() {
                                     （"反正也知道这是题目，还不如把题号放到上面去 —— 既有科目分类又有录入时间"）。
                                     题号是二维码的锚点，只读。右侧放两个打印次数（只读计数，放这儿正好）。 */}
                                 <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <div className="flex items-center gap-2 min-w-0">
-                                        <CardTitle className="font-mono text-base">
+                                    {/* 【2026-10-12 需求第 2 条 他改了】二维码要大、要"挂下来"：
+                                        他原话："这个二维码也太小了，让这个二维码大一些，
+                                        和复练纸、模仿纸的二维码一样大，上边缘和前面的题号平齐，
+                                        下面悬挂下来。"
+                                        ⇒ 这一行改成**顶对齐**（`items-start`，原来是 `items-center`
+                                        把它缩在中间），码本身放大到 56px（≈14.8mm，与深挖纸 14/16mm、
+                                        错题卡 18mm 同一档）；题号给它一点上内边距，视觉上两条上边就齐了。
+                                        码比一行字高，自然就**往下悬**着，不再是个小角标。 */}
+                                    <div className="flex items-start gap-2 min-w-0">
+                                        <CardTitle className="font-mono text-base leading-snug pt-1">
                                             {item.source || t.detail.question}
                                         </CardTitle>
                                         {/* 【2026-10-12 需求第 15 条】题号后面直接放**这道题的二维码**。
@@ -940,7 +948,7 @@ export default function ErrorDetailPage() {
                                                     "扫这个码 = 直接跳到这道题（与纸上印的同一个码）",
                                                     "Scan to open this question (same code as printed)",
                                                 )}
-                                                className="h-9 w-9 shrink-0 rounded border bg-white p-0.5"
+                                                className="h-14 w-14 shrink-0 rounded border bg-white p-0.5"
                                             />
                                         )}
                                     </div>
