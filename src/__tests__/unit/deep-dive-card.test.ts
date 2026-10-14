@@ -21,7 +21,7 @@ import {
     reviewDateSlots,
     sidePaddingMM,
 } from '@/lib/deep-dive-card';
-import { formatIsoDate } from '@/lib/date-format';
+import { formatIsoDate, formatMonthDay } from '@/lib/date-format';
 
 describe('T1 深挖纸 · 纸张与内容区尺寸', () => {
     it('B5 必须是 JIS 182×257（不是 ISO 176×250，否则满页排版会跑版）', () => {
@@ -99,7 +99,7 @@ describe('T1 深挖纸 · 纸张与内容区尺寸', () => {
     it('★ 反面：留白是"最后保障"的 —— 它的下限必须远小于页脚（2026-10-10）', () => {
         /**
          * 他的原话："我建议留白部分是最后保障的。"
-         * 起因：拿阅读题试印时**整块页脚没了**（二维码 / 横线 / 三个日期格 / 虚线框）——
+         * 起因：拿阅读题试印时**整块页脚没了**（二维码 / 横线 / 四个日期格 / 虚线框）——
          * 旧值 let 手写区先占 60mm，题干一长就把页脚顶出纸外。
          * 判据：留白让得比页脚狠（下限小），而页脚是硬指标（不能被压）。
          */
@@ -130,41 +130,52 @@ describe('T1 深挖纸 · 纸张与内容区尺寸', () => {
     });
 });
 
-describe('T1 深挖纸 · 反面三个日期格（P20 / P24）', () => {
-    it('间隔必须是 +1 / +7 / +21 —— 不是 +2（口径已定案）', () => {
-        expect([...REVIEW_OFFSETS_DAYS]).toEqual([1, 7, 21]);
+describe('T1 深挖纸 · 反面四个日期格（P20 / P24；2026-10-14 从 3 格扩到 4 格）', () => {
+    it('间隔必须是 +1 / +7 / +21 / +49 —— 不是 +2（口径已定案）', () => {
+        expect([...REVIEW_OFFSETS_DAYS]).toEqual([1, 7, 21, 49]);
     });
 
-    it('应以打印日为准算出三个日期，写法为 yyyy-mm-dd', () => {
+    it('应以打印日为准算出四个日期，**纸面写法 `MM-DD`**（2026-10-14 改）', () => {
         const slots = reviewDateSlots(new Date(2026, 8, 24)); // 2026-09-24
-        expect(slots.map((s) => s.label)).toEqual(['2026-09-25', '2026-10-01', '2026-10-15']);
-        expect(slots.map((s) => s.index)).toEqual([1, 2, 3]);
+        // ⚠️ 从 `2026-09-25` 缩成 `09-25`：加第 4 格后页脚宽度不够（见 lib/deep-dive-card.ts 的注释）
+        expect(slots.map((s) => s.label)).toEqual(['09-25', '10-01', '10-15', '11-12']);
+        expect(slots.map((s) => s.index)).toEqual([1, 2, 3, 4]);
     });
 
     it('跨月要算对（9/30 + 1 天 = 10/01）', () => {
         expect(reviewDateSlots(new Date(2026, 8, 30)).map((s) => s.label)).toEqual([
-            '2026-10-01',
-            '2026-10-07',
-            '2026-10-21',
+            '10-01',
+            '10-07',
+            '10-21',
+            '11-18',
         ]);
     });
 
     it('跨年要算对（12/25 + 7 天 = 次年 01/01）', () => {
         const slots = reviewDateSlots(new Date(2026, 11, 25));
-        expect(slots.map((s) => s.label)).toEqual(['2026-12-26', '2027-01-01', '2027-01-15']);
+        expect(slots.map((s) => s.label)).toEqual(['12-26', '01-01', '01-15', '02-12']);
+        expect(slots[1].date.getFullYear()).toBe(2027);
+    });
+
+    it('⚠️ `label` 跨年时**不带年份** —— 这是 `MM-DD` 的已知代价（年份看身份条「印于 …」）', () => {
+        const slots = reviewDateSlots(new Date(2026, 11, 25));
+        // 12-26 与次年的 01-01 在纸面上"像同一年"，靠身份条的「印于 2026-12-25」区分
+        expect(slots[0].label).toBe('12-26');
+        expect(slots[1].label).toBe('01-01');
         expect(slots[1].date.getFullYear()).toBe(2027);
     });
 
     it('闰年 2 月要算对（2028-02-28 + 1 天 = 02-29）', () => {
-        expect(reviewDateSlots(new Date(2028, 1, 28))[0].label).toBe('2028-02-29');
+        expect(reviewDateSlots(new Date(2028, 1, 28))[0].label).toBe('02-29');
     });
 
     it('只按年月日加减，时分秒必须被忽略（否则晚上打印会印成前一天）', () => {
         const lateNight = new Date(2026, 8, 24, 23, 59, 59);
         expect(reviewDateSlots(lateNight).map((s) => s.label)).toEqual([
-            '2026-09-25',
-            '2026-10-01',
-            '2026-10-15',
+            '09-25',
+            '10-01',
+            '10-15',
+            '11-12',
         ]);
     });
 
@@ -175,21 +186,29 @@ describe('T1 深挖纸 · 反面三个日期格（P20 / P24）', () => {
 });
 
 describe('日期写法', () => {
-    it('纸面统一 yyyy-mm-dd，月日必须补零', () => {
+    it('身份条等仍用 `yyyy-mm-dd`，月日必须补零', () => {
         expect(formatIsoDate(new Date(2026, 8, 5))).toBe('2026-09-05');
         expect(formatIsoDate(new Date(2026, 11, 31))).toBe('2026-12-31');
     });
 
-    it('绝不用 UTC —— 本地 0 点与 23 点必须是同一天', () => {
+    it('日期格用 `MM-DD`（2026-10-14 新增），月日同样补零', () => {
+        expect(formatMonthDay(new Date(2026, 8, 5))).toBe('09-05');
+        expect(formatMonthDay(new Date(2026, 11, 31))).toBe('12-31');
+        expect(formatMonthDay(new Date(2026, 0, 1))).toBe('01-01');
+    });
+
+    it('两个格式化函数都绝不用 UTC —— 本地 0 点与 23 点必须是同一天', () => {
         expect(formatIsoDate(new Date(2026, 8, 24, 0, 0, 0))).toBe('2026-09-24');
         expect(formatIsoDate(new Date(2026, 8, 24, 23, 59, 59))).toBe('2026-09-24');
+        expect(formatMonthDay(new Date(2026, 8, 24, 0, 0, 0))).toBe('09-24');
+        expect(formatMonthDay(new Date(2026, 8, 24, 23, 59, 59))).toBe('09-24');
     });
 });
 
-describe('反面三个进度格的配色（她第 1 / 2 / 3 次复做）', () => {
-    it('必须是三格三色，且每个色都给了"底 / 边 / 字"三个值', () => {
-        expect(SLOT_COLORS).toHaveLength(3);
-        expect(SLOT_COLORS.map((c) => c.name)).toEqual(['浅粉', '嫩绿', '金黄']);
+describe('反面四个进度格的配色（她第 1 / 2 / 3 / 4 次复做）', () => {
+    it('必须是四格四色，且每个色都给了"底 / 边 / 字"三个值', () => {
+        expect(SLOT_COLORS).toHaveLength(4);
+        expect(SLOT_COLORS.map((c) => c.name)).toEqual(['浅粉', '嫩绿', '金黄', '淡紫']);
         for (const c of SLOT_COLORS) {
             expect(c.fill).toMatch(/^#[0-9a-f]{6}$/);
             expect(c.border).toMatch(/^#[0-9a-f]{6}$/);
@@ -197,8 +216,8 @@ describe('反面三个进度格的配色（她第 1 / 2 / 3 次复做）', () =>
         }
     });
 
-    it('三个底色互不相同（一样就等于没标）', () => {
-        expect(new Set(SLOT_COLORS.map((c) => c.fill)).size).toBe(3);
+    it('四个底色互不相同（一样就等于没标）', () => {
+        expect(new Set(SLOT_COLORS.map((c) => c.fill)).size).toBe(4);
     });
 
     it('日期文字必须是**深色** —— 浅色当正文在纸上几乎看不清，复印还会再吃掉一层', () => {

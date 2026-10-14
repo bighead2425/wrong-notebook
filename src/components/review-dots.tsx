@@ -33,8 +33,10 @@ export function ReviewDots({
         <span className={`inline-flex items-center gap-1 ${className}`}>
             {dots.map((d, i) => (
                 <span key={d.key} className="inline-flex items-center">
-                    {/* 第 4 个圈（"最近一次"）与前面三个隔开 */}
-                    {i === 3 && (
+                    {/* 【2026-10-14】最后一个圈（"最近一次"）与前面的**计划格**隔开。
+                        ⚠️ 原来写死 `i === 3`（= 三个计划格之后）；计划格从 3 扩到 4 后，
+                           写死就会把分隔符放错位置 ⇒ 改成"是不是最后一个"。 */}
+                    {i === dots.length - 1 && (
                         <span
                             aria-hidden="true"
                             className="mx-1 text-[9px] leading-none text-zinc-400"

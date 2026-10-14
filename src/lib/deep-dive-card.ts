@@ -7,7 +7,7 @@
  * 本模块是纯计算：不碰 DOM、不碰数据库，所以日期口径能被单测钉死。
  */
 
-import { formatIsoDate } from './date-format';
+import { formatMonthDay } from './date-format';
 
 /* ======================== 纸张尺寸（实测，别改） ======================== */
 
@@ -261,8 +261,18 @@ export function frontSideSlackWorstMM(photoHeightMM: number): number {
  * 统一以**打印日**为基准，且第一个格是 **+1 而不是 +2**。
  * 理由（原话）：*"当天打印可能是晚上了，可能是做不成的，第二天是 24 小时，比较合理。"*
  * ⇒ 全项目只此一处定义，别处引用这里，不再各写各的。
+ *
+ * ⚠️⚠️ 【2026-10-14 更正】上面那句话**曾经是假的**：
+ *    `src/lib/review-outcomes.ts` 的 `PLANNED_REVIEW_OFFSET_DAYS` 又写了一遍 `[1,7,21]`
+ *    —— 两处并存，"只此一处"没兑现。本次改造把它收口：那边改为**引用本常量**。
+ *
+ * 【2026-10-14 空空拍板】加第 4 格：**`+49`**
+ *    （间隔 1 / 6 / 14 / 28，近似翻倍，与前三格的规律一致）。
+ *    配套三件：① `SLOT_COLORS` 加第 4 色「淡紫」（意象"沉淀"）；
+ *             ② 纸面日期改 `MM-DD`（第 4 格挤不下，页脚宽度不够）；
+ *             ③ `review-status.ts` 的 `RETIRE_STREAK` 改回 4。
  */
-export const REVIEW_OFFSETS_DAYS = [1, 7, 21] as const;
+export const REVIEW_OFFSETS_DAYS = [1, 7, 21, 49] as const;
 
 /**
  * 反面页脚三个进度格的配色（2026-09-25 他要"俏皮一点、让人想往上爬"）。
@@ -296,6 +306,10 @@ export const SLOT_COLORS: readonly SlotColor[] = [
     { name: '浅粉', fill: '#ffe3ec', border: '#e79ab8', text: '#a8386b' },
     { name: '嫩绿', fill: '#e4f5d8', border: '#8fc766', text: '#42741f' },
     { name: '金黄', fill: '#fff0c2', border: '#f0c33c', text: '#8a6410' },
+    // 【2026-10-14 加第 4 格】意象"**沉淀**"（花苞 → 生长 → 结果 → 收进柜子），
+    // 呼应蓝图原则⑤"错题不跟一辈子，学会了就移出"。
+    // ⚠️ 配色是**表达**不是技术债 —— 空空/花生随时可以改这一个值。
+    { name: '淡紫', fill: '#efe6ff', border: '#b39ddb', text: '#5e35b1' },
 ];
 
 /** 三格里她自判的结果（P20：空 / 对 / 错 三态，她自己打勾打叉） */
@@ -308,15 +322,20 @@ export const PROGRESS_MARK_LABEL: Record<ProgressMark, string> = {
 };
 
 export interface ReviewSlot {
-    /** 第几格，1 / 2 / 3 —— 对应她第 1 / 2 / 3 次复做 */
-    index: 1 | 2 | 3;
+    /** 第几格，1 / 2 / 3 / 4 —— 对应她第 1 / 2 / 3 / 4 次复做 */
+    index: 1 | 2 | 3 | 4;
     /** 距打印日多少天 */
     offsetDays: number;
     date: Date;
     /**
-     * 纸面文字，如 `2026-09-25`。
-     * ⚠️ 原先写 `9/25`（月/日、不补零），2026-09-24 改定 **yyyy-mm-dd**——
-     *    纸面上月/日的写法看着不舒服，而且跨年时"10/1"分不清是哪一年。
+     * 纸面文字，**现在写 `MM-DD`**（如 `10-15`）。
+     *
+     * ⚠️ 变更史（别只看结论）：
+     *    · 原先 `9/25`（月/日、不补零）⇒ 2026-09-24 改定 `yyyy-mm-dd`：
+     *      "看着不舒服"，且跨年 `10/1` 分不清哪一年；
+     *    · 【2026-10-14】**只让日期格退回月-日**（`10-15`，带补零 + 连字符）——
+     *      加第 4 格后页脚宽度不够（四组 `2026-10-15` 超约 10~15mm）。
+     *      **身份条「印于 …」不受影响，仍 `yyyy-mm-dd`** ⇒ 年份在纸面上仍查得到。
      */
     label: string;
 }
@@ -334,10 +353,24 @@ export function reviewDateSlots(printDate: Date): ReviewSlot[] {
     return REVIEW_OFFSETS_DAYS.map((offsetDays, i) => {
         const date = addDays(printDate, offsetDays);
         return {
-            index: (i + 1) as 1 | 2 | 3,
+            index: (i + 1) as 1 | 2 | 3 | 4,
             offsetDays,
             date,
-            label: formatIsoDate(date),
+            /**
+             * 【2026-10-14】**纸面日期格只写「月-日」**（`MM-DD`），不再 `yyyy-mm-dd`。
+             *
+             * 为什么改：第 4 格加进来后，页脚右区（约 123.5mm）**装不下四组 `2026-10-15`**
+             * （10 字符 ⇒ 每组约 21.5mm），超约 10~15mm。
+             * 缩到 5 字符后每组约 14mm ⇒ 四格 + 28mm 虚线框约 104mm，还留余量。
+             *
+             * ⚠️ 代价（空空 2026-10-14 知情拍板）：**跨年那张看不出年份**。
+             *    之所以还能接受：身份条上的「印于 …」仍用 `formatIsoDate`（带年份），
+             *    "这是哪一年"在纸面上仍查得到。
+             * ⚠️ 这与 2026-09-24「全项目纸面统一 `yyyy-mm-dd`」的定案**相反**
+             *    （那次是因为 `9/25` 不补零不好看 + 跨年分不清）。本次**只让日期格让步**，
+             *    身份条不动；将来纸型换了、宽度够了，把这里换回 `formatIsoDate` 即可。
+             */
+            label: formatMonthDay(date),
         };
     });
 }

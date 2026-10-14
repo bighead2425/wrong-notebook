@@ -32,6 +32,7 @@ model User {
   customTags KnowledgeTag[] // User's custom tags
   printBatches PrintBatch[] // 打印批次（一次交付 = 一批）
   insights   Insight[]      // 【2026-10-01】日积月累条目
+  reviewEvents ReviewEvent[] // 【2026-10-14】复习事件流水（带时间戳）
 }
 
 // 统一知识点标签表 (支持无限层级)
@@ -225,6 +226,8 @@ model ErrorItem {
   reviewSchedules ReviewSchedule[]
   printJobs       PrintJob[]        // 该题的每一次打印（同一题会重印多次，见 PrintJob）
   stateChangeLogs StateChangeLog[]  // 状态变更日志（R15）
+  /// 【2026-10-14】**复习事件流水**（带时间戳）—— 规则见 lib/review-events.ts，方案见 docs\09
+  reviewEvents    ReviewEvent[]
   /// 【T2/T3 2026-09-28】这道题被编进过哪些卷（可空关系：题删了卷里那一行仍在，只是断了链）
   volumeItems     ReviewVolumeItem[]
   /// 【2026-10-01 改】日积月累与题的关联**不再走外键**，改存**题号**（`Insight.errorItemNo`）：
@@ -441,6 +444,55 @@ model StateChangeLog {
 
   @@index([errorItemId, createdAt])
   @@index([actor, createdAt])
+}
+
+// ===========================================================================
+// 【2026-10-14】复习事件流水（带时间戳）—— ReviewEvent
+// ===========================================================================
+
+/// 一次复习的**一条流水**。
+///
+/// ── 为什么要有它（详见 `docs\09_review_events改造方案.md`）──────────
+///   老的 `ErrorItem.reviewOutcomes` 是"**一张只有四个空格的卡片**"：
+///   `planned[3]`（第 1/7/21 天）+ `last`（最近一次），**只有结果、没有日期**。
+///   ⇒ 两个后遗症：
+///     ① 不知道"上次复习是哪天" ⇒ "建议下次"只能按**今天**起算（见 `review-status.ts` 文件头）；
+///     ② 三个格满了之后再来一次**认不出来** ⇒ `RETIRE_STREAK` 只能取 3（想要 4）。
+///   本表把"卡片"换成"**流水账**"：一次复习一行，**行数不限、每行带日期**。
+///
+/// ⚠️ 第一步只**双写**（老字段照旧写）⇒ 读侧行为不变、随时可回滚；切读源是第二步。
+///
+/// ⚠️ `occurredOn` 用 `YYYY-MM-DD` 字符串**而不是 DateTime** —— 遵守项目"时区铁律"：
+///    容器跑 UTC，"哪一天"必须只在**客户端**算好再传进来。
+model ReviewEvent {
+  id          String @id @default(cuid())
+
+  userId      String
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  errorItemId String
+  errorItem   ErrorItem @relation(fields: [errorItemId], references: [id], onDelete: Cascade)
+
+  /// 这一天的"日键"（`YYYY-MM-DD`，本地时区，客户端算好）
+  occurredOn  String
+
+  /// "right" | "wrong"
+  outcome     String
+
+  /// 计划内第几次（0 / 1 / 2 / 3）；**null = 计划外**的额外复习。
+  /// ⚠️ 这正是老数据认不出来的那件事 —— 写入侧必须**显式声明**，不许靠差分猜。
+  plannedIndex Int?
+
+  /// 从哪张卷标回来的（可空：电脑上手动勾的就没有卷）
+  volumeId    String?
+
+  /// 入库时刻（审计用；判断"哪天"一律看 `occurredOn`，别看它）
+  createdAt   DateTime @default(now())
+
+  /// ⚠️ 刻意**不加** (errorItemId, occurredOn) 唯一约束：同一天可能补录多条，
+  ///    宁可多记一笔流水，也不要因为撞约束而丢数据。
+  @@index([userId, errorItemId, occurredOn])
+  @@index([errorItemId, occurredOn])
 }
 
 // ===========================================================================

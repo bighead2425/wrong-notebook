@@ -19,3 +19,22 @@ const pad = (n: number) => String(n).padStart(2, '0');
 export function formatIsoDate(date: Date): string {
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
+
+/**
+ * 【2026-10-14】**日期格**专用：`MM-DD`（如 `10-15`）。
+ *
+ * ⚠️⚠️ 这一条**推翻了 2026-09-24 的定案**，务必看清来龙去脉：
+ *    · 2026-09-24 之前纸面写 `9/25`（月/日、不补零）⇒ 空空看纸样后说"看上去不舒服"，
+ *      且跨年 `10/1` 分不清哪一年 ⇒ **全项目纸面统一 `yyyy-mm-dd`**。
+ *    · 2026-10-14 加第 4 个日期格后，页脚右区（约 123.5mm）**装不下四组 `2026-10-15`**
+ *      （超约 10~15mm）⇒ 空空当天拍板：**日期格改用 `MM-DD`**
+ *      （带补零、用连字符，与当年被否的 `9/25` 不完全一样）。
+ *      代价（他知情）：**跨年那张看不出年份**。
+ *
+ * ⇒ 与 `formatIsoDate` 的**分工**：
+ *    **日期格**用 `formatMonthDay`（省宽度）；**身份条「印于 …」仍用 `formatIsoDate`**（带年份）。
+ *    于是"这是哪一年"在纸面上仍然查得到，只是不在格子里。
+ */
+export function formatMonthDay(date: Date): string {
+    return `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}

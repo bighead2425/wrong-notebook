@@ -5,9 +5,9 @@
  * 他当初纠结的"连着两次都对了要不要降档""三次都对了算不算已掌握"，
  * 在这条规则下**不需要人判** —— 这些测试就是在钉"人不用再纠结"这件事。
  *
- * ⚠️ 门槛是 **3 次**而不是他批的 4 次：原因在 `lib/review-status.ts` 文件头那段 ⚠️⚠️
- *    （现在存的 `planned` + `last` 两个字段**没有时间戳**，"第 4 次"认不出来）。
- *    下面有一条测试专门把这个"认不出来"钉住，免得以后有人以为这里漏了。
+ * ✅ 【2026-10-14】门槛已改回他批的 **4 次** —— 带时间戳的复习事件表（`ReviewEvent`）上线后，
+ *    "计划格满了之后又对一次"**认得出来**了；纸面也从 3 格扩到 **4 格**（偏移 +49）。
+ *    ⇒ 下面那些"连对 N 次"的用例都按 **4 格**造数据。
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -20,7 +20,7 @@ import { serializeReviewOutcomes } from '@/lib/review-outcomes';
 
 const TODAY = new Date('2026-10-13T09:00:00');
 
-/** 造一条 outcomes：planned 三格 + last */
+/** 造一条 outcomes：planned 四格 + last */
 function make(planned: ('right' | 'wrong' | null)[], last: 'right' | 'wrong' | null) {
     return serializeReviewOutcomes({ planned, last });
 }
@@ -77,8 +77,15 @@ describe('reviewStatusOf —— 状态、连对、紧迫度、下次该什么时
         expect(s.nextDueKey).toBe('2026-10-20'); // +7
     });
 
-    it(`★ 连对 ${RETIRE_STREAK} 次（计划内三格全对）⇒ 退休、不再排进复练`, () => {
-        const s = reviewStatusOf(make(['right', 'right', 'right'], 'right'), TODAY);
+    it('★ 连对 3 次 ⇒ 仍在复练中 / 21 天后再练（新补的那一档，2026-10-14）', () => {
+        const s = reviewStatusOf(make(['right', 'right', 'right', null], 'right'), TODAY);
+        expect(s.state).toBe('practicing');
+        expect(s.rightStreak).toBe(3);
+        expect(s.nextDueKey).toBe('2026-11-03'); // +21
+    });
+
+    it(`★ 连对 ${RETIRE_STREAK} 次（计划内四格全对）⇒ 退休、不再排进复练`, () => {
+        const s = reviewStatusOf(make(['right', 'right', 'right', 'right'], 'right'), TODAY);
         expect(s.rightStreak).toBe(RETIRE_STREAK);
         expect(s.state).toBe('retired');
         expect(s.urgency).toBe(1);
@@ -87,32 +94,33 @@ describe('reviewStatusOf —— 状态、连对、紧迫度、下次该什么时
     });
 
     it('★ 退休之后再错一次 ⇒ 立刻回到"要练"、连对清零（没有一劳永逸）', () => {
-        const s = reviewStatusOf(make(['right', 'right', 'right'], 'wrong'), TODAY);
+        const s = reviewStatusOf(make(['right', 'right', 'right', 'right'], 'wrong'), TODAY);
         expect(s.state).toBe('due');
         expect(s.rightStreak).toBe(0);
         expect(s.wrongStreak).toBe(1);
         expect(s.urgency).toBe(4);
     });
 
-    it('★ 计划内做完 ⇒ 第四格同步，不会被重复数成两次（他 09-30 定的规矩 ①）', () => {
+    it('★ 计划内做完 ⇒ 最后一格同步，不会被重复数成两次（他 09-30 定的规矩 ①）', () => {
         const s = reviewStatusOf(make(['right', null, null], 'right'), TODAY);
         expect(s.rightStreak).toBe(1);
         expect(s.evidenceCount).toBe(1);
         expect(s.plannedDone).toBe(1);
     });
 
-    it('★ 计划外的复习接在计划内后面（规矩 ②：前三个圈不动、只动最近一次）', () => {
+    it('★ 计划外的复习接在计划内后面（规矩 ②：计划格不动、只动最近一次）', () => {
         expect(reviewEventSequence(make(['right', 'right', null], 'wrong'))).toEqual(['right', 'right', 'wrong']);
         const s = reviewStatusOf(make(['right', 'right', null], 'wrong'), TODAY);
         expect(s.state).toBe('due');
         expect(s.wrongStreak).toBe(1);
     });
 
-    it('⚠️ 已知的"认不出来"：计划三格全对 + 最近一次也对 ⇒ 只数到 3（这就是门槛取 3 的原因）', () => {
-        const s = reviewStatusOf(make(['right', 'right', 'right'], 'right'), TODAY);
-        // 实际可能是"计划三次全对"（3 次），也可能是"之后又计划外对了一次"（4 次）——
-        // 没有时间戳分不开 ⇒ 一律按 3 处理。要真数到 4 得加带时间戳的复习记录表（第二步）。
-        expect(s.evidenceCount).toBe(3);
+    it('✅ 四格全对 ⇒ 数到 4（2026-10-14：门槛回到 4，从前的"只数到 3"已解除）', () => {
+        const s = reviewStatusOf(make(['right', 'right', 'right', 'right'], 'right'), TODAY);
+        // 纸面扩到 4 格后，"四格全对"就是货真价实的 4 次 ⇒ 正好达到 RETIRE_STREAK。
+        // ⚠️ 但"四格满了之后**又**计划外对了一次"仍认不出来（那要靠 `ReviewEvent` 表来数）——
+        //    所以状态机目前仍以 `reviewOutcomes` 为准（**切读源是后续的事**）。
+        expect(s.evidenceCount).toBe(4);
         expect(s.state).toBe('retired');
     });
 
@@ -125,7 +133,7 @@ describe('reviewStatusOf —— 状态、连对、紧迫度、下次该什么时
     });
 
     it('紧迫度就是"能不能排序"的那个数：退休 1 < 连对2次 2 < 连对1次 3 < 刚错 4 < 新/连错 5', () => {
-        expect(reviewStatusOf(make(['right', 'right', 'right'], 'right'), TODAY).urgency).toBe(1);
+        expect(reviewStatusOf(make(['right', 'right', 'right', 'right'], 'right'), TODAY).urgency).toBe(1);
         expect(reviewStatusOf(make(['right', 'right', null], 'right'), TODAY).urgency).toBe(2);
         expect(reviewStatusOf(make([null, null, null], 'right'), TODAY).urgency).toBe(3);
         expect(reviewStatusOf(make([null, null, null], 'wrong'), TODAY).urgency).toBe(4);

@@ -9,6 +9,8 @@ import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { normalizeMistakeCategory } from "@/lib/mistake-category";
 import { normalizeReviewOutcomes, serializeReviewOutcomes } from "@/lib/review-outcomes";
+// 【2026-10-14】复习事件流水（第一步：双写）—— 唯一写入口在 lib/review-events.ts
+import { parseReviewEventInput, recordReviewEvent } from "@/lib/review-events";
 import {
     clampLevel,
     computeLevelLinkage,
@@ -124,6 +126,20 @@ export async function PUT(
              * 结构不乱、也不留非法值（"right"/"wrong"/null 三态，别的一律当没结果）。
              */
             reviewOutcomes,
+            /**
+             * 【2026-10-14】复习事件流水（**第一步：双写**）。
+             *
+             * ⚠️ 为什么必须**显式传**、不从 `reviewOutcomes` 的前后差分推：
+             *    `planned` + `last` 两个字段**没有时间戳** ⇒ "三格满了之后又对一次"
+             *    与"三格全对（就是三次）"在数据上长得一模一样，差分**认不出来**
+             *    （见 `review-status.ts` 文件头那段 ⚠️⚠️）。
+             *    ⇒ 写入侧必须自己声明"这是一次复习"，本字段就是那个声明。
+             *
+             * 形状：`{ occurredOn: 'YYYY-MM-DD', outcome: 'right'|'wrong',
+             *          plannedIndex?: 0|1|2|3, volumeId?: string }`
+             * 形状不对 ⇒ **当没传**（与本文件其他可选字段同一条规矩）。
+             */
+            reviewEvent,
             /**
              * 【2026-10-01】「深挖了还没印」提醒**手动按掉**（详情页双击那个计数）。
              * 只接受布尔值；非布尔当没传（改属性接口不替调用方做主）。
@@ -478,6 +494,31 @@ export async function PUT(
             data: updateData,
             include: { tags: true, notebook: true },
         });
+
+        /**
+         * 【2026-10-14】复习事件流水（**第一步：双写**）。
+         *
+         * ⚠️ **失败不影响主更新** —— 与下面 `stateLogs` 同一条规矩：
+         *    这一步只是"开始攒带时间戳的数据"，攒不上不该让"改题"失败
+         *    （主更新已经把 `reviewOutcomes` 写进去了，读侧行为一切照旧）。
+         */
+        if (reviewEvent !== undefined && reviewEvent !== null) {
+            const ev = parseReviewEventInput(reviewEvent);
+            if (ev) {
+                try {
+                    await recordReviewEvent({
+                        userId: user.id,
+                        errorItemId: id,
+                        occurredOn: ev.occurredOn,
+                        outcome: ev.outcome,
+                        plannedIndex: ev.plannedIndex ?? null,
+                        volumeId: ev.volumeId ?? null,
+                    });
+                } catch (error) {
+                    logger.error({ error, id }, 'Failed to record review event');
+                }
+            }
+        }
 
         // 【2026-09-28】等级/错因的变更留痕（「派生 + 落定快照」要求可追溯）
         if (stateLogs.length > 0) {

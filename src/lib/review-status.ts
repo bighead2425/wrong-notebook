@@ -58,11 +58,12 @@ import { normalizeReviewOutcomes, type ReviewOutcome } from './review-outcomes';
 /**
  * 连对几次算"可以退休"（不再排进复练）。
  *
- * 他 2026-10-13 拍的是 **4**；但按现有存储形状只认得到 **3**（理由见文件头那段
- * ⚠️⚠️ —— `planned` + `last` 两个字段没有时间戳，第 4 次认不出来）。
- * ⇒ 先按 3 让它能跑；第二步加上"带时间戳的复习记录表"之后，改回 4 只需改这一个数。
+ * 他 2026-10-13 拍的是 **4**；当时因为存储形状只认得到 3，先按 3 让它能跑。
+ * ✅ **2026-10-14 已改回 4** —— 带时间戳的复习事件表（`ReviewEvent`）上线后，
+ *    "三格满了之后又对一次"**认得出来**了（写入侧显式声明那次复习，不靠差分猜）。
+ *    配套：纸上也加了第 4 格（`REVIEW_OFFSETS_DAYS = [1, 7, 21, 49]`）。
  */
-export const RETIRE_STREAK = 3;
+export const RETIRE_STREAK = 4;
 
 /**
  * 连对 N 次之后，隔多少天再练一次。
@@ -72,9 +73,11 @@ export const RETIRE_STREAK = 3;
  *   1 ⇒ 3 天　2 ⇒ 7 天　3 ⇒ 21 天　4 及以上 ⇒ 退休（不再排）
  *
  * ⚠️ 这张表与上面的 `RETIRE_STREAK` 是**同一个设计的两半**：连对到 `RETIRE_STREAK` 就退休
- *    （所以表只到索引 2；索引 3 = 退休，不需要间隔）。改动时两处一起看。
+ *    ⇒ 表要覆盖到 `RETIRE_STREAK - 1` 这一档。
+ *    【2026-10-14】`RETIRE_STREAK` 从 3 改回 4 ⇒ 本表补上**索引 3 = 21 天**
+ *    （正好是文件头注释里原本就写下、但当时用不到的那一档）。改动时两处一起看。
  */
-export const REVIEW_INTERVAL_DAYS: readonly number[] = [1, 3, 7];
+export const REVIEW_INTERVAL_DAYS: readonly number[] = [1, 3, 7, 21];
 
 export type ReviewState = 'new' | 'due' | 'practicing' | 'retired';
 
