@@ -65,20 +65,23 @@ describe('T1 深挖纸 · 该印的必须印出来', () => {
         expect(renderWith()).toContain('遮挡线');
     });
 
-    it('三个日期格写 **yyyy-mm-dd**，按打印日 +1 / +7 / +21', () => {
+    it('四个日期格写 **MM-DD**，按打印日 +1 / +7 / +21 / +49（2026-10-14 改）', () => {
         const html = renderWith();
-        expect(html).toContain('2026-09-25');
-        expect(html).toContain('2026-10-01');
-        expect(html).toContain('2026-10-15');
-        // 旧的"月/日"写法必须绝迹（跨年时"10/1"分不清是哪一年）
-        expect(html).not.toContain('>9/25<');
+        expect(html).toContain('09-25');
+        expect(html).toContain('10-01');
+        expect(html).toContain('10-15');
+        expect(html).toContain('11-12');
+        // ⚠️ 日期格里**不再**出现完整年份；但整页别处仍有 `yyyy-mm-dd`
+        //    （身份条「印于 2026-09-24」），所以只断言"这个格子的旧写法绝迹"。
+        expect(html).not.toContain('2026-09-25');
     });
 
     it('日期跟着打印日走（跨年要算对）', () => {
         const html = renderWith({}, new Date(2026, 11, 25));
-        expect(html).toContain('2026-12-26');
-        expect(html).toContain('2027-01-01');
-        expect(html).toContain('2027-01-15');
+        expect(html).toContain('12-26');
+        expect(html).toContain('01-01');
+        expect(html).toContain('01-15');
+        expect(html).toContain('02-12');
     });
 
     it('身份条要印题号、年级学期与打印日', () => {

@@ -16,59 +16,80 @@ import {
 /**
  * 【2026-10-02 他定的规则】复习结果写哪一格 —— **按顺序填第一个空位**，且永远同步 `last`。
  *
- *   没有记录 → planned[0]；只有第一次 → planned[1]；有第二次没第三次 → planned[2]；
- *   有第三次 → last。
+ *   没有记录 → planned[0]；只有第一次 → planned[1]；… ；**计划格全满 → last**。
+ *
+ * ⚠️ 【2026-10-14】计划格从 **3 格扩到 4 格**（偏移 +1/+7/+21/+49）。
+ *    下面那条"计划格满了 ⇒ 写 last"的**门槛从 3 变成 4** —— 不是漏改，是扩格的必然结果。
+ *    （`lib/scan-marking.ts` 用的是 `PLANNED_REVIEW_ROUNDS`，所以逻辑自动跟着变，无需改代码。）
  */
 describe('扫卷录入 · 复习结果写哪一格', () => {
     it('★ 没有复习记录 ⇒ 写第一次（planned[0]），并同步 last', () => {
         const w = nextReviewOutcomes(null, 'right');
         expect(w.slot).toBe(0);
-        expect(w.outcomes.planned).toEqual(['right', null, null]);
+        expect(w.outcomes.planned).toEqual(['right', null, null, null]);
         expect(w.outcomes.last).toBe('right');
     });
 
     it('★ 只有第一次 ⇒ 写第二次（planned[1]），last 同步成这一次', () => {
-        const w = nextReviewOutcomes({ planned: ['right', null, null], last: 'right' }, 'wrong');
+        const w = nextReviewOutcomes({ planned: ['right', null, null, null], last: 'right' }, 'wrong');
         expect(w.slot).toBe(1);
-        expect(w.outcomes.planned).toEqual(['right', 'wrong', null]);
+        expect(w.outcomes.planned).toEqual(['right', 'wrong', null, null]);
         expect(w.outcomes.last).toBe('wrong');
     });
 
     it('★ 有第二次而没有第三次 ⇒ 写第三次（planned[2]）', () => {
-        const w = nextReviewOutcomes({ planned: ['right', 'wrong', null], last: 'wrong' }, 'right');
+        const w = nextReviewOutcomes({ planned: ['right', 'wrong', null, null], last: 'wrong' }, 'right');
         expect(w.slot).toBe(2);
-        expect(w.outcomes.planned).toEqual(['right', 'wrong', 'right']);
+        expect(w.outcomes.planned).toEqual(['right', 'wrong', 'right', null]);
         expect(w.outcomes.last).toBe('right');
     });
 
-    it('★ 有第三次 ⇒ 只写最近一次（last），三个计划位一个字都不许动', () => {
+    it('★ 前三格满了但**第 4 格还空** ⇒ 写第 4 格（2026-10-14 扩格后的新行为）', () => {
         const w = nextReviewOutcomes({ planned: ['right', 'wrong', 'right'], last: 'right' }, 'wrong');
+        expect(w.slot).toBe(3);
+        expect(w.outcomes.planned).toEqual(['right', 'wrong', 'right', 'wrong']);
+        expect(w.outcomes.last).toBe('wrong');
+    });
+
+    it('★ 四格全满 ⇒ 只写最近一次（last），计划格一个字都不许动', () => {
+        const w = nextReviewOutcomes(
+            { planned: ['right', 'wrong', 'right', 'right'], last: 'right' },
+            'wrong'
+        );
         expect(w.slot).toBe('last');
-        expect(w.outcomes.planned).toEqual(['right', 'wrong', 'right']);
+        expect(w.outcomes.planned).toEqual(['right', 'wrong', 'right', 'right']);
         expect(w.outcomes.last).toBe('wrong');
     });
 
     it('中间空、后面有值 ⇒ 仍然填**第一个**空位（从左往右）', () => {
         const w = nextReviewOutcomes({ planned: ['right', null, 'wrong'], last: 'wrong' }, 'right');
         expect(w.slot).toBe(1);
-        expect(w.outcomes.planned).toEqual(['right', 'right', 'wrong']);
+        expect(w.outcomes.planned).toEqual(['right', 'right', 'wrong', null]);
         expect(w.outcomes.last).toBe('right');
     });
 
     it('★ 库里存的是 JSON 字符串也照收（扫码列表拿到的就是字符串）', () => {
         const w = nextReviewOutcomes('{"planned":["right",null,null],"last":"right"}', 'wrong');
         expect(w.slot).toBe(1);
-        expect(w.outcomes.planned).toEqual(['right', 'wrong', null]);
+        expect(w.outcomes.planned).toEqual(['right', 'wrong', null, null]);
     });
 
     it('坏数据（坏 JSON / 非对象）一律当"没有记录"，不猜历史', () => {
         for (const bad of ['不是 json', '{}', 123, undefined]) {
-            expect(nextReviewOutcomes(bad, 'right').outcomes.planned).toEqual(['right', null, null]);
+            expect(nextReviewOutcomes(bad, 'right').outcomes.planned).toEqual([
+                'right',
+                null,
+                null,
+                null,
+            ]);
         }
     });
 
     it('不改动传入的对象（纯函数，返回的是新数组）', () => {
-        const before = { planned: ['right', null, null] as ('right' | 'wrong' | null)[], last: 'right' as const };
+        const before = {
+            planned: ['right', null, null] as ('right' | 'wrong' | null)[],
+            last: 'right' as const,
+        };
         nextReviewOutcomes(before, 'wrong');
         expect(before.planned).toEqual(['right', null, null]);
         expect(before.last).toBe('right');
@@ -81,7 +102,7 @@ describe('扫卷录入 · 复习结果写哪一格', () => {
         const pink = nextReviewOutcomes(snapshot, 'wrong');
         expect(green.slot).toBe(1);
         expect(pink.slot).toBe(1); // 同一个落点
-        expect(pink.outcomes.planned).toEqual(['right', 'wrong', null]); // 不是 ['right','right','wrong']
+        expect(pink.outcomes.planned).toEqual(['right', 'wrong', null, null]); // 不是 ['right','right','wrong']
         expect(pink.outcomes.last).toBe('wrong');
     });
 });
@@ -105,7 +126,7 @@ describe('扫卷录入 · 灰圆三态循环', () => {
         expect(reviewMarkFromOutcomes({ planned: ['right', null, null], last: null })).toBe('none');
     });
 
-    it('三态配色齐全，绿=对 / 粉=错（与错题卡四圆点同色，不另立一套）', () => {
+    it('三态配色齐全，绿=对 / 粉=错（与错题卡圆点同色，不另立一套）', () => {
         expect(REVIEW_MARK_COLORS.right.bg).toBe('#6fbf8b');
         expect(REVIEW_MARK_COLORS.wrong.bg).toBe('#f6c9cf');
         expect(REVIEW_MARK_COLORS.none.bg).toBe('#9ca3af');

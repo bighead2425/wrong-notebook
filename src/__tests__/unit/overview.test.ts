@@ -106,8 +106,9 @@ describe('buildOverview —— 学情底账', () => {
         expect(o.byReviewState[0].zh).toBe('新');
     });
 
-    it('已退休计数（连对满 3 ⇒ 不必再排）', () => {
-        const retired = item({ reviewOutcomes: res(['right', 'right', 'right'], 'right') });
+    it('已退休计数（连对满 4 ⇒ 不必再排）', () => {
+        // 【2026-10-14】`RETIRE_STREAK` 从 3 改回 4 ⇒ 这里必须造 **4 个** right 才退休
+        const retired = item({ reviewOutcomes: res(['right', 'right', 'right', 'right'], 'right') });
         const o = buildOverview([retired, item({})], TODAY);
         expect(o.totals.retired).toBe(1);
     });
