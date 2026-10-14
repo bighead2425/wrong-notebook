@@ -5,8 +5,10 @@ import {
     plannedReviewDates,
     PLANNED_REVIEW_LABELS_ZH,
     PLANNED_REVIEW_LABELS_EN,
+    PLANNED_REVIEW_OFFSET_DAYS,
     setLastOutcome,
     setPlannedOutcome,
+    type PlannedIndex,
     type ReviewOutcome,
     type ReviewOutcomes,
 } from '@/lib/review-outcomes';
@@ -15,7 +17,8 @@ import {
  * 【2026-09-30】详情页里的**复习结果编辑器**（四个圆点那套）。
  *
  * 他定的界面形态：
- *   · 前三行 = 计划复习的三个节点，**每行写具体日期**（录入日 +1 / +7 / +21 天，YYYY-MM-DD）；
+ *   · 前**四**行 = 计划复习的四个节点，**每行写具体日期**（录入日 +1 / +7 / +21 / +49 天，
+ *     YYYY-MM-DD；偏移量取自 `PLANNED_REVIEW_OFFSET_DAYS`，本组件不再自己写一遍）；
  *   · 每行三个圆圈：**对号 / 错号 / 空圈**（三选一）；
  *   · 最后一行写「最近一次情况」，同样三个圆圈。
  *
@@ -29,8 +32,12 @@ import {
  * ⚠️ 圆圈的**造型**只有这一处（详情页专用）；卡片上那四个只读的小圈在 `review-dots.tsx` ——
  *    两边颜色同源同一组常量，不要各调各的。
  *
- * 逻辑全在 `lib/review-outcomes.ts`：`setPlannedOutcome`（改前三行 ⇒ 联动 last）与
+ * 逻辑全在 `lib/review-outcomes.ts`：`setPlannedOutcome`（改计划格 ⇒ 联动 last）与
  * `setLastOutcome`（只改最近一次）。这里是纯展示 + 把点击翻译成这两个调用。
+ *
+ * ⚠️ 【2026-10-14】等级联动那一侧有个**临时口径**：**最后一个计划格暂不进等级账本**
+ *    （"第 4 次加减多少"空空还没定）—— 所以这里点第 4 格不会改奖牌。
+ *    见 `lib/level-linkage.ts` 的 `computeLevelLinkage()`。
  */
 
 const GRAY_UNSELECTED = '#9aa0a6';
@@ -155,11 +162,14 @@ export function ReviewOutcomeEditor({
                     key={i}
                     label={dates[i] || L('（无录入日期）', '(no date)')}
                     labelTitle={L(
-                        `${PLANNED_REVIEW_LABELS_ZH[i]}（录入日 +${[1, 7, 21][i]} 天）`,
-                        `${PLANNED_REVIEW_LABELS_EN[i]} (record date +${[1, 7, 21][i]}d)`,
+                        `${PLANNED_REVIEW_LABELS_ZH[i]}（录入日 +${PLANNED_REVIEW_OFFSET_DAYS[i]} 天）`,
+                        `${PLANNED_REVIEW_LABELS_EN[i]} (record date +${PLANNED_REVIEW_OFFSET_DAYS[i]}d)`,
                     )}
                     value={v}
-                    onPick={(next) => onChange(setPlannedOutcome(current, i as 0 | 1 | 2, next))}
+                    /* ⚠️ 下标类型必须跟着 `PLANNED_REVIEW_ROUNDS` 走 ——
+                       这里曾经写死 `i as 0 | 1 | 2`（3 格时代的残留），加第 4 格后
+                       虽然运行时仍传 3、但类型是骗人的（hover 提示也退化成"+undefined 天"）。 */
+                    onPick={(next) => onChange(setPlannedOutcome(current, i as PlannedIndex, next))}
                     L={L}
                 />
             ))}
@@ -170,11 +180,11 @@ export function ReviewOutcomeEditor({
                 onPick={(next) => onChange(setLastOutcome(current, next))}
                 L={L}
             />
-            {/* 一句话说清联动规则（免得到时候搞不懂为什么第四行自己变了） */}
+            {/* 一句话说清联动规则（免得到时候搞不懂为什么最后一行自己变了） */}
             <p className="pt-1 text-[11px] leading-tight text-muted-foreground">
                 {L(
-                    '前三行是计划复习（+1 / +7 / +21 天）；改前三行时"最近一次"会跟着变成最后一个有结果的',
-                    'First three rows are planned reviews; the last row follows the last filled one.',
+                    '前四行是计划复习（+1 / +7 / +21 / +49 天）；改前四行时"最近一次"会跟着变成最后一个有结果的',
+                    'First four rows are planned reviews; the last row follows the last filled one.',
                 )}
             </p>
         </div>

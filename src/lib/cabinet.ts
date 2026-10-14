@@ -28,6 +28,7 @@ import {
     normalizeReviewOutcomes,
     PLANNED_REVIEW_LABELS_ZH,
     PLANNED_REVIEW_OFFSET_DAYS,
+    type PlannedIndex,
 } from './review-outcomes';
 import { normalizeManageType } from './manage-type';
 // 【2026-10-13】⑦「今天先练这几道」用状态机算紧迫度（规则只在那一个模块里）
@@ -162,8 +163,8 @@ export function pendingDeepPrint(questions: readonly CabinetQuestion[]): Cabinet
 
 export interface DueReviewItem {
     question: CabinetQuestion;
-    /** 下一个还没做的是第几次计划复习（0=第1天 / 1=第7天 / 2=第21天） */
-    plannedIndex: 0 | 1 | 2;
+    /** 下一个还没做的是第几次计划复习（0=第1天 / 1=第7天 / 2=第21天 / 3=第49天） */
+    plannedIndex: PlannedIndex;
     /** 这个复习节点的到期日（打印日 + 1/7/21，本地 `YYYY-MM-DD`） */
     dueOn: string;
     /** 到期后过了几天（正好到期当天 = 0） */
@@ -195,14 +196,14 @@ export function dueReviewItems(
 
         const planned = normalizeReviewOutcomes(q.reviewOutcomes).planned;
         const idx = planned.findIndex((v) => v === null);
-        if (idx === -1) continue; // 三次计划复习都做完了
+        if (idx === -1) continue; // 计划格全做完了（现在是 4 格）
 
         const dueOn = addDays(dayKey(base), PLANNED_REVIEW_OFFSET_DAYS[idx]);
         if (today < dueOn) continue; // 还没到期（本地日字符串可直接比大小）
 
         out.push({
             question: q,
-            plannedIndex: idx as 0 | 1 | 2,
+            plannedIndex: idx as PlannedIndex,
             dueOn,
             overdueDays: daysBetweenKeys(dueOn, today),
             label: PLANNED_REVIEW_LABELS_ZH[idx],
@@ -416,7 +417,7 @@ export interface CabinetTasks {
         source: string | null;
         notebookId?: string | null;
         dueOn: string;
-        plannedIndex: 0 | 1 | 2;
+        plannedIndex: PlannedIndex;
         label: string;
         overdueDays: number;
     }>;

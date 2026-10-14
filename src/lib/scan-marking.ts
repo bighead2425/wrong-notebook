@@ -15,6 +15,7 @@
 
 import {
     normalizeReviewOutcomes,
+    type PlannedIndex,
     type ReviewOutcome,
     type ReviewOutcomes,
 } from './review-outcomes';
@@ -134,8 +135,14 @@ export const REVIEW_MARK_COLORS: Record<ReviewMark, { bg: string; fg: string }> 
 
 /* ============================ 三、复习结果写到哪一格 ============================ */
 
-/** 这次结果落在哪一格：0/1/2 = 计划第几次；'last' = 最近一次 */
-export type ReviewOutcomeSlot = 0 | 1 | 2 | 'last';
+/**
+ * 这次结果落在哪一格：`0/1/2/3` = 计划第几次；`'last'` = 最近一次。
+ *
+ * ⚠️ 计划侧的下标类型**必须**用 `PlannedIndex`（长度 = `PLANNED_REVIEW_ROUNDS`）——
+ *    这里曾经写死 `0 | 1 | 2`（3 格时代的残留）：加第 4 格后运行时仍能算出 3，
+ *    但类型是骗人的，而且谁照着这个类型写判断就会漏掉第 4 格。
+ */
+export type ReviewOutcomeSlot = PlannedIndex | 'last';
 
 export interface ReviewOutcomeWrite {
     /** 落值之后的完整复习结果（直接交给 `serializeReviewOutcomes`） */
@@ -149,7 +156,8 @@ export interface ReviewOutcomeWrite {
  *   · 没有复习记录 ⇒ 写第一次（planned[0]）；
  *   · 只有第一次   ⇒ 写第二次（planned[1]）；
  *   · 有第二次而没有第三次 ⇒ 写第三次（planned[2]）；
- *   · 有第三次     ⇒ 写最近一次（last）。
+ *   · 前三格都满   ⇒ 写第四次（planned[3]，2026-10-14 随纸面第 4 格一起加的）；
+ *   · 四格都满     ⇒ 写最近一次（last）。
  *
  * ⚠️ **额外要求（他专门强调的）**：只要标了"对/错"，就**同时更新 `last`** ——
  *    `last` 的定义就是"最近一次复习的结果（计划内、计划外都算）"，
@@ -164,8 +172,8 @@ export function nextReviewOutcomes(current: unknown, outcome: ReviewOutcome): Re
     const emptyIndex = planned.findIndex((v) => v === null);
     if (emptyIndex >= 0) {
         planned[emptyIndex] = outcome;
-        return { outcomes: { planned, last: outcome }, slot: emptyIndex as 0 | 1 | 2 };
+        return { outcomes: { planned, last: outcome }, slot: emptyIndex as PlannedIndex };
     }
-    // 三个计划位都满了 ⇒ 只动"最近一次"（计划位一个字都不改）
+    // 计划格全满了（现在是 4 格）⇒ 只动"最近一次"（计划格一个字都不改）
     return { outcomes: { planned, last: outcome }, slot: 'last' };
 }

@@ -24,10 +24,14 @@
  *
  *   这一改，他那三条"不变"不用单独写代码 —— 它们是这个结构的自然结果。
  *
- * ── 账上只留**一笔**（而且只记"计划三格"）────────────────────────────────
+ * ── 账上只留**一笔**（而且只记"计划格"）────────────────────────────────
  *   既然只有"最新那一笔"能被反悔，更早的账**永远不可能再被撤销** ⇒ 不必留。
- *   所以 `levelLedger` 存的就是 `{ slot, delta }` —— 最近一次因**计划三格**产生的账。
+ *   所以 `levelLedger` 存的就是 `{ slot, delta }` —— 最近一次因**计划格**产生的账。
  *   "最近一次复习"那一格**不进账本**：它按"一次输入"记（见 `computeLevelLinkage` 尾部说明）。
+ *
+ * ⚠️ **2026-10-14：纸上加了第 4 格，但"第 4 次加减多少"他没定** ⇒ 本模块里加了
+ *   一条**临时口径**（最后一个计划格先不动等级、也不动账本），详见 `computeLevelLinkage()` 里那段注释。
+ *    规则未定**不等于可以自己编一条** —— 编出来会直接改她看到的奖牌。
  *
  * ⚠️ 已印出去的纸一律不动（他 2026-10-03 拍板）：等级只影响"将来再印"的纸，
  *    绝不回头改已发出的日期格 —— 否则她按纸复习、系统按新规则算，两边越走越偏。
@@ -63,8 +67,19 @@ export function clampLevel(value: unknown): number {
 
 /* ============================ 账（levelLedger） ============================ */
 
-/** 账上的槽位：三个计划节点 + 最近一次 */
-export type LevelSlot = 'p1' | 'p2' | 'p3' | 'last';
+/** 账上的槽位：四个计划节点 + 最近一次 */
+export type LevelSlot = 'p1' | 'p2' | 'p3' | 'p4' | 'last';
+
+/**
+ * 计划节点的槽位名，**下标 = `planned` 数组下标**。
+ *
+ * ⚠️⚠️ 长度**必须**等于 `PLANNED_REVIEW_ROUNDS`。这条以前是硬编码的 `['p1','p2','p3']`，
+ *    2026-10-14 加第 4 格时漏改 ⇒ 点第 4 格算出 `slot = undefined` ⇒
+ *    ① 清空那格时 `prevEntry.delta` 撞 null（500，界面上就是"更新失败"）；
+ *    ② 记出来的账是 `{"delta":N}`（没有 slot）⇒ 账本失效。
+ *    ⇒ 现在由 `level-linkage.test.ts` 里一条**看门测试**钉住"长度必须相等"。
+ */
+export const PLANNED_LEVEL_SLOTS: readonly LevelSlot[] = ['p1', 'p2', 'p3', 'p4'];
 
 /** 最近一笔账 —— 只有它可能被"反悔"撤销 */
 export interface LevelEntry {
@@ -72,7 +87,7 @@ export interface LevelEntry {
     delta: number;
 }
 
-const SLOTS: readonly LevelSlot[] = ['p1', 'p2', 'p3', 'last'];
+const SLOTS: readonly LevelSlot[] = ['p1', 'p2', 'p3', 'p4', 'last'];
 
 export function isLevelSlot(value: unknown): value is LevelSlot {
     return typeof value === 'string' && (SLOTS as readonly string[]).includes(value);
@@ -179,6 +194,7 @@ export function slotLabelZh(slot: LevelSlot): string {
     if (slot === 'p1') return '第 1 次复习';
     if (slot === 'p2') return '第 2 次复习';
     if (slot === 'p3') return '第 3 次复习';
+    if (slot === 'p4') return '第 4 次复习';
     return '最近一次复习';
 }
 
@@ -243,7 +259,24 @@ export function computeLevelLinkage(input: LevelLinkageInput): LevelLinkageResul
 
     if (changedPlanned.length > 0) {
         const i = Math.max(...changedPlanned);
-        const slot = (['p1', 'p2', 'p3'] as const)[i];
+
+        /**
+         * ⚠️⚠️【2026-10-14 临时口径】**最后一个计划格先不动等级、也不动账本**。
+         *
+         * 起因：纸上 2026-10-14 加了第 4 格（`+49` 天），但**"第 4 次该加减多少"这条规则
+         * 空空还没定**（现有规则是他当年按 3 格亲口定的：第 1 次恒 0，第 2 / 3 次看组合）。
+         *
+         * ⚠️ **为什么不能"顺手"沿用第 3 格那条规则**：`finish()` 会把**同一槽位的旧账撤掉**
+         *    ⇒ 第 3 格刚记的那笔会被当成"旧账"撤销，算出来是"第 4 次又错 ⇒ 等级反而**降**"，
+         *    明显不对。（这正是加第 4 格之前那版代码的实际行为，也是本次 bug 的一半。）
+         *
+         * 📌 先这样是为了**把 bug 关掉**：等级不乱动、账本不损坏；而"第 4 次"这个事实
+         *    仍然记在 `planned[3]` 与 `ReviewEvent` 流水里（一处都没丢）。
+         *    他定了规则之后：**删掉这一行** + 给 `plannedSlotDelta` 补 `index === 3` 的分支即可。
+         */
+        if (i >= PLANNED_REVIEW_ROUNDS - 1) return unchanged;
+
+        const slot = PLANNED_LEVEL_SLOTS[i];
 
         /**
          * ② 它是不是"最新的"？

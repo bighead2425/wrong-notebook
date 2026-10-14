@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import {
     LEVEL_MAX,
     LEVEL_MIN,
+    PLANNED_LEVEL_SLOTS,
     clampLevel,
     computeLevelLinkage,
     initialLevelForManageType,
@@ -18,14 +19,21 @@ import {
     plannedSlotDelta,
     serializeLevelEntry,
 } from '@/lib/level-linkage';
-import { emptyReviewOutcomes, type ReviewOutcomes } from '@/lib/review-outcomes';
+import {
+    PLANNED_REVIEW_ROUNDS,
+    emptyReviewOutcomes,
+    type ReviewOutcomes,
+} from '@/lib/review-outcomes';
 
-/** 快捷造一份复习结果 */
+/** 快捷造一份复习结果（长度跟着 `PLANNED_REVIEW_ROUNDS` 走，别再写死 3） */
 function outcomes(
     planned: (('right' | 'wrong') | null)[],
     last: ('right' | 'wrong') | null = null,
 ): ReviewOutcomes {
-    return { planned: [planned[0] ?? null, planned[1] ?? null, planned[2] ?? null], last };
+    return {
+        planned: Array.from({ length: PLANNED_REVIEW_ROUNDS }, (_, i) => planned[i] ?? null),
+        last,
+    };
 }
 
 /** 跑一次联动（省得每个用例都写一长串参数） */
@@ -329,5 +337,74 @@ describe('等级联动 · 边界', () => {
         });
         expect(r.changed).toBe(false);
         expect(r.attention).toBe(2);
+    });
+});
+
+/* ==========================================================================
+ * 【2026-10-14 加第 4 格】把当天那个**线上 bug** 钉住：
+ *
+ *   现象：详情页点**第 4 个**复习结果圆圈 ⇒ 界面弹"更新失败"（接口 500）。
+ *   根因：`computeLevelLinkage` 里的槽位名表还是 3 格时代的 `['p1','p2','p3']`
+ *         ⇒ 下标 3 取到 `undefined` ⇒ ① 清空那格时 `prevEntry.delta` 撞 null（500）；
+ *         ② 就算不崩，账也会写成 `{"delta":N}`（**没有 slot**）⇒ 账本失效。
+ * ========================================================================== */
+describe('等级联动 · 计划第 4 格（2026-10-14 加的格）', () => {
+    it('★ 看门测试：计划槽位名表的长度**必须**等于 PLANNED_REVIEW_ROUNDS', () => {
+        // 再加格/减格时，这条会先红 —— 免得又是"有人加了格、忘了改槽位表"
+        expect(PLANNED_LEVEL_SLOTS).toHaveLength(PLANNED_REVIEW_ROUNDS);
+    });
+
+    it('★★ 清空第 4 格**不许崩**（修复前：`slot = undefined` ⇒ 读 `prevEntry.delta` 撞 null ⇒ 接口 500）', () => {
+        const prev = outcomes(['right', 'right', 'right', 'right'], 'right');
+        const next = outcomes(['right', 'right', 'right', null], 'right'); // 倒着找 ⇒ last 仍是 right
+        expect(() => run({ attention: 3, prev, next })).not.toThrow();
+    });
+
+    it('★★ 账本是空的时候清空第 4 格同样不许崩（修复前就是这条路径炸的）', () => {
+        const prev = outcomes(['wrong', 'wrong', 'wrong', 'wrong'], 'wrong');
+        const next = outcomes(['wrong', 'wrong', 'wrong', null], 'wrong');
+        expect(() => run({ attention: 5, prev, next, entry: null })).not.toThrow();
+    });
+
+    it('★ 【临时口径】改第 4 格**不动等级、也不动账本**（"第 4 次加减多少"他还没定）', () => {
+        const prev = outcomes(['right', 'right', 'right', null], 'right');
+        const next = outcomes(['right', 'right', 'right', 'right'], 'right');
+        const r = run({ attention: 3, prev, next, entry: { slot: 'p2', delta: 1 } });
+        expect(r.changed).toBe(false); // 等级不动
+        expect(r.attention).toBe(3);
+        expect(r.entryChanged).toBe(false);
+        expect(r.entry).toEqual({ slot: 'p2', delta: 1 }); // ← 旧账**不许被顺手清掉**
+        expect(r.slot).toBeNull();
+    });
+
+    it('★ 【临时口径】把第 4 格改成"错"也一样：不动等级', () => {
+        const prev = outcomes(['right', 'right', 'right', 'right'], 'right');
+        const next = outcomes(['right', 'right', 'right', 'wrong'], 'wrong');
+        const r = run({ attention: 3, prev, next });
+        expect(r.changed).toBe(false);
+        expect(r.attention).toBe(3);
+    });
+
+    it('⚠️ 但**不许**"顺手沿用第 3 格的规则" —— 那会撤掉第 3 格刚记的账（第 4 次错 ⇒ 等级反而降）', () => {
+        // 这条替"规则必须是**他定的**"站岗：将来有人删掉临时口径、直接让 index===3 走
+        // index===2 的分支，这里立刻会红。
+        const prev = outcomes(['wrong', 'wrong', 'wrong', null], 'wrong');
+        const next = outcomes(['wrong', 'wrong', 'wrong', 'wrong'], 'wrong');
+        const r = run({ attention: 5, prev, next, entry: { slot: 'p3', delta: 2 } });
+        expect(r.delta).toBe(0);
+        expect(r.entry).toEqual({ slot: 'p3', delta: 2 }); // 没有变成 -1
+    });
+
+    it('★ 账本被写坏成 `{"delta":N}`（没有 slot）时当作"没有账"，不崩也不乱撤', () => {
+        expect(normalizeLevelEntry('{"delta":-1}')).toBeNull();
+    });
+
+    it('★ 前三格的规则一个字没变（回归）', () => {
+        const prev = outcomes(['right', null, null], null);
+        const next = outcomes(['right', 'wrong', null], 'wrong');
+        const r = run({ attention: 2, prev, next });
+        expect(r.changed).toBe(true);
+        expect(r.attention).toBe(3); // 一次对、二次错 ⇒ +1
+        expect(r.slot).toBe('p2');
     });
 });
