@@ -7,7 +7,7 @@
  * 本模块是纯计算：不碰 DOM、不碰数据库，所以日期口径能被单测钉死。
  */
 
-import { formatMonthDay } from './date-format';
+import { formatMonthDay, formatYear } from './date-format';
 
 /* ======================== 纸张尺寸（实测，别改） ======================== */
 
@@ -338,6 +338,15 @@ export interface ReviewSlot {
      *      **身份条「印于 …」不受影响，仍 `yyyy-mm-dd`** ⇒ 年份在纸面上仍查得到。
      */
     label: string;
+    /**
+     * 【2026-10-14】写在**这一格的颜色块前面**的年份（如 `2026`）。
+     *
+     * **只有第 1 格有**（其余为 `null`）—— 空空当天拍板（方案 A）：
+     * 年份在反面那一页上无处可查（身份条在正面），所以借页脚里**仅剩的 ~11.9mm**
+     * 写一个年份；跨年的情况靠"日期先大后小"自然读出来。
+     * 取舍与他的原话见 `date-format.ts` 的 `formatYear()` 注释。
+     */
+    yearLabel: string | null;
 }
 
 /** 只按「年月日」加减，**不碰毫秒**。 */
@@ -346,7 +355,7 @@ export function addDays(date: Date, days: number): Date {
 }
 
 /**
- * 三个日期格。
+ * 四个日期格（打印日 +1 / +7 / +21 / +49）。
  * @param printDate 打印那一刻（只用它的年月日，时分秒忽略）
  */
 export function reviewDateSlots(printDate: Date): ReviewSlot[] {
@@ -371,6 +380,12 @@ export function reviewDateSlots(printDate: Date): ReviewSlot[] {
              *    身份条不动；将来纸型换了、宽度够了，把这里换回 `formatIsoDate` 即可。
              */
             label: formatMonthDay(date),
+            /**
+             * 【2026-10-14】年份只写在**第 1 格**前面（方案 A，空空拍板）。
+             * 取的是**第一格自己的年份**（不是"打印年份"）—— 12-31 打印时第一格已是次年，
+             * 这样标签和它后面那个日期永远同一年。
+             */
+            yearLabel: i === 0 ? formatYear(date) : null,
         };
     });
 }

@@ -84,6 +84,47 @@ describe('T1 深挖纸 · 该印的必须印出来', () => {
         expect(html).toContain('02-12');
     });
 
+    /* ==================================================================
+     * 【2026-10-14 方案 A】第 1 格前面加年份（空空拍板）
+     * 为什么：日期格只写 `MM-DD`，而**反面这一页没有第二处年份**
+     *         （身份条「印于 …」在**正面**）⇒ 年份必须在日期格这行自己带出来。
+     * ================================================================== */
+
+    it('★ 年份写在第 1 格**前面**，而且全页**只出现一次**', () => {
+        const html = renderWith();
+        // 只出现一次：`>2026<` 这种"整个文本节点就是年份"的形态只应有一个
+        expect(html.match(/>2026</g) ?? []).toHaveLength(1);
+        // 位置：在第一个颜色格之前
+        // ⚠️ 必须用 `class="print-deep-slot"` 而不是 `print-deep-slot` ——
+        //    后者是**行容器** `print-deep-slots` 的前缀，会匹配到行本身（第一版就踩了这个坑）。
+        const yearAt = html.indexOf('>2026<');
+        const firstSlotAt = html.indexOf('class="print-deep-slot"');
+        expect(yearAt).toBeGreaterThan(-1);
+        expect(firstSlotAt).toBeGreaterThan(-1);
+        expect(yearAt).toBeLessThan(firstSlotAt);
+    });
+
+    it('★ 年份用的是**第 1 格的颜色**（浅粉文字色 #a8386b），不是黑的', () => {
+        const html = renderWith();
+        const idx = html.indexOf('>2026<');
+        const around = html.slice(Math.max(0, idx - 90), idx);
+        expect(around).toContain('#a8386b');
+    });
+
+    it('★ 年份是**第 1 格自己的年份**（12-31 打印 ⇒ 第 1 格是次年 01-01，标 2027）', () => {
+        const html = renderWith({}, new Date(2026, 11, 31));
+        expect(html).toContain('>2027<');
+        expect(html).not.toContain('>2026<');
+    });
+
+    it('⚠️ 跨年那张**不给后面的格子补年份** —— 方案 A 的已知代价（空空明确接受）', () => {
+        const html = renderWith({}, new Date(2026, 11, 25));
+        // 第 1 格 12-26 属于 2026 ⇒ 标 2026；而 01-01 其实是 2027，纸上不写
+        expect(html).toContain('>2026<');
+        expect(html).not.toContain('2027');
+        // 靠"日期先大后小"读出来（12-26 → 01-01），这也是他接受它的理由
+    });
+
     it('身份条要印题号、年级学期与打印日', () => {
         const html = renderWith();
         expect(html).toContain('SX20260916001');

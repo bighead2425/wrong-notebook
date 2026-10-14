@@ -613,7 +613,12 @@ export function DeepDiveCard({
                         {/* 四个日期格（打印日 +1 / +7 / +21 / +49，**纸面写 MM-DD**）+ 末尾虚线框
                             【2026-10-14】① 加第 4 格（偏移 +49、色「淡紫」）；
                             ② 日期由 `yyyy-mm-dd` 缩成 `MM-DD` —— 页脚右区约 123.5mm，
-                               四组全写会超 10~15mm（见 lib/deep-dive-card.ts 的注释）。 */}
+                               四组全写会超 10~15mm（见 lib/deep-dive-card.ts 的注释）。
+                            ③ 第 1 格**前面加年份**（方案 A）—— 页脚宽度实测：
+                               右区 123.5mm，加年份前已用 111.6mm，**只余 11.9mm**；
+                               一个 `2026`（9pt）≈ 8.1mm + 内间距 1.2mm ⇒ 加完仍余约 2.6mm。
+                               ⚠️ **改动这条带之前先读 `docs\11_纸面尺寸账_深挖纸页脚.md`**，
+                                  里面有复量脚本（`tools\_measure_footer2.py`）。 */}
                         <div
                             className="print-deep-slots"
                             style={{ display: 'flex', alignItems: 'center', gap: '5mm', flexShrink: 0 }}
@@ -629,6 +634,17 @@ export function DeepDiveCard({
                                             gap: '1.2mm',
                                         }}
                                     >
+                                        {/* 【2026-10-14 方案 A】年份只写在第 1 格**前面**，用该格颜色。
+                                            为什么需要：日期格只写 `MM-DD`（宽度所限），而
+                                            **反面这一页没有第二处年份**（身份条「印于 …」在正面）。
+                                            ⚠️ 年末那几格其实已跨年（`12-22` 后面跟 `01-05`），
+                                               空空 2026-10-14 明确接受："跨年总量小，日期先大后小，自然读得出"。
+                                               （要严格补的做法见 `date-format.ts` 的 `formatYear()`。） */}
+                                        {s.yearLabel && (
+                                            <span style={{ fontSize: '9pt', color: c.text, fontWeight: 600 }}>
+                                                {s.yearLabel}
+                                            </span>
+                                        )}
                                         {/* 一格里三种状态：空着 / 打勾 / 打叉 —— 打勾打叉是她的任务 */}
                                         <span
                                             className="print-deep-slot"

@@ -142,6 +142,17 @@ describe('T1 深挖纸 · 反面四个日期格（P20 / P24；2026-10-14 从 3 �
         expect(slots.map((s) => s.index)).toEqual([1, 2, 3, 4]);
     });
 
+    it('★ 年份只写在**第 1 格**前面（方案 A，空空 2026-10-14 拍板）', () => {
+        const slots = reviewDateSlots(new Date(2026, 8, 24)); // 2026-09-24
+        expect(slots.map((s) => s.yearLabel)).toEqual(['2026', null, null, null]);
+    });
+
+    it('★ 年份取的是**第 1 格自己的年份**，不是"打印年份"（12-31 打印时第 1 格已是次年）', () => {
+        const slots = reviewDateSlots(new Date(2026, 11, 31)); // 2026-12-31
+        expect(slots[0].label).toBe('01-01');
+        expect(slots[0].yearLabel).toBe('2027');
+    });
+
     it('跨月要算对（9/30 + 1 天 = 10/01）', () => {
         expect(reviewDateSlots(new Date(2026, 8, 30)).map((s) => s.label)).toEqual([
             '10-01',
@@ -157,11 +168,12 @@ describe('T1 深挖纸 · 反面四个日期格（P20 / P24；2026-10-14 从 3 �
         expect(slots[1].date.getFullYear()).toBe(2027);
     });
 
-    it('⚠️ `label` 跨年时**不带年份** —— 这是 `MM-DD` 的已知代价（年份看身份条「印于 …」）', () => {
+    it('⚠️ 跨年时后几格**不给自己标年份** —— 这是"只标第一个年份"的已知代价（方案 A）', () => {
         const slots = reviewDateSlots(new Date(2026, 11, 25));
-        // 12-26 与次年的 01-01 在纸面上"像同一年"，靠身份条的「印于 2026-12-25」区分
-        expect(slots[0].label).toBe('12-26');
-        expect(slots[1].label).toBe('01-01');
+        // 12-26 与次年的 01-01 在纸面上"像同一年"；靠"日期先大后小"读出来。
+        // ⚠️ 这是空空 2026-10-14 明确接受的取舍（原话见 date-format.ts 的 formatYear()）——
+        //    要严格补，得在跨年那格前面再标一次，但页脚只剩 11.9mm，装不下第 2 个年份。
+        expect(slots.map((s) => s.yearLabel)).toEqual(['2026', null, null, null]);
         expect(slots[1].date.getFullYear()).toBe(2027);
     });
 
