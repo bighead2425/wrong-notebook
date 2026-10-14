@@ -11,12 +11,9 @@ import { normalizeMistakeCategory } from "@/lib/mistake-category";
 import { normalizeReviewOutcomes, serializeReviewOutcomes } from "@/lib/review-outcomes";
 // 【2026-10-14】复习事件流水（第一步：双写）—— 唯一写入口在 lib/review-events.ts
 import { parseReviewEventInput, recordReviewEvent } from "@/lib/review-events";
-import {
-    clampLevel,
-    computeLevelLinkage,
-    levelDeltaForTypeSwitch,
-    serializeLevelEntry,
-} from "@/lib/level-linkage";
+// 【2026-10-15】⚠️ 只留"类型切换 ±1"与夹值；
+//   `computeLevelLinkage` / `serializeLevelEntry` 已**不再调用**（复习结果不再自动加减等级，见下方注释）
+import { clampLevel, levelDeltaForTypeSwitch } from "@/lib/level-linkage";
 // 【2026-10-10】"已掌握"要过一遍题间从属关系规则（人工标记才断开关联、主题向下传播）
 import type { LinkOp } from "@/lib/item-link";
 import { applyLinkOps, applyMastery, loadLinkView, planMasteryChange } from "@/lib/item-link-store";
@@ -346,21 +343,18 @@ export async function PUT(
         }
 
         /**
-         * 【2026-10-03】等级 × 复习结果 / 类型切换的**联动收口**（他拍板的"事件记账"）。
+         * 【2026-10-03 立，2026-10-15 缩】等级的**自动加减**（他拍板的"事件记账"）。
          *
-         * 规则只在 `lib/level-linkage.ts` 一处实现，这里只做"接线"：
-         *   (a) **类型切换**：复练 → 深挖 = +1；深挖 → 复练 = −1（只认**人显式**改的那次；
-         *       错因自动派生不算 —— 那是系统按 L1 映射表干活，不该动等级）；
-         *   (b) **复习结果**：按第 1/2/3 次与"最近一次"的组合记账；翻旧账不记账；
-         *       最新那一格允许反悔（撤销旧账 + 按新组合重算）。
+         * 现在只剩 **(a) 类型切换**：复练 → 深挖 = +1；深挖 → 复练 = −1
+         * （只认**人显式**改的那次；错因自动派生不算 —— 那是系统按 L1 映射表干活，不该动等级）。
+         *
+         * ⚠️ 原来的 **(b) 复习结果联动**已**整段停用**（2026-10-15，理由见下面那段注释）。
          *
          * ⚠️ 顺序有讲究：**人工直接定级（`attention`）优先** —— 他点了奖牌就以他点的为准，
          *    自动加减这一步整个让位（否则会出现"我刚点上去又被弹回来"）。
          */
         if (!hasExplicitAttention) {
             let nextAttention = clampLevel(errorItem.attention);
-            let nextLedger: string | null = errorItem.levelLedger ?? null;
-            let ledgerTouched = false;
             let note = '';
 
             if (manageTypeChanged) {
@@ -372,22 +366,32 @@ export async function PUT(
                 }
             }
 
-            if (updateData.reviewOutcomes !== undefined) {
-                const linked = computeLevelLinkage({
-                    currentAttention: nextAttention,
-                    prevOutcomes: errorItem.reviewOutcomes,
-                    nextOutcomes: updateData.reviewOutcomes,
-                    prevEntry: errorItem.levelLedger,
-                });
-                if (linked.changed) {
-                    nextAttention = linked.attention;
-                    note = note ? `${note}；${linked.reasonZh}` : linked.reasonZh;
-                }
-                if (linked.entryChanged) {
-                    nextLedger = serializeLevelEntry(linked.entry);
-                    ledgerTouched = true;
-                }
-            }
+            /**
+             * ⚠️⚠️【2026-10-15 **停用**】复习结果不再自动加减等级 ——
+             *   原来这里调 `computeLevelLinkage`（"等级 × 复习结果的组合记账"），**本次整段删掉**。
+             *
+             * ── 为什么停（空空 2026-10-15 指的方向："别在这套旧机制上给第 4 格补规则"）──
+             *   ① **规则本身缺一档**：那套规则是他 2026-10-03 按 **3 格**亲口定的
+             *      （第 1 次恒 0、第 2/3 次看组合）。纸面加第 4 格后，第 4 次**没有规则**
+             *      —— 只能临时冻结（那段临时口径现在留在 `level-linkage.ts` 里当"看门"）。
+             *   ② **语义是反的**：做错 ⇒ 等级升 ⇒ 界面上奖牌从 🥉 往 👑 走，
+             *      看着像"升级"，实际是"更该练了"（老账：奖牌语义反转）。
+             *   ③ **它还会顺手清账**：`finish()` 里"这次变化 0 笔账 ⇒ 清空账本"，
+             *      于是点第 1 格会把已有账本清掉。**停用之后，这笔旧账一并作废。**
+             *
+             * ── 被**保留**的（都不属于"复习结果联动"）──
+             *   · 录入时的**初定级**（深挖 ⇒ 白银 2 / 复练 ⇒ 青铜 1）—— 在 POST 路由里，没动；
+             *   · **类型切换的 ±1**（上面那段，复练 ⇄ 深挖）—— 那是**人动的手**，
+             *     沿用他"**人工 > 自动**"那条；
+             *   · **人工点奖牌**改档（卡片 / 详情页下拉 / 筛选）。
+             *
+             * ── 替代方案（已定，待落地）──
+             *   档的正确来源是**状态机算的紧迫度**（`lib/review-status.ts`）：
+             *   题上只记事实，"会不会"每次现算。见 `docs\12_等级语义改造方案_20261015.md`。
+             *
+             * 📌 `computeLevelLinkage` 与它的单测**一个字没删** —— 那是他当年定的规则的**唯一记录**，
+             *    将来一起决定"改造/退休"。要临时恢复：`git revert` 这个提交即可。
+             */
 
             if (nextAttention !== clampLevel(errorItem.attention)) {
                 updateData.attention = nextAttention;
@@ -400,9 +404,6 @@ export async function PUT(
                     actorUserId: user.id,
                     note: note || '等级联动',
                 });
-            }
-            if (ledgerTouched) {
-                updateData.levelLedger = nextLedger;
             }
         }
 

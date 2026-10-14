@@ -26,6 +26,15 @@ const mocks = vi.hoisted(() => ({
     mockPrismaNotebook: {
         findUnique: vi.fn(),
     },
+    /**
+     * 【2026-10-15 补】等级变更留痕表。
+     * 缺它的时候，"类型切换 ±1"那条路会打出一条
+     * `Cannot read properties of undefined (reading 'createMany')` 的噪声
+     * （接口本身不失败 —— 留痕写失败不影响主流程，但日志会被它污染）。
+     */
+    mockPrismaStateChangeLog: {
+        createMany: vi.fn(),
+    },
     mockSession: {
         user: {
             email: 'user@example.com',
@@ -42,6 +51,7 @@ vi.mock('@/lib/prisma', () => ({
         errorItem: mocks.mockPrismaErrorItem,
         knowledgeTag: mocks.mockPrismaKnowledgeTag,
         notebook: mocks.mockPrismaNotebook,
+        stateChangeLog: mocks.mockPrismaStateChangeLog,
     },
 }));
 
@@ -520,6 +530,65 @@ describe('/api/error-items', () => {
             const arg = mocks.mockPrismaErrorItem.update.mock.calls[0][0] as { data: Record<string, unknown> };
             expect(arg.data).not.toHaveProperty('attention');
             expect(arg.data).not.toHaveProperty('levelLedger');
+        });
+    });
+
+    /* ==========================================================================
+     * 【2026-10-15 停用】复习结果**不再自动加减等级**
+     *
+     * 空空 2026-10-15 指的方向："别在这套旧机制上给第 4 格补规则" ——
+     * 那套"按复习结果组合记账"的规则是按 3 格定的、第 4 格没有规则、语义还是反的
+     * （做错 ⇒ 等级升 ⇒ 奖牌从 🥉 往 👑 走）。所以整段停用，改由状态机的**紧迫度**表达。
+     * ======================================================================== */
+    describe('PUT /api/error-items/[id] · 等级自动加减（2026-10-15 停用复习结果联动）', () => {
+        const itemWith = (reviewOutcomes: string | null) => ({
+            id: 'error-item-1',
+            userId: 'user-123',
+            attention: 3,
+            manageType: 'review',
+            levelLedger: null,
+            reviewOutcomes,
+        });
+
+        const putBody = async (body: Record<string, unknown>) => {
+            const request = new Request('http://localhost/api/error-items/error-item-1', {
+                method: 'PUT',
+                body: JSON.stringify(body),
+                headers: { 'Content-Type': 'application/json' },
+            });
+            return PUT(request, { params: Promise.resolve({ id: 'error-item-1' }) });
+        };
+
+        it('★★ 改第 2 格（旧规则会 +1）⇒ 现在**一点都不许动**等级与账本', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(
+                itemWith(JSON.stringify({ planned: ['right', null, null, null], last: 'right' })),
+            );
+            mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
+
+            await putBody({ reviewOutcomes: JSON.stringify({ planned: ['right', 'wrong', null, null], last: 'wrong' }) });
+
+            const arg = mocks.mockPrismaErrorItem.update.mock.calls[0][0] as { data: Record<string, unknown> };
+            expect(arg.data).not.toHaveProperty('attention');
+            expect(arg.data).not.toHaveProperty('levelLedger');
+            // 但复习结果本身**照旧要落库** —— 停的是"加减等级"，不是"记结果"
+            expect(String(arg.data.reviewOutcomes)).toContain('wrong');
+        });
+
+        it('★ 但**类型切换**的 ±1 仍在（那是人动的手，没停）', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({
+                ...itemWith(null),
+                attention: 1,
+                manageType: 'review',
+            });
+            mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
+
+            await putBody({ manageType: 'deep' });
+
+            const arg = mocks.mockPrismaErrorItem.update.mock.calls[0][0] as { data: Record<string, unknown> };
+            expect(arg.data.attention).toBe(2); // 复练 → 深挖 ⇒ +1
+            expect(arg.data.manageType).toBe('deep');
+            // 变更留痕也要有（"这题为什么升了"要能往回查）
+            expect(mocks.mockPrismaStateChangeLog.createMany).toHaveBeenCalled();
         });
     });
 
