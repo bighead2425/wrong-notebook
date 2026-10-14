@@ -446,6 +446,83 @@ describe('/api/error-items', () => {
         });
     });
 
+    /* ==========================================================================
+     * 【2026-10-14 加第 4 格】复习结果四格 —— 走**真接口**再验一次
+     *
+     * 背景：空空报"点第 4 个复习圆圈 ⇒ 更新失败"。单元层已经查明根因在等级联动
+     * （`level-linkage` 的槽位名表停在 3 格 ⇒ `slot = undefined`），
+     * 这里从**接口层**确认"填第 4 格 / 清第 4 格都是 200"，并把临时口径钉住。
+     * ======================================================================== */
+    describe('PUT /api/error-items/[id] · 复习结果四格（2026-10-14 加第 4 格）', () => {
+        const itemWith = (reviewOutcomes: string | null) => ({
+            id: 'error-item-1',
+            userId: 'user-123',
+            attention: 3,
+            manageType: 'review',
+            levelLedger: null,
+            reviewOutcomes,
+        });
+
+        const put = async (reviewOutcomes: string) => {
+            const request = new Request('http://localhost/api/error-items/error-item-1', {
+                method: 'PUT',
+                body: JSON.stringify({ reviewOutcomes }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+            return PUT(request, { params: Promise.resolve({ id: 'error-item-1' }) });
+        };
+
+        it('★ 第 4 格填「对」⇒ 200', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(
+                itemWith(JSON.stringify({ planned: ['right', 'wrong', 'right', null], last: 'wrong' })),
+            );
+            mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
+
+            const res = await put(
+                JSON.stringify({ planned: ['right', 'wrong', 'right', 'right'], last: 'right' }),
+            );
+            expect(res.status).toBe(200);
+        });
+
+        it('★★ 第 4 格**清空** ⇒ 也必须 200（修复前这条就是界面上那个「更新失败」）', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(
+                itemWith(JSON.stringify({ planned: ['right', 'wrong', 'right', 'right'], last: 'right' })),
+            );
+            mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
+
+            const res = await put(
+                JSON.stringify({ planned: ['right', 'wrong', 'right', null], last: 'right' }),
+            );
+            expect(res.status).toBe(200);
+        });
+
+        it('★ 第 4 格填进去的**值要真的落库**（联动提前 return 也不许把值丢了）', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(
+                itemWith(JSON.stringify({ planned: ['right', 'wrong', 'right', null], last: 'wrong' })),
+            );
+            mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
+
+            await put(JSON.stringify({ planned: ['right', 'wrong', 'right', 'wrong'], last: 'wrong' }));
+            const arg = mocks.mockPrismaErrorItem.update.mock.calls[0][0] as { data: Record<string, unknown> };
+            const planned = JSON.parse(String(arg.data.reviewOutcomes)).planned;
+            expect(planned).toHaveLength(4);
+            expect(planned[3]).toBe('wrong');
+        });
+
+        it('★ 【临时口径】第 4 格不许顺手改等级、也不许动账本', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({
+                ...itemWith(JSON.stringify({ planned: ['wrong', 'wrong', 'wrong', null], last: 'wrong' })),
+                levelLedger: JSON.stringify({ slot: 'p2', delta: 1 }),
+            });
+            mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
+
+            await put(JSON.stringify({ planned: ['wrong', 'wrong', 'wrong', 'wrong'], last: 'wrong' }));
+            const arg = mocks.mockPrismaErrorItem.update.mock.calls[0][0] as { data: Record<string, unknown> };
+            expect(arg.data).not.toHaveProperty('attention');
+            expect(arg.data).not.toHaveProperty('levelLedger');
+        });
+    });
+
     describe('GET /api/error-items/list (获取错题列表)', () => {
         it('应该返回用户的错题（分页响应）', async () => {
             const errorItems = [
