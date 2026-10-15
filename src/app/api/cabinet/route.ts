@@ -84,6 +84,12 @@ export async function GET() {
                     createdAt: true,
                     /** 【2026-10-13 底账】错因（覆盖率要数它） */
                     mistakeCategory: true,
+                    /**
+                     * 【2026-10-15 真真】知识点统计要它 —— 真源是**多对多 `tags`**，
+                     * 不是 `ErrorItem.knowledgePoints` 那列（已 `[DEPRECATED]`）。
+                     * ⚠️ 只取统计用得到的两列；**别在这里顺手加别的 include**（会拖慢列表）。
+                     */
+                    tags: { select: { name: true, subject: true } },
                     /** 【2026-10-13 底账】学科只在 Notebook 上（题自己不存）⇒ 连本子一起取 */
                     notebook: { select: { subject: true } },
                 },
@@ -131,6 +137,8 @@ export async function GET() {
             subject: it.notebook?.subject ?? null,
             /** 【2026-10-13 底账】错因 */
             mistakeCategory: it.mistakeCategory,
+            /** 【2026-10-15 真真】知识点（多对多）—— 知识点统计的唯一输入 */
+            tags: it.tags.map((t) => ({ name: t.name, subject: t.subject })),
         }));
 
         // 日积月累 → 纯逻辑输入（记下它被编进过哪些卷）

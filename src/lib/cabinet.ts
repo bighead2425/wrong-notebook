@@ -35,6 +35,8 @@ import { normalizeManageType } from './manage-type';
 import { reviewStatusOf, type ReviewStatus } from './review-status';
 // 【2026-10-13】学情底账（覆盖率）—— 判据在 overview.ts，本文件只负责把它一起返回
 import { buildOverview, type Overview } from './overview';
+// 【2026-10-15 真真】知识点 × 时间窗统计 —— 判据在 knowledge-stats.ts，同样只负责一起返回
+import { buildKnowledgeStats, type KnowledgeSummary } from './knowledge-stats';
 
 /* ============================ 输入形状 ============================ */
 
@@ -67,6 +69,12 @@ export interface CabinetQuestion {
     subject?: string | null;
     /** 【2026-10-13 底账】错因（`MistakeCategory` 之一）—— 覆盖率要数它 */
     mistakeCategory?: string | null;
+    /**
+     * 【2026-10-15 真真】知识点（`ErrorItem.tags` → `KnowledgeTag`）—— 知识点统计要数它。
+     * ⚠️ 真源是**多对多关系 `tags`**，不是 `ErrorItem.knowledgePoints` 那列（那列已 `[DEPRECATED]`）。
+     * 可选：老调用方（测试）不传 ⇒ 这道题不进任何知识点统计，**不会算错**。
+     */
+    tags?: { name: string; subject?: string | null }[] | null;
 }
 
 /** 【2026-10-13】"今天先练哪几道"的一条 —— 由复练结果算出来（不落库，见 review-status.ts） */
@@ -458,6 +466,19 @@ export interface CabinetTasks {
      *    两个都叫 overview 会让人以为是同一个东西。
      */
     ledger: Overview;
+    /**
+     * 【2026-10-15 真真】知识点 × 时间窗统计 —— **也不是任务**，是"**哪个知识点在连着错**"。
+     *
+     * 出处：空空已批的设计第 4 层（`docs\12` 第一节）——
+     *   *"新增一张按「知识点 × 时间窗」聚合的表：同一知识点连着错了几次、错因分布、
+     *     最近一次是什么时候。AI 读它写评价。"*
+     * ⇒ 它服务的是"AI 写学情评价"，所以**每个数字都带 `coverage`**
+     *   （项目硬线：任何 AI 结论必须显示样本量与覆盖率）。
+     *
+     * ⚠️ 判据在 `lib/knowledge-stats.ts`，本文件只负责一起算、一起返回。
+     * ⚠️ **本棒不动 UI** —— 展示位等空空定；这里只把数据备好。
+     */
+    knowledgeStats: KnowledgeSummary[];
 }
 
 /**
@@ -581,5 +602,11 @@ export function buildCabinetTasks(input: {
         },
         /** 【2026-10-13 底账】与任务卡用**同一批题**算 —— 用户看到"共 N 道"必须处处一致 */
         ledger: buildOverview(questions, now),
+        /**
+         * 【2026-10-15 真真】知识点统计：同样用**同一批题**（`questions` 与 `ledger` 逐字同源）
+         * ⇒ 三块数字（任务卡 / 底账 / 知识点）不会出现"各算一遍、互相打架"。
+         * ⚠️ 需要 `questions[].tags`；取数侧没带的话这里会得到空数组（不是错，是"没数据"）。
+         */
+        knowledgeStats: buildKnowledgeStats(questions, now),
     };
 }
