@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { unauthorized, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { maybeSettleDaily, normalizeTodayKey } from "@/lib/daily-settle";
 import { subjectLabel } from "@/lib/notebook-fields";
 import { normalizeManageType } from "@/lib/manage-type";
 import {
@@ -29,7 +30,7 @@ const logger = createLogger("api:cabinet");
  * ⚠️ `ReviewVolume` 表**没有 userId 列**（历史设计：卷是"印出去的凭证"，全局存放）。
  *    这里按"卷里至少有一道**当前用户**的题"来认领，避免把别人家的卷摆到他的任务台。
  */
-export async function GET() {
+export async function GET(req: Request) {
     const session = await getServerSession(authOptions);
 
     try {
@@ -42,6 +43,22 @@ export async function GET() {
             userId = user?.id ?? null;
         }
         if (!userId) return unauthorized("Authentication required");
+
+        /**
+         * 【2026-10-15 新】**每日等级结算的惰性触发点**。
+         *
+         * 内阁页是"打开错题本"的主入口 ⇒ 在这儿顺手检查"今天结算过没有"，
+         * 没结算就跑一次（`docs\14` 第五节）。**不做定时任务** —— 宿主 crontab /
+         * 调度容器都绑在 NAS 上，换机器要重配；惰性触发全在应用里，可移植。
+         *
+         * ⚠️ `?today=YYYY-MM-DD`：**客户端传自己的"今天"**（浏览器天生知道用户在哪个时区）。
+         *    不传 / 传得不合理 ⇒ 退回服务器日期。见 `normalizeTodayKey` 的注释。
+         * ⚠️ **必须 await 且吞异常**：`maybeSettleDaily` 自己保证不抛
+         *    —— 结算失败绝不能让"打开内阁"失败。
+         * ⚠️ 绝大多数请求在这里只花**一次查询**（`lastSettledOn === 今天` 就直接返回）。
+         */
+        const todayParam = new URL(req.url).searchParams.get("today");
+        await maybeSettleDaily(userId, normalizeTodayKey(todayParam));
 
         const [notebooks, items, insights, volumesRaw] = await Promise.all([
             prisma.notebook.findMany({

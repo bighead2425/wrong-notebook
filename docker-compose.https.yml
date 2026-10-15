@@ -27,6 +27,9 @@ services:
       - "80:3000"    # HTTP（可选）
       - "443:443"    # HTTPS
     environment:
+      # 【2026-10-15 新增】容器时区 —— 见 docker-compose.yml 里同一条的说明。
+      #   node:22-alpine 默认 UTC ⇒ 北京时间 00:00–08:00 服务端算"今天"会差一天。
+      - TZ=Asia/Shanghai
       # === 必须配置（请修改） ===
       # 替换为你的实际访问地址
       - NEXTAUTH_URL=https://YOUR_IP_OR_DOMAIN

@@ -6,6 +6,8 @@ import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { unauthorized, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+// 【2026-10-15】每日等级结算的惰性触发（见下方 GET 里的注释）
+import { maybeSettleDaily, normalizeTodayKey } from "@/lib/daily-settle";
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MIN_PAGE_SIZE } from "@/lib/constants/pagination";
 
 const logger = createLogger('api:error-items:list');
@@ -59,6 +61,19 @@ export async function GET(req: Request) {
         if (!user) {
             return unauthorized("Authentication required");
         }
+
+        /**
+         * 【2026-10-15 新】**每日等级结算的惰性触发点（之二）**。
+         *
+         * 内阁页（`api/cabinet`）是主入口，但"打开错题本"也可能**直接从错题本页进来**
+         * ⇒ 这里也挂一个，两条路都覆盖到。
+         *
+         * ⚠️ 绝大多数请求只花**一次查询**（`lastSettledOn === 今天` 直接返回）；
+         *    没结算过才真的干活。`maybeSettleDaily` 自己保证**不抛异常**。
+         * ⚠️ `?today=YYYY-MM-DD` 由客户端带（浏览器知道用户在哪个时区）；
+         *    不带 / 不合理 ⇒ 退回服务器日期（见 `normalizeTodayKey`）。
+         */
+        await maybeSettleDaily(user.id, normalizeTodayKey(searchParams.get("today")));
 
         const whereClause: Prisma.ErrorItemWhereInput = {
             userId: user.id,

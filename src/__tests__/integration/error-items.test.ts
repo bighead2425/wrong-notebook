@@ -35,6 +35,18 @@ const mocks = vi.hoisted(() => ({
     mockPrismaStateChangeLog: {
         createMany: vi.fn(),
     },
+    /**
+     * 【2026-10-15 补】每日等级结算的状态表。
+     * 错题列表接口（`/api/error-items/list`）现在会顺手调一次 `maybeSettleDaily`，
+     * 缺这个 mock 的话它会走到 catch 分支 —— 接口本身不失败（结算吞异常是设计），
+     * 但日志会被"结算失败"的噪声刷屏。这里让它**直接返回"今天已结算"**短路掉。
+     */
+    mockPrismaDailySettle: {
+        findUnique: vi.fn(() => Promise.resolve({ lastSettledOn: '2099-01-01' })),
+        create: vi.fn(),
+        update: vi.fn(),
+        updateMany: vi.fn(),
+    },
     mockSession: {
         user: {
             email: 'user@example.com',
@@ -52,6 +64,7 @@ vi.mock('@/lib/prisma', () => ({
         knowledgeTag: mocks.mockPrismaKnowledgeTag,
         notebook: mocks.mockPrismaNotebook,
         stateChangeLog: mocks.mockPrismaStateChangeLog,
+        dailySettle: mocks.mockPrismaDailySettle,
     },
 }));
 
@@ -519,7 +532,7 @@ describe('/api/error-items', () => {
             expect(planned[3]).toBe('wrong');
         });
 
-        it('★ 【临时口径】第 4 格不许顺手改等级、也不许动账本', async () => {
+        it('★ 【2026-10-15 改了】第 4 格现在**会**按新规则重算等级，但**旧账本仍然不许动**', async () => {
             mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({
                 ...itemWith(JSON.stringify({ planned: ['wrong', 'wrong', 'wrong', null], last: 'wrong' })),
                 levelLedger: JSON.stringify({ slot: 'p2', delta: 1 }),
@@ -528,27 +541,32 @@ describe('/api/error-items', () => {
 
             await put(JSON.stringify({ planned: ['wrong', 'wrong', 'wrong', 'wrong'], last: 'wrong' }));
             const arg = mocks.mockPrismaErrorItem.update.mock.calls[0][0] as { data: Record<string, unknown> };
-            expect(arg.data).not.toHaveProperty('attention');
+            // 连错 ≥ 2 ⇒ 间隔 1 天 ⇒ 倒数 1、等级 5（🥗 此刻 = "今天就得练"）
+            expect(arg.data.levelCountdown).toBe(1);
+            expect(arg.data.attention).toBe(5);
+            // ⚠️ 但**旧账本（`levelLedger`）一个字都不许动** ——
+            //    那套"按复习结果组合记账"的机制已整段停用，改由"事实 + 时间"直接推出。
             expect(arg.data).not.toHaveProperty('levelLedger');
         });
     });
 
     /* ==========================================================================
-     * 【2026-10-15 **等级完全收回系统管理**】三条人工/自动改等级的路径全停
+     * 【2026-10-15 **等级完全收回系统管理**】—— 注意分清两件事：
      *
-     *   ① 复习结果联动 —— 空空 2026-10-15 指的方向："别在这套旧机制上给第 4 格补规则"。
-     *      那套"按复习结果组合记账"的规则是按 3 格定的、第 4 格没有规则、语义还是反的
-     *      （做错 ⇒ 等级升 ⇒ 奖牌从 🥉 往 👑 走）。⇒ 整段停用。
-     *   ② 类型切换 ±1（复练 ⇄ 深挖）—— 本次停用。
-     *      空空原话：*"复练、深挖是对一道题怎么练习、用什么纸的记录项……
-     *      纸型和紧迫程度联系不是那么紧密。"* ⇒ **等级与纸型脱钩**。
-     *   ③ API 的 `attention` 入参 —— 本次停用（收下但不写库，只记一条 warn）。
+     *   ✅ **请求不能"指定"等级** —— `attention` 入参被忽略（后门已关）。
+     *   ✅ **但"记下复习结果"会按规则重算等级** —— 这是**系统**在算，不是人在改：
+     *      间隔表（对错 ⇒ 多少天后再练）+ 阈值表（还剩几天 ⇒ 哪个档），
+     *      规则唯一实现在 `lib/level-settle.ts`（纯函数，41 条单测）。
      *
-     * ⇒ **等级的唯一来源 = 每日结算**（见 `docs\14_等级语义改造v2_完整设计_20261015.md` 第五节）。
+     *   ❌ 停掉的三条"人工/旧机制"路径：
+     *      ① 复习结果按**旧账本**组合加减（记在 `levelLedger` 上）—— 整段停用；
+     *      ② 类型切换 ±1（复练 ⇄ 深挖）—— 空空："纸型和紧迫程度联系不是那么紧密"；
+     *      ③ 四处 UI 的人工改档入口（卡片图标 / 详情页下拉 / 扫码面板 / 分析页）。
+     *
      * ⚠️ 这几条断言是**跟着行为一起改的**，不是"测试红了就改测试"——
      *    行为本身是空空明确要改的（教训 #17：改断言前先确认"它钉的行为本身对不对"）。
      * ======================================================================== */
-    describe('PUT /api/error-items/[id] · 等级不再由任何请求改动（2026-10-15 收回系统管理）', () => {
+    describe('PUT /api/error-items/[id] · 等级由系统算（2026-10-15 收回人工入口）', () => {
         const itemWith = (reviewOutcomes: string | null) => ({
             id: 'error-item-1',
             userId: 'user-123',
@@ -567,7 +585,7 @@ describe('/api/error-items', () => {
             return PUT(request, { params: Promise.resolve({ id: 'error-item-1' }) });
         };
 
-        it('★★ 改第 2 格（旧规则会 +1）⇒ 现在**一点都不许动**等级与账本', async () => {
+        it('★★ 【2026-10-15 改了】改第 2 格 ⇒ 按**新规则**重算（不再是旧账本的 +1），账本仍不动', async () => {
             mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(
                 itemWith(JSON.stringify({ planned: ['right', null, null, null], last: 'right' })),
             );
@@ -576,10 +594,20 @@ describe('/api/error-items', () => {
             await putBody({ reviewOutcomes: JSON.stringify({ planned: ['right', 'wrong', null, null], last: 'wrong' }) });
 
             const arg = mocks.mockPrismaErrorItem.update.mock.calls[0][0] as { data: Record<string, unknown> };
-            expect(arg.data).not.toHaveProperty('attention');
-            expect(arg.data).not.toHaveProperty('levelLedger');
-            // 但复习结果本身**照旧要落库** —— 停的是"加减等级"，不是"记结果"
+            /**
+             * 序列 = 对、错 ⇒ 最近一次错（连错 1）⇒ 间隔 4 天 ⇒ 倒数 4、等级 4（🥥 抓紧）。
+             *
+             * ⚠️ 这里**故意同时钉住"倒数"和"等级"两个值** —— 只钉等级的话，
+             *    万一实现里"倒数写对了但等级算错了"，测试照样绿。两者都钉才真验了规则。
+             * ⚠️ 与旧机制的区别：旧的记在 `levelLedger` 账本上、靠"这次变化了几笔"推；
+             *    新的**直接由事实推出**（间隔表 + 阈值表），不落任何中间账。
+             */
+            expect(arg.data.levelCountdown).toBe(4);
+            expect(arg.data.attention).toBe(4);
+            // 复习结果本身照旧要落库 —— 停的是"旧账本记账"，不是"记结果"
             expect(String(arg.data.reviewOutcomes)).toContain('wrong');
+            // 旧账本不许再被读写
+            expect(arg.data).not.toHaveProperty('levelLedger');
         });
 
         it('★★ 【2026-10-15 也停用了】改类型**不再牵动等级**', async () => {

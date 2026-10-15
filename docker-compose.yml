@@ -8,6 +8,14 @@ services:
     ports:
       - "3000:3000"
     environment:
+      # 【2026-10-15 新增】**容器时区**。
+      #   node:22-alpine 默认跑 UTC ⇒ 服务端 `new Date()` 算出的"今天"在
+      #   北京时间 00:00–08:00 之间会**差一天**（内阁"今天先练"会少几道题）。
+      #   这一行让容器的表与北京时间对齐。
+      # ⚠️ 它管的是"**服务器在哪**"，不是"用户在哪" —— 用户时区由**浏览器**决定
+      #    （客户端会把"今天"传给 /api/cabinet，见 docs\14 第六节）。
+      # ⚠️ 换到别的时区部署 ⇒ 改这一行即可（不用改代码）。
+      - TZ=Asia/Shanghai
       # NEXTAUTH_URL 根据实际情况设置你的信息
       #- NEXTAUTH_URL=http://your_domain_name:3000
       - NEXTAUTH_SECRET=your_secret_key

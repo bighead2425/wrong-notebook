@@ -11,11 +11,18 @@ import { normalizeMistakeCategory } from "@/lib/mistake-category";
 import { normalizeReviewOutcomes, serializeReviewOutcomes } from "@/lib/review-outcomes";
 // 【2026-10-14】复习事件流水（第一步：双写）—— 唯一写入口在 lib/review-events.ts
 import { parseReviewEventInput, recordReviewEvent } from "@/lib/review-events";
-// 【2026-10-15】⚠️ 只留"类型切换 ±1"与夹值；
-//   `computeLevelLinkage` / `serializeLevelEntry` 已**不再调用**（复习结果不再自动加减等级，见下方注释）
-//   `clampLevel` / `levelDeltaForTypeSwitch` / `computeLevelLinkage` / `serializeLevelEntry`
-//   均已**不再调用**（等级完全交给系统，见下方那段 ⚠️⚠️ 注释）⇒ 本文件不再 import 它们。
-//   函数体与单测都还在 `lib/level-linkage.ts` 里（历史记录，别删）。
+/**
+ * 【2026-10-15】**等级完全交给系统** —— 规则在 `lib/level-settle.ts`（纯函数），
+ * 结算在 `lib/daily-settle.ts`。本文件只用两个纯函数：
+ *   · `planAfterReview`  —— 记下复习结果时，把「倒数天数 + 等级」一起写对；
+ *   · `shouldAutoMaster` —— 连对 4 次 ⇒ 直接已掌握。
+ *
+ * ⚠️ 本文件**不再 import** `lib/level-linkage.ts` 的任何东西：
+ *   `clampLevel` / `levelDeltaForTypeSwitch` / `computeLevelLinkage` / `serializeLevelEntry`
+ *   均已不再调用（四处人工入口收回 + 类型切换脱钩）。
+ *   函数体与单测都还留在那个文件里（那是当年规则的唯一记录，**别删**）。
+ */
+import { planAfterReview, shouldAutoMaster } from '@/lib/level-settle';
 // 【2026-10-10】"已掌握"要过一遍题间从属关系规则（人工标记才断开关联、主题向下传播）
 import type { LinkOp } from "@/lib/item-link";
 import { applyLinkOps, applyMastery, loadLinkView, planMasteryChange } from "@/lib/item-link-store";
@@ -204,6 +211,26 @@ export async function PUT(
         }
 
         /**
+         * 【2026-10-15 新】记下复习结果 ⇒ **同时把「倒数天数」与「等级」写对**。
+         *
+         * ── 为什么在"录入这一刻"就要写等级，而不是等每日结算 ────────────────
+         *   规则是"**等级 = 由倒数 + 连对次数决定**"（`lib/level-settle.ts`）。
+         *   若录入只写倒数、不改等级，库里就会出现"**倒数是 7 但等级还是 5**"
+         *   这种自相矛盾的状态。⇒ 录入时把两者**一起**写对，结算只负责"时间往前推"。
+         *
+         * ⚠️ 形状不对 / 空值**不进这段**（上面已经过滤），所以这里只看 `updateData`。
+         * ⚠️ 幂等：同一份表单重复提交 ⇒ 算出来的值一模一样，不会漂。
+         */
+        let autoMastered = false;
+        if (typeof updateData.reviewOutcomes === 'string') {
+            const next = planAfterReview(updateData.reviewOutcomes);
+            updateData.levelCountdown = next.levelCountdown;
+            updateData.attention = next.attention;
+            // 连对 4 次 ⇒ 直接已掌握（下面再落，见"等级 1 的出口"那段注释）
+            autoMastered = shouldAutoMaster(updateData.reviewOutcomes);
+        }
+
+        /**
          * ⚠️⚠️【2026-10-15 **停止接受**】`attention`（等级）不再允许由调用方写入。
          *
          * 空空 2026-10-15 定：**等级完全交给系统，用户不再干涉**。
@@ -279,6 +306,35 @@ export async function PUT(
          *   ③ 每次真改动都写 StateChangeLog（谁改的、从什么改成什么）。
          */
         const stateLogs: Prisma.StateChangeLogCreateManyInput[] = [];
+
+        /**
+         * 【2026-10-15 新】**连对 4 次 ⇒ 直接已掌握**（等级 1 的出口之一）。
+         *
+         * 空空 2026-10-15 原话：*"等级 1 期间又练对了一次（连对 4 次），直接已掌握，
+         *   我们的目的就是 4 次已掌握，如果连做 4 次连对 4 次，那就是已掌握，没问题。"*
+         *
+         * ⚠️ **故意不走 `planMasteryChange`** —— 那条路是"**人工**标记"的规则
+         *    （硬编码 `manual: true`，会把**附题与主题断开**）。自动判定**不是人工动作**，
+         *    不该拆关系。所以这里**只改掌握位，关系一动不动**。
+         *    ⇒ 代价：主题被自动标已掌握时，名下附题**不会跟着标**。
+         *      这是有意的（每道题按自己的复习史判），将来若要传播再单独议。
+         *
+         * ⚠️ **位置有讲究**：必须在"从属关系规则"那段**之后**（否则会被它当人工标记处理），
+         *    也必须在 `stateLogs` 声明**之后**（否则 TDZ 报错）。
+         * ⚠️ 只在"现在还不是已掌握"时才写（避免无谓的状态变更日志）。
+         */
+        if (autoMastered && Number(errorItem.masteryLevel) < 2) {
+            updateData.masteryLevel = 2;
+            stateLogs.push({
+                errorItemId: id,
+                field: 'masteryLevel',
+                fromValue: String(errorItem.masteryLevel ?? 0),
+                toValue: '2',
+                actor: 'system',
+                actorUserId: user.id,
+                note: '连对 4 次 ⇒ 系统判定已掌握',
+            });
+        }
 
         if (mistakeCategory !== undefined) {
             const nextCategory = normalizeMistakeCategory(mistakeCategory);

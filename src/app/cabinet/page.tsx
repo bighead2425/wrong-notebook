@@ -34,6 +34,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { apiClient } from "@/lib/api-client";
+// 【2026-10-15】客户端算"今天"（本地时区）⇒ 传给 /api/cabinet 供每日等级结算用
+import { dayKey } from "@/lib/calendar-grid";
 import {
     MANAGE_TYPE_LABEL,
     MANAGE_TYPE_SCREEN_COLOR,
@@ -188,7 +190,16 @@ export default function CabinetPage() {
     useEffect(() => {
         let cancelled = false;
         apiClient
-            .get<CabinetResponse>("/api/cabinet")
+            /**
+             * 【2026-10-15】把**客户端的"今天"**带给服务端 —— 每日等级结算要用它。
+             *
+             * 为什么不靠服务端自己算：容器跑 UTC（Dockerfile 里没配时区），
+             * 而**浏览器天生知道用户在哪个时区**（不用问用户、也不用做设置项）
+             * ⇒ 这是项目"时区铁律"（"哪一天只在客户端算"）的正解。
+             * 服务端有保险：传得不合理（差超过 1 天）就退回服务器日期。
+             * 详见 `docs\14` 第六节 / `lib/daily-settle.ts` 的 `normalizeTodayKey`。
+             */
+            .get<CabinetResponse>(`/api/cabinet?today=${encodeURIComponent(dayKey(new Date()))}`)
             .then((d) => {
                 if (!cancelled) setData(d);
             })

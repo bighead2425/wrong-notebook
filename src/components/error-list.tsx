@@ -38,7 +38,7 @@ import { ATTENTION_LEVELS, isAttentionUnfiltered } from "@/lib/attention-level";
 import { AttentionMultiSelect } from "@/components/attention-multi-select";
 import { ErrorItemCard } from "@/components/error-item-card";
 import { DatePickerCalendar } from "@/components/date-picker-calendar";
-import { countByDay, dayBoundsISO, rangeBoundsISO } from "@/lib/calendar-grid";
+import { countByDay, dayBoundsISO, dayKey, rangeBoundsISO } from "@/lib/calendar-grid";
 import { cleanMarkdown } from "@/lib/markdown-utils";
 
 /**
@@ -440,6 +440,15 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
      */
     function buildFilterParams(opts: { withoutDates?: boolean } = {}): URLSearchParams {
         const params = new URLSearchParams();
+        /**
+         * 【2026-10-15 新】**把客户端的"今天"带给服务端** —— 每日等级结算要用它。
+         *
+         * 与下面「其他日期」那条**同一个道理**（同一段注释里早写明了）：
+         * "容器跑在 UTC，服务端自己算'这一天'会偏 8 小时"。
+         * 浏览器知道用户在哪个时区 ⇒ 由它算好再传，服务端不猜。
+         * ⚠️ 服务端有保险：差超过 1 天就退回服务器日期（`normalizeTodayKey`）。
+         */
+        params.append("today", dayKey(new Date()));
         if (notebookId) params.append("notebookId", notebookId);
         if (search) params.append("query", search);
         if (masteryFilter !== "all") {
