@@ -22,7 +22,7 @@ import { parseReviewEventInput, recordReviewEvent } from "@/lib/review-events";
  *   均已不再调用（四处人工入口收回 + 类型切换脱钩）。
  *   函数体与单测都还留在那个文件里（那是当年规则的唯一记录，**别删**）。
  */
-import { planAfterReview, shouldAutoMaster } from '@/lib/level-settle';
+import { planAfterReview, planAfterUnmaster, shouldAutoMaster } from '@/lib/level-settle';
 // 【2026-10-10】"已掌握"要过一遍题间从属关系规则（人工标记才断开关联、主题向下传播）
 import type { LinkOp } from "@/lib/item-link";
 import { applyLinkOps, applyMastery, loadLinkView, planMasteryChange } from "@/lib/item-link-store";
@@ -252,12 +252,34 @@ export async function PUT(
             );
         }
 
-        // 掌握状态：0=New / 1=Reviewing / 2=Mastered（=2 即四分法「已掌握」，扫码「已会」写此位）
+        // 掌握状态：0=New / 1=Reviewing / 2=Mastered（=2 即「已掌握」，扫码「已会」写此位）
         if (masteryLevel !== undefined) {
             const m = Number(masteryLevel);
             if (Number.isFinite(m) && m >= 0 && m <= 2) {
                 updateData.masteryLevel = Math.round(m);
             }
+        }
+
+        /**
+         * 【2026-10-15 新】**从"已掌握"改回"未掌握" ⇒ 回到 4 抓紧 + 倒数 4 天**。
+         *
+         * 空空 2026-10-15 原话：*"用户再点击这个已掌握，则又变为未掌握，同时倒数 4 天转为
+         *   4 抓紧档"*（他先写"倒数 7 天"、后更正为 4 —— 7 天按阈值表会落在 3 档，自相矛盾）。
+         * 他给的理由：*"这个已掌握可能是有水分的……再点回'未掌握'，那么很可能后续又什么时候做错了。"*
+         * ⇒ 退回来时**当成"刚做错过一次"**，重新进入复习流程。
+         *
+         * ⚠️ **必须在服务端做**（不能靠前端传 `attention`）—— 那个入参已于 2026-10-15 关闭。
+         * ⚠️ 放在复习结果那段**之后**：用户同时改两者时，**"点回未掌握"这个显式动作优先**。
+         * ⚠️ 规则本身在 `lib/level-settle.ts`（纯函数，可单测），这里只负责"什么时候用"。
+         */
+        if (
+            typeof updateData.masteryLevel === 'number' &&
+            updateData.masteryLevel < 2 &&
+            Number(errorItem.masteryLevel) === 2
+        ) {
+            const reentry = planAfterUnmaster();
+            updateData.levelCountdown = reentry.levelCountdown;
+            updateData.attention = reentry.attention;
         }
 
         /**

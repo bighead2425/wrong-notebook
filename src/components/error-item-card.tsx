@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { CheckCircle, Clock, Printer, Trash2 } from "lucide-react";
+import { CheckCircle, Clock, Printer, Sparkles, Trash2 } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import {
     DEEP_NUDGE_COLOR,
@@ -17,6 +17,8 @@ import {
 } from "@/lib/manage-type";
 import { getMistakeCategoryLabel, normalizeMistakeCategory } from "@/lib/mistake-category";
 import { attentionFullName, attentionLevelOf } from "@/lib/attention-level";
+// 【2026-10-15】判"预掌握"（等级1 + 倒数0）—— 判据的唯一出处，别在组件里重写
+import { isPreMastered } from "@/lib/level-settle";
 import { linkRoleColor, linkRoleLabel, type LinkRole } from "@/lib/item-link";
 import { cleanMarkdown } from "@/lib/markdown-utils";
 import { PrintCounts } from "@/components/print-counts";
@@ -34,6 +36,8 @@ export type ErrorItemCardData = {
     printCount?: number | null;
     reviewPrintCount?: number | null;
     attention?: number | null;
+    /** 【2026-10-15】等级倒数天数 —— 判"预掌握"要用（等级1 + 倒数0） */
+    levelCountdown?: number | null;
     reviewOutcomes?: string | null;
     deepNudgeDismissed?: boolean | null;
 };
@@ -116,6 +120,20 @@ export function ErrorItemCard({
     const nudge = needsDeepPrintNudge(item);
 
     /**
+     * 【2026-10-15 新】三个派生状态 —— 掌握位的显示与"等级图标要不要黑白"都靠它们。
+     *
+     * · `mastered`   = 已掌握（`masteryLevel === 2`，用户点的或"连对 4 次"自动给的）
+     * · `preMastered`= **预掌握**（等级 1 + 倒数 0，**系统算出来的**，不落库）
+     * · `frozen`     = 两者都**冻结**（不再参与等级变化、也不进任何任务）
+     *
+     * ⚠️ 判据**一律用 `lib/level-settle.ts` 的纯函数**，别在这儿重写一遍 ——
+     *    那是"预掌握"定义（等级1 + 倒数0）的唯一出处，抄第二份必然分叉。
+     */
+    const mastered = Number(item.masteryLevel) >= 2;
+    const preMastered = isPreMastered(item.attention, item.levelCountdown);
+    const frozen = mastered || preMastered;
+
+    /**
      * 【2026-10-10】左上角角标：把这题的角"切一刀"，切出来的小三角填色
      * （**主题深红 / 附题黄**；孤题不画）。
      *
@@ -195,20 +213,36 @@ export function ErrorItemCard({
                 >
                     <CardHeader className="pb-0">
                         <div className="flex justify-between items-start">
-                            {/* 左上角：「待复习 / 已掌握」点一下互转并保存。
-                                ⚠️ 点到"已掌握"后这道题就不在主库了（四分法：主库 = masteryLevel<2），
-                                   刷新/换筛选后它会进"已掌握分区"；再点回来就回来。 */}
+                            {/* 左上角：掌握状态，点一下在「未掌握 ⇄ 已掌握」之间转。
+                                ⚠️ 点到"已掌握"后这道题**仍然看得见**（2026-10-15 起默认不再排除已掌握），
+                                   只是不再参与等级变化、也不再进任何任务。
+                                ⚠️ 三种样式的出处见 `docs\14` §7.6：
+                                   未掌握 = 灰（待复习）/ **预掌握 = 黄底白字** / 已掌握 = 绿底白字。 */}
                             <Badge
-                                variant={item.masteryLevel > 0 ? "default" : "secondary"}
-                                className={`${item.masteryLevel > 0 ? "bg-green-600 hover:bg-green-700" : ""} ${selectMode ? "" : "cursor-pointer"}`}
-                                title={item.masteryLevel > 0
-                                    ? L("点一下改回「待复习」", "Click to mark as to-review")
-                                    : L("点一下标成「已掌握」", "Click to mark as mastered")}
+                                variant={mastered ? "default" : "secondary"}
+                                className={`${
+                                    mastered
+                                        ? "bg-green-600 hover:bg-green-700"
+                                        : preMastered
+                                          ? "bg-amber-500 text-white hover:bg-amber-600"
+                                          : ""
+                                } ${selectMode ? "" : "cursor-pointer"}`}
+                                title={
+                                    mastered
+                                        ? L("点一下改回「未掌握」（会回到 🥥 抓紧档，重新进入复习）", "Click to un-master (back to level 4)")
+                                        : preMastered
+                                          ? L("系统判定已经稳了。点一下标成「已掌握」", "System says it's steady. Click to mark as mastered")
+                                          : L("点一下标成「已掌握」", "Click to mark as mastered")
+                                }
                                 onClick={selectMode ? undefined : onToggleMastery}
                             >
-                                {item.masteryLevel > 0 ? (
+                                {mastered ? (
                                     <span className="flex items-center gap-1">
                                         <CheckCircle className="h-3 w-3" /> {t.notebook.mastered}
+                                    </span>
+                                ) : preMastered ? (
+                                    <span className="flex items-center gap-1">
+                                        <Sparkles className="h-3 w-3" /> {L("预掌握", "Pre-mastered")}
                                     </span>
                                 ) : (
                                     <span className="flex items-center gap-1">
@@ -218,14 +252,29 @@ export function ErrorItemCard({
                             </Badge>
                             {/* 右上角：等级图标（**只读**）+ 录入时间 + 垃圾桶
                                 ⚠️【2026-10-15】等级**收回系统管理** —— 原来是"点一下升一级"的按钮，
-                                   现在改成不可点的 span。理由见 `lib/attention-level.ts` 文件头。 */}
+                                   现在改成不可点的 span。理由见 `lib/attention-level.ts` 文件头。
+                                ⚠️ **冻结态显示黑白**（已掌握 / 预掌握）—— 一眼看出"这题不再动了"。 */}
                             <div className="flex items-center gap-0.5 shrink-0">
                                 <span
-                                    className="mr-0.5 rounded px-0.5 text-sm leading-none"
-                                    title={L(
-                                        `等级：${attentionFullName(item.attention)}（由系统管理，不用手改）`,
-                                        `Level: ${attentionFullName(item.attention, false)} (system-managed)`,
-                                    )}
+                                    className={`mr-0.5 rounded px-0.5 text-sm leading-none ${
+                                        frozen ? "grayscale opacity-60" : ""
+                                    }`}
+                                    title={
+                                        mastered
+                                            ? L(
+                                                  `等级：${attentionFullName(item.attention)}（已掌握，已冻结）`,
+                                                  `Level: ${attentionFullName(item.attention, false)} (mastered, frozen)`,
+                                              )
+                                            : preMastered
+                                              ? L(
+                                                    `等级：${attentionFullName(item.attention)}（预掌握，已冻结）`,
+                                                    `Level: ${attentionFullName(item.attention, false)} (pre-mastered, frozen)`,
+                                                )
+                                              : L(
+                                                    `等级：${attentionFullName(item.attention)}（由系统管理，不用手改）`,
+                                                    `Level: ${attentionFullName(item.attention, false)} (system-managed)`,
+                                                )
+                                    }
                                 >
                                     {attentionLevelOf(item.attention).medal}
                                 </span>

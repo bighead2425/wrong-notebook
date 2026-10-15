@@ -10,18 +10,30 @@ import {
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ChevronDown, Medal } from 'lucide-react';
-import { ATTENTION_LEVELS, attentionFullName, isAttentionUnfiltered, toggleAttentionLevel } from '@/lib/attention-level';
+import {
+    ATTENTION_LEVELS,
+    FILTER_KEYS,
+    MASTERED_FILTER_KEY,
+    attentionFullName,
+    isFilterUnfiltered,
+    toggleFilterKey,
+} from '@/lib/attention-level';
 
 /**
- * 【2026-09-30】「等级」筛选 —— **多选**下拉（🥉青铜 … 👑王者）。
+ * 【2026-09-30 建，2026-10-15 **改成「掌握/等级」合并筛选**】
  *
  * 他定的规矩（逐条对上）：
  *   · 点一次切换选中，前面有 ✓ / 无 ✓ 作标识；
- *   · 【2026-10-03 改】底部两排按钮：
- *       第一排 = **全选 / 清除**（同一个按钮，文字随草稿状态变）；
- *       第二排 = **取消 / 确认**；
- *   · **一个都没勾 ⇒ 确认置灰不可点**（他的核心诉求）：只有至少勾了一个等级，确认才可点；
+ *   · 底部两排按钮：第一排 = **全选 / 清除**（同一个按钮，文字随草稿状态变）；
+ *     第二排 = **取消 / 确认**；
+ *   · **一个都没勾 ⇒ 确认置灰不可点**（他的核心诉求）；
  *   · 改动只在**确认**时才吐给外面 —— 边点边筛会让列表在菜单后面乱跳，也看不出"我改了什么"。
+ *
+ * ⭐【2026-10-15】空空把原【筛选】里的「掌握状态」整组并进来 ⇒ 选项变成 6 个：
+ *    **已掌握 / 🍜D稳了 / 🥘C还行 / 🥐B该练 / 🥥A抓紧 / 🥗S此刻**
+ *    键的集合（`mastered` + `1..5`）与"至少留一个勾"的规则都在 `lib/attention-level.ts`
+ *    （唯一实现）；服务端把选中项拼成 `OR`、并给等级分支加 `masteryLevel < 2`
+ *    ⇒ **已掌握优先于等级**（已掌握的题不会出现在任何等级档的结果里）。
  *
  * ⚠️ 用 **draft 草稿**而不是直接改外部 state：`onOpenChange` 打开时把外部值拷进草稿，
  *    「取消」只需丢掉草稿即可（不需要外部把值传回来，也不会因为 props 变了而半路被覆盖）。
@@ -32,23 +44,22 @@ export function AttentionMultiSelect({
     language = 'zh',
     className = '',
 }: {
-    /** 当前生效的等级（1-5）；长度为 5 = 未筛 */
-    value: number[];
-    onConfirm: (next: number[]) => void;
+    /** 当前生效的键（`mastered` + `1..5`）；长度 = 全部 = 未筛 */
+    value: string[];
+    onConfirm: (next: string[]) => void;
     language?: 'zh' | 'en';
     className?: string;
 }) {
     const [open, setOpen] = useState(false);
-    const [draft, setDraft] = useState<number[]>(value);
+    const [draft, setDraft] = useState<string[]>(value);
 
     const zh = language === 'zh';
-    const allValues = ATTENTION_LEVELS.map((l) => l.value);
     /** 全部选中 = 等于没筛（按钮保持"未筛"的样子） */
-    const isAll = isAttentionUnfiltered(value);
+    const isAll = isFilterUnfiltered(value);
 
-    const toggle = (v: number) => {
+    const toggle = (key: string) => {
         // "至少留一个勾"的规则在 lib 里（唯一实现），这里只负责调用
-        setDraft((prev) => toggleAttentionLevel(prev, v));
+        setDraft((prev) => toggleFilterKey(prev, key));
     };
 
     return (
@@ -72,24 +83,35 @@ export function AttentionMultiSelect({
                     <ChevronDown className="ml-1.5 h-3.5 w-3.5" />
                 </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuContent align="end" className="w-48">
+                {/* 第一项：**已掌握**（排在最前 —— 空空定的顺序） */}
+                <DropdownMenuItem
+                    disabled={draft.includes(MASTERED_FILTER_KEY) && draft.length <= 1}
+                    onSelect={(e) => {
+                        e.preventDefault(); // 不关菜单：多选要能连着点几个
+                        toggle(MASTERED_FILTER_KEY);
+                    }}
+                >
+                    <span className="w-4 shrink-0">{draft.includes(MASTERED_FILTER_KEY) ? '✓' : ''}</span>
+                    <span>{zh ? '已掌握' : 'Mastered'}</span>
+                </DropdownMenuItem>
+
+                {/* 剩下五项：按"最不急 → 最急"排（1→5，与 `ATTENTION_LEVELS` 一致） */}
                 {ATTENTION_LEVELS.map((lv) => {
-                    const checked = draft.includes(lv.value);
-                    const onlyOneLeft = checked && draft.length <= 1;
+                    const key = String(lv.value);
+                    const checked = draft.includes(key);
                     return (
                         <DropdownMenuItem
-                            key={lv.value}
-                            disabled={onlyOneLeft}
+                            key={key}
+                            disabled={checked && draft.length <= 1}
                             onSelect={(e) => {
-                                // 不关菜单：多选要能连着点几个
                                 e.preventDefault();
-                                toggle(lv.value);
+                                toggle(key);
                             }}
                         >
                             <span className="w-4 shrink-0">{checked ? '✓' : ''}</span>
-                            {/* 【2026-10-15】换成"图标 + 字母 + 名称"（如 🥐B该练）——
-                                字母与名称都来自 `ATTENTION_LEVELS`，别在这儿拼字符串。
-                                ⚠️ 后续（docs\14 §7.5）这个下拉还要并入"掌握状态"那一组。 */}
+                            {/* 图标 + 字母 + 名称（如 🥐B该练）—— 字母与名称都来自 `ATTENTION_LEVELS`，
+                                别在这儿拼字符串（本项目的老教训）。 */}
                             <span>
                                 {lv.medal}
                                 {attentionFullName(lv.value, zh)}
@@ -110,7 +132,7 @@ export function AttentionMultiSelect({
                         variant="outline"
                         size="sm"
                         className="h-7 w-full px-1 text-xs"
-                        onClick={() => setDraft(draft.length === 0 ? [...allValues] : [])}
+                        onClick={() => setDraft(draft.length === 0 ? [...FILTER_KEYS] : [])}
                     >
                         {draft.length === 0 ? (zh ? '全选' : 'All') : (zh ? '清除' : 'Clear')}
                     </Button>

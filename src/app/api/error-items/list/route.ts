@@ -6,6 +6,13 @@ import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { unauthorized, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+// 【2026-10-15】「掌握 / 等级」合并筛选的键（唯一实现在 lib/attention-level.ts）
+import {
+    MASTERED_FILTER_KEY,
+    filterKeyToLevel,
+    isFilterUnfiltered,
+    parseFilterKeys,
+} from "@/lib/attention-level";
 // 【2026-10-15】每日等级结算的惰性触发（见下方 GET 里的注释）
 import { maybeSettleDaily, normalizeTodayKey } from "@/lib/daily-settle";
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MIN_PAGE_SIZE } from "@/lib/constants/pagination";
@@ -45,6 +52,25 @@ export async function GET(req: Request) {
      * 与界面同时改，没有别处依赖。
      */
     const attentionParam = searchParams.get("attention");
+
+    /**
+     * ⭐【2026-10-15 **新**】「掌握 / 等级」**合并筛选**：`levelFilter=mastered,1,3`。
+     *
+     * 空空 2026-10-15 定（`docs\14` §7.5）：原【筛选】里的「掌握状态」整组挪出来，
+     * 与原【等级】下拉合并成一个 —— 选项为
+     * **已掌握 / 🍜D稳了 / 🥘C还行 / 🥐B该练 / 🥥A抓紧 / 🥗S此刻**（6 个）。
+     *
+     * ⚠️ **"已掌握优先于等级"**（他明确要求）：一道题即使等级是 🥗S此刻，
+     *    只要它已掌握，就**不出现在 🥗S此刻 的结果里**。
+     *    ⇒ 实现就是把选中项拼成 `OR`，并给**等级分支**加上 `masteryLevel < 2`：
+     *        · 选了"已掌握"      ⇒ 命中 `masteryLevel >= 2`（只看已掌握）
+     *        · 选了某一档等级    ⇒ 命中 `masteryLevel < 2 且 attention = 该档`
+     *    ⇒ 已掌握的题只可能从"已掌握"那个分支出来 —— 优先级天然成立，不需要额外排序。
+     *
+     * ⚠️ 旧参数 `attention=` / `mastery=` **保留**（老链接与测试仍在用）；
+     *    两者与 `levelFilter` 是**并列的 AND 条件**，正常界面只会传 `levelFilter`。
+     */
+    const levelFilterKeys = parseFilterKeys(searchParams.get("levelFilter"));
 
     // 分页参数
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
@@ -113,11 +139,31 @@ export async function GET(req: Request) {
                  * ⚠️ 只跳过**归档那一层**：`deletedAt = null` 与"已掌握不进主库"这两条照旧，
                  *    这样已归档本的详情页与在用本的详情页**行为完全一致**，不会多出第二套规矩。
                  */
+                /**
+                 * ⚠️⚠️【2026-10-15 **改了**】默认**不再排除"已掌握"的题**。
+                 *
+                 * 空空 2026-10-15 原话：*"默认列表里，已掌握的题是不显示的。这样不好，
+                 *   我还是需要将已掌握能够显示出来才比较有掌控力，所以错题本中要将
+                 *   '已掌握'显示出来，这个改正吧。"*
+                 * 并且他明确了语义：*"这道题虽然'已掌握'，但我还是要能够看得见。"*
+                 *
+                 * ── 改之前是什么样 ──
+                 *   默认（调用方没传 `mastery`）时会主动排除 `masteryLevel >= 2`
+                 *   ⇒ **已掌握的题在错题本里彻底看不见**，只有一个"筛选→已掌握"的后门能看到。
+                 *   那是照"四分法（蓝图 5.3）：主库 = masteryLevel < 2"实现的。
+                 *
+                 * ── 现在为什么可以改 ──
+                 *   ① 前端**从不传 `scope`**（一律走默认），所以改这里 = 改"错题本列表看到什么"；
+                 *   ② 内阁（`/api/cabinet`）**本来就不按 masteryLevel 过滤**（它要算"掌握构成"），
+                 *      任务卡里的"该练/该复查"由 `lib/cabinet.ts` 内部自己排除已掌握 ⇒ 不受影响；
+                 *   ③ 已掌握的题**不进任何任务**这条没变（见 `cabinet.ts`），
+                 *      只是"能在错题本里被看见"了 —— 这正是他要的。
+                 *
+                 * ⚠️ 于是"主库"这个词在本文件里只剩"**本在用 + 未进回收箱**"的意思，
+                 *    **不再含 `masteryLevel < 2`**。要只看未掌握 ⇒ 传 `mastery=0`。
+                 */
                 if (notebookId) {
-                    // 点名了某一本 ⇒ **归不归档都照给**；"已掌握不进主库"那条照旧保留
-                    if (mastery === null) {
-                        andConditions.push({ masteryLevel: { lt: 2 } });
-                    }
+                    // 点名了某一本 ⇒ **归不归档都照给**（见上面那段），也不按掌握与否排除
                 } else if (scope === "archived") {
                     whereClause.notebook = { is: { archiveStatus: "archived" } };
                 } else if (scope === "main" || !scope) {
@@ -126,13 +172,6 @@ export async function GET(req: Request) {
                         { notebookId: null },
                         { notebook: { is: { archiveStatus: { not: "archived" } } } },
                     ];
-                    // 【四分法对齐 · 蓝图 5.3】主库 = deletedAt=null 且 masteryLevel<2 且 本在用。
-                    // 原实现漏了 masteryLevel<2，「已掌握」的题一直混在主库里，四分法名不副实。
-                    // 但要留一个出口：界面上的「已掌握」筛选项正是靠 mastery=1 来看这一分区的，
-                    // 若无条件排除，该筛选会查出空集。故只在调用方**未显式传 mastery** 时排除。
-                    if (mastery === null) {
-                        andConditions.push({ masteryLevel: { lt: 2 } });
-                    }
                 }
                 // scope=all 不加额外限制
             }
@@ -143,7 +182,30 @@ export async function GET(req: Request) {
             whereClause.printCount = 0;
         }
 
-        // 等级筛选（多选）：1,3,5 ⇒ in
+        /**
+         * ⭐【2026-10-15 新】「掌握 / 等级」合并筛选（见上面 `levelFilterKeys` 那段注释）。
+         *
+         * ⚠️ 必须走 `andConditions`（= 最终 `whereClause.AND`），**不能写顶层 OR** ——
+         *    顶层 `OR` 已经被"主库/归档范围"那段占了，再写一次会把它整段覆盖掉
+         *    （本文件里 `gradeSemester` 踩过这个坑，注释里写着）。
+         */
+        if (levelFilterKeys.length > 0 && !isFilterUnfiltered(levelFilterKeys)) {
+            const wantsMastered = levelFilterKeys.includes(MASTERED_FILTER_KEY);
+            const levels = levelFilterKeys
+                .map((k) => filterKeyToLevel(k))
+                .filter((n): n is number => n !== null);
+
+            const branches: Prisma.ErrorItemWhereInput[] = [];
+            if (wantsMastered) branches.push({ masteryLevel: { gte: 2 } });
+            if (levels.length > 0) {
+                // ⚠️ `masteryLevel: { lt: 2 }` 就是"已掌握优先于等级"的落点：
+                //    已掌握的题**永远不会**从等级分支里出来。
+                branches.push({ masteryLevel: { lt: 2 }, attention: { in: levels } });
+            }
+            if (branches.length > 0) andConditions.push({ OR: branches });
+        }
+
+        // 等级筛选（多选）：1,3,5 ⇒ in（**旧参数**，新界面走 levelFilter；保留兼容）
         if (attentionParam) {
             const levels = attentionParam
                 .split(",")
@@ -176,9 +238,25 @@ export async function GET(req: Request) {
             });
         }
 
-        // Mastery filter
+        /**
+         * 掌握状态筛选（`mastery`）。
+         *
+         * ⚠️⚠️【2026-10-15 **修正了口径**】原来是 `mastery=1 ⇒ masteryLevel > 0`，
+         *    也就是把 **`1`（复习中）也算成"已掌握"** —— 名不副实。
+         *
+         * 空空 2026-10-15 明确了模型：*"题按照掌握与否的分类分为'已掌握'和'未掌握'，
+         *   其中'未掌握'下分为 5 个等级。"*
+         * ⇒ **二分**：`masteryLevel = 2` 才是已掌握；`0` 与 `1` **都算未掌握**。
+         *   （`1` 这个值在业务上从未被写入过 —— 真真 2026-10-15 全仓查实，是个预留档。）
+         *
+         * | 传什么 | 查什么 |
+         * |---|---|
+         * | `mastery=0`（未掌握） | `masteryLevel < 2` |
+         * | `mastery=1`（已掌握） | `masteryLevel = 2` |
+         * | 不传 | 不按掌握与否筛（**已掌握默认可见**，见上面那段注释） |
+         */
         if (mastery !== null) {
-            whereClause.masteryLevel = mastery === "1" ? { gt: 0 } : 0;
+            whereClause.masteryLevel = mastery === "1" ? { equals: 2 } : { lt: 2 };
         }
 
         // Time range filter

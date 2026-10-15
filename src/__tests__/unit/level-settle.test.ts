@@ -16,6 +16,7 @@ import {
     isPreMastered,
     levelFromCountdown,
     planAfterReview,
+    planAfterUnmaster,
     planSettlement,
     rightStreakOf,
     shouldAutoMaster,
@@ -210,6 +211,22 @@ describe('等级结算 · 冻结（三类题不参与结算）', () => {
         expect(isFrozen({ ...base, notebookArchived: true })).toBe(true);
         // ⚠️ 这条最容易漏：归档题本来就不在主库，但"重算"照样会把它改活
         expect(isFrozen({ ...base, notebookArchived: true, masteryLevel: 0 })).toBe(true);
+    });
+});
+
+describe('等级结算 · "已掌握"退回"未掌握"（planAfterUnmaster）', () => {
+    it('回到 **4 抓紧 + 倒数 4 天**（空空 2026-10-15 定的；他先写 7 天后更正为 4）', () => {
+        expect(planAfterUnmaster()).toEqual({ levelCountdown: 4, attention: 4 });
+    });
+
+    it('倒数和等级**互相自洽** —— 用刚写下的倒数反算等级，必须等于刚写下的等级', () => {
+        const r = planAfterUnmaster();
+        expect(levelFromCountdown(r.levelCountdown, 0)).toBe(r.attention);
+    });
+
+    it('⚠️ 不能是 7 天 —— 7 天按阈值表会落到 3 档，与"转 4 抓紧"自相矛盾', () => {
+        expect(planAfterUnmaster().levelCountdown).not.toBe(7);
+        expect(levelFromCountdown(7, 0)).toBe(3); // 这就是为什么不能用 7
     });
 });
 

@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Filter, ChevronDown, Printer, ListChecks, Trash2, X, Plus, Link2, Loader2 } from "lucide-react";
+import { Search, Clock, ChevronDown, Printer, ListChecks, Trash2, X, Plus, Link2, Loader2 } from "lucide-react";
 import {
     Dialog,
     DialogContent,
@@ -21,7 +21,8 @@ import {
     DropdownMenuContent,
     DropdownMenuItem,
     DropdownMenuLabel,
-    DropdownMenuSeparator,
+    // ⚠️【2026-10-15 删】原来【筛选】里「掌握状态」与「时间范围」之间要一道分隔线；
+    //    那组已并进【等级】⇒ 这里不再有"两段并列"的场合，分隔线也就没用了。
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { KnowledgeFilter } from "@/components/knowledge-filter";
@@ -34,7 +35,9 @@ import {
 } from "@/lib/manage-type";
 import { Pagination } from "@/components/ui/pagination";
 import { DEFAULT_PAGE_SIZE } from "@/lib/constants/pagination";
-import { ATTENTION_LEVELS, isAttentionUnfiltered } from "@/lib/attention-level";
+import { FILTER_KEYS, isFilterUnfiltered } from "@/lib/attention-level";
+// 【2026-10-15】掌握开关点一下变成什么（唯一实现在 level-settle.ts）
+import { nextMasteryLevel } from "@/lib/level-settle";
 import { AttentionMultiSelect } from "@/components/attention-multi-select";
 import { ErrorItemCard } from "@/components/error-item-card";
 import { DatePickerCalendar } from "@/components/date-picker-calendar";
@@ -79,7 +82,6 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
     const [items, setItems] = useState<ErrorItem[]>([]);
     const [, setLoading] = useState(true);
     const [search, setSearch] = useState("");
-    const [masteryFilter, setMasteryFilter] = useState<"all" | "mastered" | "unmastered">("all");
     const [timeFilter, setTimeFilter] = useState<TimeFilter>("all");
     /** 日历选的结果：绿点（若干天）或蓝色区间（一段）—— 二者不会同时存在 */
     const [datePoints, setDatePoints] = useState<string[]>([]);
@@ -95,12 +97,17 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
     const [selectedTag, setSelectedTag] = useState<string | null>(null);
     const [expandedTags, setExpandedTags] = useState<Set<string>>(new Set());
     /**
-     * 【2026-09-30】等级筛选**改成多选**：默认 5 档全选（= 没筛）。
-     * 只勾了几档 ⇒ `attention=1,3,5`。
+     * ⭐【2026-10-15 **合并成一个**】「掌握 / 等级」筛选（`docs\14` §7.5）。
+     *
+     * 原来这里是两个东西：`masteryFilter`（掌握状态：全部/待复习/已掌握）
+     * 和 `attentionSelection`（等级 1-5 多选）。
+     * 空空 2026-10-15 定：把"掌握状态"整组挪出来，与"等级"合并成一个多选，
+     * 选项与顺序 = **已掌握 / 🍜D稳了 / 🥘C还行 / 🥐B该练 / 🥥A抓紧 / 🥗S此刻**。
+     *
+     * ⚠️ 默认**全选**（= 没筛）；只勾几项 ⇒ `levelFilter=mastered,3`。
+     * ⚠️ 键的集合与"至少留一个勾"的规则都在 `lib/attention-level.ts`（唯一实现）。
      */
-    const [attentionSelection, setAttentionSelection] = useState<number[]>(
-        ATTENTION_LEVELS.map((l) => l.value),
-    );
+    const [levelSelection, setLevelSelection] = useState<string[]>([...FILTER_KEYS]);
     // 分页状态
     const [page, setPage] = useState(1);
     const [pageSize] = useState(DEFAULT_PAGE_SIZE);
@@ -187,7 +194,7 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
     const toggleMastery = (item: ErrorItem, e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        const next = item.masteryLevel > 0 ? 0 : 2;
+        const next = nextMasteryLevel(item.masteryLevel);
         patchItemFields(item.id, { masteryLevel: next }, { masteryLevel: next });
     };
 
@@ -395,26 +402,25 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
     };
 
     // 追踪筛选条件是否变化（用于判断是否需要重置页码）
-    const prevFiltersRef = useRef({ search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionSelection, datePoints, dateRange });
+    const prevFiltersRef = useRef({ search, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, levelSelection, datePoints, dateRange });
 
     useEffect(() => {
         const prevFilters = prevFiltersRef.current;
         const filtersChanged =
             prevFilters.search !== search ||
-            prevFilters.masteryFilter !== masteryFilter ||
             prevFilters.timeFilter !== timeFilter ||
             prevFilters.selectedTag !== selectedTag ||
             prevFilters.notebookId !== notebookId ||
             prevFilters.gradeFilter !== gradeFilter ||
             prevFilters.chapterFilter !== chapterFilter ||
             prevFilters.manageTypeFilter !== manageTypeFilter ||
-            prevFilters.attentionSelection !== attentionSelection ||
+            prevFilters.levelSelection !== levelSelection ||
             // 日历里改选的日子/区段也算"筛选变了"
             JSON.stringify(prevFilters.datePoints) !== JSON.stringify(datePoints) ||
             JSON.stringify(prevFilters.dateRange) !== JSON.stringify(dateRange);
 
         // 更新 ref
-        prevFiltersRef.current = { search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionSelection, datePoints, dateRange };
+        prevFiltersRef.current = { search, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, levelSelection, datePoints, dateRange };
 
         if (filtersChanged && page !== 1) {
             // 筛选条件变化且不在第一页，重置到第一页（会再次触发此 effect）
@@ -424,7 +430,7 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
 
         // 正常请求数据
         fetchItems();
-    }, [page, search, masteryFilter, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, attentionSelection, datePoints, dateRange]);
+    }, [page, search, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, levelSelection, datePoints, dateRange]);
 
     /**
      * 当前筛选条件 → 查询参数（**一处实现**：列表 / 导出打印 / 跨页全选 / 日历共用）。
@@ -451,8 +457,13 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
         params.append("today", dayKey(new Date()));
         if (notebookId) params.append("notebookId", notebookId);
         if (search) params.append("query", search);
-        if (masteryFilter !== "all") {
-            params.append("mastery", masteryFilter === "mastered" ? "1" : "0");
+        /**
+         * ⭐【2026-10-15】「掌握 / 等级」合并筛选 —— 全选 = 没筛，一个参数都不传。
+         * 只勾了几项 ⇒ `levelFilter=mastered,3`（键的集合见 `lib/attention-level.ts`）。
+         * ⚠️ 不再传 `mastery=` —— "掌握状态"那一组已经并进这里了。
+         */
+        if (!isFilterUnfiltered(levelSelection)) {
+            params.append("levelFilter", levelSelection.join(","));
         }
         if (timeFilter !== "all" && !opts.withoutDates) {
             params.append("timeRange", timeFilter);
@@ -476,12 +487,10 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
         if (chapterFilter) params.append("chapter", chapterFilter); // 章节筛选
         if (manageTypeFilter !== "all") params.append("manageType", manageTypeFilter);
         /**
-         * 等级（**多选**）：5 档全选 = 没筛，一个参数都不传；
-         * 只勾了几档 ⇒ `attention=1,3,5`（服务端按 `in` 过滤）。
+         * ⚠️⚠️【2026-10-15 **删**】这里原来会发 `attention=1,3,5`（等级多选）。
+         *    "掌握状态"与"等级"已合成一个多选（`docs\14` §7.5）⇒ 参数改走 `levelFilter`，
+         *    见上面那段。`attention=` 服务端仍兼容（老链接/测试用），但界面不再发它。
          */
-        if (attentionSelection.length > 0 && !isAttentionUnfiltered(attentionSelection)) {
-            params.append("attention", attentionSelection.join(","));
-        }
         return params;
     }
 
@@ -547,19 +556,20 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
     };
 
     /**
-     * 【2026-09-30 改多选】有没有"正在生效的筛选" —— 决定筛选按钮是不是「已筛」+银灰底。
-     * 只算**筛选下拉里的那些条件**（掌握度/时间/标签/年级/章节/分类/等级）；
+     * 【2026-09-30 改多选，2026-10-15 合并后又有变化】有没有"正在生效的筛选" ——
+     * 决定筛选按钮是不是「已筛」+银灰底。
+     * 只算**下拉里的那些条件**（时间/标签/年级/章节/分类/掌握与等级）；
      * 搜索框不算（它就在旁边、看得见，而且不属于"下拉里设过的条件"）。
-     * ⚠️ 等级：**5 档全选 = 没筛**（跟选"全部"一个意思），所以只在"没全选"时才算已筛。
+     * ⚠️ 掌握与等级：**6 项全选 = 没筛**（跟选"全部"一个意思），只在没全选时才算已筛。
+     * ⚠️ "掌握状态"那一组已于 2026-10-15 并进这个多选（原【筛选】按钮只剩时间）。
      */
     const hasActiveFilter =
-        masteryFilter !== "all" ||
         timeFilter !== "all" ||
         !!selectedTag ||
         !!gradeFilter ||
         !!chapterFilter ||
         manageTypeFilter !== "all" ||
-        !isAttentionUnfiltered(attentionSelection);
+        !isFilterUnfiltered(levelSelection);
 
     return (
         <div className="space-y-6">            <div className="flex flex-col sm:flex-row gap-4">
@@ -645,7 +655,14 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
                         </DropdownMenuContent>
                     </DropdownMenu>
 
-                    {/* 筛选（从第一行换到这儿，内容没动） */}
+                    {/**
+                     * ⭐【2026-10-15 **改名 + 只剩时间**】原【筛选】⇒【时间】。
+                     *
+                     * 空空 2026-10-15 原话：*"请将'筛选'按钮的名称改为时间"*。
+                     * 为什么只剩时间：它原来装着两组 —— 「掌握状态」和「时间范围」。
+                     * 「掌握状态」整组**并进【等级】**了（见下面那个多选），
+                     * 这里自然只剩时间范围 ⇒ 名字也得跟着改，否则名不副实。
+                     */}
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                             {/* 有任何筛选条件 ⇒ 按钮变「已筛」+ **银灰底**。
@@ -656,24 +673,15 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
                                 size="sm"
                                 className={hasActiveFilter ? "bg-zinc-300 text-zinc-900 hover:bg-zinc-300/90" : ""}
                             >
-                                <Filter className="mr-1.5 h-3.5 w-3.5" />
-                                {hasActiveFilter ? L("已筛", "Filtered") : t.notebook.filter}
+                                <Clock className="mr-1.5 h-3.5 w-3.5" />
+                                {hasActiveFilter ? L("已筛", "Filtered") : L("时间", "Time")}
                                 <ChevronDown className="ml-1.5 h-3.5 w-3.5" />
                             </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start" className="w-48">
-                            <DropdownMenuLabel>{t.filter.masteryStatus || "Mastery Status"}</DropdownMenuLabel>
-                            <DropdownMenuItem onClick={() => setMasteryFilter("all")}>
-                                {masteryFilter === "all" && "✓ "}{t.filter.all || "All"}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => setMasteryFilter("unmastered")}>
-                                {masteryFilter === "unmastered" && "✓ "}{t.filter.review || "To Review"}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => setMasteryFilter("mastered")}>
-                                {masteryFilter === "mastered" && "✓ "}{t.filter.mastered || "Mastered"}
-                            </DropdownMenuItem>
-
-                            <DropdownMenuSeparator />
+                            {/* ⚠️⚠️【2026-10-15 删掉整组】「掌握状态：全部/待复习/已掌握」
+                                已经并进下面的【等级】多选（已掌握优先于等级）。
+                                留着它就有**两个地方**能管掌握状态，迟早对不上。 */}
 
                             {/* 时间范围 7 档 + 「其他日期」（点它开日历） */}
                             <DropdownMenuLabel>{t.filter.timeRange || "Time Range"}</DropdownMenuLabel>
@@ -693,10 +701,11 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
                         </DropdownMenuContent>
                     </DropdownMenu>
 
-                    {/* 等级（多选：🥉青铜 … 👑王者，至少留一个，底部 全选/取消/确认） */}
+                    {/* ⭐【2026-10-15 合并】「掌握 / 等级」多选：已掌握 / 🍜D稳了 / 🥘C还行 /
+                        🥐B该练 / 🥥A抓紧 / 🥗S此刻（至少留一个，底部 全选/取消/确认） */}
                     <AttentionMultiSelect
-                        value={attentionSelection}
-                        onConfirm={setAttentionSelection}
+                        value={levelSelection}
+                        onConfirm={setLevelSelection}
                         language={language}
                     />
                 </div>

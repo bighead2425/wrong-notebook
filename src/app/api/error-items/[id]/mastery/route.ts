@@ -7,6 +7,8 @@ import { createLogger } from "@/lib/logger";
 // 【2026-10-10】"已掌握"要过一遍题间从属关系规则（人工标记才断开关联、主题向下传播）
 import type { LinkOp } from "@/lib/item-link";
 import { applyLinkOps, applyMastery, planMasteryChange } from "@/lib/item-link-store";
+// 【2026-10-15】"已掌握 ⇒ 未掌握"要给回一档（规则在 level-settle.ts，纯函数）
+import { planAfterUnmaster } from "@/lib/level-settle";
 
 const logger = createLogger('api:error-items:mastery');
 
@@ -40,7 +42,7 @@ export async function PATCH(
         // Verify ownership before update
         const existingItem = await prisma.errorItem.findUnique({
             where: { id },
-            select: { userId: true },
+            select: { userId: true, masteryLevel: true },
         });
 
         if (!existingItem) {
@@ -70,12 +72,25 @@ export async function PATCH(
             logger.error({ error, itemId: id }, 'Failed to plan item link on mastery change');
         }
 
+        /**
+         * 【2026-10-15 新】**从"已掌握"改回"未掌握" ⇒ 回到 4 抓紧 + 倒数 4 天**。
+         *
+         * 与 `PUT /api/error-items/[id]` 里那条**同一条规则**（`lib/level-settle.ts` 的
+         * `planAfterUnmaster`）—— 两条写掌握状态的路都得走，否则"从哪个按钮点的"会得到不同结果。
+         * 出处与理由见那个函数的注释（空空 2026-10-15 定的）。
+         */
+        const reentry =
+            next < 2 && Number(existingItem.masteryLevel) === 2 ? planAfterUnmaster() : null;
+
         const errorItem = await prisma.errorItem.update({
             where: {
                 id,
             },
             data: {
                 masteryLevel: next,
+                ...(reentry
+                    ? { levelCountdown: reentry.levelCountdown, attention: reentry.attention }
+                    : {}),
             },
         });
 

@@ -33,7 +33,9 @@ import { NotebookSelector } from "@/components/notebook-selector";
 import { CorrectionEditor, ParsedQuestionWithSubject } from "@/components/correction-editor";
 import { ParsedQuestion } from "@/lib/ai";
 import { PrintCounts } from "@/components/print-counts";
-import { attentionLabel } from "@/lib/attention-level";
+import { attentionFullName, attentionLevelOf } from "@/lib/attention-level";
+// 【2026-10-15】判"预掌握"（等级1 + 倒数0）—— 判据的唯一出处
+import { isPreMastered } from "@/lib/level-settle";
 import { GRADE_SEMESTER_OPTIONS as GRADE_SEMESTER_OPTIONS_SHARED } from "@/lib/grade-semester-options";
 import { ReviewOutcomeEditor } from "@/components/review-outcome-editor";
 import { serializeReviewOutcomes, type ReviewOutcomes } from "@/lib/review-outcomes";
@@ -87,6 +89,11 @@ interface ErrorItemDetail {
     reviewPrintCount?: number | null;
     /** G8 / T5：关注档（难度）1-5 */
     attention?: number | null;
+    /**
+     * 【2026-10-15】等级**倒数天数**（0~49）—— 判"预掌握"（等级1 + 倒数0）要用，
+     * 顶栏第一行那个「🥐 3天」显示的就是它。规则见 `lib/level-settle.ts`。
+     */
+    levelCountdown?: number | null;
     /**
      * 【2026-09-30】复习结果四圆点的原材料（JSON 字符串）：
      * `{"planned":["right",null,null],"last":"wrong"}`
@@ -196,6 +203,31 @@ export default function ErrorDetailPage() {
      * ⚠️ 跟着 `item.reviewOutcomes` 走：他在卡片上改圆圈，上面那句话立刻跟着变。
      */
     const reviewStatus = useMemo(() => reviewStatusOf(item?.reviewOutcomes), [item?.reviewOutcomes]);
+
+    /**
+     * 【2026-10-15 新】顶栏那两行要用的派生值（`docs\14` §7.4）。
+     *
+     * 布局（与空空逐字核对无误的"混合版"）：
+     * ```
+     * 题号                              🥐 3天
+     * 深挖 2 ｜ 复练 1   [二维码]        B该练
+     * ```
+     * · 题号在上、"深挖 2 ｜ 复练 1"在题号**正下方**（左对齐）
+     * · 二维码**紧贴**这坨文字的右边，**上沿齐题号、下沿齐深挖那一行**
+     * · 🥐3天 / B该练 两行贴**整行最右**、右对齐
+     *
+     * ⚠️ 判据一律用 lib 里的纯函数（`isPreMastered`），别在页面里重写定义。
+     */
+    const attentionLevel = attentionLevelOf(item?.attention);
+    /** 倒数天数（真实值；null/NaN 时不显示天数，只显示图标） */
+    const countdownDays =
+        item?.levelCountdown === null || item?.levelCountdown === undefined
+            ? null
+            : Math.max(0, Number(item.levelCountdown));
+    const isPreMasteredNow = isPreMastered(item?.attention, item?.levelCountdown);
+    const isMasteredNow = Number(item?.masteryLevel) >= 2;
+    /** 冻结 = 已掌握 或 预掌握（不再参与等级变化；图标显示黑白） */
+    const isFrozenNow = isMasteredNow || isPreMasteredNow;
 
     const [loading, setLoading] = useState(true);
     const [notesInput, setNotesInput] = useState("");
@@ -931,60 +963,85 @@ export default function ErrorDetailPage() {
                                 {/* 【2026-09-30 他要求】原来写「题目」，现在直接写**这道题的题号**
                                     （"反正也知道这是题目，还不如把题号放到上面去 —— 既有科目分类又有录入时间"）。
                                     题号是二维码的锚点，只读。右侧放两个打印次数（只读计数，放这儿正好）。 */}
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                    {/* 【2026-10-12 需求第 2 条 他改了】二维码要大、要"挂下来"：
-                                        他原话："这个二维码也太小了，让这个二维码大一些，
-                                        和复练纸、模仿纸的二维码一样大，上边缘和前面的题号平齐，
-                                        下面悬挂下来。"
-                                        ⇒ 这一行改成**顶对齐**（`items-start`，原来是 `items-center`
-                                        把它缩在中间），码本身放大到 56px（≈14.8mm，与深挖纸 14/16mm、
-                                        错题卡 18mm 同一档）；题号给它一点上内边距，视觉上两条上边就齐了。
-                                        码比一行字高，自然就**往下悬**着，不再是个小角标。 */}
-                                    <div className="flex items-start gap-2 min-w-0">
-                                        <CardTitle className="font-mono text-base leading-snug pt-1">
+                                {/* ⚠️⚠️【2026-10-15 **改成"混合版"布局**】（`docs\14` §7.4，与空空逐字核对无误）
+                                    ```
+                                    题号                              🥐 3天
+                                    深挖 2 ｜ 复练 1   [二维码]        B该练
+                                    ```
+                                    · 题号在上、"深挖 2 ｜ 复练 1"在题号**正下方**（左对齐）
+                                    · 二维码**紧贴**这坨文字的右边，**上沿齐题号、下沿齐深挖那一行**
+                                    · 🥐3天 / B该练 两行贴**整行最右**、右对齐
+
+                                    ⚠️ 怎么做到"上沿齐、下沿齐"：左边那坨给固定高 `h-14`（= 二维码边长 56px），
+                                       内部 `justify-between` 把两行推到上下两端；二维码 `self-stretch`
+                                       自动撑成同高 ⇒ 三条边自然齐平。改高度只需改这一处。 */}
+                                <div className="flex items-stretch justify-between gap-3">
+                                    <div className="flex flex-col justify-between gap-1 h-14 min-w-0">
+                                        <CardTitle className="font-mono text-base leading-none">
                                             {item.source || t.detail.question}
                                         </CardTitle>
-                                        {/* 【2026-10-12 需求第 15 条】题号后面直接放**这道题的二维码**。
-                                            他原话："目前进入错题详情页后没有这道题的二维码，使用起来很不方便，
-                                            建议在错题详情页，每道错题题号后面直接增加这道题的二维码。"
-                                            ⚠️ 码的内容就是**题号本身**（与印在纸上的那个码同一个载荷，
-                                               见 `lib/qr.ts`）⇒ 手机扫它 = 直接进这一屏，不是另一套地址。 */}
-                                        {itemQr && (
-                                            <img
-                                                src={itemQr}
-                                                alt={item.source || "QR"}
-                                                title={L(
-                                                    "扫这个码 = 直接跳到这道题（与纸上印的同一个码）",
-                                                    "Scan to open this question (same code as printed)",
-                                                )}
-                                                className="h-14 w-14 shrink-0 rounded border bg-white p-0.5"
+                                        {/* 【2026-10-01 他要求】「深挖 X | 复练 Y」——
+                                            当"类型=深挖 且 深挖打印次数=0"时**底色转黄**（提醒该去印深挖纸了）；
+                                            **双击它**表示『这次我知道了』，提醒解除（写 deepNudgeDismissed）。
+                                            判定与列表卡片上那个上色的打印机图标**共用同一个函数**。 */}
+                                        <span
+                                            className={`self-start text-sm font-medium whitespace-nowrap rounded px-1.5 py-0.5 ${deepNudge ? "cursor-pointer" : ""}`}
+                                            style={deepNudge ? { background: DEEP_NUDGE_BG } : undefined}
+                                            title={deepNudge
+                                                ? L(
+                                                      "这是深挖题、还没印过深挖纸。去打印一次，或双击这里表示『这次我知道了』。",
+                                                      "Deep-dive item not printed yet. Print it, or double-click here to dismiss.",
+                                                  )
+                                                : undefined}
+                                            onDoubleClick={() => {
+                                                if (!deepNudge) return;
+                                                patchMetadata({ deepNudgeDismissed: true });
+                                            }}
+                                        >
+                                            <PrintCounts
+                                                deep={item.printCount}
+                                                review={item.reviewPrintCount}
+                                                compact
                                             />
-                                        )}
+                                        </span>
                                     </div>
-                                    {/* 【2026-10-01 他要求】「深挖 X | 复练 Y」——
-                                        当"类型=深挖 且 深挖打印次数=0"时**底色转黄**（提醒该去印深挖纸了）；
-                                        **双击它**表示『这次我知道了』，提醒解除（写 deepNudgeDismissed）。
-                                        判定与列表卡片上那个上色的打印机图标**共用同一个函数**。 */}
-                                    <span
-                                        className={`text-sm font-medium whitespace-nowrap rounded px-1.5 py-0.5 ${deepNudge ? "cursor-pointer" : ""}`}
-                                        style={deepNudge ? { background: DEEP_NUDGE_BG } : undefined}
-                                        title={deepNudge
-                                            ? L(
-                                                  "这是深挖题、还没印过深挖纸。去打印一次，或双击这里表示『这次我知道了』。",
-                                                  "Deep-dive item not printed yet. Print it, or double-click here to dismiss.",
-                                              )
-                                            : undefined}
-                                        onDoubleClick={() => {
-                                            if (!deepNudge) return;
-                                            patchMetadata({ deepNudgeDismissed: true });
-                                        }}
-                                    >
-                                        <PrintCounts
-                                            deep={item.printCount}
-                                            review={item.reviewPrintCount}
-                                            compact
+                                    {/* 【2026-10-12 需求第 15 条】题号后面放**这道题的二维码**。
+                                        ⚠️ 码的内容就是**题号本身**（与印在纸上的那个码同一个载荷，
+                                           见 `lib/qr.ts`）⇒ 手机扫它 = 直接进这一屏，不是另一套地址。
+                                        ⚠️ 宽度 56px（≈14.8mm，与深挖纸 14/16mm、错题卡 18mm 同一档）。 */}
+                                    {itemQr && (
+                                        <img
+                                            src={itemQr}
+                                            alt={item.source || "QR"}
+                                            title={L(
+                                                "扫这个码 = 直接跳到这道题（与纸上印的同一个码）",
+                                                "Scan to open this question (same code as printed)",
+                                            )}
+                                            className="w-14 shrink-0 self-stretch rounded border bg-white p-0.5"
                                         />
-                                    </span>
+                                    )}
+                                    {/* 【2026-10-15 新】右上角两行：第一行「图标 + 还剩几天」，
+                                        第二行「字母 + 名称」（预掌握时显示"预掌握"）。
+                                        ⚠️ 等级由系统算、用户改不了（人工入口已全部收回）。
+                                        ⚠️ **冻结态（已掌握 / 预掌握）显示黑白** —— 一眼看出"这题不再动了"。 */}
+                                    <div className="ml-auto self-center text-right whitespace-nowrap">
+                                        <div
+                                            className={`text-sm font-medium ${isFrozenNow ? "grayscale opacity-60" : ""}`}
+                                            title={
+                                                isFrozenNow
+                                                    ? L("已冻结，不再参与等级变化", "Frozen — no longer changes")
+                                                    : L("等级由系统按复习情况自动算", "Managed automatically by the system")
+                                            }
+                                        >
+                                            {attentionLevel.medal}
+                                            {countdownDays !== null && ` ${countdownDays}天`}
+                                        </div>
+                                        <div className="text-sm font-medium">
+                                            {isPreMasteredNow
+                                                ? L("预掌握", "Pre-mastered")
+                                                : attentionFullName(item.attention, language === "zh")}
+                                        </div>
+                                    </div>
                                 </div>
                             </CardHeader>
                             <CardContent className="space-y-4">
@@ -1221,22 +1278,10 @@ export default function ErrorDetailPage() {
                                             </Select>
                                         </div>
 
-                                        {/* ⚠️⚠️【2026-10-15 **收回人工入口**】原来这里是个下拉（🥉青铜…👑王者，选中即存）。
-                                            空空 2026-10-15 定：**等级完全交给系统，用户不再干涉** ⇒ 下拉整段删掉，
-                                            改成**只读**一行（信息还在，但改不了）。
-                                            完整规则见 `docs\14_等级语义改造v2_完整设计_20261015.md`。 */}
-                                        <div className="flex justify-between items-center gap-3">
-                                            <span className="text-muted-foreground whitespace-nowrap">{t.detail.attention}:</span>
-                                            <span
-                                                className="text-sm font-medium"
-                                                title={L(
-                                                    "等级由系统按复习情况自动算，不用手改",
-                                                    "Managed automatically by the system",
-                                                )}
-                                            >
-                                                {attentionLabel(item.attention)}
-                                            </span>
-                                        </div>
+                                        {/* ⚠️⚠️【2026-10-15 **整栏删掉**】原来这里是「等级：🍜 稳了」一行只读显示。
+                                            空空 2026-10-15 定："将试题信息中的等级一栏去掉" ——
+                                            等级已经挪到**顶栏右上角**（图标 + 还剩几天 + 字母名称），
+                                            这里再留一份就是重复。 */}
 
                                         {/* 【2026-09-30 他要求】把卡片上那**四个复习结果圆圈**纳进详情页，
                                             摆在试题信息栏的最后（等级后面）。

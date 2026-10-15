@@ -53,6 +53,8 @@ import { DocScanner, type DocScannerHandle } from '@/components/doc-scanner';
 import { ImageCropper } from '@/components/image-cropper';
 import { ImageZoomViewer } from '@/components/image-zoom-viewer';
 import { cycleManageType } from '@/lib/manage-type';
+// 【2026-10-15】掌握开关点一下变成什么（唯一实现在 level-settle.ts）
+import { nextMasteryLevel } from '@/lib/level-settle';
 // 【2026-10-12 需求第 2 条】手机端划一下就收 / 叫左栏（三个页面共用这一份）
 import { usePanelSwipe } from '@/lib/use-panel-swipe';
 import type { ErrorItem } from '@/types/api';
@@ -1226,11 +1228,11 @@ export default function InsightsPage() {
                                                     patchQuestion(
                                                         {
                                                             masteryLevel:
-                                                                linkedQuestion.masteryLevel > 0 ? 0 : 2,
+                                                                nextMasteryLevel(linkedQuestion.masteryLevel),
                                                         },
                                                         {
                                                             masteryLevel:
-                                                                linkedQuestion.masteryLevel > 0 ? 0 : 2,
+                                                                nextMasteryLevel(linkedQuestion.masteryLevel),
                                                         },
                                                     )
                                                 }

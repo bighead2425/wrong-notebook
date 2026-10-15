@@ -134,3 +134,66 @@ export function isAttentionUnfiltered(selected: readonly number[]): boolean {
  *    ⇒ `initialLevelForManageType()` 不再被调用（函数体保留，是历史记录）。
  */
 export const NEW_ITEM_ATTENTION = 5;
+
+/* ══════════════════════════════════════════════════════════════════════
+ * 【2026-10-15 新】「掌握 / 等级」**合并筛选**的键
+ *
+ * 空空 2026-10-15 定（`docs\14` §7.5）：把原来的两个下拉合成一个 ——
+ *   ① 原【筛选】里的「掌握状态」整组挪出来；
+ *   ② 与原【等级】下拉合并，选项与顺序为：
+ *      **已掌握 / 🍜D稳了 / 🥘C还行 / 🥐B该练 / 🥥A抓紧 / 🥗S此刻**
+ *
+ * 📌 为什么**没有"预掌握"这一项**：他这一版把模型说死了 ——
+ *    *"题按照掌握与否的分类分为'已掌握'和'未掌握'，其中'未掌握'下分为 5 个等级。"*
+ *    ⇒ 二分的"掌握" + 未掌握里的 5 档 = **6 个选项**。
+ *    "预掌握"是**等级 1（稳了）之下的一个显示状态**（等级1 + 倒数0），
+ *    筛 🍜D稳了 时它自然被包含进去，不必单列。
+ *
+ * ⚠️ **"已掌握优先于等级"**（他明确要求）：一道题即使等级是 🥗S此刻，
+ *    只要它已掌握，就**不出现在 🥗S此刻 的筛选结果里** —— 由服务端把这几项
+ *    拼成 `OR` 且给等级分支加上 `masteryLevel < 2` 实现（见 `api/error-items/list`）。
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/** 合并筛选里"已掌握"那一项的键 */
+export const MASTERED_FILTER_KEY = 'mastered';
+
+/** 合并筛选的全部合法键（顺序 = 下拉里的显示顺序） */
+export const FILTER_KEYS: readonly string[] = [
+    MASTERED_FILTER_KEY,
+    ...ATTENTION_LEVELS.map((l) => String(l.value)),
+];
+
+/** 键 ⇒ 等级数字（"已掌握"不是等级，返回 null） */
+export function filterKeyToLevel(key: string): number | null {
+    if (key === MASTERED_FILTER_KEY) return null;
+    const n = Number(key);
+    return Number.isFinite(n) && n >= 1 && n <= ATTENTION_LEVELS.length ? n : null;
+}
+
+/**
+ * 点一下某个键：选中 ⇄ 取消。**至少留一个**（空 ⇒ 原样返回，不让勾全没）。
+ * ⚠️ 与 `toggleAttentionLevel` 是同一条规矩，只是键从数字换成了字符串。
+ */
+export function toggleFilterKey(selected: readonly string[], key: string): string[] {
+    if (selected.includes(key)) {
+        if (selected.length <= 1) return [...selected];
+        return selected.filter((k) => k !== key);
+    }
+    // 按 `FILTER_KEYS` 的固定顺序排 —— 存出来的 URL 参数才是稳定的
+    return FILTER_KEYS.filter((k) => k === key || selected.includes(k));
+}
+
+/** 全部选中 = 没筛（判"已筛"、决定要不要传参数都用它） */
+export function isFilterUnfiltered(selected: readonly string[]): boolean {
+    return selected.length >= FILTER_KEYS.length;
+}
+
+/** 把 URL 里那串 `mastered,1,3` 解成合法的键数组（脏值直接丢掉） */
+export function parseFilterKeys(raw: string | null): string[] {
+    if (!raw) return [];
+    const keys = raw
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => FILTER_KEYS.includes(s));
+    return FILTER_KEYS.filter((k) => keys.includes(k)); // 去重 + 固定顺序
+}

@@ -707,7 +707,13 @@ describe('/api/error-items', () => {
             );
         });
 
-        it('应该支持按掌握程度筛选', async () => {
+        /**
+         * ⚠️⚠️【2026-10-15 **修正口径**】原来是 `mastery=1 ⇒ masteryLevel > 0`，
+         *    那等于把 **`1`（复习中）也算成"已掌握"** —— 名不副实。
+         *    空空 2026-10-15 把模型说死了："二分"（已掌握 / 未掌握）
+         *    ⇒ **只有 `= 2` 才是已掌握**（`1` 从未被业务写入，是预留档）。
+         */
+        it('应该支持按掌握程度筛选（=2 才算已掌握）', async () => {
             mocks.mockPrismaErrorItem.count.mockResolvedValue(0);
             mocks.mockPrismaErrorItem.findMany.mockResolvedValue([]);
 
@@ -718,10 +724,84 @@ describe('/api/error-items', () => {
             expect(mocks.mockPrismaErrorItem.findMany).toHaveBeenCalledWith(
                 expect.objectContaining({
                     where: expect.objectContaining({
-                        masteryLevel: { gt: 0 },
+                        masteryLevel: { equals: 2 },
                     }),
                 })
             );
+        });
+
+        // ====================================================================
+        // ⭐【2026-10-15 新】「掌握 / 等级」**合并筛选**（`docs\14` §7.5）
+        // 空空把原【筛选】里的「掌握状态」整组并进【等级】⇒ 6 个选项，
+        // 且明确了两件事：
+        //   ① **已掌握默认可见**（"这道题虽然'已掌握'，但我还是要能够看得见"）；
+        //   ② **已掌握优先于等级**（已掌握的题不出现在任何等级档的结果里）。
+        // ====================================================================
+        describe('合并筛选 levelFilter（掌握 + 等级）', () => {
+            const listWhere = () =>
+                (mocks.mockPrismaErrorItem.findMany.mock.calls[0][0] as {
+                    where: { AND?: { OR?: unknown[] }[]; masteryLevel?: unknown; attention?: unknown };
+                }).where;
+
+            it('★★ **默认不再排除已掌握** —— 不传 levelFilter 也不传 mastery', async () => {
+                mocks.mockPrismaErrorItem.count.mockResolvedValue(0);
+                mocks.mockPrismaErrorItem.findMany.mockResolvedValue([]);
+
+                await GET_LIST(new Request('http://localhost/api/error-items/list'));
+
+                const where = listWhere();
+                expect(where.masteryLevel).toBeUndefined();
+                expect(JSON.stringify(where.AND ?? [])).not.toContain('masteryLevel');
+            });
+
+            it('★★ 选中某一档等级 ⇒ 等级分支带 `masteryLevel: { lt: 2 }`（**已掌握优先**）', async () => {
+                mocks.mockPrismaErrorItem.count.mockResolvedValue(0);
+                mocks.mockPrismaErrorItem.findMany.mockResolvedValue([]);
+
+                await GET_LIST(new Request('http://localhost/api/error-items/list?levelFilter=3'));
+
+                const branches = (listWhere().AND ?? []).flatMap((c) => c.OR ?? []);
+                expect(branches).toEqual(
+                    expect.arrayContaining([{ masteryLevel: { lt: 2 }, attention: { in: [3] } }]),
+                );
+            });
+
+            it('★★ 同时选"已掌握 + 一档" ⇒ 两个分支**并列**（OR），谁也不挤掉谁', async () => {
+                mocks.mockPrismaErrorItem.count.mockResolvedValue(0);
+                mocks.mockPrismaErrorItem.findMany.mockResolvedValue([]);
+
+                await GET_LIST(new Request('http://localhost/api/error-items/list?levelFilter=mastered,3'));
+
+                const branches = (listWhere().AND ?? []).flatMap((c) => c.OR ?? []);
+                expect(branches).toHaveLength(2);
+                expect(branches).toEqual(
+                    expect.arrayContaining([
+                        { masteryLevel: { gte: 2 } },
+                        { masteryLevel: { lt: 2 }, attention: { in: [3] } },
+                    ]),
+                );
+            });
+
+            it('★★ **6 项全选 = 没筛**（一个条件都不加），脏键直接丢掉', async () => {
+                mocks.mockPrismaErrorItem.count.mockResolvedValue(0);
+                mocks.mockPrismaErrorItem.findMany.mockResolvedValue([]);
+
+                await GET_LIST(
+                    new Request('http://localhost/api/error-items/list?levelFilter=mastered,1,2,3,4,5'),
+                );
+                expect(JSON.stringify(listWhere().AND ?? [])).not.toContain('masteryLevel');
+                expect(JSON.stringify(listWhere().AND ?? [])).not.toContain('attention');
+
+                // 脏键（`9`、`外星人`）不该让接口报错，也不该影响筛选
+                mocks.mockPrismaErrorItem.findMany.mockClear();
+                const dirtyRes = await GET_LIST(
+                    new Request('http://localhost/api/error-items/list?levelFilter=9,外星人'),
+                );
+                expect(dirtyRes.status).toBe(200);
+                const dirtyWhere = listWhere();
+                expect(dirtyWhere.masteryLevel).toBeUndefined();
+                expect(JSON.stringify(dirtyWhere.AND ?? [])).not.toContain('attention');
+            });
         });
 
         it('应该支持按知识点标签筛选', async () => {

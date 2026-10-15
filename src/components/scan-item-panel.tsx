@@ -39,6 +39,8 @@ import type { ErrorItem } from "@/types/api";
 import { ErrorItemCard } from "@/components/error-item-card";
 import { ReviewOutcomeEditor } from "@/components/review-outcome-editor";
 import { cycleManageType } from "@/lib/manage-type";
+// 【2026-10-15】掌握开关点一下变成什么（唯一实现在 level-settle.ts）
+import { nextMasteryLevel } from "@/lib/level-settle";
 import { serializeReviewOutcomes, type ReviewOutcomes } from "@/lib/review-outcomes";
 
 export function ScanItemPanel({
@@ -224,8 +226,8 @@ export function ScanItemPanel({
                     linkRole={item.link?.role ?? null}
                     onToggleMastery={() =>
                         patch(
-                            { masteryLevel: item.masteryLevel > 0 ? 0 : 2 },
-                            { masteryLevel: item.masteryLevel > 0 ? 0 : 2 },
+                            { masteryLevel: nextMasteryLevel(item.masteryLevel) },
+                            { masteryLevel: nextMasteryLevel(item.masteryLevel) },
                         )
                     }
                     onCycleManageType={() => {

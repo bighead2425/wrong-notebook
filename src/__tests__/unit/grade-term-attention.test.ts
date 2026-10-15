@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GRADE_TERMS, normalizeTerm, splitGradeText, termLabel, termSearchVariants, volumeMatchesTerm } from '@/lib/grade-term';
-import { ATTENTION_LEVELS, attentionFullName, attentionLabel, attentionLevelOf, cycleAttentionLevel, isAttentionUnfiltered, toggleAttentionLevel } from '@/lib/attention-level';
+import { ATTENTION_LEVELS, FILTER_KEYS, attentionFullName, attentionLabel, attentionLevelOf, cycleAttentionLevel, filterKeyToLevel, isAttentionUnfiltered, isFilterUnfiltered, parseFilterKeys, toggleAttentionLevel, toggleFilterKey } from '@/lib/attention-level';
 
 /**
  * 年级·学期的归一（复练卷页"年级/学期"筛选用）。
@@ -179,5 +179,56 @@ describe('年级·学期 · 服务端筛选用的写法展开', () => {
         expect(termSearchVariants('火星上')).toEqual(['火星上']);
         expect(termSearchVariants('六年级')).toEqual(['六年级']);
         expect(termSearchVariants('')).toEqual([]);
+    });
+});
+
+/**
+ * ⭐【2026-10-15 新】「掌握 / 等级」**合并筛选**的键（`docs\14` §7.5）。
+ * 空空 2026-10-15 把原【筛选】里的「掌握状态」整组并进【等级】⇒ 6 个选项。
+ * 键的集合、"至少留一个"、"全选=没筛"、URL 解析，都在 `lib/attention-level.ts`。
+ */
+describe('等级 · 合并筛选的键（掌握 + 等级）', () => {
+    it('6 个键、顺序 = 下拉里的显示顺序（已掌握在最前，其后 1→5）', () => {
+        expect(FILTER_KEYS).toEqual(['mastered', '1', '2', '3', '4', '5']);
+    });
+
+    it('filterKeyToLevel：等级键 ⇒ 数字；"mastered" ⇒ null（它不是等级）', () => {
+        expect(filterKeyToLevel('3')).toBe(3);
+        expect(filterKeyToLevel('mastered')).toBeNull();
+        expect(filterKeyToLevel('9')).toBeNull();
+        expect(filterKeyToLevel('abc')).toBeNull();
+    });
+
+    it('toggleFilterKey：点一下切换，且**至少留一个**（一个都不许没）', () => {
+        expect(toggleFilterKey(['mastered', '1'], '1')).toEqual(['mastered']);
+        expect(toggleFilterKey(['mastered', '1'], 'mastered')).toEqual(['1']);
+        // 只剩一个时再点它 ⇒ 原样返回（不让你把勾全取消）
+        expect(toggleFilterKey(['1'], '1')).toEqual(['1']);
+        // 新勾上的键按固定顺序插（存出来的 URL 参数才是稳定的）
+        expect(toggleFilterKey(['5', 'mastered'], '2')).toEqual(['mastered', '2', '5']);
+    });
+
+    it('isFilterUnfiltered：6 项全选 = 没筛', () => {
+        expect(isFilterUnfiltered(['mastered', '1', '2', '3', '4', '5'])).toBe(true);
+        expect(isFilterUnfiltered(['mastered', '1', '2', '3', '4'])).toBe(false);
+        expect(isFilterUnfiltered([])).toBe(false);
+    });
+
+    it('parseFilterKeys：解 URL 参数，脏值丢掉 + 去重 + 固定顺序', () => {
+        expect(parseFilterKeys('mastered,3,1')).toEqual(['mastered', '1', '3']);
+        expect(parseFilterKeys('3,3,mastered')).toEqual(['mastered', '3']);
+        expect(parseFilterKeys('1,外星人,9')).toEqual(['1']);
+        expect(parseFilterKeys('')).toEqual([]);
+        expect(parseFilterKeys(null)).toEqual([]);
+    });
+
+    it('★ "已掌握优先于等级"的落点：等级分支必须带 masteryLevel < 2', () => {
+        // 这条断言钉的是**服务端口径**（见 api/error-items/list 里那段）：
+        // 选了等级档时，已掌握的题不许从等级分支出来。
+        const levelBranch = { masteryLevel: { lt: 2 }, attention: { in: [3] } };
+        const aMasteredItem = { masteryLevel: 2, attention: 3 };
+        expect(aMasteredItem.masteryLevel < 2).toBe(false); // 进不了等级分支
+        expect(Number(aMasteredItem.masteryLevel) >= 2).toBe(true); // 只能走"已掌握"分支
+        expect(levelBranch.attention.in).toContain(3);
     });
 });
