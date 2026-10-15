@@ -534,13 +534,21 @@ describe('/api/error-items', () => {
     });
 
     /* ==========================================================================
-     * 【2026-10-15 停用】复习结果**不再自动加减等级**
+     * 【2026-10-15 **等级完全收回系统管理**】三条人工/自动改等级的路径全停
      *
-     * 空空 2026-10-15 指的方向："别在这套旧机制上给第 4 格补规则" ——
-     * 那套"按复习结果组合记账"的规则是按 3 格定的、第 4 格没有规则、语义还是反的
-     * （做错 ⇒ 等级升 ⇒ 奖牌从 🥉 往 👑 走）。所以整段停用，改由状态机的**紧迫度**表达。
+     *   ① 复习结果联动 —— 空空 2026-10-15 指的方向："别在这套旧机制上给第 4 格补规则"。
+     *      那套"按复习结果组合记账"的规则是按 3 格定的、第 4 格没有规则、语义还是反的
+     *      （做错 ⇒ 等级升 ⇒ 奖牌从 🥉 往 👑 走）。⇒ 整段停用。
+     *   ② 类型切换 ±1（复练 ⇄ 深挖）—— 本次停用。
+     *      空空原话：*"复练、深挖是对一道题怎么练习、用什么纸的记录项……
+     *      纸型和紧迫程度联系不是那么紧密。"* ⇒ **等级与纸型脱钩**。
+     *   ③ API 的 `attention` 入参 —— 本次停用（收下但不写库，只记一条 warn）。
+     *
+     * ⇒ **等级的唯一来源 = 每日结算**（见 `docs\14_等级语义改造v2_完整设计_20261015.md` 第五节）。
+     * ⚠️ 这几条断言是**跟着行为一起改的**，不是"测试红了就改测试"——
+     *    行为本身是空空明确要改的（教训 #17：改断言前先确认"它钉的行为本身对不对"）。
      * ======================================================================== */
-    describe('PUT /api/error-items/[id] · 等级自动加减（2026-10-15 停用复习结果联动）', () => {
+    describe('PUT /api/error-items/[id] · 等级不再由任何请求改动（2026-10-15 收回系统管理）', () => {
         const itemWith = (reviewOutcomes: string | null) => ({
             id: 'error-item-1',
             userId: 'user-123',
@@ -574,7 +582,7 @@ describe('/api/error-items', () => {
             expect(String(arg.data.reviewOutcomes)).toContain('wrong');
         });
 
-        it('★ 但**类型切换**的 ±1 仍在（那是人动的手，没停）', async () => {
+        it('★★ 【2026-10-15 也停用了】改类型**不再牵动等级**', async () => {
             mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({
                 ...itemWith(null),
                 attention: 1,
@@ -585,10 +593,26 @@ describe('/api/error-items', () => {
             await putBody({ manageType: 'deep' });
 
             const arg = mocks.mockPrismaErrorItem.update.mock.calls[0][0] as { data: Record<string, unknown> };
-            expect(arg.data.attention).toBe(2); // 复练 → 深挖 ⇒ +1
+            // 类型本身照旧要落库（深挖/复练仍然能改 —— 停的只是"它牵动等级"）
             expect(arg.data.manageType).toBe('deep');
-            // 变更留痕也要有（"这题为什么升了"要能往回查）
-            expect(mocks.mockPrismaStateChangeLog.createMany).toHaveBeenCalled();
+            // ⚠️ 但**等级一点都不许动** —— 等级与纸型脱钩，归系统管
+            expect(arg.data).not.toHaveProperty('attention');
+        });
+
+        it('★★ 请求里直接传 `attention` 也**写不进去**（后门已关）', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({
+                ...itemWith(null),
+                attention: 3,
+            });
+            mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
+
+            await putBody({ attention: 5, userNotes: '顺手改个备注' });
+
+            const arg = mocks.mockPrismaErrorItem.update.mock.calls[0][0] as { data: Record<string, unknown> };
+            // 等级不许动
+            expect(arg.data).not.toHaveProperty('attention');
+            // ⚠️ 但**别的字段照旧要落库** —— 不能因为忽略了一个字段就让整次"改题"失败
+            expect(arg.data.userNotes).toBe('顺手改个备注');
         });
     });
 

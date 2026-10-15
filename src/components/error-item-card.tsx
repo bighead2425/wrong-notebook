@@ -16,7 +16,7 @@ import {
     needsDeepPrintNudge,
 } from "@/lib/manage-type";
 import { getMistakeCategoryLabel, normalizeMistakeCategory } from "@/lib/mistake-category";
-import { attentionLevelOf } from "@/lib/attention-level";
+import { attentionFullName, attentionLevelOf } from "@/lib/attention-level";
 import { linkRoleColor, linkRoleLabel, type LinkRole } from "@/lib/item-link";
 import { cleanMarkdown } from "@/lib/markdown-utils";
 import { PrintCounts } from "@/components/print-counts";
@@ -46,9 +46,9 @@ export type ErrorItemCardData = {
  * —— 也就是**扫码结果页要的就是这张卡本身**。抄第二份必然走样（改了一处忘了另一处），
  * 所以卡片只有这一份实现：错题本页与扫码结果页都用它。
  *
- * ── 卡片上"即点即存"的五个位置（都不进详情页）──────────────────────────
+ * ── 卡片上"即点即存"的位置（都不进详情页）──────────────────────────
  *   左上：待复习 ⇄ 已掌握      （`onToggleMastery`）
- *   右上：等级奖牌（点一下升一级，👑 回 🥉）+ 录入时间 + 垃圾桶（`onCycleAttention` / `onTrash`）
+ *   右上：等级图标（**只读，2026-10-15 起不可点**）+ 录入时间 + 垃圾桶（`onTrash`）
  *   右下：类型标签（点一下轮转 深挖→复练→未定）（`onCycleManageType`）
  *   左下：打印机图标（进深挖纸界面；**深挖未印时上色**）+ 两个打印次数（`onDeepDivePrint`）
  *   底端中间：四个复习结果圆圈（只读展示，详情页才可改）
@@ -73,7 +73,7 @@ export interface ErrorItemCardProps {
 
     onToggleSelect?: (e: ReactMouseEvent) => void;
     onToggleMastery?: (e: ReactMouseEvent) => void;
-    onCycleAttention?: (e: ReactMouseEvent) => void;
+    /** ⚠️【2026-10-15 已删】等级图标不再可点（收回系统管理）—— 原来的 `onCycleAttention` 已移除 */
     onCycleManageType?: (e: ReactMouseEvent) => void;
     onTrash?: (e: ReactMouseEvent) => void;
     onDeepDivePrint?: (e: ReactMouseEvent) => void;
@@ -100,7 +100,6 @@ export function ErrorItemCard({
     selected = false,
     onToggleSelect,
     onToggleMastery,
-    onCycleAttention,
     onCycleManageType,
     onTrash,
     onDeepDivePrint,
@@ -217,19 +216,19 @@ export function ErrorItemCard({
                                     </span>
                                 )}
                             </Badge>
-                            {/* 右上角：等级奖牌 + 录入时间 + 垃圾桶 */}
+                            {/* 右上角：等级图标（**只读**）+ 录入时间 + 垃圾桶
+                                ⚠️【2026-10-15】等级**收回系统管理** —— 原来是"点一下升一级"的按钮，
+                                   现在改成不可点的 span。理由见 `lib/attention-level.ts` 文件头。 */}
                             <div className="flex items-center gap-0.5 shrink-0">
-                                <button
-                                    type="button"
-                                    className={`mr-0.5 rounded px-0.5 text-sm leading-none ${selectMode ? "cursor-default" : "cursor-pointer hover:bg-muted"}`}
+                                <span
+                                    className="mr-0.5 rounded px-0.5 text-sm leading-none"
                                     title={L(
-                                        `等级：${attentionLevelOf(item.attention).zh}（点一下升一级）`,
-                                        `Level: ${attentionLevelOf(item.attention).en} (click to upgrade)`,
+                                        `等级：${attentionFullName(item.attention)}（由系统管理，不用手改）`,
+                                        `Level: ${attentionFullName(item.attention, false)} (system-managed)`,
                                     )}
-                                    onClick={selectMode ? undefined : onCycleAttention}
                                 >
                                     {attentionLevelOf(item.attention).medal}
-                                </button>
+                                </span>
                                 <span className="text-xs text-muted-foreground">
                                     {format(new Date(item.createdAt), "MM/dd")}
                                 </span>

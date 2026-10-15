@@ -33,7 +33,7 @@ import { NotebookSelector } from "@/components/notebook-selector";
 import { CorrectionEditor, ParsedQuestionWithSubject } from "@/components/correction-editor";
 import { ParsedQuestion } from "@/lib/ai";
 import { PrintCounts } from "@/components/print-counts";
-import { attentionLevelOf, ATTENTION_LEVELS } from "@/lib/attention-level";
+import { attentionLabel } from "@/lib/attention-level";
 import { GRADE_SEMESTER_OPTIONS as GRADE_SEMESTER_OPTIONS_SHARED } from "@/lib/grade-semester-options";
 import { ReviewOutcomeEditor } from "@/components/review-outcome-editor";
 import { serializeReviewOutcomes, type ReviewOutcomes } from "@/lib/review-outcomes";
@@ -1221,24 +1221,21 @@ export default function ErrorDetailPage() {
                                             </Select>
                                         </div>
 
-                                        {/* 【2026-09-30 他要求】等级也给下拉：🥉青铜 … 👑王者，**选中即存** */}
+                                        {/* ⚠️⚠️【2026-10-15 **收回人工入口**】原来这里是个下拉（🥉青铜…👑王者，选中即存）。
+                                            空空 2026-10-15 定：**等级完全交给系统，用户不再干涉** ⇒ 下拉整段删掉，
+                                            改成**只读**一行（信息还在，但改不了）。
+                                            完整规则见 `docs\14_等级语义改造v2_完整设计_20261015.md`。 */}
                                         <div className="flex justify-between items-center gap-3">
                                             <span className="text-muted-foreground whitespace-nowrap">{t.detail.attention}:</span>
-                                            <Select
-                                                value={String(attentionLevelOf(item.attention).value)}
-                                                onValueChange={(v) => patchMetadata({ attention: Number(v) })}
+                                            <span
+                                                className="text-sm font-medium"
+                                                title={L(
+                                                    "等级由系统按复习情况自动算，不用手改",
+                                                    "Managed automatically by the system",
+                                                )}
                                             >
-                                                <SelectTrigger className="w-[160px] h-8">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    {ATTENTION_LEVELS.map((lv) => (
-                                                        <SelectItem key={lv.value} value={String(lv.value)}>
-                                                            {lv.medal} {lv.zh}
-                                                        </SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
+                                                {attentionLabel(item.attention)}
+                                            </span>
                                         </div>
 
                                         {/* 【2026-09-30 他要求】把卡片上那**四个复习结果圆圈**纳进详情页，

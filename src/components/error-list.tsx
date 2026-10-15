@@ -34,7 +34,7 @@ import {
 } from "@/lib/manage-type";
 import { Pagination } from "@/components/ui/pagination";
 import { DEFAULT_PAGE_SIZE } from "@/lib/constants/pagination";
-import { ATTENTION_LEVELS, cycleAttentionLevel, isAttentionUnfiltered } from "@/lib/attention-level";
+import { ATTENTION_LEVELS, isAttentionUnfiltered } from "@/lib/attention-level";
 import { AttentionMultiSelect } from "@/components/attention-multi-select";
 import { ErrorItemCard } from "@/components/error-item-card";
 import { DatePickerCalendar } from "@/components/date-picker-calendar";
@@ -146,17 +146,12 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
     };
 
     /**
-     * 右上角那枚等级奖牌：**点一下升一级，👑 之后回到 🥉**（循环）。
-     * 出处：他 2026-09-30 的原话 ——
-     *   *"点击错题卡上的等级图标，则图标自动升级并保存，顺序从🥉…👑升级，已经是👑的跳回🥉。"*
+     * ⚠️⚠️【2026-10-15 **已删**】右上角那枚等级图标原来"点一下升一级"。
+     *
+     * 空空 2026-10-15 定：**等级完全交给系统，用户不再干涉** ⇒ 这个 handler 整段删掉，
+     * 卡片上的图标改成**只读**（`ErrorItemCard` 已不再收 `onCycleAttention`）。
+     * 循环规则本身仍留在 `lib/attention-level.ts` 的 `cycleAttentionLevel()`（没删，是历史记录）。
      */
-    const cycleAttention = (item: ErrorItem, e: React.MouseEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        // 循环规则写在 lib 里（唯一实现；扫码页加等级也走同一个函数）
-        const next = cycleAttentionLevel(item.attention);
-        patchItemFields(item.id, { attention: next }, { attention: next });
-    };
 
     /**
      * 右下角的「深挖 / 复练 / 未定」：点一下轮转**深挖 → 复练 → 未定 → 深挖**（循环）。
@@ -726,7 +721,6 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
                         tagsExpanded={expandedTags.has(item.id)}
                         onToggleSelect={(e) => toggleSelectItem(item.id, e)}
                         onToggleMastery={(e) => toggleMastery(item, e)}
-                        onCycleAttention={(e) => cycleAttention(item, e)}
                         onCycleManageType={(e) => cycleManageTypeOnCard(item, e)}
                         onTrash={(e) => trashItem(item.id, e)}
                         onDeepDivePrint={(e) => openDeepDivePrint(item.id, e)}

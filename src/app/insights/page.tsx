@@ -52,7 +52,6 @@ import { ErrorItemCard } from '@/components/error-item-card';
 import { DocScanner, type DocScannerHandle } from '@/components/doc-scanner';
 import { ImageCropper } from '@/components/image-cropper';
 import { ImageZoomViewer } from '@/components/image-zoom-viewer';
-import { cycleAttentionLevel } from '@/lib/attention-level';
 import { cycleManageType } from '@/lib/manage-type';
 // 【2026-10-12 需求第 2 条】手机端划一下就收 / 叫左栏（三个页面共用这一份）
 import { usePanelSwipe } from '@/lib/use-panel-swipe';
@@ -1235,15 +1234,6 @@ export default function InsightsPage() {
                                                         },
                                                     )
                                                 }
-                                                onCycleAttention={() => {
-                                                    const next = cycleAttentionLevel(
-                                                        linkedQuestion.attention,
-                                                    );
-                                                    patchQuestion(
-                                                        { attention: next },
-                                                        { attention: next },
-                                                    );
-                                                }}
                                                 onCycleManageType={() => {
                                                     const next = cycleManageType(
                                                         linkedQuestion.manageType,

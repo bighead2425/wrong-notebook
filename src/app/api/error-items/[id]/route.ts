@@ -13,7 +13,9 @@ import { normalizeReviewOutcomes, serializeReviewOutcomes } from "@/lib/review-o
 import { parseReviewEventInput, recordReviewEvent } from "@/lib/review-events";
 // 【2026-10-15】⚠️ 只留"类型切换 ±1"与夹值；
 //   `computeLevelLinkage` / `serializeLevelEntry` 已**不再调用**（复习结果不再自动加减等级，见下方注释）
-import { clampLevel, levelDeltaForTypeSwitch } from "@/lib/level-linkage";
+//   `clampLevel` / `levelDeltaForTypeSwitch` / `computeLevelLinkage` / `serializeLevelEntry`
+//   均已**不再调用**（等级完全交给系统，见下方那段 ⚠️⚠️ 注释）⇒ 本文件不再 import 它们。
+//   函数体与单测都还在 `lib/level-linkage.ts` 里（历史记录，别删）。
 // 【2026-10-10】"已掌握"要过一遍题间从属关系规则（人工标记才断开关联、主题向下传播）
 import type { LinkOp } from "@/lib/item-link";
 import { applyLinkOps, applyMastery, loadLinkView, planMasteryChange } from "@/lib/item-link-store";
@@ -108,7 +110,7 @@ export async function PUT(
             // 【M1】框坐标。与 POST 同一套规矩：**形状不对当没提供**，不拒存整条更新。
             cropRegions,
             // ===== 状态字段（5.3 单一事实来源）=====
-            attention,        // 关注档 1-5（难度档，G8 / T5）
+            attention,        // ⚠️【2026-10-15】已**不再写入**，收到只记一条 warn 日志（等级归系统管）
             masteryLevel,     // 0 New / 1 Reviewing / 2 Mastered（=2 即四分法「已掌握」）
             userNotes,        // 备注（扫码「跳转原题备注」用）
             // 【2026-09-28】错题等级（deep/review）与错因受控枚举。
@@ -202,17 +204,25 @@ export async function PUT(
         }
 
         /**
-         * 关注档 1-5（G8 难度档）：夹到 1..5，非法值忽略。
-         * 【2026-10-03】**传了合法值 ⇒ 人工直接定级** —— 下面那段"等级联动"要让位：
-         * 人的动作永远优先于自动加减（否则他点一下奖牌，系统可能又给它弹回去）。
+         * ⚠️⚠️【2026-10-15 **停止接受**】`attention`（等级）不再允许由调用方写入。
+         *
+         * 空空 2026-10-15 定：**等级完全交给系统，用户不再干涉**。
+         *   原来的规矩是"传了合法值 ⇒ 人工直接定级，自动加减让位"（人工 > 自动）。
+         *   现在**四处 UI 入口全部收回**（错题卡图标 / 详情页下拉 / 扫码面板 / 分析页）
+         *   ⇒ 这个入参留着只会变成"后门"，索性一起关掉。
+         *
+         * ⚠️ **调用方仍传 `attention` 不报错，但会被忽略** —— 故意不报错：
+         *    万一有没改到的老调用方，不该因此让"改题"整个失败（与 `reviewEvent` 同一条规矩）。
+         *    但**会打一条 warn 日志**：日志里若出现 `Ignored attention`，说明还有调用方没清干净。
+         *
+         * 📌 等级的唯一来源 = **每日结算**（见 `docs\14_等级语义改造v2_完整设计_20261015.md` 第五节，待落地）。
+         * 📌 恢复办法：`git revert` 这个提交。
          */
-        const hasExplicitAttention =
-            attention !== undefined &&
-            Number.isFinite(Number(attention)) &&
-            Number(attention) >= 1 &&
-            Number(attention) <= 5;
-        if (hasExplicitAttention) {
-            updateData.attention = Math.round(Number(attention));
+        if (attention !== undefined && attention !== null) {
+            logger.warn(
+                { errorItemId: id, attention },
+                'Ignored attention from request — level is system-managed since 2026-10-15',
+            );
         }
 
         // 掌握状态：0=New / 1=Reviewing / 2=Mastered（=2 即四分法「已掌握」，扫码「已会」写此位）
@@ -305,13 +315,12 @@ export async function PUT(
             }
         }
 
-        // ① 人显式定级 ⇒ 落定（手动 / 采纳 AI 建议）
-        let manageTypeChanged = false;
+        // 人显式改「类型」（深挖/复练/未定）⇒ 落定（手动 / 采纳 AI 建议）
+        // ⚠️【2026-10-15】这里**不再牵动等级** —— 原来改类型会 ±1 级，现已脱钩。
         if (manageType !== undefined) {
             const nextType = normalizeManageType(manageType);
             const fromAi = normalizeManageTypeSource(manageTypeSource) === 'ai';
             if ((errorItem.manageType ?? null) !== nextType) {
-                manageTypeChanged = true;
                 updateData.manageType = nextType;
                 // 清成"未定"时来源也一并清空（避免"未定但来源写着手动"这种自相矛盾）
                 updateData.manageTypeSource = nextType ? (fromAi ? 'ai' : 'manual') : null;
@@ -343,69 +352,37 @@ export async function PUT(
         }
 
         /**
-         * 【2026-10-03 立，2026-10-15 缩】等级的**自动加减**（他拍板的"事件记账"）。
+         * ⚠️⚠️【2026-10-15 **整段停用**】等级不再由"事件记账"改动。
          *
-         * 现在只剩 **(a) 类型切换**：复练 → 深挖 = +1；深挖 → 复练 = −1
-         * （只认**人显式**改的那次；错因自动派生不算 —— 那是系统按 L1 映射表干活，不该动等级）。
+         * ── 这一段的来历（三步走，都记在这儿免得后人不解）──
+         *   2026-10-03 立：等级 = "人工定级 + 类型切换 ±1 + 复习结果按组合加减"（事件记账）。
+         *   2026-10-15 缩：**复习结果联动**整段删掉（规则缺第 4 档、语义还是反的、还会顺手清账本）。
+         *   2026-10-15 再缩（**本次**）：**类型切换 ±1 也停掉**。
          *
-         * ⚠️ 原来的 **(b) 复习结果联动**已**整段停用**（2026-10-15，理由见下面那段注释）。
+         * ── 为什么连"类型切换 ±1"也停 ──
+         *   空空 2026-10-15 定：**等级完全交给系统，用户不再干涉**。
+         *   而"复练 ⇄ 深挖 ⇒ ±1"也是**人动的手在改等级** ⇒ 留着它，"收回系统管理"就是半拉子。
+         *   同时他给了理由：*"复练、深挖是对一道题怎么练习、用什么纸的记录项……
+         *   纸型和紧迫程度联系不是那么紧密。"* ⇒ **等级与纸型脱钩**。
          *
-         * ⚠️ 顺序有讲究：**人工直接定级（`attention`）优先** —— 他点了奖牌就以他点的为准，
-         *    自动加减这一步整个让位（否则会出现"我刚点上去又被弹回来"）。
+         * ── 于是"等级"现在有几个来源？**一个都没有** ──
+         *   ① 录入初定级：已改成**一律 5**（见 `api/error-items/route.ts`）；
+         *   ② 类型切换 ±1：**本次停用**（就是这里）；
+         *   ③ 人工点图标 / 详情页下拉 / 扫码面板 / 分析页：**四处 UI 入口已全部收回**；
+         *   ④ API 的 `attention` 入参：**本次停用**（见下面 `hasExplicitAttention` 那段）。
+         *   ⇒ **等级的唯一来源 = 每日结算**（`docs\14` 第五节，待落地）。
+         *
+         * ── 被保留的（都不改等级）──
+         *   · `manageType`（深挖/复练）本身照旧能改 —— 只是**不再牵动等级**；
+         *   · `stateLogs` 照旧记 manageType 等字段的变化。
+         *
+         * 📌 `clampLevel` / `levelDeltaForTypeSwitch` / `computeLevelLinkage` 与它们的单测
+         *    **一个字没删** —— 那是他当年定的规则的**唯一记录**，将来一起决定去留。
+         *    要临时恢复：`git revert` 这个提交即可。
+         *
+         * ⚠️ 与 `lib/review-status.ts` 的关系：那个模块算的**紧迫度 1-5** 才是等级的正确来源
+         *    （"题上只记事实，'会不会'每次现算"）。本次不动它，只把"人工入口"关掉。
          */
-        if (!hasExplicitAttention) {
-            let nextAttention = clampLevel(errorItem.attention);
-            let note = '';
-
-            if (manageTypeChanged) {
-                const typeDelta = levelDeltaForTypeSwitch(errorItem.manageType ?? null, updateData.manageType ?? null);
-                const after = clampLevel(nextAttention + typeDelta);
-                if (after !== nextAttention) {
-                    note = updateData.manageType === 'deep' ? '升级为深挖 ⇒ 升 1 级' : '降为复练 ⇒ 降 1 级';
-                    nextAttention = after;
-                }
-            }
-
-            /**
-             * ⚠️⚠️【2026-10-15 **停用**】复习结果不再自动加减等级 ——
-             *   原来这里调 `computeLevelLinkage`（"等级 × 复习结果的组合记账"），**本次整段删掉**。
-             *
-             * ── 为什么停（空空 2026-10-15 指的方向："别在这套旧机制上给第 4 格补规则"）──
-             *   ① **规则本身缺一档**：那套规则是他 2026-10-03 按 **3 格**亲口定的
-             *      （第 1 次恒 0、第 2/3 次看组合）。纸面加第 4 格后，第 4 次**没有规则**
-             *      —— 只能临时冻结（那段临时口径现在留在 `level-linkage.ts` 里当"看门"）。
-             *   ② **语义是反的**：做错 ⇒ 等级升 ⇒ 界面上奖牌从 🥉 往 👑 走，
-             *      看着像"升级"，实际是"更该练了"（老账：奖牌语义反转）。
-             *   ③ **它还会顺手清账**：`finish()` 里"这次变化 0 笔账 ⇒ 清空账本"，
-             *      于是点第 1 格会把已有账本清掉。**停用之后，这笔旧账一并作废。**
-             *
-             * ── 被**保留**的（都不属于"复习结果联动"）──
-             *   · 录入时的**初定级**（深挖 ⇒ 白银 2 / 复练 ⇒ 青铜 1）—— 在 POST 路由里，没动；
-             *   · **类型切换的 ±1**（上面那段，复练 ⇄ 深挖）—— 那是**人动的手**，
-             *     沿用他"**人工 > 自动**"那条；
-             *   · **人工点奖牌**改档（卡片 / 详情页下拉 / 筛选）。
-             *
-             * ── 替代方案（已定，待落地）──
-             *   档的正确来源是**状态机算的紧迫度**（`lib/review-status.ts`）：
-             *   题上只记事实，"会不会"每次现算。见 `docs\12_等级语义改造方案_20261015.md`。
-             *
-             * 📌 `computeLevelLinkage` 与它的单测**一个字没删** —— 那是他当年定的规则的**唯一记录**，
-             *    将来一起决定"改造/退休"。要临时恢复：`git revert` 这个提交即可。
-             */
-
-            if (nextAttention !== clampLevel(errorItem.attention)) {
-                updateData.attention = nextAttention;
-                stateLogs.push({
-                    errorItemId: id,
-                    field: 'attention',
-                    fromValue: String(errorItem.attention),
-                    toValue: String(nextAttention),
-                    actor: 'system',
-                    actorUserId: user.id,
-                    note: note || '等级联动',
-                });
-            }
-        }
 
         if (notebookId !== undefined) {
             if (notebookId === "") {

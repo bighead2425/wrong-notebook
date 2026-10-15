@@ -10,7 +10,7 @@ import {
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ChevronDown, Medal } from 'lucide-react';
-import { ATTENTION_LEVELS, isAttentionUnfiltered, toggleAttentionLevel } from '@/lib/attention-level';
+import { ATTENTION_LEVELS, attentionFullName, isAttentionUnfiltered, toggleAttentionLevel } from '@/lib/attention-level';
 
 /**
  * 【2026-09-30】「等级」筛选 —— **多选**下拉（🥉青铜 … 👑王者）。
@@ -87,8 +87,12 @@ export function AttentionMultiSelect({
                             }}
                         >
                             <span className="w-4 shrink-0">{checked ? '✓' : ''}</span>
+                            {/* 【2026-10-15】换成"图标 + 字母 + 名称"（如 🥐B该练）——
+                                字母与名称都来自 `ATTENTION_LEVELS`，别在这儿拼字符串。
+                                ⚠️ 后续（docs\14 §7.5）这个下拉还要并入"掌握状态"那一组。 */}
                             <span>
-                                {lv.medal} {zh ? lv.zh : lv.en}
+                                {lv.medal}
+                                {attentionFullName(lv.value, zh)}
                             </span>
                         </DropdownMenuItem>
                     );

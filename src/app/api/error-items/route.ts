@@ -15,7 +15,7 @@ import {
     suggestManageType,
 } from "@/lib/manage-type";
 import { subjectKeyToCode, formatDateStamp, formatQuestionNo, startOfToday } from "@/lib/question-no";
-import { initialLevelForManageType } from "@/lib/level-linkage";
+import { NEW_ITEM_ATTENTION } from "@/lib/attention-level";
 // 【2026-10-10】可选的"新建时直接挂到某道题下面"（他原稿："拍照新增一道题并关联到题 A"）
 import { rootOf, type LinkNode } from "@/lib/item-link";
 import { loadLinkNodes, resolveOwnedItem } from "@/lib/item-link-store";
@@ -302,12 +302,19 @@ export async function POST(req: Request) {
                     manageType: finalManageType,
                     manageTypeSource: finalManageSource,
                     /**
-                     * 【2026-10-03】**初定级**（一次性）：深挖 ⇒ 白银(2)、复练 ⇒ 青铜(1)。
-                     * 他拍板："初定只是一次性行为，之后靠调整既可。"
-                     * ⚠️ 只在这里定一次 —— 之后的升降全靠 `lib/level-linkage.ts`
-                     *    （类型切换 ±1、复习结果按规则加减），别在别处再"按类型重算等级"。
+                     * 【2026-10-15 **改了**】新录入的题**一律 = 等级 5（🥗 S 此刻）**。
+                     *
+                     * ── 为什么改 ──
+                     *   以前是"初定级：深挖 ⇒ 白银(2)、复练 ⇒ 青铜(1)"（`initialLevelForManageType`）。
+                     *   但等级的含义已经变成"**紧迫度**"（越大越急），而**没练过的题当然最急**
+                     *   ⇒ 初定级给 1 或 2 与模型直接打架。
+                     *   同时空空 2026-10-15 定：**等级与"用哪张纸"脱钩**（"纸型和紧迫程度联系不是那么紧密"）。
+                     *
+                     * ⚠️ 深挖 / 复练 的初判**仍然照旧**（`finalManageType`，来自 AI 判作答过程或人工选），
+                     *    只是**不再影响等级**。
+                     * ⚠️ 常量从 `lib/attention-level.ts` 取，**不写死数字**（教训 #15）。
                      */
-                    attention: initialLevelForManageType(finalManageType),
+                    attention: NEW_ITEM_ATTENTION,
                     source: finalSource,
                     inputMethod: inputMethod || null,
                     // 【M1】框坐标：undefined（没传/形状不对）时**不写这一列**，

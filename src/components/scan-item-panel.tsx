@@ -38,7 +38,6 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import type { ErrorItem } from "@/types/api";
 import { ErrorItemCard } from "@/components/error-item-card";
 import { ReviewOutcomeEditor } from "@/components/review-outcome-editor";
-import { cycleAttentionLevel } from "@/lib/attention-level";
 import { cycleManageType } from "@/lib/manage-type";
 import { serializeReviewOutcomes, type ReviewOutcomes } from "@/lib/review-outcomes";
 
@@ -229,10 +228,6 @@ export function ScanItemPanel({
                             { masteryLevel: item.masteryLevel > 0 ? 0 : 2 },
                         )
                     }
-                    onCycleAttention={() => {
-                        const next = cycleAttentionLevel(item.attention);
-                        patch({ attention: next }, { attention: next });
-                    }}
                     onCycleManageType={() => {
                         const next = cycleManageType(item.manageType);
                         patch({ manageType: next }, { manageType: next });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GRADE_TERMS, normalizeTerm, splitGradeText, termLabel, termSearchVariants, volumeMatchesTerm } from '@/lib/grade-term';
-import { ATTENTION_LEVELS, attentionLabel, attentionLevelOf, cycleAttentionLevel, isAttentionUnfiltered, toggleAttentionLevel } from '@/lib/attention-level';
+import { ATTENTION_LEVELS, attentionFullName, attentionLabel, attentionLevelOf, cycleAttentionLevel, isAttentionUnfiltered, toggleAttentionLevel } from '@/lib/attention-level';
 
 /**
  * 年级·学期的归一（复练卷页"年级/学期"筛选用）。
@@ -64,34 +64,46 @@ describe('年级·学期 · 卷的匹配', () => {
 });
 
 /**
- * 等级（关注档 1-5 → 🥉🥈🥇💎👑）。
- * 他说"先改显示，分级以后再说" ⇒ 只测显示映射，不动数据语义。
+ * 等级（关注档 1-5 → 🍜🥘🥐🥥🥗 / D C B A S）。
+ * 【2026-10-15 换内容】1-5 的**语义从"等级"变成"紧迫度"**（越大越急），
+ * 图标换成花生自己提的那一版。只测显示映射，数据语义（1-5）不变。
  */
-describe('等级 · 奖牌映射', () => {
-    it('1-5 对应 青铜/白银/黄金/钻石/王者', () => {
-        expect(ATTENTION_LEVELS.map((l) => l.medal)).toEqual(['🥉', '🥈', '🥇', '💎', '👑']);
-        expect(attentionLevelOf(1).zh).toBe('青铜');
-        expect(attentionLevelOf(3).zh).toBe('黄金');
-        expect(attentionLevelOf(5).zh).toBe('王者');
+describe('等级 · 图标映射', () => {
+    it('1-5 对应 花生那套图标 + D/C/B/A/S', () => {
+        expect(ATTENTION_LEVELS.map((l) => l.medal)).toEqual(['🍜', '🥘', '🥐', '🥥', '🥗']);
+        expect(ATTENTION_LEVELS.map((l) => l.grade)).toEqual(['D', 'C', 'B', 'A', 'S']);
+        expect(attentionLevelOf(1).zh).toBe('稳了');
+        expect(attentionLevelOf(3).zh).toBe('该练');
+        expect(attentionLevelOf(5).zh).toBe('此刻');
     });
 
-    it('越界/空值兜底到青铜，绝不返回 undefined', () => {
-        expect(attentionLevelOf(0).zh).toBe('青铜');
-        expect(attentionLevelOf(9).zh).toBe('王者');
-        expect(attentionLevelOf(null).zh).toBe('青铜');
-        expect(attentionLevelOf(undefined).zh).toBe('青铜');
+    it('越界/空值兜底到最不急那档（🍜 稳了），绝不返回 undefined', () => {
+        expect(attentionLevelOf(0).zh).toBe('稳了');
+        expect(attentionLevelOf(9).zh).toBe('此刻');
+        expect(attentionLevelOf(null).zh).toBe('稳了');
+        expect(attentionLevelOf(undefined).zh).toBe('稳了');
     });
 
     it('显示串：徽章 + 名称（中/英）', () => {
-        expect(attentionLabel(3, true)).toBe('🥇 黄金');
-        expect(attentionLabel(3, false)).toBe('🥇 Gold');
+        expect(attentionLabel(3, true)).toBe('🥐 该练');
+        expect(attentionLabel(3, false)).toBe('🥐 To practice');
+    });
+
+    it('字母 + 名称，如「B该练」（详情页顶栏第二行用）', () => {
+        expect(attentionFullName(1)).toBe('D稳了');
+        expect(attentionFullName(3)).toBe('B该练');
+        expect(attentionFullName(5)).toBe('S此刻');
     });
 });
 
 /**
  * 【2026-09-30】等级在界面上有两个动作，两条规则都写进 lib（唯一实现）：
- *   ① 卡片右边那枚奖牌点一下：**升一级，👑 之后回 🥉**
+ *   ① 卡片右边那枚图标点一下：**升一级，最后一档之后回第一档**
  *   ② 「等级」多选下拉点一下：切换勾选，但**至少留一个勾**
+ *
+ * ⚠️【2026-10-15】**① 已停用**（等级收回系统管理，UI 无入口）——
+ *    但函数体与这些断言**都保留**：它们钉着"1→5 递增、5 之后回 1"这条不变量，
+ *    将来若要恢复人工入口，这就是现成的规格。
  */
 describe('等级 · 点一下升一级（卡片上的奖牌）', () => {
     it('1→2→3→4→5，5 之后回 1', () => {
@@ -103,8 +115,8 @@ describe('等级 · 点一下升一级（卡片上的奖牌）', () => {
     });
 
     it('空值 / 越界值也能安全升（老数据没有这道坎）', () => {
-        expect(cycleAttentionLevel(null)).toBe(2); // 空按青铜(1) 算 ⇒ 升到白银
-        expect(cycleAttentionLevel(9)).toBe(1); // 越界按王者(5) 算 ⇒ 回青铜
+        expect(cycleAttentionLevel(null)).toBe(2); // 空按第 1 档(🍜 稳了) 算 ⇒ 升到第 2 档
+        expect(cycleAttentionLevel(9)).toBe(1); // 越界按第 5 档(🥗 此刻) 算 ⇒ 回第 1 档
     });
 });
 
