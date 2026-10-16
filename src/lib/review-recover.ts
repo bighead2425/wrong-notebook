@@ -80,8 +80,6 @@ export interface RecoveryRow {
     errorItemId: string | null;
     /** 这一卷上这道题的标记（`right`/`wrong`/null）—— 地图不展示它，AI 自己从照片读 */
     markState?: string | null;
-    /** 这道题的复习历史（JSON 字符串）—— 保存时用它算 `nextReviewOutcomes` */
-    reviewOutcomes?: string | null;
 }
 
 /**
@@ -277,11 +275,13 @@ export interface RecoveryWrite {
  * 规则（与他定的口径一致）：
  *   · **只写"她标了"的题** —— `none` / `unclear` 一律跳过（不静默清空、不替她做主）；
  *   · **题被删了**（`errorItemId` 为空，纸上有格子但题库没这题）⇒ 只写卷行的 `markState`，
- *     不写复习历史（没处写）；
+ *     不写复习结果（没处写）；
  *   · `markState` 只可能是 `right` / `wrong`。
  *
- * ⚠️ 复习结果**怎么落格**（"按顺序填第一个空位 + 每次都更新最近一次"）由
- *    `scan-marking.ts` 的 `nextReviewOutcomes` 负责，这里只回答"哪几行要写、写对还是错"。
+ * ⚠️【2026-10-16】**这里只回答"哪几行要写、写对还是错"** ——
+ *    具体怎么落库（写一条复习流水 / 维护卷行标记）由调用方（`app/recover/page.tsx`）做。
+ *    原来还有一句"落格由 `scan-marking.ts` 的 `nextReviewOutcomes` 负责"，
+ *    那个函数已随"流水为真相"整段删除（说见 `lib/scan-marking.ts` 第三节）。
  */
 export function planRecoveryWrites(
     pageRows: readonly RecoveryRow[],

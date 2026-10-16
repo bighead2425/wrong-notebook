@@ -234,9 +234,15 @@ export interface ImitateSheetProps {
     /** 点升降框 ⇒ 直接改类型（扫码录入那一路） */
     onPromoteToggle?: (item: ErrorItem) => void;
     promoteOverrideOf?: (item: ErrorItem) => { direction: PromoteDirection; checked: boolean } | undefined;
-    /** 点右侧灰圆 ⇒ 循环记录对/错/清空（扫码录入那一路） */
+    /** 点右侧灰圆 ⇒ 记录对/错（**两态**，2026-10-16 起；扫码录入那一路） */
     onReviewMarkTap?: (item: ErrorItem) => void;
     reviewMarkOf?: (item: ErrorItem) => ReviewMark;
+    /** 【2026-10-16】长按 / 右键灰圆 ⇒ 弹菜单（再录一次 / 删除这一条） */
+    onReviewMarkLongPress?: (item: ErrorItem) => void;
+    /** 【2026-10-16】这道题在这张卷上录过几轮（`>1` ⇒ 圈上画上标） */
+    reviewRoundsOf?: (item: ErrorItem) => number;
+    /** 【2026-10-16】这道题已掌握 ⇒ 圆禁用（"录不了"） */
+    reviewMarkDisabledOf?: (item: ErrorItem) => boolean;
     /**
      * 【2026-10-12】右栏的**附题**上移 / 下移一位（与相邻那道附题交换顺序与流水号）。
      * 与复练纸那套**同一份**（`ReviewSheet` 也是这两个名字）——
@@ -277,6 +283,9 @@ export function ImitateSheet({
     promoteOverrideOf,
     onReviewMarkTap,
     reviewMarkOf,
+    onReviewMarkLongPress,
+    reviewRoundsOf,
+    reviewMarkDisabledOf,
     onMoveQuestion,
     totalSeq,
     L,
@@ -455,6 +464,13 @@ export function ImitateSheet({
                                     promoteOverride={promoteOverrideOf ? promoteOverrideOf(item) : undefined}
                                     onReviewMarkTap={onReviewMarkTap ? () => onReviewMarkTap(item) : undefined}
                                     reviewMark={reviewMarkOf ? reviewMarkOf(item) : undefined}
+                                    onReviewMarkLongPress={
+                                        onReviewMarkLongPress ? () => onReviewMarkLongPress(item) : undefined
+                                    }
+                                    reviewRounds={reviewRoundsOf ? reviewRoundsOf(item) : undefined}
+                                    reviewMarkDisabled={
+                                        reviewMarkDisabledOf ? reviewMarkDisabledOf(item) : undefined
+                                    }
                                     {...movePropsFor(item, b.seq)}
                                     L={L}
                                 />

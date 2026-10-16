@@ -71,3 +71,19 @@ export function reviewEventSourceLabel(
             return zh ? '单题扫描录入' : 'Single-question scan';
     }
 }
+
+/**
+ * 【2026-10-16 如如】"这张卷上的录入"该记成哪个来源 —— 由卷的 `kind` 定。
+ *
+ * 出处：`docs\18` §五 + `lib/volume-code.ts` 的 `VolumeKind = 'review' | 'build' | 'imitate'`。
+ *   · `review` （复练卷，`RE…`）⇒ `review_paper`
+ *   · `imitate`（模仿卷，`CO…`）⇒ `imitate_paper`
+ *   · `build`  （积累纸，`BU…`）⇒ ⚠️ **规格的表里没有它**（积累纸目前不走复习录入）。
+ *      保守取 `review_paper`（= 归到"纸质卷上的录入"），**不猜成"单题扫描"** ——
+ *      真要在积累纸上录，来源那一格显示成"复练纸"比显示成"单题扫描"更接近事实。
+ *      📌 这一条**留给空空/下一棒复核**：若积累纸也会录复习结果，得给它一个自己的来源值。
+ */
+export function paperSourceForKind(kind: unknown): ReviewEventSource {
+    if (kind === 'imitate') return 'imitate_paper';
+    return 'review_paper';
+}

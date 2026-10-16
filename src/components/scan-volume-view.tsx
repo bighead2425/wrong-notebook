@@ -47,14 +47,32 @@ import { whenImagesDecoded, whenImagesSettled } from "@/lib/print-image-readines
 import type { VolumeKind } from "@/lib/volume-code";
 import type { ManageType, PromoteDirection } from "@/lib/manage-type";
 import {
-    markForItem,
+    EMPTY_VOLUME_MARK,
+    REVIEW_MARK_COLORS,
     nextReviewMark,
-    nextReviewOutcomes,
     promoteToggleFor,
+    volumeMarkMap,
+    volumeMarkOf,
     type ReviewMark,
+    type VolumeMark,
 } from "@/lib/scan-marking";
-import { normalizeReviewOutcomes, serializeReviewOutcomes, type ReviewOutcomes } from "@/lib/review-outcomes";
-import { reviewEventDraft, type ReviewEventDraft } from "@/lib/review-event-draft";
+import {
+    reviewEventDeleteDraft,
+    reviewEventDraft,
+    reviewEventUpdateDraft,
+    type ReviewEventDraft,
+    type ReviewEventPatchDraft,
+} from "@/lib/review-event-draft";
+// 【2026-10-16】来源：卷页记的流水是"复练纸/模仿纸 + 卷号"（由卷的 kind 定，见该文件头）
+import { paperSourceForKind } from "@/lib/review-event-source";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 import { SheetZoom } from "@/components/print/sheet-zoom";
 import { makeQrDataUrl } from "@/lib/qr";
 import { cleanMarkdown } from "@/lib/markdown-utils";
@@ -337,91 +355,65 @@ export function ScanVolumeView({
     >({});
 
     /**
-     * 灰圆的**当前态**（本屏的一条会话状态）。
+     * 【2026-10-02 立 · 2026-10-16 换读源】**这一卷上每道题的记录**。
      *
-     * 为什么不直接拿库里的 `last` 当显示：他定的三态循环最后一步是"回到灰底白数字"，
-     * 而这一步按"不删历史、只撤销这次标记"落库（库里 `last` 会退回**这次标记之前**那个值）。
-     * 若直接看 `last`，点回灰色之后圆会仍显示上一轮的对号 —— 与他要的循环不符。
-     * 所以圆画什么由这里决定：**这道题这次抽到之后我把它标成了什么**；没标过才回落到库里。
-     * ⚠️ 重新进这一屏（marks 清空）时回落到库里 `last`：那时灰圆可能显示成绿/粉
-     *    （因为"最近一次"记录仍在）—— 这是"清空不删历史"的必然结果，已在交付说明里标明。
+     * 以前读的是卷行上的 `markState`（"这张纸上我标了什么"），
+     * 现在读**这条题在这张卷上的最近一条流水**（`ReviewEvent`）—— 因为流水才是复习结果的真相。
+     * `markState` 仍然照写（回录页拿它做校对），但**不再拿它画圆**。
+     *
+     * ⚠️ 本地这一份同时充当**乐观更新**的落点（点完先改画面、写完用服务端结果覆盖）。
      */
-    const [marks, setMarks] = useState<Record<string, ReviewMark>>({});
+    const [volMarks, setVolMarks] = useState<Record<string, VolumeMark>>({});
 
     /**
-     * 这道题此刻的灰圆态：**本地这一会儿的覆盖** → **这一卷的行上记的** → 灰。
+     * 这道题此刻的圆态 / 最近那条的 id / 录过几轮 —— 全部取自 `volMarks` 那一张表。
      *
-     * ⚠️【2026-10-02 他定的】兜底**不能**再回落到题目的 `last`（那是跨卷的复习历史）。
+     * ⚠️ `volMarks` 里可能暂时是**乐观值**（点完先改画面），服务器一回来就被真值覆盖
+     *    （见 `writeMark`）⇒ 外面不用再分一层"本地覆盖"。
+     *
+     * ⚠️【2026-10-02 他定的】它**不能**回落到题目的复习历史。
      * 他原话："如果扫的是另外一个**没有扫描过**的新卷，即使有这道题**还是应该给灰圈**。"
-     * 所以判据是"**这张纸上**我标过没有"（`ReviewVolumeItem.markState`），
-     * 而不是"这道题历史上复习过什么"。
-     * （同一份卷重扫时两者一致 —— 因为标的时候两边是同时写的。）
+     * —— 判据是"**这张纸上**有没有记过"，不是"这道题历史上复习过什么"。
      */
     const markOfItem = useCallback(
-        (item: ErrorItem): ReviewMark => markForItem(item.id, marks, volume?.items || []),
-        [marks, volume],
+        (item: ErrorItem): VolumeMark => volumeMarkOf(item.id, {}, volMarks),
+        [volMarks],
     );
 
-    /**
-     * 灰圆写入前的**快照**（同时也是"这一轮标记还活着"的凭据）：
-     *   · 有它 ⇒ 还在同一轮里，绿⇄粉是**修正同一格**（不新增记录）；
-     *   · 点回灰数字 ⇒ 用它**撤销这一轮**（更早的历史记录一个字不动），然后删掉它。
-     */
-    const markUndoRef = useRef<Record<string, string | null>>({});
     /** 同一道题正在写库时不重复受理（乐观更新下避免连点把顺序打乱） */
     const busyRef = useRef<Set<string>>(new Set());
     const [saveError, setSaveError] = useState<string | null>(null);
 
-    /** 把一份复习结果写库（乐观更新 → 失败回滚 + 提示）
-     *  @param event 本次"这是一次复习"的声明（`lib/review-event-draft.ts`）；
-     *               撤销（点回灰圆）时**不传** —— 撤销不是一次复习。 */
-    const saveReviewOutcomes = useCallback(
-        async (item: ErrorItem, next: ReviewOutcomes, prevRaw: string | null, event?: ReviewEventDraft | null) => {
-            patchItem(item.id, { reviewOutcomes: serializeReviewOutcomes(next) });
-            setSaveError(null);
+    /**
+     * 【2026-10-16 如如】拉这一卷上所有题的复习记录（**一次查完**，`docs\18` §4.3）。
+     *
+     * ⚠️ 失败**不弹窗**（它是纸面上的一层只读信息）：只把提示挂在下面那个琥珀条上，
+     *    因为他此刻正对着纸在核对，弹窗会打断。
+     */
+    const fetchVolumeMarks = useCallback(
+        async (volumeId: string) => {
             try {
-                const updated = await apiClient.put<{ attention?: number }>(`/api/error-items/${item.id}`, {
-                    reviewOutcomes: next,
-                    /** 【2026-10-16 如如】**补上复习流水** —— 这张表此前没人写（API 接得住、前端一处都没传）。 */
-                    ...(event ? { reviewEvent: event } : {}),
-                });
-                /**
-                 * 【2026-10-03】复习结果会**联动等级**（见 `lib/level-linkage.ts`）⇒
-                 * 用服务器算完的值刷新（这一屏不显示奖牌，但列表/详情页可能正开着同一道题）。
-                 */
-                if (typeof updated?.attention === 'number') {
-                    patchItem(item.id, { attention: updated.attention });
-                }
+                const res = await apiClient.get<{ marks: unknown[] }>(
+                    `/api/review-volumes/${volumeId}/review-marks`,
+                );
+                setVolMarks(volumeMarkMap(res?.marks ?? []));
             } catch (err) {
                 console.error(err);
-                patchItem(item.id, { reviewOutcomes: prevRaw });
                 setSaveError(
-                    L("这道题的复习结果没存上，已还原，请再试一次", "Failed to save the result; reverted"),
+                    L("这张卷上的录入记录没读上，圆可能是旧的", "Failed to read this volume's marks"),
                 );
             }
         },
-        [L, patchItem],
+        [L],
     );
 
-    /**
-     * 【2026-10-02】把"**这一卷某行**的标记"写库（决定圆画成哪一态）。
-     *
-     * 与 `saveReviewOutcomes` 是**两件事、都要写**：
-     *   · 这里 ⇒ "**这张纸上**我标了什么"（按卷，`ReviewVolumeItem.markState`）；
-     *   · 那里 ⇒ "**这道题**复习过几次、结果如何"（跨卷的复习历史，`ErrorItem.reviewOutcomes`）。
-     * 他既要"同步到复习结果"、又要"换新卷时给灰圈"，所以两个存储各司其职、同时写。
-     *
-     * 失败只提示、不把界面弹回去：圆态有本地的 `marks` 顶着，下次点击还会重写一次 ——
-     * 这是"标记"不是"录入"，容错空间比弹回去让人重来更划算。
-     */
+    /** 卷行上的"纸面标记"（`ReviewVolumeItem.markState`）—— 与流水**同时**维护 */
     const saveItemMark = useCallback(
-        async (item: ErrorItem, next: ReviewMark) => {
+        async (rowId: string, next: ReviewMark) => {
             if (!volume) return;
-            const row = (volume.items || []).find((r) => r.errorItemId === item.id);
-            if (!row) return;
             try {
                 await apiClient.patch(`/api/review-volumes/${volume.id}`, {
-                    markItemId: row.id,
+                    markItemId: rowId,
                     markState: next === 'none' ? null : next,
                 });
                 setVolume((prev) =>
@@ -429,14 +421,13 @@ export function ScanVolumeView({
                         ? {
                               ...prev,
                               items: prev.items.map((r) =>
-                                  r.id === row.id
-                                      ? { ...r, markState: next === 'none' ? null : next }
-                                      : r,
+                                  r.id === rowId ? { ...r, markState: next === 'none' ? null : next } : r,
                               ),
                           }
                         : prev,
                 );
             } catch (err) {
+                // 这笔只是"纸面标记"，流水已经写进去了 ⇒ 只提示、不把界面弹回去
                 console.error(err);
                 setSaveError(
                     L(
@@ -449,56 +440,132 @@ export function ScanVolumeView({
         [volume, L],
     );
 
-    /** 点右侧灰圆：灰数字 → 绿对号 → 粉错号 → 灰数字 */
+    /**
+     * 【2026-10-16 如如】把一次录入写进库 —— **唯一路径是流水**（`reviewEvent`）。
+     *
+     * 三种动作（`docs\18` §4.3 + §六）：
+     *   · `add`    —— 点灰圆 / 长按"再录一次"
+     *   · `update` —— 点圈在"对 ⇄ 错"之间换（**改这一轮这题的结果**，不是新增一条）
+     *   · `delete` —— 长按菜单"删除这一条"
+     * 全部**逐题即时**（不再有"离开页面时统一落定"那回事）。
+     *
+     * ⚠️ 写成功后**重拉这一卷的记录**当真相，并顺手把卷行上的 `markState` 同步过去
+     *    （那是"这张纸上的标记"，回录页要用）。
+     */
+    const writeMark = useCallback(
+        async (item: ErrorItem, body: ReviewEventDraft | ReviewEventPatchDraft, optimistic: VolumeMark) => {
+            if (!volume || busyRef.current.has(item.id)) return;
+            busyRef.current.add(item.id);
+            setSaveError(null);
+            setVolMarks((prev) => ({ ...prev, [item.id]: optimistic }));
+            try {
+                await apiClient.put(`/api/error-items/${item.id}`, { reviewEvent: body });
+                await fetchVolumeMarks(volume.id);
+                const row = (volume.items || []).find((r) => r.errorItemId === item.id);
+                if (row) void saveItemMark(row.id, optimistic.mark);
+            } catch (err) {
+                console.error(err);
+                // 失败**拉回真实数据**（宁可显示服务端的旧值，也不留一个只在屏幕上的假态）
+                await fetchVolumeMarks(volume.id);
+                setSaveError(
+                    L("这道题的复习结果没存上，已还原，请再试一次", "Failed to save the result; reverted"),
+                );
+            } finally {
+                busyRef.current.delete(item.id);
+            }
+        },
+        [volume, fetchVolumeMarks, saveItemMark, L],
+    );
+
+    /** 这一卷专用的来源值（复练纸 / 模仿纸）—— 由卷的 `kind` 定 */
+    const markSource = useMemo(() => paperSourceForKind(volume?.kind), [volume?.kind]);
+
+    /**
+     * 【2026-10-16 如如】卷拉回来之后，再拉**这一卷上每道题的复习记录**
+     * （决定那圈绿/粉 + 轮次角标，`docs\18` §4.3）。
+     *
+     * ⚠️ 单独一次请求（不塞进 lookup）：lookup 每次扫页都要跑，而"记录"只有这一屏需要；
+     *    而且写完一条之后要能**只重拉这一小块**（见 `writeMark`）。
+     * ⚠️ 这个 effect 必须放在 `fetchVolumeMarks` **之后** ——
+     *    依赖数组是**当场求值**的，放前面会撞上 `const` 的暂时性死区（真会抛错）。
+     */
+    useEffect(() => {
+        if (volume?.id) void fetchVolumeMarks(volume.id);
+    }, [volume?.id, fetchVolumeMarks]);
+
+    /**
+     * **点圈：对 ⇄ 错**（两态，他 2026-10-16 改定的）。
+     *   · 这张卷上还没有记录 ⇒ 新增一条（`add`）
+     *   · 已经有记录 ⇒ **改那一条**（`update`）—— "修正这一轮的结果"，不是又录一轮
+     *     （要"再录一轮"就走**长按菜单**，这是两态循环与"再录一次"的分工）
+     * ⚠️ 点圈**永远不经过"清空"** —— 撤销走长按菜单的"删除这一条"。
+     */
     const onReviewMarkTap = useCallback(
         (item: ErrorItem) => {
             if (busyRef.current.has(item.id)) return;
-            const next = nextReviewMark(markOfItem(item));
-            const prevRaw = item.reviewOutcomes ?? null;
-            setMarks((prev) => ({ ...prev, [item.id]: next }));
-            // 卷上的那一笔标记（按卷记）——无论哪种态都要落一次
-            void saveItemMark(item, next);
-
-            if (next === "none") {
-                // 清空 = 撤销这一轮标记：把写入前的快照摆回库里；这轮没写过就不动库
-                if (!(item.id in markUndoRef.current)) return;
-                const undoRaw = markUndoRef.current[item.id];
-                delete markUndoRef.current[item.id];
-                if (undoRaw === null || undoRaw === undefined) return;
-                busyRef.current.add(item.id);
-                void saveReviewOutcomes(item, normalizeReviewOutcomes(undoRaw), prevRaw).finally(() =>
-                    busyRef.current.delete(item.id),
-                );
-                return;
-            }
-
-            /**
-             * 关键：绿⇄粉是**修正同一格**，不是又占一个新格。
-             * 起手那一下把"写入前的快照"记下来；之后每次改对错都从**同一份快照**重算
-             * ⇒ `nextReviewOutcomes` 每次都填到**同一个空位**（它找的是快照里第一个空格），
-             * 与"按顺序填第一个空位"完全一致，又不会把一轮标记记成两条。
-             */
-            const hasActiveMark = item.id in markUndoRef.current;
-            const baseRaw = hasActiveMark ? markUndoRef.current[item.id] : prevRaw;
-            if (!hasActiveMark) markUndoRef.current[item.id] = prevRaw;
-
-            const { outcomes, slot } = nextReviewOutcomes(baseRaw, next);
-            busyRef.current.add(item.id);
-            void saveReviewOutcomes(
+            const cur = markOfItem(item);
+            const next = nextReviewMark(cur.mark);
+            const optimistic: VolumeMark = cur.eventId
+                ? { ...cur, mark: next }
+                : { mark: next, eventId: null, rounds: cur.rounds + 1 };
+            void writeMark(
                 item,
-                outcomes,
-                prevRaw,
-                /**
-                 * 【2026-10-16 如如】把这次判定**显式记成一条复习流水**。
-                 * ⚠️ 口径（见 `lib/review-event-draft.ts` 文件头）：**每次点出判定都记一条** ——
-                 *    同一格上"绿⇄粉"改主意会留两条（一条 right、一条 wrong）。
-                 *    这对现有两个读侧（`rightStreakOf` / `lastReviewDay`）没有影响；
-                 *    将来若要"同一天同格只留最终结果"，需加幂等（**留给下一棒/空空定**）。
-                 */
-                reviewEventDraft({ outcome: next, plannedIndex: slot, volumeId: volume?.id ?? null }),
-            ).finally(() => busyRef.current.delete(item.id));
+                cur.eventId
+                    ? reviewEventUpdateDraft(cur.eventId, next)
+                    : reviewEventDraft({
+                          outcome: next,
+                          plannedIndex: null,
+                          volumeId: volume?.id ?? null,
+                          source: markSource,
+                      }),
+                optimistic,
+            );
         },
-        [markOfItem, saveReviewOutcomes, saveItemMark, volume],
+        [markOfItem, writeMark, volume, markSource],
+    );
+
+    /**
+     * **长按圈 ⇒ 菜单**（他 2026-10-16 定的三项）。
+     *
+     * ⚠️ 为什么要有这个菜单：两态循环把"撤销"从点击路径里挤出去了
+     *    （旧的三态是"再点一下回灰"，而那个中间态还会落库）⇒ 撤销必须另给一个入口。
+     */
+    const [markMenuItem, setMarkMenuItem] = useState<ErrorItem | null>(null);
+
+    const onReviewMarkLongPress = useCallback((item: ErrorItem) => setMarkMenuItem(item), []);
+
+    /** 菜单里的三个动作 */
+    const recordAgain = useCallback(
+        (item: ErrorItem, outcome: 'right' | 'wrong') => {
+            const cur = markOfItem(item);
+            setMarkMenuItem(null);
+            void writeMark(
+                item,
+                reviewEventDraft({
+                    outcome,
+                    plannedIndex: null,
+                    volumeId: volume?.id ?? null,
+                    source: markSource,
+                }),
+                { mark: outcome, eventId: null, rounds: cur.rounds + 1 },
+            );
+        },
+        [markOfItem, writeMark, volume, markSource],
+    );
+
+    const deleteLatestMark = useCallback(
+        (item: ErrorItem) => {
+            const cur = markOfItem(item);
+            setMarkMenuItem(null);
+            if (!cur.eventId) return;
+            /**
+             * 删掉最近这一条之后圆该回到什么？
+             * **不猜** —— 让服务端重算（`fetchVolumeMarks` 会给出上一轮的结果）；
+             * 乐观值先按"没有记录"画，宁可闪一下也不显示一个可能错的颜色。
+             */
+            void writeMark(item, reviewEventDeleteDraft(cur.eventId), EMPTY_VOLUME_MARK);
+        },
+        [markOfItem, writeMark],
     );
 
     /** 点升降框：第一次改类型、第二次改回来（都乐观 + 失败回滚） */
@@ -747,6 +814,71 @@ export function ScanVolumeView({
                 </div>
             ) : null}
 
+            {/* ===== 【2026-10-16 如如】长按那颗圆 ⇒ 菜单（他定的三项）=====
+                出处：`docs\18` §4.3。为什么要有它：**两态循环把"撤销"挤出了点击路径**
+                （旧的三态是"再点一下回灰"，中间态还会落库）⇒ 撤销得另给一个入口。
+
+                ⚠️ 实现选择：用**对话框**（`Dialog`）而不是贴着圈的浮层 ——
+                   纸面是**缩放过的**、外面还套着滚动容器，浮层要处理缩放/裁剪/定位三件事；
+                   这里是"三个动作"，用对话框在手机上和电脑上**手感一致**、也不会被裁掉。
+                   （这一条是我定的，规格只说"弹菜单"，**留给空空/下一棒复核**。） */}
+            <Dialog
+                open={!!markMenuItem}
+                onOpenChange={(open) => {
+                    if (!open) setMarkMenuItem(null);
+                }}
+            >
+                <DialogContent className="max-w-sm">
+                    <DialogHeader>
+                        <DialogTitle>{L("这道题的复习结果", "This question's review result")}</DialogTitle>
+                        <DialogDescription>
+                            {markMenuItem
+                                ? L(
+                                      `「${markMenuItem.source || markMenuItem.id}」在这张卷上已录 ${markOfItem(markMenuItem).rounds} 轮。`,
+                                      `${markOfItem(markMenuItem).rounds} round(s) recorded on this paper.`,
+                                  )
+                                : ""}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-2">
+                        <Button
+                            variant="outline"
+                            className="w-full justify-start"
+                            onClick={() => markMenuItem && recordAgain(markMenuItem, 'right')}
+                        >
+                            <span style={{ color: REVIEW_MARK_COLORS.right.bg }} className="mr-2 font-bold">
+                                ✓
+                            </span>
+                            {L("再录一次：对", "Record again: correct")}
+                        </Button>
+                        <Button
+                            variant="outline"
+                            className="w-full justify-start"
+                            onClick={() => markMenuItem && recordAgain(markMenuItem, 'wrong')}
+                        >
+                            <span style={{ color: REVIEW_MARK_COLORS.wrong.fg }} className="mr-2 font-bold">
+                                ✗
+                            </span>
+                            {L("再录一次：错", "Record again: wrong")}
+                        </Button>
+                        <Button
+                            variant="outline"
+                            className="w-full justify-start text-rose-600"
+                            /* 这张卷上还没有记录 ⇒ 没有"这一条"可删（按钮灰着，而不是点了没反应） */
+                            disabled={!markMenuItem || !markOfItem(markMenuItem).eventId}
+                            onClick={() => markMenuItem && deleteLatestMark(markMenuItem)}
+                        >
+                            {L("删除这一条", "Delete the latest record")}
+                        </Button>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setMarkMenuItem(null)}>
+                            {L("取消", "Cancel")}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             <div
                 ref={scrollRef}
                 className="max-h-[78vh] overflow-auto rounded-md border bg-zinc-100 p-3 dark:bg-zinc-900"
@@ -831,7 +963,10 @@ export function ScanVolumeView({
                                       onPromoteToggle={onPromoteToggle}
                                       promoteOverrideOf={promoteOverrideOf}
                                       onReviewMarkTap={onReviewMarkTap}
-                                      reviewMarkOf={markOfItem}
+                                      reviewMarkOf={(it) => markOfItem(it).mark}
+                                      onReviewMarkLongPress={onReviewMarkLongPress}
+                                      reviewRoundsOf={(it) => markOfItem(it).rounds}
+                                      reviewMarkDisabledOf={(it) => Number(it.masteryLevel) >= 2}
                                       L={L}
                                   />
                               </div>
@@ -880,7 +1015,10 @@ export function ScanVolumeView({
                                 onPromoteToggle={onPromoteToggle}
                                 promoteOverrideOf={promoteOverrideOf}
                                 onReviewMarkTap={onReviewMarkTap}
-                                reviewMarkOf={markOfItem}
+                                reviewMarkOf={(it) => markOfItem(it).mark}
+                                onReviewMarkLongPress={onReviewMarkLongPress}
+                                reviewRoundsOf={(it) => markOfItem(it).rounds}
+                                reviewMarkDisabledOf={(it) => Number(it.masteryLevel) >= 2}
                                 L={L}
                             />
                         </div>

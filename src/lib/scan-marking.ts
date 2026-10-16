@@ -13,12 +13,8 @@
  *    类型的取值与判据一律走 `lib/manage-type.ts`（尤其"未定按复练处理"这条）。
  */
 
-import {
-    normalizeReviewOutcomes,
-    type PlannedIndex,
-    type ReviewOutcome,
-    type ReviewOutcomes,
-} from './review-outcomes';
+// `normalizeReviewOutcomes` 只被 `reviewMarkFromOutcomes`（保留的另一件事）用到 ⇒ 留着
+import { normalizeReviewOutcomes } from './review-outcomes';
 import {
     normalizeManageType,
     promoteDirectionFor,
@@ -81,19 +77,22 @@ export const PROMOTE_APPLIED_BG: Record<PromoteDirection, string> = {
 export type ReviewMark = 'none' | 'right' | 'wrong';
 
 /**
- * 他定的循环顺序（**同一个圆点一下换一格**）：
- *   灰底白数字 → 绿底白对号 → 粉底灰错号 → 灰底白数字 …
+ * 【他 2026-10-16 改定的】点一下灰圆换哪一态 —— **两态循环**：
+ *   灰 → 对 → 错 → 对 → 错 …
+ *
+ * ⚠️⚠️ **不再经过"清空"** —— 这正是本次改造的核心（他 2026-10-16 的原话：
+ *    旧的三态让"错改对"必经"删除"，中间态还会落库）。
+ *    ⇒ 想撤销一条记录就走**长按菜单里的"删除这一条"**，不再靠"再点一下"。
+ * ⚠️ 所以从 `wrong` 出发回到的是 `right`（不是 `none`），`none` 只可能来自"这张卷上没有记录"。
  */
-export function nextReviewMark(mark: ReviewMark): ReviewMark {
-    if (mark === 'none') return 'right';
-    if (mark === 'right') return 'wrong';
-    return 'none';
+export function nextReviewMark(mark: ReviewMark): 'right' | 'wrong' {
+    return mark === 'right' ? 'wrong' : 'right';
 }
 
 /**
  * 从**题目的复习历史**推圆态（看 `last`）。
  *
- * ⚠️【2026-10-02】**生产代码当前不再用它** —— 圆态改成"按卷"判断了（见 `markForItem`）。
+ * ⚠️【2026-10-02】**生产代码当前不再用它** —— 圆态改成"按卷"判断了（见 `volumeMarkOf`）。
  * 保留它的原因：它表达的是另一件真实存在的事 ——"这道题最近一次复习结果是什么"，
  * 与"这张纸上我标了什么"是**两个不同的问题**。将来若要画"与复习历史联动"的圆，还会用到。
  * 别把它当成"旧的、删了也没关系"的代码；但也**别再用它来还原扫码页的圆**。
@@ -106,24 +105,73 @@ export function reviewMarkFromOutcomes(current: unknown): ReviewMark {
 }
 
 /**
- * 【2026-10-02 他定的】这道题**在某一卷上**该画成哪一态。
+ * 【2026-10-02 他定的 · 2026-10-16 换读源】这道题**在某一卷上**该画成哪一态。
  *
- * 取值顺序：**本次会话的本地覆盖** → **卷里那一行记的** `markState` → 灰（`none`）。
+ * 取值顺序：**本次会话的本地覆盖** → **服务端给的这一卷的标记** → 灰（`none`）。
  *
- * ⚠️ 兜底判据必须是**卷的行**，不是题目的 `last`。他原话：
+ * ⚠️ 兜底判据必须是**这一卷**，不是题目的 `last`。他原话：
  *   "如果扫的是另外一个**没有扫描过**的新卷，即使有这道题**还是应该给灰圈**。"
  *   —— "标过没标过"是**这张纸上**发生过的事，不跟着题跑到别的卷里。
+ * ⭐【2026-10-16】"这一卷的标记"以前读的是卷行上的 `markState`（纸面标记），
+ *   现在读**这条题在这张卷上的最近一条流水**（`ReviewEvent`）——
+ *   因为流水才是复习结果的真相（`docs\18` §4.3"回显规则"）。
+ *   卷行的 `markState` 仍然照写（回录页用它做校对），但**不再拿它画圆**。
  *
  * 抽成纯函数是为了能被单测钉住（组件里那段是 `useCallback`，测不到）。
  */
-export function markForItem(
+export function volumeMarkOf(
     itemId: string,
-    localMarks: Readonly<Record<string, ReviewMark>>,
-    rows: ReadonlyArray<{ errorItemId: string | null; markState?: string | null }>,
-): ReviewMark {
-    if (itemId in localMarks) return localMarks[itemId];
-    const row = rows.find((r) => r.errorItemId === itemId);
-    return row?.markState === 'right' || row?.markState === 'wrong' ? row.markState : 'none';
+    local: Readonly<Record<string, VolumeMark>>,
+    marks: Readonly<Record<string, VolumeMark>>,
+): VolumeMark {
+    const server = marks[itemId];
+    const overlay = local[itemId];
+    if (!server && !overlay) return EMPTY_VOLUME_MARK;
+    return {
+        mark: overlay?.mark ?? server?.mark ?? 'none',
+        eventId: overlay?.eventId ?? server?.eventId ?? null,
+        rounds: overlay?.rounds ?? server?.rounds ?? 0,
+    };
+}
+
+/* ==================== 【2026-10-16】这一卷上"这道题"的样子 ==================== */
+
+/** 服务端给的"这道题在这张卷上"的样子（`GET /api/review-volumes/[id]/review-marks`） */
+export interface VolumeMark {
+    /** 最近一条流水的结果；`none` = 这张卷上还没有记录 */
+    mark: ReviewMark;
+    /** 最近那条流水的 id —— 长按菜单"删除这一条"要用；没有记录 = `null` */
+    eventId: string | null;
+    /** 这道题**在这张卷上**录过几条（两轮角标：`>1` 才标） */
+    rounds: number;
+}
+
+/** "这张卷上没这道题的记录" */
+export const EMPTY_VOLUME_MARK: VolumeMark = { mark: 'none', eventId: null, rounds: 0 };
+
+/**
+ * 把接口给的一行归一化 —— **不认识的值一律当"没有记录"**，
+ * 宁可画灰圈、也不猜一个结果（与 `review-outcomes` 那条规矩一致）。
+ */
+export function normalizeVolumeMark(raw: unknown): VolumeMark {
+    if (!raw || typeof raw !== 'object') return EMPTY_VOLUME_MARK;
+    const o = raw as Record<string, unknown>;
+    const mark = o.mark === 'right' || o.mark === 'wrong' ? o.mark : 'none';
+    const rounds = typeof o.rounds === 'number' && Number.isFinite(o.rounds) ? Math.max(0, Math.trunc(o.rounds)) : 0;
+    const eventId = typeof o.eventId === 'string' && o.eventId.trim() ? o.eventId.trim() : null;
+    return { mark, eventId, rounds };
+}
+
+/** 接口那串数组 ⇒ 以题 id 为键的表（组件里查一次 O(1)） */
+export function volumeMarkMap(rows: readonly unknown[]): Record<string, VolumeMark> {
+    const out: Record<string, VolumeMark> = {};
+    for (const raw of rows) {
+        if (!raw || typeof raw !== 'object') continue;
+        const id = (raw as Record<string, unknown>).errorItemId;
+        if (typeof id !== 'string' || !id) continue;
+        out[id] = normalizeVolumeMark(raw);
+    }
+    return out;
 }
 
 /** 三态的配色 —— 绿/粉与错题卡四圆点（`review-dots.tsx`）**刻意一致**，避免同一屏两套红绿 */
@@ -133,47 +181,14 @@ export const REVIEW_MARK_COLORS: Record<ReviewMark, { bg: string; fg: string }> 
     wrong: { bg: '#f6c9cf', fg: '#8a8a8a' },
 };
 
-/* ============================ 三、复习结果写到哪一格 ============================ */
-
-/**
- * 这次结果落在哪一格：`0/1/2/3` = 计划第几次；`'last'` = 最近一次。
+/* ==================== 三、【2026-10-16 已删】"写到哪一格" ====================
  *
- * ⚠️ 计划侧的下标类型**必须**用 `PlannedIndex`（长度 = `PLANNED_REVIEW_ROUNDS`）——
- *    这里曾经写死 `0 | 1 | 2`（3 格时代的残留）：加第 4 格后运行时仍能算出 3，
- *    但类型是骗人的，而且谁照着这个类型写判断就会漏掉第 4 格。
+ * 这里原来有 `ReviewOutcomeSlot` / `ReviewOutcomeWrite` / `nextReviewOutcomes()` ——
+ * 那套"**按顺序填第一个空位**"（没有记录 ⇒ 写 planned[0] … 四格满 ⇒ 写 `last`）
+ * 是**老形状**（`{planned,last}`）的写入规则，随 `docs\18` 换成"流水为真相"后**整段作废**：
+ *   · 现在点一下就是**一条流水**（新增）或**改那条流水**（`op: update`），
+ *     根本不存在"填第几格"这一步；
+ *   · 而"纸背面那四个日期框"仍然存在 —— 但那是**纸**的事，判等级/紧迫度都不看它。
+ * ⇒ 删掉而不是留着：留着只会让下一个人再写回一个没人读的形状（本项目栽过三次的那类坑）。
+ *   老形状**读**的能力仍在 `lib/review-outcomes.ts`（`normalizeReviewOutcomes`）。
  */
-export type ReviewOutcomeSlot = PlannedIndex | 'last';
-
-export interface ReviewOutcomeWrite {
-    /** 落值之后的完整复习结果（直接交给 `serializeReviewOutcomes`） */
-    outcomes: ReviewOutcomes;
-    /** 写进了哪一格（界面提示 / 测试断言用） */
-    slot: ReviewOutcomeSlot;
-}
-
-/**
- * 【他 2026-10-02 定的规则】**按顺序填第一个空位**：
- *   · 没有复习记录 ⇒ 写第一次（planned[0]）；
- *   · 只有第一次   ⇒ 写第二次（planned[1]）；
- *   · 有第二次而没有第三次 ⇒ 写第三次（planned[2]）；
- *   · 前三格都满   ⇒ 写第四次（planned[3]，2026-10-14 随纸面第 4 格一起加的）；
- *   · 四格都满     ⇒ 写最近一次（last）。
- *
- * ⚠️ **额外要求（他专门强调的）**：只要标了"对/错"，就**同时更新 `last`** ——
- *    `last` 的定义就是"最近一次复习的结果（计划内、计划外都算）"，
- *    所以"最近一次情况"那行永远是最新的。
- *
- * ⚠️ 清空**不走这里**：清空是"撤销这次标记"，调用方用写入前的快照回滚
- *    （见 `scan-volume-view.tsx`），不会从这里往回删历史。
- */
-export function nextReviewOutcomes(current: unknown, outcome: ReviewOutcome): ReviewOutcomeWrite {
-    const base = normalizeReviewOutcomes(current);
-    const planned = [...base.planned];
-    const emptyIndex = planned.findIndex((v) => v === null);
-    if (emptyIndex >= 0) {
-        planned[emptyIndex] = outcome;
-        return { outcomes: { planned, last: outcome }, slot: emptyIndex as PlannedIndex };
-    }
-    // 计划格全满了（现在是 4 格）⇒ 只动"最近一次"（计划格一个字都不改）
-    return { outcomes: { planned, last: outcome }, slot: 'last' };
-}

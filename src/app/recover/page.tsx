@@ -54,8 +54,9 @@ import {
     type RecoveryBlockedReason,
     type RecoveryRow,
 } from "@/lib/review-recover";
-import { nextReviewOutcomes } from "@/lib/scan-marking";
+// 【2026-10-16 改】复习结果**只写流水**（`reviewEvent`）—— 整包覆盖那条路服务端已不再接受
 import { reviewEventDraft } from "@/lib/review-event-draft";
+import { paperSourceForKind } from "@/lib/review-event-source";
 import {
     Camera,
     CameraOff,
@@ -612,7 +613,7 @@ export default function RecoverPage() {
     /**
      * 保存复练卡：**只写"她标了"的那些题**（对/错），写两处：
      *   ① 卷行 `markState`（"这张纸上我标了什么"，按卷）—— `PATCH /api/review-volumes/[id]`；
-     *   ② 题目的 `reviewOutcomes`（"这道题复习史"，跨卷）—— `PUT /api/error-items/[id]`。
+     *   ② 题目的复习结果（**一条流水**，"这道题复习史"，跨卷）—— `PUT /api/error-items/[id]`。
      * ⚠️ `none` / `unclear` 一律跳过（不静默清空、不替她做主）；题被删了只写①。
      */
     const saveReviewCard = useCallback(
@@ -641,22 +642,26 @@ export default function RecoverPage() {
                         markItemId: w.rowId,
                         markState: w.markState,
                     });
-                    // ② 这道题的复习史（口径与扫码页完全一致）
+                    // ② 这道题的复习结果 —— **只能写流水**（口径与扫码页完全一致）
                     if (w.writesOutcome && w.errorItemId) {
-                        const row = card.rows.find((r) => r.rowId === w.rowId);
-                        const { outcomes, slot } = nextReviewOutcomes(row?.reviewOutcomes ?? null, w.markState);
                         await apiClient.put(`/api/error-items/${w.errorItemId}`, {
-                            reviewOutcomes: outcomes,
                             /**
-                             * 【2026-10-16 如如】**补上复习流水**（`ReviewEvent`）。
-                             * 这张表 2026-10-14 就建好、API 也接得住，但**四个写入点一处都没传**
-                             * ⇒ 表永远为空、且**完全静默**。出处：`HANDOFF.md` §③-11。
-                             * `volumeId` 用本张卡的卷（回录天然知道是哪张卷）。
+                             * 【2026-10-16 如如】改成**只写流水**（`docs\18` §4.3 / §六）。
+                             * 原来这里还发一份 `reviewOutcomes` 整包覆盖 —— 那条路
+                             * 2026-10-16 起被服务端**收下就忽略**（结果由流水派生），
+                             * 留着只会让人以为"发了就生效"。
+                             *
+                             * ⚠️ `plannedIndex` 不再传（新模型里"计划第几格"只在纸上有意义，
+                             *    判等级/紧迫度一律看"最近几条 + 日期"）。
+                             * ⚠️ 来源：回录页目前处理的是**复练卷**（`RE…`）⇒ `review_paper`。
+                             *    若将来模仿卷也走回录，得按那张卷的 `kind` 给 `imitate_paper`
+                             *    （`card` 上现在没有 kind 字段，届时要补）。
                              */
                             reviewEvent: reviewEventDraft({
                                 outcome: w.markState,
-                                plannedIndex: slot,
+                                plannedIndex: null,
                                 volumeId: card.volumeId,
+                                source: paperSourceForKind(null),
                             }),
                         });
                     }

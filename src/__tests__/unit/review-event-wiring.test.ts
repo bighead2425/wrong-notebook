@@ -92,11 +92,12 @@ describe('复习流水 · 前端写入点的看门护栏', () => {
         );
         const names = offenders.map(short).sort();
 
-        /** ⏳ 已知遗留：第 4 步（卷页 + 回录页）做完必须把这两行删掉 */
-        const LEGACY_PENDING: string[] = [
-            '/src/app/recover/page.tsx',
-            '/src/components/scan-volume-view.tsx',
-        ];
+        /**
+         * ✅【2026-10-16 第 4 步】**名单已清空** —— 卷页与回录页都改成"只写流水"了。
+         * 留这个空数组是**故意的**：它把"反查"那条判据保留在测试里 ——
+         * 将来谁再往名单里塞东西，就得同时解释为什么。
+         */
+        const LEGACY_PENDING: string[] = [];
 
         expect(
             names.filter((n) => !LEGACY_PENDING.includes(n)),

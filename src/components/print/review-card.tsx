@@ -163,10 +163,16 @@ export interface ReviewSheetProps {
     onPromoteToggle?: (item: ErrorItem) => void;
     /** 升降框的"已应用（勾选）"态；返回 undefined = 未勾选 */
     promoteOverrideOf?: (item: ErrorItem) => { direction: PromoteDirection; checked: boolean } | undefined;
-    /** 点右侧灰圆 ⇒ 交给调用方记录（对/错/清空） */
+    /** 点右侧灰圆 ⇒ 交给调用方记录（**两态**：对 ⇄ 错） */
     onReviewMarkTap?: (item: ErrorItem) => void;
-    /** 灰圆当前态（none/right/wrong） */
+    /** 灰圆当前态（none/right/wrong）—— 记得按**这一卷上**的记录算，不是题目历史 */
     reviewMarkOf?: (item: ErrorItem) => ReviewMark;
+    /** 【2026-10-16】长按 / 右键灰圆 ⇒ 交给调用方弹菜单（再录一次 / 删除这一条） */
+    onReviewMarkLongPress?: (item: ErrorItem) => void;
+    /** 【2026-10-16】这道题在这张卷上录过几轮（`>1` ⇒ 圈上画上标） */
+    reviewRoundsOf?: (item: ErrorItem) => number;
+    /** 【2026-10-16】这道题已掌握 ⇒ 圆禁用（"录不了"，`docs\18` 验收 #10） */
+    reviewMarkDisabledOf?: (item: ErrorItem) => boolean;
     /** 加号的悬停提示（可选） */
     plusTitle?: string;
     /** 按住两题之间的虚线（调上面那道题的留白行数） */
@@ -552,6 +558,9 @@ export function ReviewQuestionBlock({
     promoteOverride,
     onReviewMarkTap,
     reviewMark,
+    onReviewMarkLongPress,
+    reviewRounds,
+    reviewMarkDisabled,
     onMoveUp,
     onMoveDown,
     L,
@@ -602,12 +611,29 @@ export function ReviewQuestionBlock({
     /** 升降框的"已应用（勾选）"态：方向 + 是否勾上；不传 = 未勾选，方向按当前类型推 */
     promoteOverride?: { direction: PromoteDirection; checked: boolean };
     /**
-     * 【2026-10-02 扫码录入】**点右侧灰圆 ⇒ 循环记录对/错**。
+     * 【2026-10-02 扫码录入】**点右侧灰圆 ⇒ 记录对 / 错**（**两态**：点一下对、再点一下错）。
      * 不传 ⇒ 这颗圆根本不画（打印那一路完全没有它）。
      */
     onReviewMarkTap?: () => void;
-    /** 这颗圆当前该是什么态（none/right/wrong）；由调用方按复习结果推 */
+    /** 这颗圆当前该是什么态（none/right/wrong）；由调用方按**这一卷上**的记录推 */
     reviewMark?: ReviewMark;
+    /**
+     * 【2026-10-16 如如】**长按 / 右键**这颗圆 ⇒ 弹菜单（"再录一次：对 / 错"、"删除这一条"）。
+     * 不传 ⇒ 长按没有任何反应（行为退化成"只有点击"）。
+     * 出处：`docs\18` §4.3 —— 两态循环把"撤销"挤出了点击路径，撤销只能走这个菜单。
+     */
+    onReviewMarkLongPress?: () => void;
+    /**
+     * 【2026-10-16 如如】这道题**已掌握** ⇒ 这颗圆禁用（不响应点击 / 长按，只显示当前态）。
+     * 出处：`docs\18` 验收 #10"已掌握的题录不了" —— 冻住就真冻住
+     * （**服务端也一样会忽略**，这里只是别让他白点一下没反应）。
+     */
+    reviewMarkDisabled?: boolean;
+    /**
+     * 【2026-10-16 如如】这道题**在这张卷上**录过几轮 —— `>1` 时在圈左上方画一个上标数字。
+     * 不传/为 1 ⇒ 不画角标。
+     */
+    reviewRounds?: number;
     /**
      * 【2026-10-12】右上角那对**上移 / 下移**（只在屏幕上）。
      * 不给 = 这一路不需要排序（量尺、卷管理页、扫码浏览），按钮根本不画。
@@ -830,51 +856,175 @@ export function ReviewQuestionBlock({
                 </div>
             </div>
 
-            {/* 【2026-10-02 扫码录入】**右侧灰圆**：点它循环"灰数字 → 绿对号 → 粉错号 → 灰数字"。
+            {/* 【2026-10-02 扫码录入】**右侧灰圆**：点一下记"对"、再点记"错"（**两态**，2026-10-16 改）。
                 · 位置：**天蓝框右侧、纸面右边距里**（他说的"靠近纸张边缘那一侧"），
                   **与中间蓝加号圆心在同一竖直中线**；这样它不会压在题块内的升降框/答案上；
                 · 直径 11mm，比加号那个蓝圆（10mm）略大 —— 手指按得住；
                 · ⚠️ `no-print`：屏幕控件，绝不落纸；
                 · ⚠️ 双击缩放失效（onDoubleClick 拦截；touchAction 再挡手机双击缩放）；
-                  拖动平移不受影响（它只认鼠标，且本就跳过 button）。 */}
+                  拖动平移不受影响（它只认鼠标，且本就跳过 button）。
+                · ⭐【2026-10-16】**长按 / 右键** ⇒ 弹菜单（再录一次 / 删除这一条）——
+                  因为两态循环里**不再有"清空"**，撤销只能从这里走。 */}
             {onReviewMarkTap ? (
-                <button
-                    type="button"
-                    className="no-print"
-                    title={L(
-                        '点一下记"做对"，再点记"做错"，再点清空',
-                        'Tap: correct → wrong → clear',
-                    )}
-                    onClick={onReviewMarkTap}
-                    onDoubleClick={(e) => e.stopPropagation()}
-                    style={{
-                        position: 'absolute',
-                        // 落在纸面右边距里（正好贴着题块右缘往外一格），不与块内控件重叠
-                        right: '-11mm',
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        width: '11mm',
-                        height: '11mm',
-                        borderRadius: '9999px',
-                        border: 'none',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        cursor: 'pointer',
-                        zIndex: 7,
-                        boxShadow: '0 0.4mm 1.2mm rgba(0,0,0,0.25)',
-                        background: REVIEW_MARK_COLORS[reviewMark ?? 'none'].bg,
-                        color: REVIEW_MARK_COLORS[reviewMark ?? 'none'].fg,
-                        fontSize: '11pt',
-                        fontWeight: 700,
-                        lineHeight: 1,
-                        touchAction: 'manipulation',
-                    }}
-                >
-                    {reviewMark === 'right' ? '✓' : reviewMark === 'wrong' ? '✗' : seq}
-                </button>
+                <ReviewMarkCircle
+                    mark={reviewMark ?? 'none'}
+                    seq={seq}
+                    rounds={reviewRounds}
+                    disabled={reviewMarkDisabled}
+                    onTap={onReviewMarkTap}
+                    onLongPress={onReviewMarkLongPress}
+                    L={L}
+                />
             ) : null}
         </div>
+    );
+}
+
+/** 长按多久算长按（毫秒）—— 太短会跟"点击"打架，太长按着累 */
+const REVIEW_MARK_LONG_PRESS_MS = 550;
+
+/**
+ * 【2026-10-16 如如】卷页上那颗**记录对错的圆**（抽出来是因为多了长按那套状态）。
+ *
+ * 手势（`docs\18` §4.3）：
+ *   · **点一下** ⇒ 对 ⇄ 错 两态切换（**永远不经过"清空"**）
+ *   · **长按 / 右键** ⇒ 交给调用方弹菜单（再录一次：对 / 错 / 删除这一条）
+ *
+ * ⚠️ **长按触发后，松手那一次 click 必须吞掉** —— 否则"长按"会顺带当成一次点击、
+ *    把他刚要看的东西又改了一次。用一个 ref 标记"这次长按已经生效"。
+ * ⚠️ 这块在**缩放过的纸面**里 ⇒ 角标用 mm 单位跟着纸缩放（与圆的尺寸同一套单位）。
+ */
+function ReviewMarkCircle({
+    mark,
+    seq,
+    rounds,
+    disabled,
+    onTap,
+    onLongPress,
+    L,
+}: {
+    mark: ReviewMark;
+    /** 还没记录时圆里显示的那个**流水号**（灰底白数字） */
+    seq: number;
+    rounds?: number;
+    /** 已掌握 ⇒ 禁用（不响应任何手势；服务端也一样会忽略） */
+    disabled?: boolean;
+    onTap: () => void;
+    onLongPress?: () => void;
+    L: (zh: string, en: string) => string;
+}) {
+    const timer = useRef<number | null>(null);
+    const fired = useRef(false);
+
+    const clearTimer = () => {
+        if (timer.current !== null) {
+            window.clearTimeout(timer.current);
+            timer.current = null;
+        }
+    };
+
+    const startPress = () => {
+        if (!onLongPress || disabled) return;
+        fired.current = false;
+        clearTimer();
+        timer.current = window.setTimeout(() => {
+            fired.current = true;
+            onLongPress();
+        }, REVIEW_MARK_LONG_PRESS_MS);
+    };
+
+    // 组件卸载时别把定时器留着（下一题、翻页都会重建）
+    useEffect(() => clearTimer, []);
+
+    const color = REVIEW_MARK_COLORS[mark];
+
+    return (
+        <button
+            type="button"
+            className="no-print"
+            disabled={disabled}
+            title={
+                disabled
+                    ? L('这道题已掌握 ⇒ 录不了（先取消已掌握）', 'Mastered — unmark it first to record')
+                    : onLongPress
+                      ? L(
+                            '点一下：对 ⇄ 错；长按：再录一次 / 删除这一条',
+                            'Tap: correct ⇄ wrong · Long-press: record again / delete',
+                        )
+                      : L('点一下：对 ⇄ 错', 'Tap: correct ⇄ wrong')
+            }
+            aria-label={L('记录这道题的对错', 'Record correct or wrong')}
+            onClick={() => {
+                if (disabled) return;
+                if (fired.current) {
+                    fired.current = false; // 这次是长按带出来的，别当成点击
+                    return;
+                }
+                onTap();
+            }}
+            onPointerDown={startPress}
+            onPointerUp={clearTimer}
+            onPointerLeave={clearTimer}
+            onPointerCancel={clearTimer}
+            onContextMenu={(e) => {
+                if (!onLongPress || disabled) return;
+                e.preventDefault();
+                onLongPress();
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
+            style={{
+                position: 'absolute',
+                // 落在纸面右边距里（正好贴着题块右缘往外一格），不与块内控件重叠
+                right: '-11mm',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                width: '11mm',
+                height: '11mm',
+                borderRadius: '9999px',
+                border: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: disabled ? 'not-allowed' : 'pointer',
+                zIndex: 7,
+                boxShadow: '0 0.4mm 1.2mm rgba(0,0,0,0.25)',
+                background: color.bg,
+                color: color.fg,
+                fontSize: '11pt',
+                fontWeight: 700,
+                lineHeight: 1,
+                touchAction: 'manipulation',
+                // 已掌握：压暗一点，一眼看出"这颗点不动"
+                opacity: disabled ? 0.45 : 1,
+            }}
+        >
+            {mark === 'right' ? '✓' : mark === 'wrong' ? '✗' : seq}
+            {/* 轮次角标：这道题**在这张卷上**录过 2 轮以上才标（1 不标）——
+                样式做成"次幂"那样的小号上标，位置在圆的**左上方**（他 2026-10-16 22:43 定）。 */}
+            {typeof rounds === 'number' && rounds > 1 ? (
+                <span
+                    aria-hidden="true"
+                    style={{
+                        position: 'absolute',
+                        left: '-1.6mm',
+                        top: '-1.6mm',
+                        minWidth: '4mm',
+                        height: '4mm',
+                        padding: '0 0.6mm',
+                        borderRadius: '9999px',
+                        background: '#ffffff',
+                        color: '#374151',
+                        border: '0.25mm solid #d1d5db',
+                        fontSize: '6.5pt',
+                        fontWeight: 700,
+                        lineHeight: '3.4mm',
+                        textAlign: 'center',
+                    }}
+                >
+                    {rounds}
+                </span>
+            ) : null}
+        </button>
     );
 }
 
@@ -902,6 +1052,9 @@ export function ReviewSheet({
     promoteOverrideOf,
     onReviewMarkTap,
     reviewMarkOf,
+    onReviewMarkLongPress,
+    reviewRoundsOf,
+    reviewMarkDisabledOf,
     onMoveQuestion,
     totalSeq,
     L,
@@ -1026,6 +1179,15 @@ export function ReviewSheet({
                                                 onReviewMarkTap ? () => onReviewMarkTap(item) : undefined
                                             }
                                             reviewMark={reviewMarkOf ? reviewMarkOf(item) : undefined}
+                                            onReviewMarkLongPress={
+                                                onReviewMarkLongPress
+                                                    ? () => onReviewMarkLongPress(item)
+                                                    : undefined
+                                            }
+                                            reviewRounds={reviewRoundsOf ? reviewRoundsOf(item) : undefined}
+                                            reviewMarkDisabled={
+                                                reviewMarkDisabledOf ? reviewMarkDisabledOf(item) : undefined
+                                            }
                                             {...movePropsFor(item, b.seq)}
                                             L={L}
                                         />

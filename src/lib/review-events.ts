@@ -335,3 +335,55 @@ export async function listReviewEventRows(
         createdAt: r.createdAt,
     }));
 }
+
+/** 某道题在**某一张卷**上的一条记录（卷页画圆 / 角标 / 长按菜单要用） */
+export interface VolumeReviewMark {
+    errorItemId: string;
+    /** 最近一条的结果 */
+    outcome: ReviewOutcome;
+    /** 最近那条的 id（"删除这一条"用它） */
+    eventId: string;
+    /** 这道题在这张卷上录过几条（>1 ⇒ 画轮次角标） */
+    rounds: number;
+}
+
+/**
+ * 【2026-10-16 如如】**这一张卷上**每道题的复习记录（`docs\18` §4.3"回显规则"）。
+ *
+ * 口径：
+ *   · 只认 `volumeId = 这张卷` 的流水（**别的卷上的记录不参与** ——
+ *     他 2026-10-02 定过："扫一个新卷，即使有这道题还是应该给灰圈"）；
+ *   · 每题给**最近一条**（按 `occurredOn` + `createdAt` 取末位）⇒ 圆画它；
+ *   · 同时给 `rounds` = 这张卷上录过几条 ⇒ 轮次角标。
+ *
+ * ⚠️ **一次查完**（`errorItemId in [...]`）再在内存里分组 ——
+ *    绝不许"每道题查一次"（`docs\17` 那条性能账：慢来自查询次数多）。
+ * ⚠️ 只取需要的列（`select`）：卷页可能有几十道题。
+ */
+export async function listVolumeReviewMarks(
+    userId: string,
+    volumeId: string,
+    errorItemIds: readonly string[],
+): Promise<VolumeReviewMark[]> {
+    if (!volumeId || !errorItemIds.length) return [];
+
+    const rows = await prisma.reviewEvent.findMany({
+        where: { userId, volumeId, errorItemId: { in: [...errorItemIds] } },
+        orderBy: [{ occurredOn: 'asc' }, { createdAt: 'asc' }],
+        select: { id: true, errorItemId: true, outcome: true },
+    });
+
+    const byItem = new Map<string, VolumeReviewMark>();
+    for (const r of rows) {
+        if (!isReviewOutcome(r.outcome)) continue; // 脏数据跳过（宁可画灰圈，也不猜）
+        const prev = byItem.get(r.errorItemId);
+        // 正序读进来 ⇒ 每次覆盖就是"最近一条"
+        byItem.set(r.errorItemId, {
+            errorItemId: r.errorItemId,
+            outcome: r.outcome,
+            eventId: r.id,
+            rounds: (prev?.rounds ?? 0) + 1,
+        });
+    }
+    return [...byItem.values()];
+}
