@@ -46,11 +46,27 @@ export async function GET(req: Request) {
         const masteryRate = totalErrors > 0 ? ((masteredCount / totalErrors) * 100).toFixed(1) : 0;
 
         // 4. Subject Distribution - Get error items grouped by subject
+        /**
+         * ⚠️⚠️【2026-10-16 真真】**性能修复：这里原来没写 `select`，而且不分页。**
+         *
+         * 与错题本列表同一个病根（见 `lib/constants/error-item-list-fields.ts` 文件头）：
+         * 不写 select ⇒ 返回 `ErrorItem` 全部标量字段，**含 `originalImageUrl`（题图 base64，单张最大约 1.37MB）**。
+         *
+         * ⚠️ 这一处**比错题本列表更危险** —— 它 `where` 只按 `userId`、**没有分页**，
+         *    取的是**全部错题**。按 300 道题估：300 × 1.37MB ≈ **410MB**；题再多就是 GB 级。
+         *
+         * ⚠️ 而它**只用到 `item.notebook.subject` 一个字段**（下面 forEach 里就这一处）
+         *    ⇒ 图是**纯浪费**。
+         *
+         * 📌 谁在调：`components/wrong-answer-stats.tsx` ⇒ **首页与内阁页都用它**
+         *    （`app/cabinet/page.tsx` 的文件头写着"统计总览复用主页统计中心"）。
+         */
         const errorItemsWithSubject = await prisma.errorItem.findMany({
             where: { userId, deletedAt: null },
-            include: {
-                notebook: true
-            }
+            select: {
+                id: true,
+                notebook: { select: { subject: true } },
+            },
         });
 
         const subjectMap = new Map<string, number>();

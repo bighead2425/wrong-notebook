@@ -50,6 +50,16 @@ export async function GET(
         if (!notebook) return notFound("Notebook not found");
         if (notebook.userId !== user.id) return forbidden("Not authorized");
 
+        /**
+         * ⚠️⚠️【2026-10-16 真真】**性能修复：这里原来没写 `select`。**
+         *
+         * 同一个病根（见 `lib/constants/error-item-list-fields.ts` 文件头）：
+         * 不写 select ⇒ 返回 `ErrorItem` 全部标量字段，**含 `originalImageUrl`（题图 base64）**。
+         * 而本接口**没有分页**（取这本的全部未掌握题）⇒ 一本 300 题就是约 **410MB**。
+         *
+         * ⚠️ 下面 `items.map()` 只用到 `tags.name` / `mistakeAnalysis` / `analysis` / `source` / `id`
+         *    ⇒ 按**实际用到的**给 select，图一个字节都不读。
+         */
         const items = await prisma.errorItem.findMany({
             where: {
                 notebookId: id,
@@ -57,7 +67,13 @@ export async function GET(
                 deletedAt: null,
                 masteryLevel: { lt: 2 },
             },
-            include: { tags: true },
+            select: {
+                id: true,
+                source: true,
+                analysis: true,
+                mistakeAnalysis: true,
+                tags: { select: { name: true } },
+            },
             orderBy: { createdAt: "asc" },
         });
 

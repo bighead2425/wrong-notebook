@@ -8,6 +8,8 @@ import { createLogger } from "@/lib/logger";
 import { formatInsightCode, nextInsightSeq } from "@/lib/insight-code";
 import { writePhoto } from "@/lib/insight-photo";
 import { decodeCursor, encodeCursor } from "@/lib/list-cursor";
+// 【2026-10-16】关联题的字段清单（唯一出处；默认不含题图）—— 见该文件头的性能说明
+import { LIST_ITEM_SCALARS } from "@/lib/constants/error-item-list-fields";
 
 const logger = createLogger('api:insights');
 
@@ -249,10 +251,33 @@ async function loadQuestions(userId: string, nos: string[]) {
     if (uniq.length === 0) return {} as Record<string, unknown>;
     const rows = await prisma.errorItem.findMany({
         where: { userId, source: { in: uniq } },
-        include: {
+        /**
+         * ⚠️⚠️【2026-10-16 真真】**性能修复：这里原来也没写 `select`。**
+         *
+         * 与错题本列表**同一个病根**（见 `lib/constants/error-item-list-fields.ts` 文件头）：
+         * 不写 `select` ⇒ 返回 `ErrorItem` 的全部标量字段，**含 `originalImageUrl`（题图 base64）**。
+         *
+         * 而这一处的量比错题本还大 —— `INSIGHT_PAGE_SIZE = 50`，
+         * 这一页 50 条日积月累关联的题**全部**被查回来：
+         *
+         * | 实测（真 Prisma + 真 SQLite，50 题 × 每张 400KB 图） | |
+         * |---|---|
+         * | 响应体 | **26.12 MB** |
+         * | 查关联题 | **751 ms**（图全带回来了） |
+         * | 序列化 | 346 ms |
+         * | 纯传输（NAS 3.6MB/s） | **7.3 秒** |
+         *
+         * ⚠️ **而页面真正只用「当前选中那一条」的题**（`insights/page.tsx` 里
+         *    只有 `questions[current.errorItemNo]` 这一处读它）—— 那一道题才 **0.4 KB**。
+         *    右栏渲染的是 `ErrorItemCard`，**它一个图片字段都不用**（组件里没有 `<img>`）。
+         *
+         * ⇒ 与错题本列表用**同一份字段清单**（`LIST_ITEM_SCALARS`），**同样不带题图**。
+         */
+        select: {
+            ...Object.fromEntries(LIST_ITEM_SCALARS.map((f) => [f, true])),
             notebook: { select: { id: true, displayName: true, subject: true } },
             tags: true,
-        },
+        } as Prisma.ErrorItemSelect,
     });
     const map: Record<string, unknown> = {};
     for (const r of rows) {
