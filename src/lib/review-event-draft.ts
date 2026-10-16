@@ -9,7 +9,8 @@
  * ⇒ 把**纯的那一半**（形状 + 构造）放这里，服务端那半留在 `review-events.ts`。
  *
  * ⚠️ **两边必须一致**：服务端 `parseReviewEventInput()` 只认
- *    `{ occurredOn: 'YYYY-MM-DD', outcome: 'right'|'wrong', plannedIndex?: number, volumeId?: string }`。
+ *    `{ occurredOn: 'YYYY-MM-DD', outcome: 'right'|'wrong', plannedIndex?: number,
+ *       volumeId?: string, source?: string, op?: 'add'|'update'|'delete', eventId?: string }`。
  *    本模块有单测钉住"形状与字段名"，改一边必须改另一边。
  *
  * ══════════════════════════════════════════════════════════════════
@@ -34,6 +35,7 @@
 
 import { dayKey } from './calendar-grid';
 import type { ReviewOutcome } from './review-outcomes';
+import type { ReviewEventSource } from './review-event-source';
 
 /** 与 `lib/review-events.ts` 的 `ReviewEventInput` **同形**（改一处必须改另一处，有单测钉） */
 export interface ReviewEventDraft {
@@ -44,18 +46,23 @@ export interface ReviewEventDraft {
     plannedIndex: number | null;
     /** 从哪张卷标回来的（可空） */
     volumeId?: string | null;
+    /** 来源（见 `lib/review-event-source.ts`）—— 不传时服务端按"单题扫描录入"兜 */
+    source?: ReviewEventSource;
 }
 
 /**
  * 拼一条复习事件。
  *
  * @param plannedIndex 计划内第几格（0 起）；传 `'last'` 或 `null` = **计划外**
+ * @param source       来自哪个入口（**必须由调用方按"自己是谁"给** ——
+ *                     判据是"从哪个入口进来"，不能靠码内容猜，见 `review-event-source.ts`）
  * @param today        只给测试用；默认取当前本地时间
  */
 export function reviewEventDraft(opts: {
     outcome: ReviewOutcome;
     plannedIndex: number | 'last' | null;
     volumeId?: string | null;
+    source?: ReviewEventSource;
     today?: Date;
 }): ReviewEventDraft {
     const draft: ReviewEventDraft = {
@@ -67,5 +74,30 @@ export function reviewEventDraft(opts: {
                 : null,
     };
     if (opts.volumeId) draft.volumeId = opts.volumeId;
+    if (opts.source) draft.source = opts.source;
     return draft;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 【2026-10-16 如如】改 / 删某一条（`docs\18` §4.2：详情页表格里点一下那一行）
+ *
+ * 形状与服务端 `parseReviewEventInput()` 对齐：`update` 要 `eventId + outcome`，
+ * `delete` 只要 `eventId`。
+ * ⚠️ **不带日期、来源、卷号** —— 那是"这一次复习"的事实；改主意只是改正
+ *    "结果记错了"，不是把这次复习挪到别的时间（服务端也确实不看）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 改某一条流水的**结果** */
+export interface ReviewEventPatchDraft {
+    op: 'update' | 'delete';
+    eventId: string;
+    outcome?: ReviewOutcome;
+}
+
+export function reviewEventUpdateDraft(eventId: string, outcome: ReviewOutcome): ReviewEventPatchDraft {
+    return { op: 'update', eventId, outcome };
+}
+
+export function reviewEventDeleteDraft(eventId: string): ReviewEventPatchDraft {
+    return { op: 'delete', eventId };
 }

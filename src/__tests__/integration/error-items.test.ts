@@ -73,6 +73,14 @@ const mocks = vi.hoisted(() => ({
         },
         expires: '2025-12-31',
     },
+    /**
+     * 【2026-10-16 补】卷（`ReviewVolume`）—— 详情页那张表的"来源"列要显示卷号
+     * （`复练纸 RE20261016001`）。而 `ReviewEvent.volumeId` 是**普通字符串**、不是关系，
+     * 所以服务端是**另查一次**卷号（不是 join）。
+     */
+    mockPrismaReviewVolume: {
+        findMany: vi.fn(() => Promise.resolve([])),
+    },
 }));
 
 // Mock Prisma client
@@ -85,6 +93,7 @@ vi.mock('@/lib/prisma', () => ({
         stateChangeLog: mocks.mockPrismaStateChangeLog,
         dailySettle: mocks.mockPrismaDailySettle,
         reviewEvent: mocks.mockPrismaReviewEvent,
+        reviewVolume: mocks.mockPrismaReviewVolume,
     },
 }));
 
@@ -109,6 +118,8 @@ import { GET as GET_LIST } from '@/app/api/error-items/list/route';
 import { PATCH as PATCH_NOTES } from '@/app/api/error-items/[id]/notes/route';
 import { PATCH as PATCH_MASTERY } from '@/app/api/error-items/[id]/mastery/route';
 import { DELETE as DELETE_ITEM } from '@/app/api/error-items/[id]/delete/route';
+/** 【2026-10-16 如如】详情页「复习结果」那张表的数据源（只读） */
+import { GET as GET_REVIEW_EVENTS } from '@/app/api/error-items/[id]/review-events/route';
 import { getServerSession } from 'next-auth';
 /** 【2026-10-16 如如】用**前端那个构造器**拼事件 ⇒ 顺手把"两端形状一致"也验了 */
 import { reviewEventDraft } from '@/lib/review-event-draft';
@@ -771,6 +782,79 @@ describe('/api/error-items', () => {
             });
 
             expect(res.status).toBe(200);
+        });
+    });
+
+    describe('GET /api/error-items/[id]/review-events (详情页那张表要读的流水)', () => {
+        const call = async (id = 'error-item-1') =>
+            GET_REVIEW_EVENTS(new Request(`http://localhost/api/error-items/${id}/review-events`), {
+                params: Promise.resolve({ id }),
+            });
+
+        it('没登录 ⇒ 401', async () => {
+            vi.mocked(getServerSession).mockResolvedValueOnce(null);
+            const res = await call();
+            expect(res.status).toBe(401);
+        });
+
+        it('别人的题 ⇒ 403（不许读别人的复习流水）', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({ userId: 'someone-else' });
+            const res = await call();
+            expect(res.status).toBe(403);
+        });
+
+        it('题不存在 ⇒ 404', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(null);
+            const res = await call();
+            expect(res.status).toBe(404);
+        });
+
+        it('★★ 一次查完 + **正序**返回 + 带卷号（`take: 4` 取的是最近 4 条）', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({ userId: 'user-123' });
+            // 真实查询是 desc 取 N 条再反转 ⇒ 这里也给 desc 顺序的一组
+            mocks.mockPrismaReviewEvent.findMany.mockResolvedValue([
+                { id: 'e3', occurredOn: '2026-10-16', outcome: 'right', source: 'review_paper', volumeId: 'vol-1', createdAt: new Date('2026-10-16T13:30:00Z') },
+                { id: 'e2', occurredOn: '2026-10-12', outcome: 'wrong', source: 'single_scan', volumeId: null, createdAt: new Date('2026-10-12T11:02:00Z') },
+                { id: 'e1', occurredOn: '2026-10-10', outcome: 'right', source: 'legacy', volumeId: null, createdAt: new Date('2026-10-10T02:00:00Z') },
+            ]);
+            mocks.mockPrismaReviewVolume.findMany.mockResolvedValue([
+                { id: 'vol-1', volumeNo: 'RE20261016001' },
+            ]);
+
+            const res = await call();
+            expect(res.status).toBe(200);
+            const body = (await res.json()) as { events: Array<Record<string, unknown>> };
+
+            // ① 正序：最早的在前，末尾 = 最近一次
+            expect(body.events.map((e) => e.id)).toEqual(['e1', 'e2', 'e3']);
+            // ② 卷号查得到（`volumeId` 是普通字符串，卷号是**另查一次**拼上的）
+            expect(body.events[2].volumeNo).toBe('RE20261016001');
+            expect(body.events[1].volumeNo).toBeNull();
+            // ③ 老数据补的那条（legacy）也在 —— 界面自己决定"不显示它的日期"
+            expect(body.events[0].source).toBe('legacy');
+
+            // ④ 只查一次、且只取 4 条、且**显式 select**（不许拉全表）
+            expect(mocks.mockPrismaReviewEvent.findMany).toHaveBeenCalledTimes(1);
+            const arg = mocks.mockPrismaReviewEvent.findMany.mock.calls[0][0] as {
+                take?: number;
+                select?: Record<string, unknown>;
+                orderBy?: unknown;
+            };
+            expect(arg.take).toBe(4);
+            expect(arg.select).toBeTruthy();
+            // ⑤ 卷号**一次查完**（`in: [...]`），不许每行查一遍（`docs\17` 那条性能账）
+            expect(mocks.mockPrismaReviewVolume.findMany).toHaveBeenCalledTimes(1);
+        });
+
+        it('没有流水 ⇒ 空数组（界面那一行写"无"，不是报错）', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({ userId: 'user-123' });
+            mocks.mockPrismaReviewEvent.findMany.mockResolvedValue([]);
+
+            const res = await call();
+            expect(res.status).toBe(200);
+            expect(await res.json()).toEqual({ events: [] });
+            // 一条流水都没有 ⇒ 不必去查卷
+            expect(mocks.mockPrismaReviewVolume.findMany).not.toHaveBeenCalled();
         });
     });
 

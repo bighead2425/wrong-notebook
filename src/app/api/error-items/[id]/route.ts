@@ -272,7 +272,7 @@ export async function PUT(
                     });
 
                     // ② 写 / 改 / 删那一条
-                    if (ev.op === 'update' && ev.eventId) {
+                    if (ev.op === 'update' && ev.eventId && ev.outcome) {
                         await updateReviewEvent({
                             userId: user.id,
                             errorItemId: id,
@@ -281,7 +281,7 @@ export async function PUT(
                         });
                     } else if (ev.op === 'delete' && ev.eventId) {
                         await deleteReviewEvent({ userId: user.id, errorItemId: id, eventId: ev.eventId });
-                    } else {
+                    } else if (ev.outcome && ev.occurredOn) {
                         await recordReviewEvent({
                             userId: user.id,
                             errorItemId: id,

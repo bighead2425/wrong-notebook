@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,9 +37,18 @@ import { attentionFullName, attentionLevelOf } from "@/lib/attention-level";
 // 【2026-10-15】判"预掌握"（等级1 + 倒数0）—— 判据的唯一出处
 import { isPreMastered } from "@/lib/level-settle";
 import { GRADE_SEMESTER_OPTIONS as GRADE_SEMESTER_OPTIONS_SHARED } from "@/lib/grade-semester-options";
-import { ReviewOutcomeEditor } from "@/components/review-outcome-editor";
-import { serializeReviewOutcomes, type ReviewOutcomes } from "@/lib/review-outcomes";
-import type { ReviewEventDraft } from "@/lib/review-event-draft";
+// 【2026-10-16 如如】「复习结果」换成**表格**（流水 = 一条一次、带日期）——
+// 出处：`docs\18` §4.2。旧的 `ReviewOutcomeEditor`（四行计划格 + 最近一次）已删：
+// 计划第几格这件事**只在纸上有意义**（纸背面印着四个日期框），界面上按格子显示会跟流水错位。
+import { ReviewOutcomeTable, type ReviewEventRowView } from "@/components/review-outcome-table";
+import type { ReviewOutcome } from "@/lib/review-outcomes";
+import {
+    reviewEventDeleteDraft,
+    reviewEventDraft,
+    reviewEventUpdateDraft,
+    type ReviewEventDraft,
+    type ReviewEventPatchDraft,
+} from "@/lib/review-event-draft";
 import { dayKey } from "@/lib/calendar-grid";
 import { ErrorItemCard } from "@/components/error-item-card";
 // 【2026-10-10】题间从属关系：颜色/说法只在 lib/item-link.ts 定一处；视图类型也在那儿（纯类型，不会把服务端代码带进来）
@@ -241,6 +250,14 @@ export default function ErrorDetailPage() {
     const [isReanalyzing, setIsReanalyzing] = useState(false);
 
     /**
+     * 【2026-10-16 如如】「复习结果」那张表格要读的**流水**（最多 4 条，正序）。
+     * ⚠️ 单独一个接口、**不塞进主 GET** —— 详情页本来就慢（`docs\17`），
+     *    而这块只在"打开页面"和"改完一条"时需要（见 `fetchReviewEvents`）。
+     */
+    const [reviewEvents, setReviewEvents] = useState<ReviewEventRowView[]>([]);
+    const [reviewBusy, setReviewBusy] = useState(false);
+
+    /**
      * 【2026-10-10】题间从属关系（主题 / 附题）：
      *   · `linkNote` —— 服务端在做完"取关/升变/恢复"后回的那句话（显示在关联区里，**不弹窗**）
      *   · `linkBusy` —— 哪个动作正在跑（防止连点两次）
@@ -301,8 +318,28 @@ export default function ErrorDetailPage() {
         }
     };
 
-    /* ================= 【2026-10-10】题间从属关系：取关 / 升变 / 恢复 ================= */
+    /**
+     * 【2026-10-16 如如】拉这道题的**复习流水**（表格用；最多 4 条、正序）。
+     *
+     * ⚠️ 失败**不弹窗**：它只是卡片里的一小块，够不上打断他（与"失败一律提示"那条的边界是
+     *    **"这次操作有没有意义"** —— 拉一块只读数据失败，弹窗只会让他莫名紧张）。
+     */
+    const fetchReviewEvents = useCallback(async (id: string) => {
+        try {
+            const res = await apiClient.get<{ events: ReviewEventRowView[] }>(
+                `/api/error-items/${id}/review-events`,
+            );
+            setReviewEvents(res?.events ?? []);
+        } catch (error) {
+            console.error(error);
+        }
+    }, []);
 
+    useEffect(() => {
+        if (item?.id) void fetchReviewEvents(item.id);
+    }, [item?.id, fetchReviewEvents]);
+
+    /* ================= 【2026-10-10】题间从属关系：取关 / 升变 / 恢复 ================= */
     /**
      * 三个动作打的是**同一个接口**（`POST /api/error-items/link`）——
      * 规则、写库、留痕全在服务端那一处（见 `lib/item-link.ts`），界面只负责"点了哪个"。
@@ -544,45 +581,54 @@ export default function ErrorDetailPage() {
     };
 
     /**
-     * 【2026-09-30】复习结果四圆点：改一格即存。
+     * 【2026-10-16 如如】复习结果的**三次写入** —— 全部发 `reviewEvent`（唯一写入口）。
      *
-     * ⚠️ 与 `patchMetadata` **故意不同**：这里**不重新拉整条 item**，只做乐观更新。
-     *    原因：重新拉 item 会触发上面那个"初始化输入状态"的 effect 之外的连带刷新，
-     *    而四圆点是高频连点的地方（点三下 = 三次请求），每次重拉整页会闪。
-     *    失败时再拉真实数据回正（**失败提示一律保留**）。
+     * 出处：`docs\18` §4.2（表格里点一下改/删）+ §六（**逐条即时**，
+     * 不再有"离开页面时统一落定"那回事）。
+     *
+     * ⚠️ 写完**只重拉这一小块流水**，不重拉整条题：这里正是连点的地方，重拉会让整页闪。
+     *    但服务端**顺带改掉的**那三个字段（缓存 / 等级 / 倒数）要就地补上，
+     *    否则顶栏的"还剩几天"和下面那句状态会显示成旧值。
+     * ⚠️ 失败时拉真实数据回正（**失败提示一律保留** —— 这条项目里一直有效）。
      */
-    const saveReviewOutcomes = async (next: ReviewOutcomes, event: ReviewEventDraft | null) => {
+    const putReviewEvent = async (body: ReviewEventDraft | ReviewEventPatchDraft) => {
         if (!item) return;
-        const serialized = serializeReviewOutcomes(next);
-        setItem({ ...item, reviewOutcomes: serialized });
+        setReviewBusy(true);
         try {
-            const updated = await apiClient.put<{ attention?: number }>(`/api/error-items/${item.id}`, {
-                reviewOutcomes: serialized,
-                /**
-                 * 【2026-10-16 如如】**补上复习流水**（`ReviewEvent`）。
-                 *
-                 * 背景：这张表 2026-10-14 就建好了、API 也接得住，但**前端一处都没传**
-                 * ⇒ 表永远是空的，而且**完全静默**（界面正常、不报错、日志也没有）。
-                 * 出处：`HANDOFF.md` §③-11、`docs\09` 第七节自己警告过的"4 个写入点漏改 ⇒ 数据静默缺失"。
-                 *
-                 * `event` 由 `ReviewOutcomeEditor` 在**点击那一刻**拼好（含"哪一格、对还是错"）——
-                 * 不能在这里按 `reviewOutcomes` 前后差分推（无时间戳 ⇒ 认不出"三格满了之后又对一次"）。
-                 * 点成空圈 ⇒ `event === null` ⇒ **不传**（撤销不是一次复习）。
-                 *
-                 * ⚠️ 等级那件事**已经与这里无关**了：等级已完全收回系统管理（`docs\14`），
-                 *    所以下面接 `attention` 只为"列表/卡片可能正开着同一道题"时保持一致。
-                 */
-                ...(event ? { reviewEvent: event } : {}),
+            const updated = await apiClient.put<Partial<ErrorItemDetail>>(`/api/error-items/${item.id}`, {
+                reviewEvent: body,
             });
-            if (typeof updated?.attention === 'number') {
-                setItem((prev) => (prev ? { ...prev, attention: updated.attention as number } : prev));
-            }
+            setItem((prev) =>
+                prev
+                    ? {
+                          ...prev,
+                          reviewOutcomes: updated.reviewOutcomes ?? prev.reviewOutcomes,
+                          attention: updated.attention ?? prev.attention,
+                          levelCountdown: updated.levelCountdown ?? prev.levelCountdown,
+                          masteryLevel: updated.masteryLevel ?? prev.masteryLevel,
+                      }
+                    : prev,
+            );
+            await fetchReviewEvents(item.id);
         } catch (error) {
             console.error(error);
             alert(t.common?.messages?.updateFailed || 'Update failed');
             fetchItem(item.id);
+        } finally {
+            setReviewBusy(false);
         }
     };
+
+    /** 记一条（**时间 = 现在**、来源 = 本页录入） */
+    const recordReviewEvent = (outcome: ReviewOutcome) =>
+        putReviewEvent(reviewEventDraft({ outcome, plannedIndex: null, source: 'detail_page' }));
+
+    /** 改某一条的结果（日期、来源、卷号都不动） */
+    const changeReviewEvent = (eventId: string, outcome: ReviewOutcome) =>
+        putReviewEvent(reviewEventUpdateDraft(eventId, outcome));
+
+    /** 删某一条 */
+    const removeReviewEvent = (eventId: string) => putReviewEvent(reviewEventDeleteDraft(eventId));
 
     // ================= 日积月累（2026-10-01 接上，路径 1：从错题来） =================
 
@@ -1294,14 +1340,22 @@ export default function ErrorDetailPage() {
                                             等级已经挪到**顶栏右上角**（图标 + 还剩几天 + 字母名称），
                                             这里再留一份就是重复。 */}
 
-                                        {/* 【2026-09-30 他要求】把卡片上那**四个复习结果圆圈**纳进详情页，
-                                            摆在试题信息栏的最后（等级后面）。
-                                            前三行 = 录入日 +1 / +7 / +21 天（写具体日期），最后一行 = 最近一次情况。 */}
+                                        {/* 【2026-10-16 如如】「复习结果」= **一张表**
+                                            （时间 / 来源 / 结果，最多 4 行）——
+                                            出处：`docs\18` §4.2。旧的"四行计划格 + 最近一次"已删：
+                                            计划第几格**只在纸上有意义**（纸背面印着四个日期框），
+                                            界面上按格子显示会跟流水错位（表里 7 条、只有 4 个格子）。
+                                            已掌握的题**录不了**（冻结语义）⇒ 整个表格禁用。 */}
                                         <div className="pt-2 border-t space-y-2">
-                                            <ReviewOutcomeEditor
-                                                value={item.reviewOutcomes}
-                                                createdAt={item.createdAt}
-                                                onChange={saveReviewOutcomes}
+                                            <ReviewOutcomeTable
+                                                events={reviewEvents}
+                                                source="detail_page"
+                                                language={language === "zh" ? "zh" : "en"}
+                                                busy={reviewBusy}
+                                                disabled={isMasteredNow}
+                                                onRecord={recordReviewEvent}
+                                                onChange={changeReviewEvent}
+                                                onDelete={removeReviewEvent}
                                                 L={L}
                                             />
                                             {/* 【2026-10-13 他拍板的设计】**这道题现在该怎么处置** ——

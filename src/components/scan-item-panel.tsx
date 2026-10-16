@@ -37,12 +37,21 @@ import { apiClient } from "@/lib/api-client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import type { ErrorItem } from "@/types/api";
 import { ErrorItemCard } from "@/components/error-item-card";
-import { ReviewOutcomeEditor } from "@/components/review-outcome-editor";
+// 【2026-10-16 如如】「复习结果」换成**表格**（与详情页同一份组件）——出处 `docs\18` §4.2。
+// ⚠️ 这一屏既服务"扫深挖纸"（来源 = 单题扫描录入），也是"从卷页点加号进来"的落点；
+//    两种情况来源都是 `single_scan`（判据是"从哪个入口进来"，不靠码内容猜）。
+import { ReviewOutcomeTable, type ReviewEventRowView } from "@/components/review-outcome-table";
+import type { ReviewOutcome } from "@/lib/review-outcomes";
+import {
+    reviewEventDeleteDraft,
+    reviewEventDraft,
+    reviewEventUpdateDraft,
+    type ReviewEventDraft,
+    type ReviewEventPatchDraft,
+} from "@/lib/review-event-draft";
 import { cycleManageType } from "@/lib/manage-type";
 // 【2026-10-15】掌握开关点一下变成什么（唯一实现在 level-settle.ts）
 import { nextMasteryLevel } from "@/lib/level-settle";
-import { serializeReviewOutcomes, type ReviewOutcomes } from "@/lib/review-outcomes";
-import type { ReviewEventDraft } from "@/lib/review-event-draft";
 
 export function ScanItemPanel({
     itemId,
@@ -73,6 +82,9 @@ export function ScanItemPanel({
 
     const [item, setItem] = useState<ErrorItem | null>(null);
     const [loading, setLoading] = useState(true);
+    /** 【2026-10-16 如如】「复习结果」表格要读的流水（最多 4 条，正序）+ 正在写 */
+    const [reviewEvents, setReviewEvents] = useState<ReviewEventRowView[]>([]);
+    const [reviewBusy, setReviewBusy] = useState(false);
 
     const fetchItem = useCallback(async () => {
         setLoading(true);
@@ -86,9 +98,25 @@ export function ScanItemPanel({
         }
     }, [itemId]);
 
+    /** 拉流水（失败**不弹窗**：它只是卡里的一小块只读数据） */
+    const fetchReviewEvents = useCallback(async () => {
+        try {
+            const res = await apiClient.get<{ events: ReviewEventRowView[] }>(
+                `/api/error-items/${itemId}/review-events`,
+            );
+            setReviewEvents(res?.events ?? []);
+        } catch (error) {
+            console.error(error);
+        }
+    }, [itemId]);
+
     useEffect(() => {
-        fetchItem();
+        void fetchItem();
     }, [fetchItem]);
+
+    useEffect(() => {
+        void fetchReviewEvents();
+    }, [fetchReviewEvents]);
 
     /* ===== 【2026-10-10】关联别的题（把题 B 挂到当前这道题下面）=====
        【2026-10-12 他去掉了"搜题式关联"】
@@ -116,26 +144,49 @@ export function ScanItemPanel({
         }
     };
 
-    const saveOutcomes = async (next: ReviewOutcomes, event: ReviewEventDraft | null) => {
+    /**
+     * 【2026-10-16 如如】复习结果的**三次写入** —— 全发 `reviewEvent`（唯一写入口）。
+     *
+     * 出处：`docs\18` §4.2 / §六。来源一律 `single_scan`：
+     *   这一屏既服务"扫深挖纸"，也是"从卷页点加号进来"的落点 —— 两者都归"单题扫描录入"
+     *   （判据是**从哪个入口进来**，不能靠二维码内容猜，见 `lib/review-event-source.ts`）。
+     *
+     * ⚠️ 写完只重拉流水这一小块；服务端顺带改掉的等级/倒数就地补上（否则顶栏显示旧值）。
+     */
+    const putReviewEvent = async (body: ReviewEventDraft | ReviewEventPatchDraft) => {
         if (!item) return;
-        const serialized = serializeReviewOutcomes(next);
-        setItem({ ...item, reviewOutcomes: serialized });
+        setReviewBusy(true);
         try {
-            const updated = await apiClient.put<{ attention?: number }>(`/api/error-items/${item.id}`, {
-                reviewOutcomes: serialized,
-                /** 【2026-10-16 如如】**补上复习流水** —— 见 `lib/review-event-draft.ts` 文件头
-                 *  （这张表此前没人写：API 接得住、前端一处都没传 ⇒ 空表 + 完全静默）。 */
-                ...(event ? { reviewEvent: event } : {}),
+            const updated = await apiClient.put<Partial<ErrorItem>>(`/api/error-items/${item.id}`, {
+                reviewEvent: body,
             });
-            if (typeof updated?.attention === 'number') {
-                setItem((prev) => (prev ? { ...prev, attention: updated.attention as number } : prev));
-            }
+            setItem((prev) =>
+                prev
+                    ? {
+                          ...prev,
+                          reviewOutcomes: updated.reviewOutcomes ?? prev.reviewOutcomes,
+                          attention: updated.attention ?? prev.attention,
+                          masteryLevel: updated.masteryLevel ?? prev.masteryLevel,
+                      }
+                    : prev,
+            );
+            await fetchReviewEvents();
         } catch (error) {
             console.error(error);
             alert(t.common?.messages?.updateFailed || "Update failed");
             fetchItem();
+        } finally {
+            setReviewBusy(false);
         }
     };
+
+    const recordReviewEvent = (outcome: ReviewOutcome) =>
+        putReviewEvent(reviewEventDraft({ outcome, plannedIndex: null, source: 'single_scan' }));
+
+    const changeReviewEvent = (eventId: string, outcome: ReviewOutcome) =>
+        putReviewEvent(reviewEventUpdateDraft(eventId, outcome));
+
+    const removeReviewEvent = (eventId: string) => putReviewEvent(reviewEventDeleteDraft(eventId));
 
     const trash = async () => {
         if (!item) return;
@@ -244,12 +295,19 @@ export function ScanItemPanel({
                 />
             </div>
 
-            {/* 错题详情页里"复习结果"那一栏的四行 —— 同一份编辑器 */}
+            {/* 复习结果：**表格**（与错题详情页同一份组件）——
+                他 2026-10-16 的改造：不再"每行三个圈"，改成"一条一次、带日期"的流水。
+                已掌握的题**录不了** ⇒ 整块禁用。 */}
             <div className="rounded-lg border bg-background p-3">
-                <ReviewOutcomeEditor
-                    value={item.reviewOutcomes}
-                    createdAt={item.createdAt}
-                    onChange={saveOutcomes}
+                <ReviewOutcomeTable
+                    events={reviewEvents}
+                    source="single_scan"
+                    language={language === "zh" ? "zh" : "en"}
+                    busy={reviewBusy}
+                    disabled={Number(item.masteryLevel) >= 2}
+                    onRecord={recordReviewEvent}
+                    onChange={changeReviewEvent}
+                    onDelete={removeReviewEvent}
                     L={L}
                 />
             </div>

@@ -51,37 +51,57 @@ export type ReviewEventOp = 'add' | 'update' | 'delete';
 
 /** 一次复习的输入（写入侧显式声明的那份数据） */
 export interface ReviewEventInput {
-    /** 这一天的日键（`YYYY-MM-DD`）—— **本地时区**，由客户端算好 */
-    occurredOn: string;
-    outcome: ReviewOutcome;
-    /** 计划内第几次（0/1/2/3）；`null` 或不传 = **计划外**的额外复习 */
-    plannedIndex?: number | null;
-    /** 从哪张卷标回来的（可空） */
-    volumeId?: string | null;
-    /** 来源（见 `lib/review-event-source.ts`）—— 缺省按 `single_scan` 处理 */
-    source?: string | null;
     /** **动作**：新增 / 改某一条 / 删某一条（缺省 `add`） */
-    op?: ReviewEventOp;
-    /** `op = 'update' | 'delete'` 时必须给：要动哪一条 */
-    eventId?: string | null;
+    op: ReviewEventOp;
+    /** 这一天的日键（`YYYY-MM-DD`）—— **本地时区**，由客户端算好；`op = 'add'` 时必有 */
+    occurredOn: string;
+    /** 结果；`op = 'delete'` 时为 `null`（删一条不需要结果） */
+    outcome: ReviewOutcome | null;
+    /** 计划内第几次（0/1/2/3）；`null` = **计划外**的额外复习 */
+    plannedIndex: number | null;
+    /** 从哪张卷标回来的（可空） */
+    volumeId: string | null;
+    /** 来源（见 `lib/review-event-source.ts`）—— 缺省按 `single_scan` 处理 */
+    source: string | null;
+    /** `op = 'update' | 'delete'` 时必有：要动哪一条 */
+    eventId: string | null;
 }
 
 /** 日键格式：`YYYY-MM-DD`（只认形状，不做日历校验 —— 形状不对就当没传） */
 const DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * 校验外部传进来的 `reviewEvent`。
+ * 校验外面传进来的 `reviewEvent`。
  *
  * 形状不对就返回 `null` ⇒ 调用方**当没传**处理。
  * 与项目里 `cropRegions` / `reviewOutcomes` 同一条规矩：
  * **不因为一个可选字段形状不对就拒掉整条更新**。
+ *
+ * ── 三个动作各自要求什么（`docs\18` §4.2 表格里点一下改/删）──────────────
+ *   · `add`（缺省）：**日期 + 结果**必须有
+ *   · `update`：**`eventId` + 结果**必须有（日期、来源、卷号都不动 —— 改主意只是
+ *     改正"结果记错了"，不是把这次复习挪到别的时间）
+ *   · `delete`：只要 `eventId`
+ * ⇒ 所以"日期"这条校验**只对 `add` 生效**，别对改/删也要求 —— 那会逼客户端
+ *   把整行数据再回传一遍（回传了服务端也不看，纯属骗人）。
  */
 export function parseReviewEventInput(value: unknown): ReviewEventInput | null {
     if (!value || typeof value !== 'object') return null;
     const o = value as Record<string, unknown>;
 
-    if (typeof o.occurredOn !== 'string' || !DAY_KEY_RE.test(o.occurredOn)) return null;
-    if (!isReviewOutcome(o.outcome)) return null;
+    /**
+     * ⚠️ `op` 只认三个字面量，别的一律当 `add` —— 这样老调用方（只传 occurredOn/outcome）
+     *    一个字都不用改就继续能用 ✓
+     */
+    const op: ReviewEventOp = o.op === 'update' || o.op === 'delete' ? o.op : 'add';
+    const eventId = typeof o.eventId === 'string' && o.eventId.trim() ? o.eventId.trim() : null;
+    const source = typeof o.source === 'string' && o.source.trim() ? o.source.trim() : null;
+    const outcome = isReviewOutcome(o.outcome) ? o.outcome : null;
+    const occurredOn = typeof o.occurredOn === 'string' && DAY_KEY_RE.test(o.occurredOn) ? o.occurredOn : '';
+
+    if (op === 'add' && (!occurredOn || !outcome)) return null;
+    if (op === 'update' && (!eventId || !outcome)) return null;
+    if (op === 'delete' && !eventId) return null;
 
     const plannedIndex =
         typeof o.plannedIndex === 'number' && Number.isInteger(o.plannedIndex) && o.plannedIndex >= 0
@@ -90,16 +110,7 @@ export function parseReviewEventInput(value: unknown): ReviewEventInput | null {
 
     const volumeId = typeof o.volumeId === 'string' && o.volumeId.trim() ? o.volumeId : null;
 
-    /**
-     * 【2026-10-16】**动作**与**来源**。
-     * ⚠️ `op` 只认三个字面量，别的一律当 `add` —— 这样老调用方（只传 occurredOn/outcome）
-     *    一个字都不用改就继续能用 ✓
-     */
-    const op: ReviewEventOp = o.op === 'update' || o.op === 'delete' ? o.op : 'add';
-    const eventId = typeof o.eventId === 'string' && o.eventId.trim() ? o.eventId.trim() : null;
-    const source = typeof o.source === 'string' && o.source.trim() ? o.source.trim() : null;
-
-    return { occurredOn: o.occurredOn, outcome: o.outcome, plannedIndex, volumeId, source, op, eventId };
+    return { op, occurredOn, outcome, plannedIndex, volumeId, source, eventId };
 }
 
 /** 记一条复习流水 —— **唯一写入口** */
@@ -263,4 +274,64 @@ export function rightStreakOf(events: readonly { outcome: string }[]): number {
 /** 最后一次复习的日期（`YYYY-MM-DD`）；没有事件 ⇒ `null` */
 export function lastReviewDay(events: readonly { occurredOn: string }[]): string | null {
     return events.length ? events[events.length - 1].occurredOn : null;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 【2026-10-16 如如】详情页那张表要读的东西（时间 / 来源 / 结果）
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 详情页表格的一行（`docs\18` §4.2） */
+export interface ReviewEventRow {
+    id: string;
+    /** 客户端算好的日键（`YYYY-MM-DD`） */
+    occurredOn: string;
+    outcome: ReviewOutcome;
+    /** 来源（可能为空 —— 老数据与将来的新入口），界面按"单题扫描录入"兜 */
+    source: string | null;
+    volumeId: string | null;
+    /** 卷号（`RE20261016001`）—— 只有复练纸/模仿纸带卷时会填上 */
+    volumeNo: string | null;
+    /** 入库时刻（**审计用**；"哪天"看 `occurredOn`，别拿它当练习日） */
+    createdAt: Date;
+}
+
+/**
+ * 这道题**最近的 N 条**流水（**正序返回，末尾 = 最近一次**）+ 卷号。
+ *
+ * ⚠️ 这里是**读**，但照样放在本模块里（唯一碰流水表的地方）——
+ *    免得"读一处、写一处"，两边的排序口径迟早分叉。
+ * ⚠️ `volumeId` 在 schema 里是**普通字符串**（不是关系）⇒ 卷号要**另查一次**，
+ *    而且必须**一次查完**（`in: [...]`），不许每题/每行查一遍（`docs\17` 那条性能账）。
+ */
+export async function listReviewEventRows(
+    userId: string,
+    errorItemId: string,
+    limit: number,
+): Promise<ReviewEventRow[]> {
+    const rows = await prisma.reviewEvent.findMany({
+        where: { userId, errorItemId },
+        orderBy: [{ occurredOn: 'desc' }, { createdAt: 'desc' }],
+        take: limit,
+        select: { id: true, occurredOn: true, outcome: true, source: true, volumeId: true, createdAt: true },
+    });
+    const ordered = rows.reverse(); // 同 `listRecentEvents`：desc 取 N 条再反转
+
+    const volumeIds = [...new Set(ordered.map((r) => r.volumeId).filter((v): v is string => !!v))];
+    const volumes = volumeIds.length
+        ? await prisma.reviewVolume.findMany({
+              where: { id: { in: volumeIds } },
+              select: { id: true, volumeNo: true },
+          })
+        : [];
+    const noById = new Map(volumes.map((v) => [v.id, v.volumeNo]));
+
+    return ordered.map((r) => ({
+        id: r.id,
+        occurredOn: r.occurredOn,
+        outcome: isReviewOutcome(r.outcome) ? r.outcome : 'right',
+        source: r.source,
+        volumeId: r.volumeId,
+        volumeNo: r.volumeId ? (noById.get(r.volumeId) ?? null) : null,
+        createdAt: r.createdAt,
+    }));
 }
