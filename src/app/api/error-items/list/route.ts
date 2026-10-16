@@ -16,6 +16,8 @@ import {
 // 【2026-10-15】每日等级结算的惰性触发（见下方 GET 里的注释）
 import { maybeSettleDaily, normalizeTodayKey } from "@/lib/daily-settle";
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MIN_PAGE_SIZE } from "@/lib/constants/pagination";
+// 【2026-10-16】列表返回哪些标量字段（唯一出处；默认不含题图）—— 见该文件头的性能说明
+import { LIST_ITEM_SCALARS } from "@/lib/constants/error-item-list-fields";
 
 const logger = createLogger('api:error-items:list');
 
@@ -71,6 +73,15 @@ export async function GET(req: Request) {
      *    两者与 `levelFilter` 是**并列的 AND 条件**，正常界面只会传 `levelFilter`。
      */
     const levelFilterKeys = parseFilterKeys(searchParams.get("levelFilter"));
+
+    /**
+     * ⚠️【2026-10-16 新】**要不要带题图**（`originalImageUrl`）。
+     *
+     * 默认**不带** —— 题图是 base64、单张最大约 1.37MB，而列表的 6 个调用方里
+     * **只有打印预览需要它**（详见下面 `findMany` 上方那段完整说明）。
+     * ⇒ 只有 `?withImages=1` 时才把题图带回来。
+     */
+    const withImages = searchParams.get("withImages") === "1";
 
     // 分页参数
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
@@ -429,10 +440,42 @@ export async function GET(req: Request) {
         const errorItems = await prisma.errorItem.findMany({
             where: whereClause,
             orderBy: { createdAt: "desc" },
-            include: {
+            /**
+             * ⚠️⚠️【2026-10-16 真真】**性能修复：默认不返回题图。**
+             *
+             * ── 问题（空空实测）────────────────────────────────────────────
+             * 局域网打开"小五上数学大库"（**才 66 道题**），错题卡出来要 **10 秒**。
+             *
+             * ── 根因 ───────────────────────────────────────────────────
+             * 这里原来只有 `include`、**没有 `select`** ⇒ Prisma 返回 `ErrorItem`
+             * 的**全部 38 个标量字段**，其中 `originalImageUrl` 是**题图 base64**：
+             *   · 上传时 `compressImage(maxSizeMB = 1)`（`lib/image-utils.ts`）⇒ **单张最大约 1.37MB**；
+             *   · 默认每页 **18 条** ⇒ 一次请求最多 **≈ 24MB**；
+             *   · 打印预览与回收箱是 `pageSize=200` ⇒ 最多 **≈ 274MB**。
+             * NAS 实测吞吐约 3.6MB/s ⇒ 光传 24MB 就要好几秒，再叠加"弱 CPU 读库 + 序列化"⇒ 10 秒对得上。
+             *
+             * ── 实测（真 Prisma + 真 SQLite，18 题 × 每张 400KB 图）─────────
+             *   原样（带图）：响应 **9.40 MB**，查库 148ms，序列化 98ms
+             *   不读图      ：响应 **23.9 KB**，查库 **23ms**，序列化 1ms
+             *   ⇒ 响应体缩小 **400 倍**，且**连库都不用读那 9MB**。
+             *
+             * ⚠️ **为什么可以安全地不返回**：列表接口的 6 个调用方逐个查过
+             *    （`error-list` / `scan-volume-view` / `review-volumes` / `trash` / `print-preview` / 详情页 `mode=ids`），
+             *    **只有打印预览需要题图**（它要印题图）⇒ 它传 `?withImages=1`；
+             *    其余 5 个连 `originalImageUrl` 这个名字都没出现过。
+             *
+             * ⚠️ **不用 Prisma 的 `omit`** —— 实测本仓这个版本（5.22）**不支持**，
+             *    会直接报 `Unknown argument 'omit'`（要开 `omitApi` 预览标志才行）。
+             *    ⇒ 用显式 `select`；字段清单抽在 `lib/constants/error-item-list-fields.ts`，
+             *      并有 `list-fields-sync.test.ts` 拿 schema 逐字段比对（加字段漏改会红）。
+             */
+            select: {
+                ...Object.fromEntries(LIST_ITEM_SCALARS.map((f) => [f, true])),
+                // ⚠️ 题图**默认不给**；只有 `?withImages=1`（打印预览）才带回来
+                ...(withImages ? { originalImageUrl: true } : {}),
                 notebook: true,
                 tags: true,
-            },
+            } as Prisma.ErrorItemSelect,
             skip: (page - 1) * pageSize,
             take: pageSize,
         });

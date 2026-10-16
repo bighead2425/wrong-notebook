@@ -267,6 +267,15 @@ function PrintPreviewContent() {
         try {
             const params = new URLSearchParams(searchParams.toString());
             params.set("pageSize", String(PRINT_PREVIEW_PAGE_SIZE));
+            /**
+             * ⚠️【2026-10-16 真真】**打印预览是唯一需要题图的调用方** ⇒ 显式要。
+             *
+             * 列表接口从今天起**默认不返回 `originalImageUrl`**（题图 base64、单张最大约 1.37MB）——
+             * 因为另外 5 个调用方（错题卡列表 / 卷页 / 回收箱 / 详情页导航）**一个字段都不用**，
+             * 白传 20 多 MB 正是"打开错题本要 10 秒"的根因。
+             * 而这一屏要**印题图**（`components/print/question-bodies.tsx`）⇒ 必须显式要回来。
+             */
+            params.set("withImages", "1");
             const response = await apiClient.get<PaginatedResponse<ErrorItem>>(
                 `/api/error-items/list?${params.toString()}`,
             );
@@ -525,7 +534,8 @@ function PrintPreviewContent() {
                  */
                 const needIds = [themeId, ...childCards.map((c) => c.id)];
                 const full = await apiClient.get<PaginatedResponse<ErrorItem>>(
-                    `/api/error-items/list?pageSize=200&ids=${encodeURIComponent(needIds.join(","))}`,
+                    // ⚠️【2026-10-16】这里正是"必须取回完整题（含题图）"的场景 ⇒ 显式 `withImages=1`。
+                    `/api/error-items/list?pageSize=200&withImages=1&ids=${encodeURIComponent(needIds.join(","))}`,
                 );
                 const byId = new Map(full.items.map((i) => [i.id, i]));
                 const theme = byId.get(themeId);

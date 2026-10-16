@@ -906,6 +906,72 @@ describe('/api/error-items', () => {
             });
         });
 
+        /**
+         * ⭐⭐【2026-10-16 真真】**性能修复的看门测试：默认不许传题图。**
+         *
+         * 背景（空空实测）：局域网打开"小五上数学大库"（才 66 道题），错题卡出来要 **10 秒**。
+         * 根因：这个接口原来没有 `select`/`omit` ⇒ 把 `ErrorItem` 的**全部标量字段**都返回，
+         * 其中 `originalImageUrl` 是**题图 base64**（单张最大约 1.37MB，见 `lib/image-utils.ts`
+         * 的 `compressImage(maxSizeMB = 1)`），默认每页 18 条 ⇒ **一次请求最多约 24MB**。
+         * 而 6 个调用方里**只有打印预览**需要题图。
+         *
+         * ⇒ 契约：**默认 `omit` 掉题图；只有 `?withImages=1` 才带。**
+         * ⚠️ 这里只能钉"有没有把 omit 传下去"（mock 的 findMany 不会真的执行 omit）——
+         *    真正"返回体里没有图"要靠真实 DB，那种测试在本仓太重，不值得。
+         *    钉住调用参数已经足够拦住"以后有人把 omit 删了"。
+         */
+        describe('题图（originalImageUrl）默认不返回', () => {
+            const selectOf = () =>
+                mocks.mockPrismaErrorItem.findMany.mock.calls[0][0] as { select?: Record<string, unknown> };
+
+            it('★★ 默认**不许**把 `originalImageUrl` 放进 select —— 否则一次列表又白传 9MB', async () => {
+                mocks.mockPrismaErrorItem.count.mockResolvedValue(0);
+                mocks.mockPrismaErrorItem.findMany.mockResolvedValue([]);
+
+                await GET_LIST(new Request('http://localhost/api/error-items/list'));
+
+                expect(selectOf().select).toBeDefined();
+                expect(selectOf().select!.originalImageUrl).toBeUndefined();
+                // 关系也要带上（原来 include 的那两个）
+                expect(selectOf().select!.notebook).toBe(true);
+                expect(selectOf().select!.tags).toBe(true);
+            });
+
+            it('★ `?withImages=1` 时才把题图带回来（打印预览要印题图）', async () => {
+                mocks.mockPrismaErrorItem.count.mockResolvedValue(0);
+                mocks.mockPrismaErrorItem.findMany.mockResolvedValue([]);
+
+                await GET_LIST(new Request('http://localhost/api/error-items/list?withImages=1'));
+
+                expect(selectOf().select!.originalImageUrl).toBe(true);
+            });
+
+            it('★ 传别的值（如 `withImages=0`）一律当"不要图" —— 只认 `1`', async () => {
+                mocks.mockPrismaErrorItem.count.mockResolvedValue(0);
+                mocks.mockPrismaErrorItem.findMany.mockResolvedValue([]);
+
+                await GET_LIST(new Request('http://localhost/api/error-items/list?withImages=0'));
+
+                expect(selectOf().select!.originalImageUrl).toBeUndefined();
+            });
+
+            it('★ 常用的那些字段**必须在 select 里**（别为了省图把字段也省没了）', async () => {
+                mocks.mockPrismaErrorItem.count.mockResolvedValue(0);
+                mocks.mockPrismaErrorItem.findMany.mockResolvedValue([]);
+
+                await GET_LIST(new Request('http://localhost/api/error-items/list'));
+
+                const sel = selectOf().select!;
+                for (const f of [
+                    'id', 'userId', 'questionText', 'attention', 'levelCountdown', 'masteryLevel',
+                    'reviewOutcomes', 'manageType', 'printCount', 'reviewPrintCount',
+                    'mistakeCategory', 'knowledgePoints', 'createdAt', 'source', 'deletedAt',
+                ]) {
+                    expect(sel[f], `select 里少了 ${f}`).toBe(true);
+                }
+            });
+        });
+
         it('应该支持按知识点标签筛选', async () => {
             mocks.mockPrismaErrorItem.count.mockResolvedValue(0);
             mocks.mockPrismaErrorItem.findMany.mockResolvedValue([]);
