@@ -61,7 +61,18 @@ describe('复习结果 · 老形状的展开（★ 与 reviewEventSequence 对�
         }
     });
 
-    it('规格里那个例子：`[right,wrong,null,null] + last=right` ⇒ `[right,wrong,right]`', () => {
+    it('★★ **读源已切换**：`reviewEventSequence()` 现在直接读新形状（这条钉住切换本身）', () => {
+        // ⚠️ 上面那条"对撞"只证明两个实现**互相一致**，不能证明序列真的读了新形状
+        //    （两边都退回老实现的话，对撞照样过）⇒ 必须有这一条显式断言。
+        expect(reviewEventSequence({ recent: ['wrong', 'right'] })).toEqual(['wrong', 'right']);
+        // 老形状仍然读得出来（过渡期）
+        expect(reviewEventSequence({ planned: ['wrong', 'right', null, null], last: 'right' })).toEqual([
+            'wrong',
+            'right',
+        ]);
+    });
+
+    it('★ 规格里那个例子：`[right,wrong,null,null] + last=right` ⇒ `[right,wrong,right]`', () => {
         expect(legacyOutcomesToRecent({ planned: ['right', 'wrong', null, null], last: 'right' })).toEqual([
             'right',
             'wrong',

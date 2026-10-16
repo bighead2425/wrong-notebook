@@ -105,7 +105,15 @@ describe('reviewStatusOf —— 状态、连对、紧迫度、下次该什么时
         const s = reviewStatusOf(make(['right', null, null], 'right'), TODAY);
         expect(s.rightStreak).toBe(1);
         expect(s.evidenceCount).toBe(1);
-        expect(s.plannedDone).toBe(1);
+        /**
+         * 【2026-10-16 如如】原来这里断言 `s.plannedDone` —— 那个字段**全仓只有这条测试在读**
+         * （生产代码一处都没有）⇒ 本轮"流水为真相"改造时**直接删掉**它，不换成
+         * `events.length` 再养一个没人用的字段。
+         * ⇒ 断言的**意图**保留下来：老形状与新形状读出来必须一样（过渡期最关键的一条）。
+         */
+        const same = reviewStatusOf({ recent: ['right'] }, TODAY);
+        expect(same.rightStreak).toBe(1);
+        expect(same.evidenceCount).toBe(1);
     });
 
     it('★ 计划外的复习接在计划内后面（规矩 ②：计划格不动、只动最近一次）', () => {

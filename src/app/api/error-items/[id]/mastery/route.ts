@@ -8,7 +8,7 @@ import { createLogger } from "@/lib/logger";
 import type { LinkOp } from "@/lib/item-link";
 import { applyLinkOps, applyMastery, planMasteryChange } from "@/lib/item-link-store";
 // 【2026-10-15】"已掌握 ⇒ 未掌握"要给回一档（规则在 level-settle.ts，纯函数）
-import { planAfterUnmaster } from "@/lib/level-settle";
+import { isPreMastered, planAfterUnmaster } from "@/lib/level-settle";
 
 const logger = createLogger('api:error-items:mastery');
 
@@ -42,7 +42,12 @@ export async function PATCH(
         // Verify ownership before update
         const existingItem = await prisma.errorItem.findUnique({
             where: { id },
-            select: { userId: true, masteryLevel: true },
+            /**
+             * ⚠️【2026-10-16 如如】多取 `attention` / `levelCountdown` ——
+             * 解冻规则是**两分支**，要判"冻结时是不是预掌握（1 级 + 倒数 0）"，
+             * 那个状态就存在这两个字段里（冻结期间它们不被抹掉）。
+             */
+            select: { userId: true, masteryLevel: true, attention: true, levelCountdown: true },
         });
 
         if (!existingItem) {
@@ -73,14 +78,21 @@ export async function PATCH(
         }
 
         /**
-         * 【2026-10-15 新】**从"已掌握"改回"未掌握" ⇒ 回到 4 抓紧 + 倒数 4 天**。
+         * 【2026-10-15 新】**从"已掌握"改回"未掌握"** —— 只有"冻结时是预掌握"才重置成
+         * **4 抓紧 + 倒数 4 天**；否则**保持原等次与倒数继续**（什么都不做）。
+         *
+         * ⚠️⚠️【2026-10-16 如如】这里原来**漏了第二条分支**（无条件 `planAfterUnmaster()`）。
+         *    他的规则是两分支，原话见 `docs\16` §1.3；2026-10-16 23:20 他确认"分支要补"。
+         *    ⇒ 判据加 `isPreMastered(...)`：冻结在"1 级 + 倒数 0"（预掌握）才重置，
+         *      别的冻结状态退回时**按原值继续**。
          *
          * 与 `PUT /api/error-items/[id]` 里那条**同一条规则**（`lib/level-settle.ts` 的
          * `planAfterUnmaster`）—— 两条写掌握状态的路都得走，否则"从哪个按钮点的"会得到不同结果。
-         * 出处与理由见那个函数的注释（空空 2026-10-15 定的）。
          */
         const reentry =
-            next < 2 && Number(existingItem.masteryLevel) === 2 ? planAfterUnmaster() : null;
+            next < 2 && Number(existingItem.masteryLevel) === 2 && isPreMastered(existingItem.attention, existingItem.levelCountdown)
+                ? planAfterUnmaster()
+                : null;
 
         const errorItem = await prisma.errorItem.update({
             where: {

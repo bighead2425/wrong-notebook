@@ -98,6 +98,8 @@ export async function GET(req: Request) {
                     lastPrintedAt: true,
                     reviewOutcomes: true,
                     masteryLevel: true,
+                    /** 【2026-10-16】②「该复查」的新判据（倒数 ≤ 0 = 到期）—— 见 `dueReviewItems` */
+                    levelCountdown: true,
                     createdAt: true,
                     /** 【2026-10-13 底账】错因（覆盖率要数它） */
                     mistakeCategory: true,

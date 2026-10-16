@@ -54,6 +54,17 @@ const mocks = vi.hoisted(() => ({
      */
     mockPrismaReviewEvent: {
         create: vi.fn(),
+        /**
+         * 【2026-10-16】派生要用的两个：
+         * · `findMany` —— 取这道题**最近 4 条**流水来算派生值（默认给空 = 没录过）
+         * · `updateMany` / `deleteMany` —— 表格里"改一条 / 删一条"（`op: update|delete`）
+         * · `count` —— 老数据补流水前的"有没有流水"判断
+         */
+        findMany: vi.fn(() => Promise.resolve([])),
+        updateMany: vi.fn(() => Promise.resolve({ count: 1 })),
+        deleteMany: vi.fn(() => Promise.resolve({ count: 1 })),
+        count: vi.fn(() => Promise.resolve(0)),
+        createMany: vi.fn(),
     },
     mockSession: {
         user: {
@@ -487,77 +498,79 @@ describe('/api/error-items', () => {
      * （`level-linkage` 的槽位名表停在 3 格 ⇒ `slot = undefined`），
      * 这里从**接口层**确认"填第 4 格 / 清第 4 格都是 200"，并把临时口径钉住。
      * ======================================================================== */
-    describe('PUT /api/error-items/[id] · 复习结果四格（2026-10-14 加第 4 格）', () => {
+    describe('PUT /api/error-items/[id] · 传旧形状的 `reviewOutcomes` ⇒ 被忽略（2026-10-16 起）', () => {
+        /**
+         * 【2026-10-16 如如】这个 describe 原来是"加第 4 格"的回归测试（老形状的写入路径）。
+         * 现在**写入路径整个换掉了**（`docs\18` §3.1：流水是唯一真相，`reviewOutcomes` 是派生缓存）
+         * ⇒ 客户端传什么都不再直接落库。
+         *
+         * 📌 **老的回归意图保留**：**"点第 4 格 ⇒ 接口 500"那个 bug 结构上不可能再发生** ——
+         *    那条路径（`computeLevelLinkage` 按 planned 下标算账）已经不存在了。
+         */
         const itemWith = (reviewOutcomes: string | null) => ({
             id: 'error-item-1',
             userId: 'user-123',
             attention: 3,
+            levelCountdown: 3,
             manageType: 'review',
             levelLedger: null,
             reviewOutcomes,
+            createdAt: new Date(2026, 8, 20),
         });
 
-        const put = async (reviewOutcomes: string) => {
+        const put = async (body: Record<string, unknown>) => {
             const request = new Request('http://localhost/api/error-items/error-item-1', {
                 method: 'PUT',
-                body: JSON.stringify({ reviewOutcomes }),
+                body: JSON.stringify(body),
                 headers: { 'Content-Type': 'application/json' },
             });
             return PUT(request, { params: Promise.resolve({ id: 'error-item-1' }) });
         };
 
-        it('★ 第 4 格填「对」⇒ 200', async () => {
+        it('★★ 传旧形状 ⇒ 200，但**一个字节都不写**（派生值只认流水）', async () => {
             mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(
                 itemWith(JSON.stringify({ planned: ['right', 'wrong', 'right', null], last: 'wrong' })),
             );
             mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
 
-            const res = await put(
-                JSON.stringify({ planned: ['right', 'wrong', 'right', 'right'], last: 'right' }),
-            );
+            const res = await put({
+                reviewOutcomes: JSON.stringify({ planned: ['right', 'wrong', 'right', 'right'], last: 'right' }),
+            });
+
             expect(res.status).toBe(200);
+            const arg = mocks.mockPrismaErrorItem.update.mock.calls[0][0] as { data: Record<string, unknown> };
+            expect(arg.data).not.toHaveProperty('reviewOutcomes');
+            expect(arg.data).not.toHaveProperty('attention');
+            expect(arg.data).not.toHaveProperty('levelCountdown');
         });
 
-        it('★★ 第 4 格**清空** ⇒ 也必须 200（修复前这条就是界面上那个「更新失败」）', async () => {
+        it('★★ 老 bug"点第 4 格 ⇒ 500"**结构上不可能再发生**（那条路径已删）', async () => {
+            // 老形状里最容易崩的两个样子：第 4 格刚填、以及把它清空
             mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(
                 itemWith(JSON.stringify({ planned: ['right', 'wrong', 'right', 'right'], last: 'right' })),
             );
             mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
 
-            const res = await put(
-                JSON.stringify({ planned: ['right', 'wrong', 'right', null], last: 'right' }),
-            );
-            expect(res.status).toBe(200);
-        });
-
-        it('★ 第 4 格填进去的**值要真的落库**（联动提前 return 也不许把值丢了）', async () => {
-            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(
-                itemWith(JSON.stringify({ planned: ['right', 'wrong', 'right', null], last: 'wrong' })),
-            );
-            mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
-
-            await put(JSON.stringify({ planned: ['right', 'wrong', 'right', 'wrong'], last: 'wrong' }));
-            const arg = mocks.mockPrismaErrorItem.update.mock.calls[0][0] as { data: Record<string, unknown> };
-            const planned = JSON.parse(String(arg.data.reviewOutcomes)).planned;
-            expect(planned).toHaveLength(4);
-            expect(planned[3]).toBe('wrong');
-        });
-
-        it('★ 【2026-10-15 改了】第 4 格现在**会**按新规则重算等级，但**旧账本仍然不许动**', async () => {
-            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({
-                ...itemWith(JSON.stringify({ planned: ['wrong', 'wrong', 'wrong', null], last: 'wrong' })),
-                levelLedger: JSON.stringify({ slot: 'p2', delta: 1 }),
+            const filled = await put({
+                reviewOutcomes: JSON.stringify({ planned: ['right', 'wrong', 'right', 'right'], last: 'right' }),
             });
+            const cleared = await put({
+                reviewOutcomes: JSON.stringify({ planned: ['right', 'wrong', 'right', null], last: 'right' }),
+            });
+
+            expect(filled.status).toBe(200);
+            expect(cleared.status).toBe(200);
+            // 而且**连带写等级的手也没抖**：这条路径不再碰等级
+            const arg = mocks.mockPrismaErrorItem.update.mock.calls[0][0] as { data: Record<string, unknown> };
+            expect(arg.data).not.toHaveProperty('levelCountdown');
+        });
+
+        it('★ 传了**不报错**（改个备注不该因为夹带老字段就整个失败）', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(itemWith(null));
             mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
 
-            await put(JSON.stringify({ planned: ['wrong', 'wrong', 'wrong', 'wrong'], last: 'wrong' }));
-            const arg = mocks.mockPrismaErrorItem.update.mock.calls[0][0] as { data: Record<string, unknown> };
-            // 连错 ≥ 2 ⇒ 间隔 1 天 ⇒ 倒数 1、等级 5（🥗 此刻 = "今天就得练"）
-            expect(arg.data.levelCountdown).toBe(1);
-            expect(arg.data.attention).toBe(5);
-            // ⚠️ 但**旧账本（`levelLedger`）一个字都不许动** ——
-            //    那套"按复习结果组合记账"的机制已整段停用，改由"事实 + 时间"直接推出。
-            expect(arg.data).not.toHaveProperty('levelLedger');
+            const res = await put({ userNotes: '备注', reviewOutcomes: '不是-json-也不是对象' });
+            expect(res.status).toBe(200);
         });
     });
 
@@ -596,13 +609,28 @@ describe('/api/error-items', () => {
             return PUT(request, { params: Promise.resolve({ id: 'error-item-1' }) });
         };
 
-        it('★★ 【2026-10-15 改了】改第 2 格 ⇒ 按**新规则**重算（不再是旧账本的 +1），账本仍不动', async () => {
-            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(
-                itemWith(JSON.stringify({ planned: ['right', null, null, null], last: 'right' })),
-            );
+        it('★★ 记一次复习结果 ⇒ 按**新规则**重算等级，并把派生缓存写回去', async () => {
+            /**
+             * 【2026-10-16 如如】**这条原来走的是"传 `reviewOutcomes` 旧形状"那条路**
+             * （因为那时写入路径还是"整包覆盖"）。现在流行为真相 ⇒ 改成**发一条 `reviewEvent`**，
+             * 意图一字不改：**同样的输入必须算出同样的倒数与等级**。
+             */
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(itemWith(null));
             mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
+            /**
+             * ⚠️ **假数据必须按 `desc` 给** —— 真实查询是 `orderBy desc` + `take` 再**反转**
+             *    （见 `listRecentEvents`：那样才能取到"**最近** N 条"）。
+             *    这里如果按正序给，被反转之后就变成倒的，规则会按"最近一条是对"去算
+             *    —— 2026-10-16 第一次写就是这么错的，测试当场抓住。
+             */
+            mocks.mockPrismaReviewEvent.findMany.mockResolvedValue([
+                { id: 'e2', outcome: 'wrong', occurredOn: '2026-10-16', createdAt: new Date(2026, 9, 16) },
+                { id: 'e1', outcome: 'right', occurredOn: '2026-10-10', createdAt: new Date(2026, 9, 10) },
+            ]);
 
-            await putBody({ reviewOutcomes: JSON.stringify({ planned: ['right', 'wrong', null, null], last: 'wrong' }) });
+            await putBody({
+                reviewEvent: { occurredOn: '2026-10-16', outcome: 'wrong', source: 'detail_page' },
+            });
 
             const arg = mocks.mockPrismaErrorItem.update.mock.calls[0][0] as { data: Record<string, unknown> };
             /**
@@ -615,8 +643,8 @@ describe('/api/error-items', () => {
              */
             expect(arg.data.levelCountdown).toBe(4);
             expect(arg.data.attention).toBe(4);
-            // 复习结果本身照旧要落库 —— 停的是"旧账本记账"，不是"记结果"
-            expect(String(arg.data.reviewOutcomes)).toContain('wrong');
+            // ★ 派生缓存也写回去了（这就是"错题卡上那 4 个圈"的数据源）
+            expect(JSON.parse(String(arg.data.reviewOutcomes)).recent).toEqual(['right', 'wrong']);
             // 旧账本不许再被读写
             expect(arg.data).not.toHaveProperty('levelLedger');
         });

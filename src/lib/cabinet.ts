@@ -26,9 +26,6 @@
 import { addDays, dayKey, parseDayKey } from './calendar-grid';
 import {
     normalizeReviewOutcomes,
-    PLANNED_REVIEW_LABELS_ZH,
-    PLANNED_REVIEW_OFFSET_DAYS,
-    type PlannedIndex,
 } from './review-outcomes';
 import { normalizeManageType } from './manage-type';
 // 【2026-10-13】⑦「今天先练这几道」用状态机算紧迫度（规则只在那一个模块里）
@@ -60,6 +57,12 @@ export interface CabinetQuestion {
      * 可选：老调用方（测试）不传也能跑 —— 不传按 0 处理。
      */
     masteryLevel?: number | null;
+    /**
+     * 【2026-10-16】**还剩几天该练**（`ErrorItem.levelCountdown`，0~49，由每日结算递减）。
+     * ②「该复查」现在的判据就是它（倒数 ≤ 0 = 到期）—— 见 `dueReviewItems` 的文件头。
+     * 可选：老调用方（测试）不传也能跑 —— 不传按"还没到期"处理。
+     */
+    levelCountdown?: number | null;
     notebookId?: string | null;
     /**
      * 【2026-10-13 底账】学科 subjectKey（从 **Notebook** 取 —— 题自己不存学科，
@@ -171,24 +174,27 @@ export function pendingDeepPrint(questions: readonly CabinetQuestion[]): Cabinet
 
 export interface DueReviewItem {
     question: CabinetQuestion;
-    /** 下一个还没做的是第几次计划复习（0=第1天 / 1=第7天 / 2=第21天 / 3=第49天） */
-    plannedIndex: PlannedIndex;
-    /** 这个复习节点的到期日（打印日 + 1/7/21，本地 `YYYY-MM-DD`） */
+    /** 该练的那一天（本地 `YYYY-MM-DD`）—— **新口径：今天 + 倒数天数**（倒数 ≤ 0 ⇒ 就是今天或更早） */
     dueOn: string;
     /** 到期后过了几天（正好到期当天 = 0） */
     overdueDays: number;
-    /** 该节点的中文名（"第 7 天复习"） */
+    /** 短标签（界面自己拼后面的说明） */
     label: string;
 }
 
 /**
- * 印过深挖纸、且**纸面下一个日期格已经到期**的题 —— 可以集中打印成复练卷了。
+ * 印过深挖纸、且**倒数天数已经走完**的题 —— 可以集中打印成复练卷了。
  *
- * 口径（他给的）：日期格 = **打印日 + 1 / 7 / 21 天**；基准取 `lastPrintedAt`。
- * "下一个还没做的" = `reviewOutcomes.planned` 里**第一个为空**的那一格
- *   —— 已经做过的不再提醒；三格都做满的，不再有计划复习。
+ * ── 【2026-10-16 如如 改口径】出处：`docs\18` §3.4 ───────────────────────
+ *   老口径是**纸面驱动**：`打印日 + [1,7,21,49][planned 里第一个空格]` ——
+ *   它依赖"第几次计划复习"这个下标，而**新模型里没有"第几格"了**（复习结果换成流水）。
+ *   ⇒ 改成 `levelCountdown`（= 还差几天该练，`daily-settle` 每天递减）：
+ *      **倒数 ≤ 0 ⇒ 到期**；`dueOn = 今天 + 倒数`（负数 = 已经过期的天数）。
  *
- * ⚠️ 到期判据用 **>=**：正好到期那一天就算到期（边界要算进来）。
+ *   ⚠️ **副作用要说清**：这一改，② 就从"纸面驱动"变成"**证据驱动**"了 ——
+ *      而 ⑦「今天先练」本来也是证据驱动（见下面 §⑦ 那段分工注释）。
+ *      ⇒ **两块的语义开始重叠**。本次**按规格照做**（没自创），
+ *      但"要不要合并这两块 / 或让②回到纸面口径"是**产品问题，待空空定**。
  */
 export function dueReviewItems(
     questions: readonly CabinetQuestion[],
@@ -199,22 +205,18 @@ export function dueReviewItems(
 
     for (const q of questions) {
         if ((Number(q.printCount) || 0) <= 0) continue;
-        const base = toDate(q.lastPrintedAt);
-        if (!base) continue;
 
-        const planned = normalizeReviewOutcomes(q.reviewOutcomes).planned;
-        const idx = planned.findIndex((v) => v === null);
-        if (idx === -1) continue; // 计划格全做完了（现在是 4 格）
+        const countdown = Number(q.levelCountdown);
+        // 老题可能没这个数（`levelCountdown` 是 2026-10-15 才加的列）⇒ 交给别的块（待打印 / 今天先练）
+        if (!Number.isFinite(countdown)) continue;
+        if (countdown > 0) continue; // 还没到期
 
-        const dueOn = addDays(dayKey(base), PLANNED_REVIEW_OFFSET_DAYS[idx]);
-        if (today < dueOn) continue; // 还没到期（本地日字符串可直接比大小）
-
+        const dueOn = addDays(today, countdown);
         out.push({
             question: q,
-            plannedIndex: idx as PlannedIndex,
             dueOn,
-            overdueDays: daysBetweenKeys(dueOn, today),
-            label: PLANNED_REVIEW_LABELS_ZH[idx],
+            overdueDays: Math.max(0, -countdown),
+            label: '该练',
         });
     }
     return out;
@@ -232,6 +234,13 @@ export function dueReviewItems(
  *   ⭐ ⑦ 补的正是②那个窟窿：②的判据是"`planned` 里第一个空格"，
  *      **三格做满就直接 `continue`** ⇒ "计划三次都做完、之后又做错"的题，
  *      ②**永远不会再提醒**；而按新规则**错了就必须回来练**。这类题在⑦里捞得回来。
+ *
+ *   ⚠️⚠️【2026-10-16 如如 更新】**上面这个分工已经被打破了** ——
+ *      ② 的判据改成了 `levelCountdown ≤ 0`（`docs\18` §3.4，因为新模型里没有"第几格"），
+ *      而那是**证据驱动**的 ⇒ **② 与 ⑦ 现在语义重叠**。
+ *      本次**按规格照做、没自创**；但"两块要不要合并 / ② 要不要另找纸面口径"
+ *      **是产品问题，待空空定**（已写进 HANDOFF §③）。
+ *      📌 判据仍在 ⑦ 这边写死：**已在②里出现的题不重复收**（`buildCabinetTasks` 里做差集）。
  *
  * ── 收谁（判据写死，人和 AI 都别在这里加形容词）──────────────────────
  *   只收**紧迫度 ≥ 4**：新录入（还没练过）、最近一次错、连错两次以上。
@@ -425,7 +434,8 @@ export interface CabinetTasks {
         source: string | null;
         notebookId?: string | null;
         dueOn: string;
-        plannedIndex: PlannedIndex;
+        /** ⚠️【2026-10-16】原来的 `plannedIndex`（第几次计划复习）**已删** ——
+         *  新模型里没有"第几格"，判据改成 `levelCountdown`（见 `dueReviewItems`） */
         label: string;
         overdueDays: number;
     }>;
@@ -547,7 +557,6 @@ export function buildCabinetTasks(input: {
                 source: d.question.source,
                 notebookId: d.question.notebookId,
                 dueOn: d.dueOn,
-                plannedIndex: d.plannedIndex,
                 label: d.label,
                 overdueDays: d.overdueDays,
             })),

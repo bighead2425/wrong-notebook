@@ -22,7 +22,11 @@ import {
  * 这个页面唯一容易写错的地方就是"判据"：日期、边界、去重。
  * 组测试只钉**已定的口径**，不钉实现细节：
  *   ① 待打印深挖 = 深挖 + 没印过（未定不算深挖）
- *   ② 该复查 = 印过 + 下一个没做的计划格已到期（到期当天算）
+ *   ② 该复查 = 印过 + **倒数天数 ≤ 0**（到期当天算）
+ *      ⚠️【2026-10-16 换口径】出处 `docs\18` §3.4：老口径是"纸面日期格（打印日 +1/7/21）到了"，
+ *      依赖 `planned` 里"第几个空格"；而新模型里复习结果换成流水、**没有"第几格"了**
+ *      ⇒ 改成看 `levelCountdown`。副作用：② 由"纸面驱动"变成"证据驱动"，
+ *      与 ⑦ 语义重叠（**已标注，待空空定**，见 `cabinet.ts` 里 §⑦ 那段注释）。
  *   ③ 该回录 = 印过 + 够天数 + 没有这道题的日积月累
  *   ④ 待回录卷 = review 卷 + 够天数 + 还有没标的行
  *   ⑤ 未打印日积月累 = 没被编进任何卷
@@ -75,53 +79,45 @@ describe('① 待打印深挖题', () => {
     });
 });
 
-describe('② 该复查的题', () => {
-    it('印过 + 打印日+1 天正好到期（边界当天）⇒ 算，overdueDays=0', () => {
-        const item = q({
-            id: '1',
-            manageType: 'deep',
-            printCount: 1,
-            lastPrintedAt: new Date(2026, 8, 30), // 09-30
-        });
-        const onDay = dueReviewItems([item], new Date(2026, 9, 1)); // 10-01 正好到期
-        expect(onDay).toHaveLength(1);
-        expect(onDay[0].dueOn).toBe('2026-10-01');
-        expect(onDay[0].overdueDays).toBe(0);
-        expect(onDay[0].plannedIndex).toBe(0);
+describe('② 该复查的题（**2026-10-16 已换口径**：倒数天数 ≤ 0 = 该练）', () => {
+    it('★ 倒数正好走到 0（到期当天）⇒ 算，overdueDays=0', () => {
+        const item = q({ id: '1', manageType: 'deep', printCount: 1, levelCountdown: 0 });
+        const out = dueReviewItems([item], NOW); // NOW = 2026-10-04
+        expect(out).toHaveLength(1);
+        expect(out[0].dueOn).toBe('2026-10-04');
+        expect(out[0].overdueDays).toBe(0);
     });
 
-    it('差一天没到 ⇒ 不算', () => {
-        const item = q({ id: '1', printCount: 1, lastPrintedAt: new Date(2026, 8, 30) });
-        expect(dueReviewItems([item], new Date(2026, 8, 30))).toEqual([]); // 打印当天
+    it('★ 倒数还没走完 ⇒ 不算（差一天也不算）', () => {
+        expect(dueReviewItems([q({ id: '1', printCount: 1, levelCountdown: 1 })], NOW)).toEqual([]);
     });
 
-    it('第 1 天已做（planned[0] 有结果）⇒ 看第 7 天那格（打印日+7）', () => {
+    it('★ 倒数是负数（已经过期）⇒ 算，并把"过了几天"报出来', () => {
+        const out = dueReviewItems([q({ id: '1', printCount: 1, levelCountdown: -2 })], NOW);
+        expect(out).toHaveLength(1);
+        expect(out[0].dueOn).toBe('2026-10-02'); // 今天是 10-04、倒数 -2 ⇒ 本该 10-02 练
+        expect(out[0].overdueDays).toBe(2);
+    });
+
+    it('★ 老题（没有 `levelCountdown` 这一列）⇒ 不算 —— 宁可漏报，也别乱报', () => {
+        expect(dueReviewItems([q({ id: '1', printCount: 1 })], NOW)).toEqual([]);
+    });
+
+    it('没印过 ⇒ 不算（这块仍然只收"印过深挖纸"的题）', () => {
+        expect(dueReviewItems([q({ id: '1', printCount: 0, levelCountdown: 0 })], NOW)).toEqual([]);
+    });
+
+    it('★ 钉住"口径已换"：老数据里的计划格**不再影响**结果', () => {
         const item = q({
             id: '1',
             printCount: 1,
             lastPrintedAt: new Date(2026, 8, 30),
+            // 老形状：第 1 格已做 ⇒ **老口径**会去看第 7 天（10-07）⇒ 10-04 那天不算
             reviewOutcomes: { planned: ['right', null, null], last: 'right' },
+            levelCountdown: 0,
         });
-        expect(dueReviewItems([item], new Date(2026, 9, 4))).toEqual([]); // 10-04 < 10-07
-        const at7 = dueReviewItems([item], new Date(2026, 9, 7));
-        expect(at7).toHaveLength(1);
-        expect(at7[0].plannedIndex).toBe(1);
-        expect(at7[0].dueOn).toBe('2026-10-07');
-    });
-
-    it('三次计划复习都做完 ⇒ 不再提醒', () => {
-        const item = q({
-            id: '1',
-            printCount: 1,
-            lastPrintedAt: new Date(2026, 8, 1),
-            reviewOutcomes: { planned: ['right', 'wrong', 'right'], last: 'right' },
-        });
-        expect(dueReviewItems([item], NOW)).toEqual([]);
-    });
-
-    it('没印过 / 没有打印日 ⇒ 不算', () => {
-        expect(dueReviewItems([q({ id: '1', printCount: 0 })], NOW)).toEqual([]);
-        expect(dueReviewItems([q({ id: '2', printCount: 1, lastPrintedAt: null })], NOW)).toEqual([]);
+        // 新口径只看倒数 ⇒ 该算。（这条如果红了，说明有人把老口径改回来了）
+        expect(dueReviewItems([item], NOW)).toHaveLength(1);
     });
 });
 
@@ -238,13 +234,14 @@ describe('⑥ 建议升为深挖', () => {
 
 describe('⑦ 编排 + 跨任务去重', () => {
     it('该回录的题不再出现在该复查里（先回录、后复查）', () => {
-        // 09-30 打印、10-04 仍未回录，且第 1 天复习已到期 —— 两个任务本会同时命中
+        // 09-30 打印、10-04 仍未回录，且倒数已到 0 —— 两个任务本会同时命中
         const item = q({
             id: '1',
             source: 'SX1',
             manageType: 'deep',
             printCount: 1,
             lastPrintedAt: new Date(2026, 8, 30),
+            levelCountdown: 0,
         });
         const t = buildCabinetTasks({ questions: [item], insights: [], volumes: [], now: NOW });
         expect(t.pendingRecover.count).toBe(1);
@@ -258,6 +255,7 @@ describe('⑦ 编排 + 跨任务去重', () => {
             manageType: 'deep',
             printCount: 1,
             lastPrintedAt: new Date(2026, 8, 30),
+            levelCountdown: 0,
         });
         const t = buildCabinetTasks({
             questions: [item],

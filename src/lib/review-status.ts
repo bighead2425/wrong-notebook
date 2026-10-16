@@ -57,10 +57,16 @@
  *    （那是它 2026-09-30 定稿时的形状）。所以"建议下次"一律按**今天**起算 ——
  *    语义是"从现在起 N 天后再练"，诚实、也不需要瞎编一个日期。
  *    想要"到期日"真准，得另加一张**带时间戳的复习事件表**（已列入第二步）。
+ *
+ * ── 【2026-10-16 如如 更新：上面那句"得另加一张事件表"**已经做到了**】──────────
+ *    `ReviewEvent` 表 2026-10-14 建好、2026-10-16 四个写入点接通（`1a2f1b7`）
+ *    ⇒ **带时间戳的流水已经有了**；`ErrorItem.reviewOutcomes` 现在只是它的**派生缓存**。
+ *    本文件仍在"按今天起算"（因为派生缓存里只有结果、没有日期），
+ *    要精确到期日就查流水 —— 那属于 `docs\09` 第二步「切读源」，**还没做**。
  */
 
 import { addDays, dayKey } from './calendar-grid';
-import { normalizeReviewOutcomes, type ReviewOutcome } from './review-outcomes';
+import { normalizeRecentOutcomes, type ReviewOutcome } from './review-outcomes';
 
 /**
  * 连对几次算"可以退休"（不再排进复练）。
@@ -103,10 +109,8 @@ export interface ReviewStatus {
     urgency: 1 | 2 | 3 | 4 | 5;
     /** 建议下次复练的日期（`YYYY-MM-DD`，按**今天**起算）；`null` = 退休，不再排 */
     nextDueKey: string | null;
-    /** 一共记过几次结果（**证据条数** —— 显示判断时要把它一起亮出来，别让人以为很准） */
+    /** 一并记过几次结果（**证据条数** —— 显示判断时要把它一起亮出来，别让人以为很准） */
     evidenceCount: number;
-    /** 计划内三次已经记过几次（0–3），给"第几次"那种显示用 */
-    plannedDone: number;
 }
 
 /** 界面上的名字（中/英）—— 两处要用同一份，别各写一遍 */
@@ -117,33 +121,31 @@ export const REVIEW_STATE_LABELS: Record<ReviewState, { zh: string; en: string }
     retired: { zh: '退休', en: 'Retired' },
 };
 
-/**
- * 把结果折成一条**按时间先后**的事件序列。
+/** 【2026-10-16 如如】**整理**：把归一化后的"最近几次结果"直接当事件序列用。
  *
- * `planned` 本来就是按第 1/7/21 天排的；`last` 是"最近一次"，
- * 它**可能**就是计划内的最后一次（他 2026-09-30 定的规矩 ①：计划内做完 ⇒ 第四格同步），
- * 也可能是一次**计划外**的复习（规矩 ②：计划外只动第四格）。
+ * ⭐ 这是本轮（"流水为真相"，`docs\18` §3.2）**唯一的读源切换点** ——
+ *    本文件下游（`reviewStatusOf` / `RETIRE_STREAK` / 紧迫度）以及
+ *    `level-settle.ts` 的**全部**函数都经由它 ⇒ 改这一处，规则层全线跟上 ✓
  *
- * ⇒ 判据：`last` 与"最后一个非空计划格"**相同**时，认为它就是那一次（不重复记）；
- *    **不同**时，把它当作一次更晚发生的事件接在后面。
+ * ── 换之前是什么样（留档，别删）────────────────────────────────────
+ * 老实现从 `{planned,last}` 两个字段**拼**出一条序列："`planned` 里的非空按序 + `last`
+ * （与最后一条不同才追加）"。那套拼接有两个毛病：
+ *   ① `planned` 绑死"第 1/7/21/49 天"，**第 5 次及以后进不去**；
+ *   ② **没有时间戳** ⇒ 「三格满了之后又对一次」与「三格全对」**数据上长得一样**，
+ *      分不出来（当年 `RETIRE_STREAK` 只能取 3，就是这个原因）。
+ * ⇒ 现在序列来自 `ErrorItem.reviewOutcomes` 的**新形状 `{recent:[…]}`**（派生缓存，
+ *    由流水 `ReviewEvent` 算出来写回）；老形状仍然读得出来（`normalizeRecentOutcomes` 新旧都认）✓
  *
- * ⚠️ 有一个**认不出来**的角落（诚实写出来）：计划 = [对, 空, 空]、`last` = 对，
- *    到底是"第 1 天对了（第四格同步）"还是"第 1 天对了、后来又对了 1 次计划外"，
- *    从这两个字段**分不出来**（没有时间戳）。当成前者处理 —— 对**连对次数**的影响是
- *    "少算一次"，也就是"晚一点才退休"，方向是**保守**的（宁可多练，不误判已掌握）。
+ * ⚠️ 新序列**最多 4 条**（派生时截断）⇒ 连对次数最多数到 4。
+ *    够用，因为规则里"连对 ≥ 3 就锁 1 级" ⇒ **封顶在 3**（`docs\18` §十.1 已论证）。
  */
 export function reviewEventSequence(outcomes: unknown): ReviewOutcome[] {
-    const { planned, last } = normalizeReviewOutcomes(outcomes);
-    const events = planned.filter((v): v is ReviewOutcome => v === 'right' || v === 'wrong');
-    if (last && last !== events[events.length - 1]) events.push(last);
-    return events;
+    return normalizeRecentOutcomes(outcomes);
 }
 
 /** 从事件序列算状态（纯函数，今天由调用方给，方便单测） */
 export function reviewStatusOf(outcomes: unknown, today: Date = new Date()): ReviewStatus {
     const events = reviewEventSequence(outcomes);
-    const { planned } = normalizeReviewOutcomes(outcomes);
-    const plannedDone = planned.filter((v) => v === 'right' || v === 'wrong').length;
 
     let rightStreak = 0;
     for (let i = events.length - 1; i >= 0; i -= 1) {
@@ -189,7 +191,6 @@ export function reviewStatusOf(outcomes: unknown, today: Date = new Date()): Rev
         urgency,
         nextDueKey: offset === null || offset === undefined ? null : addDays(dayKey(today), offset),
         evidenceCount: events.length,
-        plannedDone,
     };
 }
 

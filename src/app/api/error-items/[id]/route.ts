@@ -8,9 +8,22 @@ import { createLogger } from "@/lib/logger";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { normalizeMistakeCategory } from "@/lib/mistake-category";
-import { normalizeReviewOutcomes, serializeReviewOutcomes } from "@/lib/review-outcomes";
-// 【2026-10-14】复习事件流水（第一步：双写）—— 唯一写入口在 lib/review-events.ts
-import { parseReviewEventInput, recordReviewEvent } from "@/lib/review-events";
+import {
+    RECENT_REVIEW_LIMIT,
+    deriveRecentFromEvents,
+    legacyOutcomesToRecent,
+    serializeRecentOutcomes,
+} from "@/lib/review-outcomes";
+// 【2026-10-14 建表 / 2026-10-16 成为唯一真相】复习流水 —— **唯一写入口**在 lib/review-events.ts
+import {
+    backfillLegacyEvents,
+    deleteReviewEvent,
+    listRecentEvents,
+    parseReviewEventInput,
+    recordReviewEvent,
+    updateReviewEvent,
+} from "@/lib/review-events";
+import { dayKey } from "@/lib/calendar-grid";
 /**
  * 【2026-10-15】**等级完全交给系统** —— 规则在 `lib/level-settle.ts`（纯函数），
  * 结算在 `lib/daily-settle.ts`。本文件只用两个纯函数：
@@ -22,7 +35,7 @@ import { parseReviewEventInput, recordReviewEvent } from "@/lib/review-events";
  *   均已不再调用（四处人工入口收回 + 类型切换脱钩）。
  *   函数体与单测都还留在那个文件里（那是当年规则的唯一记录，**别删**）。
  */
-import { planAfterReview, planAfterUnmaster, shouldAutoMaster } from '@/lib/level-settle';
+import { isPreMastered, planAfterReview, planAfterUnmaster, shouldAutoMaster } from '@/lib/level-settle';
 // 【2026-10-10】"已掌握"要过一遍题间从属关系规则（人工标记才断开关联、主题向下传播）
 import type { LinkOp } from "@/lib/item-link";
 import { applyLinkOps, applyMastery, loadLinkView, planMasteryChange } from "@/lib/item-link-store";
@@ -133,7 +146,7 @@ export async function PUT(
              */
             reviewOutcomes,
             /**
-             * 【2026-10-14】复习事件流水（**第一步：双写**）。
+             * 【2026-10-14 建 / 2026-10-16 成为唯一真相】复习流水。
              *
              * ⚠️ 为什么必须**显式传**、不从 `reviewOutcomes` 的前后差分推：
              *    `planned` + `last` 两个字段**没有时间戳** ⇒ "三格满了之后又对一次"
@@ -141,8 +154,14 @@ export async function PUT(
              *    （见 `review-status.ts` 文件头那段 ⚠️⚠️）。
              *    ⇒ 写入侧必须自己声明"这是一次复习"，本字段就是那个声明。
              *
-             * 形状：`{ occurredOn: 'YYYY-MM-DD', outcome: 'right'|'wrong',
-             *          plannedIndex?: 0|1|2|3, volumeId?: string }`
+             * 形状（**2026-10-16 扩了 `op` 与 `source`，老调用方仍合法**）：
+             * ```
+             * { occurredOn: 'YYYY-MM-DD', outcome: 'right'|'wrong',
+             *   op?: 'add'|'update'|'delete',   // 缺省 add ⇒ 只传前两个字段仍然能用
+             *   eventId?: string,               // op = update/delete 时必给
+             *   source?: 'review_paper'|'imitate_paper'|'single_scan'|'detail_page'|'legacy',
+             *   plannedIndex?: 0|1|2|3, volumeId?: string }
+             * ```
              * 形状不对 ⇒ **当没传**（与本文件其他可选字段同一条规矩）。
              */
             reviewEvent,
@@ -202,32 +221,98 @@ export async function PUT(
         if (userNotes !== undefined) updateData.userNotes = userNotes || null;
 
         /**
-         * 【2026-09-30】复习结果：**整包覆盖**（它的形状本身就是"这四个位置各是什么"）。
-         * 空值（null / 空串）当"没提供"，不把已有的结果抹掉 —— 与 cropRegions 同一条规矩：
-         * 详情页改个备注，不该顺手把她的复习记录清空。
+         * ⚠️⚠️【2026-10-16 **停止接受**】`reviewOutcomes` 不再允许由调用方写入。
+         *
+         * 出处：`docs\18` §3.1 —— **流水（`ReviewEvent`）是唯一真相**，
+         * `ErrorItem.reviewOutcomes` 降级成**派生缓存**（由流水算出来写回）。
+         * ⇒ 与 2026-10-15 关闭 `attention` 那条入参**同一条规矩**：
+         *    收下但**忽略**，并且**打一条 warn**（日志里出现就说明还有老调用方没清干净）。
+         *
+         * ⚠️ 故意**不报错**：改个备注不该因为夹带了老字段就整个失败。
+         * 📌 恢复办法：`git revert` 这个提交。
          */
         if (reviewOutcomes !== undefined && reviewOutcomes !== null && reviewOutcomes !== '') {
-            updateData.reviewOutcomes = serializeReviewOutcomes(normalizeReviewOutcomes(reviewOutcomes));
+            logger.warn(
+                { id, field: 'reviewOutcomes' },
+                'Ignored reviewOutcomes from client —— 复习结果现在由流水派生（docs\\18 §3.1）',
+            );
         }
 
         /**
-         * 【2026-10-15 新】记下复习结果 ⇒ **同时把「倒数天数」与「等级」写对**。
+         * ⭐【2026-10-16】复习结果的**唯一写路径**：写流水 → 派生 → 写回缓存 + 算等级。
          *
-         * ── 为什么在"录入这一刻"就要写等级，而不是等每日结算 ────────────────
-         *   规则是"**等级 = 由倒数 + 连对次数决定**"（`lib/level-settle.ts`）。
-         *   若录入只写倒数、不改等级，库里就会出现"**倒数是 7 但等级还是 5**"
-         *   这种自相矛盾的状态。⇒ 录入时把两者**一起**写对，结算只负责"时间往前推"。
+         * 顺序很重要（这条路径**必须在主更新之前**跑完，才能把派生值一起写进去）：
+         *   ① 老数据**惰性补流水**（只在"还是老形状 + 一条流水都没有"时做，天然幂等）；
+         *   ② 按 `op` 写/改/删那一条流水（**唯一写入口** `lib/review-events.ts`）；
+         *   ③ 取这道题**最近 4 条**流水 ⇒ 派生 `reviewOutcomes`（缓存）；
+         *   ④ 由派生值算 `levelCountdown + attention`（**录结果当场就变** —— 即 `docs\16` §1.2）；
+         *   ⑤ 连对够 4 次 ⇒ 直接已掌握（下面 `autoMastered` 那段落）。
          *
-         * ⚠️ 形状不对 / 空值**不进这段**（上面已经过滤），所以这里只看 `updateData`。
-         * ⚠️ 幂等：同一份表单重复提交 ⇒ 算出来的值一模一样，不会漂。
+         * ⚠️ **已掌握的题不许录**（空空 2026-10-16 21:35 拍板，`docs\18` 决策 ⑧）：
+         *    冻住就真冻住 ⇒ 服务端直接忽略（`docs\14` §4.4 的"冻结"语义）。
+         * ⚠️ **失败不影响主更新**（与 `stateLogs` 同一条规矩）——
+         *    但**失败时一个字都不写派生值**：宁可缓存旧一点，也不能把它清空
+         *    （清了 = 她错题卡上的圈全没了）。
          */
         let autoMastered = false;
-        if (typeof updateData.reviewOutcomes === 'string') {
-            const next = planAfterReview(updateData.reviewOutcomes);
-            updateData.levelCountdown = next.levelCountdown;
-            updateData.attention = next.attention;
-            // 连对 4 次 ⇒ 直接已掌握（下面再落，见"等级 1 的出口"那段注释）
-            autoMastered = shouldAutoMaster(updateData.reviewOutcomes);
+        if (reviewEvent !== undefined && reviewEvent !== null) {
+            const ev = parseReviewEventInput(reviewEvent);
+            if (!ev) {
+                logger.warn({ id }, 'Ignored malformed reviewEvent');
+            } else if (Number(errorItem.masteryLevel) === 2) {
+                logger.warn({ id, op: ev.op }, 'Ignored reviewEvent on a mastered item');
+            } else {
+                try {
+                    // ① 老数据补流水（只补一次）
+                    await backfillLegacyEvents({
+                        userId: user.id,
+                        errorItemId: id,
+                        outcomes: legacyOutcomesToRecent(errorItem.reviewOutcomes),
+                        occurredOn: dayKey(new Date(errorItem.createdAt)),
+                    });
+
+                    // ② 写 / 改 / 删那一条
+                    if (ev.op === 'update' && ev.eventId) {
+                        await updateReviewEvent({
+                            userId: user.id,
+                            errorItemId: id,
+                            eventId: ev.eventId,
+                            outcome: ev.outcome,
+                        });
+                    } else if (ev.op === 'delete' && ev.eventId) {
+                        await deleteReviewEvent({ userId: user.id, errorItemId: id, eventId: ev.eventId });
+                    } else {
+                        await recordReviewEvent({
+                            userId: user.id,
+                            errorItemId: id,
+                            occurredOn: ev.occurredOn,
+                            outcome: ev.outcome,
+                            plannedIndex: ev.plannedIndex ?? null,
+                            volumeId: ev.volumeId ?? null,
+                            source: ev.source ?? null,
+                        });
+                    }
+
+                    // ③ 取最近 4 条 ⇒ 派生（**唯一真相是流水，这里只是把显示用的 4 条缓存下来**）
+                    const recentEvents = await listRecentEvents(user.id, id, RECENT_REVIEW_LIMIT);
+                    const recent = deriveRecentFromEvents(recentEvents);
+                    updateData.reviewOutcomes = serializeRecentOutcomes(recent);
+
+                    // ④ 录结果**当场**把倒数与等级写对（`docs\16` §1.2 那条不满）
+                    //    ⚠️ 下面两个纯函数收的是**字段那个形状**（`{recent:[…]}`），
+                    //       不是裸数组 —— 直接传数组会被归一化成"空"（= 当成新题，倒数为 1）。
+                    //       （2026-10-16 第一次写就是这么错的，被集成测试当场抓住。）
+                    const asField = { recent };
+                    const nextLevel = planAfterReview(asField);
+                    updateData.levelCountdown = nextLevel.levelCountdown;
+                    updateData.attention = nextLevel.attention;
+
+                    // ⑤ 连对 4 次 ⇒ 直接已掌握
+                    autoMastered = shouldAutoMaster(asField);
+                } catch (error) {
+                    logger.error({ error, id }, 'Failed to write review event / derive outcomes');
+                }
+            }
         }
 
         /**
@@ -268,6 +353,15 @@ export async function PUT(
          * 他给的理由：*"这个已掌握可能是有水分的……再点回'未掌握'，那么很可能后续又什么时候做错了。"*
          * ⇒ 退回来时**当成"刚做错过一次"**，重新进入复习流程。
          *
+         * ⚠️⚠️**【2026-10-16 如如 补上第二条分支】** 他的规则其实是**两分支**
+         *    （原话见 `docs\16` §1.3，2026-10-16 23:20 他确认"分支要补，可能是漏了"）：
+         *      · 冻结时是 **"1 级 + 倒数 0"（= 预掌握）** ⇒ 很可能是**没看过就点了已掌握**
+         *        ⇒ 给 **4 抓紧 + 倒数 4 天**（现在这条分支实现了）；
+         *      · 冻结时是**别的状态** ⇒ 那是"孩子确实掌握了"的**确定性命令**，
+         *        退回来时**按原来的等级和倒数继续**（= **什么都不用做**，
+         *        因为冻结期间那两个值一直留着没被抹掉）。
+         *    ⇒ 之前是**无条件**给 4/4（把第二分支也当成第一分支了）。
+         *
          * ⚠️ **必须在服务端做**（不能靠前端传 `attention`）—— 那个入参已于 2026-10-15 关闭。
          * ⚠️ 放在复习结果那段**之后**：用户同时改两者时，**"点回未掌握"这个显式动作优先**。
          * ⚠️ 规则本身在 `lib/level-settle.ts`（纯函数，可单测），这里只负责"什么时候用"。
@@ -275,7 +369,9 @@ export async function PUT(
         if (
             typeof updateData.masteryLevel === 'number' &&
             updateData.masteryLevel < 2 &&
-            Number(errorItem.masteryLevel) === 2
+            Number(errorItem.masteryLevel) === 2 &&
+            /** 只有"冻结时是预掌握"才重置；否则保持原值（见上面那段注释） */
+            isPreMastered(errorItem.attention, errorItem.levelCountdown)
         ) {
             const reentry = planAfterUnmaster();
             updateData.levelCountdown = reentry.levelCountdown;
@@ -551,30 +647,9 @@ export async function PUT(
             include: { tags: true, notebook: true },
         });
 
-        /**
-         * 【2026-10-14】复习事件流水（**第一步：双写**）。
-         *
-         * ⚠️ **失败不影响主更新** —— 与下面 `stateLogs` 同一条规矩：
-         *    这一步只是"开始攒带时间戳的数据"，攒不上不该让"改题"失败
-         *    （主更新已经把 `reviewOutcomes` 写进去了，读侧行为一切照旧）。
-         */
-        if (reviewEvent !== undefined && reviewEvent !== null) {
-            const ev = parseReviewEventInput(reviewEvent);
-            if (ev) {
-                try {
-                    await recordReviewEvent({
-                        userId: user.id,
-                        errorItemId: id,
-                        occurredOn: ev.occurredOn,
-                        outcome: ev.outcome,
-                        plannedIndex: ev.plannedIndex ?? null,
-                        volumeId: ev.volumeId ?? null,
-                    });
-                } catch (error) {
-                    logger.error({ error, id }, 'Failed to record review event');
-                }
-            }
-        }
+        /* ⚠️【2026-10-16】这里原来有一段"主更新之后再补写一条流水"（双写时期的东西）。
+         *    现在流水是**唯一真相**、且必须在主更新**之前**写（否则派生值算不出来 =
+         *    她错题卡上的圈会晚一步才变）⇒ 那段**整段搬到上面**了，此处不再有第二处写入。 */
 
         // 【2026-09-28】等级/错因的变更留痕（「派生 + 落定快照」要求可追溯）
         if (stateLogs.length > 0) {
