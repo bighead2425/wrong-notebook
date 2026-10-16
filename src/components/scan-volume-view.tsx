@@ -54,6 +54,7 @@ import {
     type ReviewMark,
 } from "@/lib/scan-marking";
 import { normalizeReviewOutcomes, serializeReviewOutcomes, type ReviewOutcomes } from "@/lib/review-outcomes";
+import { reviewEventDraft, type ReviewEventDraft } from "@/lib/review-event-draft";
 import { SheetZoom } from "@/components/print/sheet-zoom";
 import { makeQrDataUrl } from "@/lib/qr";
 import { cleanMarkdown } from "@/lib/markdown-utils";
@@ -371,14 +372,18 @@ export function ScanVolumeView({
     const busyRef = useRef<Set<string>>(new Set());
     const [saveError, setSaveError] = useState<string | null>(null);
 
-    /** 把一份复习结果写库（乐观更新 → 失败回滚 + 提示） */
+    /** 把一份复习结果写库（乐观更新 → 失败回滚 + 提示）
+     *  @param event 本次"这是一次复习"的声明（`lib/review-event-draft.ts`）；
+     *               撤销（点回灰圆）时**不传** —— 撤销不是一次复习。 */
     const saveReviewOutcomes = useCallback(
-        async (item: ErrorItem, next: ReviewOutcomes, prevRaw: string | null) => {
+        async (item: ErrorItem, next: ReviewOutcomes, prevRaw: string | null, event?: ReviewEventDraft | null) => {
             patchItem(item.id, { reviewOutcomes: serializeReviewOutcomes(next) });
             setSaveError(null);
             try {
                 const updated = await apiClient.put<{ attention?: number }>(`/api/error-items/${item.id}`, {
                     reviewOutcomes: next,
+                    /** 【2026-10-16 如如】**补上复习流水** —— 这张表此前没人写（API 接得住、前端一处都没传）。 */
+                    ...(event ? { reviewEvent: event } : {}),
                 });
                 /**
                  * 【2026-10-03】复习结果会**联动等级**（见 `lib/level-linkage.ts`）⇒
@@ -477,11 +482,23 @@ export function ScanVolumeView({
             const baseRaw = hasActiveMark ? markUndoRef.current[item.id] : prevRaw;
             if (!hasActiveMark) markUndoRef.current[item.id] = prevRaw;
 
-            const { outcomes } = nextReviewOutcomes(baseRaw, next);
+            const { outcomes, slot } = nextReviewOutcomes(baseRaw, next);
             busyRef.current.add(item.id);
-            void saveReviewOutcomes(item, outcomes, prevRaw).finally(() => busyRef.current.delete(item.id));
+            void saveReviewOutcomes(
+                item,
+                outcomes,
+                prevRaw,
+                /**
+                 * 【2026-10-16 如如】把这次判定**显式记成一条复习流水**。
+                 * ⚠️ 口径（见 `lib/review-event-draft.ts` 文件头）：**每次点出判定都记一条** ——
+                 *    同一格上"绿⇄粉"改主意会留两条（一条 right、一条 wrong）。
+                 *    这对现有两个读侧（`rightStreakOf` / `lastReviewDay`）没有影响；
+                 *    将来若要"同一天同格只留最终结果"，需加幂等（**留给下一棒/空空定**）。
+                 */
+                reviewEventDraft({ outcome: next, plannedIndex: slot, volumeId: volume?.id ?? null }),
+            ).finally(() => busyRef.current.delete(item.id));
         },
-        [markOfItem, saveReviewOutcomes, saveItemMark],
+        [markOfItem, saveReviewOutcomes, saveItemMark, volume],
     );
 
     /** 点升降框：第一次改类型、第二次改回来（都乐观 + 失败回滚） */

@@ -55,6 +55,7 @@ import {
     type RecoveryRow,
 } from "@/lib/review-recover";
 import { nextReviewOutcomes } from "@/lib/scan-marking";
+import { reviewEventDraft } from "@/lib/review-event-draft";
 import {
     Camera,
     CameraOff,
@@ -643,8 +644,21 @@ export default function RecoverPage() {
                     // ② 这道题的复习史（口径与扫码页完全一致）
                     if (w.writesOutcome && w.errorItemId) {
                         const row = card.rows.find((r) => r.rowId === w.rowId);
-                        const { outcomes } = nextReviewOutcomes(row?.reviewOutcomes ?? null, w.markState);
-                        await apiClient.put(`/api/error-items/${w.errorItemId}`, { reviewOutcomes: outcomes });
+                        const { outcomes, slot } = nextReviewOutcomes(row?.reviewOutcomes ?? null, w.markState);
+                        await apiClient.put(`/api/error-items/${w.errorItemId}`, {
+                            reviewOutcomes: outcomes,
+                            /**
+                             * 【2026-10-16 如如】**补上复习流水**（`ReviewEvent`）。
+                             * 这张表 2026-10-14 就建好、API 也接得住，但**四个写入点一处都没传**
+                             * ⇒ 表永远为空、且**完全静默**。出处：`HANDOFF.md` §③-11。
+                             * `volumeId` 用本张卡的卷（回录天然知道是哪张卷）。
+                             */
+                            reviewEvent: reviewEventDraft({
+                                outcome: w.markState,
+                                plannedIndex: slot,
+                                volumeId: card.volumeId,
+                            }),
+                        });
                     }
                 }
                 patchReview(id, (c) => ({ ...c, saving: false, state: { k: "saved", written: writes.length, skipped } }));

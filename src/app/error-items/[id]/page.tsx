@@ -39,6 +39,7 @@ import { isPreMastered } from "@/lib/level-settle";
 import { GRADE_SEMESTER_OPTIONS as GRADE_SEMESTER_OPTIONS_SHARED } from "@/lib/grade-semester-options";
 import { ReviewOutcomeEditor } from "@/components/review-outcome-editor";
 import { serializeReviewOutcomes, type ReviewOutcomes } from "@/lib/review-outcomes";
+import type { ReviewEventDraft } from "@/lib/review-event-draft";
 import { dayKey } from "@/lib/calendar-grid";
 import { ErrorItemCard } from "@/components/error-item-card";
 // 【2026-10-10】题间从属关系：颜色/说法只在 lib/item-link.ts 定一处；视图类型也在那儿（纯类型，不会把服务端代码带进来）
@@ -550,18 +551,28 @@ export default function ErrorDetailPage() {
      *    而四圆点是高频连点的地方（点三下 = 三次请求），每次重拉整页会闪。
      *    失败时再拉真实数据回正（**失败提示一律保留**）。
      */
-    const saveReviewOutcomes = async (next: ReviewOutcomes) => {
+    const saveReviewOutcomes = async (next: ReviewOutcomes, event: ReviewEventDraft | null) => {
         if (!item) return;
         const serialized = serializeReviewOutcomes(next);
         setItem({ ...item, reviewOutcomes: serialized });
         try {
-            /**
-             * 【2026-10-03】复习结果与**等级联动**（他拍板的"事件记账"，规则在 `lib/level-linkage.ts`）
-             * ⇒ 用服务器算完的 `attention` 刷新页面上的奖牌。
-             * ⚠️ 仍然**不重拉整条 item**（那会闪、还会打断他连续点圆圈的节奏），只补这一个字段。
-             */
             const updated = await apiClient.put<{ attention?: number }>(`/api/error-items/${item.id}`, {
                 reviewOutcomes: serialized,
+                /**
+                 * 【2026-10-16 如如】**补上复习流水**（`ReviewEvent`）。
+                 *
+                 * 背景：这张表 2026-10-14 就建好了、API 也接得住，但**前端一处都没传**
+                 * ⇒ 表永远是空的，而且**完全静默**（界面正常、不报错、日志也没有）。
+                 * 出处：`HANDOFF.md` §③-11、`docs\09` 第七节自己警告过的"4 个写入点漏改 ⇒ 数据静默缺失"。
+                 *
+                 * `event` 由 `ReviewOutcomeEditor` 在**点击那一刻**拼好（含"哪一格、对还是错"）——
+                 * 不能在这里按 `reviewOutcomes` 前后差分推（无时间戳 ⇒ 认不出"三格满了之后又对一次"）。
+                 * 点成空圈 ⇒ `event === null` ⇒ **不传**（撤销不是一次复习）。
+                 *
+                 * ⚠️ 等级那件事**已经与这里无关**了：等级已完全收回系统管理（`docs\14`），
+                 *    所以下面接 `attention` 只为"列表/卡片可能正开着同一道题"时保持一致。
+                 */
+                ...(event ? { reviewEvent: event } : {}),
             });
             if (typeof updated?.attention === 'number') {
                 setItem((prev) => (prev ? { ...prev, attention: updated.attention as number } : prev));

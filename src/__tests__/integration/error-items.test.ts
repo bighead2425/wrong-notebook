@@ -47,6 +47,14 @@ const mocks = vi.hoisted(() => ({
         update: vi.fn(),
         updateMany: vi.fn(),
     },
+    /**
+     * 【2026-10-16 补】复习流水表（`ReviewEvent`）。
+     * 此前**没有任何前端在传 `reviewEvent`** ⇒ 这张表一直是空的、测试也照不出来。
+     * 现在有了断言，就要能看见它被写。
+     */
+    mockPrismaReviewEvent: {
+        create: vi.fn(),
+    },
     mockSession: {
         user: {
             email: 'user@example.com',
@@ -65,6 +73,7 @@ vi.mock('@/lib/prisma', () => ({
         notebook: mocks.mockPrismaNotebook,
         stateChangeLog: mocks.mockPrismaStateChangeLog,
         dailySettle: mocks.mockPrismaDailySettle,
+        reviewEvent: mocks.mockPrismaReviewEvent,
     },
 }));
 
@@ -90,6 +99,8 @@ import { PATCH as PATCH_NOTES } from '@/app/api/error-items/[id]/notes/route';
 import { PATCH as PATCH_MASTERY } from '@/app/api/error-items/[id]/mastery/route';
 import { DELETE as DELETE_ITEM } from '@/app/api/error-items/[id]/delete/route';
 import { getServerSession } from 'next-auth';
+/** 【2026-10-16 如如】用**前端那个构造器**拼事件 ⇒ 顺手把"两端形状一致"也验了 */
+import { reviewEventDraft } from '@/lib/review-event-draft';
 
 describe('/api/error-items', () => {
     const mockUser = {
@@ -641,6 +652,97 @@ describe('/api/error-items', () => {
             expect(arg.data).not.toHaveProperty('attention');
             // ⚠️ 但**别的字段照旧要落库** —— 不能因为忽略了一个字段就让整次"改题"失败
             expect(arg.data.userNotes).toBe('顺手改个备注');
+        });
+    });
+
+    /* ==========================================================================
+     * 【2026-10-16 如如】复习流水（`ReviewEvent`）—— **端到端**：
+     * 前端构造的草稿 → 接口 → 落库。
+     *
+     * 背景（真真 2026-10-15 复核发现，见 HANDOFF §③-11）：这张表 10-14 就建好、
+     * API 也接得住，但**四个前端写入点一处都没传** ⇒ 表永远为空，而且**完全静默**
+     * （不报错、日志也没有）。本组把**接口这一侧**钉死；前端四点由
+     * `review-event-draft` 的单测 + 类型一起钉住。
+     * ======================================================================== */
+    describe('PUT /api/error-items/[id] · 复习流水（ReviewEvent）', () => {
+        const itemWith = (reviewOutcomes: string | null) => ({
+            id: 'error-item-1',
+            userId: 'user-123',
+            attention: 5,
+            manageType: 'review',
+            levelLedger: null,
+            reviewOutcomes,
+        });
+
+        const put = async (body: Record<string, unknown>) => {
+            const request = new Request('http://localhost/api/error-items/error-item-1', {
+                method: 'PUT',
+                body: JSON.stringify(body),
+                headers: { 'Content-Type': 'application/json' },
+            });
+            return PUT(request, { params: Promise.resolve({ id: 'error-item-1' }) });
+        };
+
+        it('★★ 传了 reviewEvent ⇒ 落一条流水（用前端那个构造器拼的，形状必须被认）', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(itemWith(null));
+            mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
+
+            const event = reviewEventDraft({ outcome: 'wrong', plannedIndex: 2, volumeId: 'vol-9' });
+            const res = await put({
+                reviewOutcomes: JSON.stringify({ planned: [null, null, 'wrong', null], last: 'wrong' }),
+                reviewEvent: event,
+            });
+
+            expect(res.status).toBe(200);
+            expect(mocks.mockPrismaReviewEvent.create).toHaveBeenCalledTimes(1);
+            expect(mocks.mockPrismaReviewEvent.create.mock.calls[0][0]).toMatchObject({
+                data: {
+                    userId: 'user-123',
+                    errorItemId: 'error-item-1',
+                    occurredOn: event.occurredOn,
+                    outcome: 'wrong',
+                    plannedIndex: 2,
+                    volumeId: 'vol-9',
+                },
+            });
+        });
+
+        it("★ 不传 reviewEvent ⇒ **一条都不写**（不许“顺手补一条”）", async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(itemWith(null));
+            mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
+
+            const res = await put({
+                reviewOutcomes: JSON.stringify({ planned: ['right', null, null, null], last: 'right' }),
+            });
+
+            expect(res.status).toBe(200);
+            expect(mocks.mockPrismaReviewEvent.create).not.toHaveBeenCalled();
+        });
+
+        it('★ 形状不对（日期不是 `YYYY-MM-DD`）⇒ **当没传**，但主更新照旧成功', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(itemWith(null));
+            mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
+
+            const res = await put({
+                reviewOutcomes: JSON.stringify({ planned: ['right', null, null, null], last: 'right' }),
+                reviewEvent: { occurredOn: '2026/10/16', outcome: 'right' },
+            });
+
+            expect(res.status).toBe(200);
+            expect(mocks.mockPrismaReviewEvent.create).not.toHaveBeenCalled();
+        });
+
+        it('★ 流水写失败**不许**连带让"改题"失败（与留痕同一条规矩）', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(itemWith(null));
+            mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
+            mocks.mockPrismaReviewEvent.create.mockRejectedValueOnce(new Error('db down'));
+
+            const res = await put({
+                reviewOutcomes: JSON.stringify({ planned: [null, null, null, 'right'], last: 'right' }),
+                reviewEvent: reviewEventDraft({ outcome: 'right', plannedIndex: 3 }),
+            });
+
+            expect(res.status).toBe(200);
         });
     });
 

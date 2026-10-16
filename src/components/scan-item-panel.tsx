@@ -42,6 +42,7 @@ import { cycleManageType } from "@/lib/manage-type";
 // 【2026-10-15】掌握开关点一下变成什么（唯一实现在 level-settle.ts）
 import { nextMasteryLevel } from "@/lib/level-settle";
 import { serializeReviewOutcomes, type ReviewOutcomes } from "@/lib/review-outcomes";
+import type { ReviewEventDraft } from "@/lib/review-event-draft";
 
 export function ScanItemPanel({
     itemId,
@@ -115,14 +116,16 @@ export function ScanItemPanel({
         }
     };
 
-    const saveOutcomes = async (next: ReviewOutcomes) => {
+    const saveOutcomes = async (next: ReviewOutcomes, event: ReviewEventDraft | null) => {
         if (!item) return;
         const serialized = serializeReviewOutcomes(next);
         setItem({ ...item, reviewOutcomes: serialized });
         try {
-            // 【2026-10-03】复习结果会**联动等级** ⇒ 顺带把服务器算完的等级接回来
             const updated = await apiClient.put<{ attention?: number }>(`/api/error-items/${item.id}`, {
                 reviewOutcomes: serialized,
+                /** 【2026-10-16 如如】**补上复习流水** —— 见 `lib/review-event-draft.ts` 文件头
+                 *  （这张表此前没人写：API 接得住、前端一处都没传 ⇒ 空表 + 完全静默）。 */
+                ...(event ? { reviewEvent: event } : {}),
             });
             if (typeof updated?.attention === 'number') {
                 setItem((prev) => (prev ? { ...prev, attention: updated.attention as number } : prev));
