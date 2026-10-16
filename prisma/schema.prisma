@@ -502,7 +502,14 @@ model ReviewEvent {
   plannedIndex Int?
 
   /// 从哪张卷标回来的（可空：电脑上手动勾的就没有卷）
+  /// ⚠️【2026-10-16 起】它同时承担"来源 = 复练纸/模仿纸 + 卷号"里的卷号那一半
   volumeId    String?
+
+  /// 【2026-10-16 新增】这次结果**从哪来的** —— 取值见 `src/lib/review-event-source.ts`：
+  ///   review_paper（复练纸）| imitate_paper（模仿纸）| single_scan（单题扫描录入，**含深挖纸**）
+  ///   | detail_page（本页录入）| legacy（老数据一次性补的流水，**界面不显示它的日期**）
+  /// ⚠️ 可空是为了**老数据**与将来新入口 —— 读侧认不出就当 `legacy` 处理，别崩。
+  source      String?
 
   /// 入库时刻（审计用；判断"哪天"一律看 `occurredOn`，别看它）
   createdAt   DateTime @default(now())

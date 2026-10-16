@@ -236,3 +236,131 @@ function stateLabel(state: ReviewOutcome | null | undefined, lang: 'zh' | 'en'):
     if (state === 'wrong') return lang === 'zh' ? '做错了' : 'wrong';
     return lang === 'zh' ? '还没有结果' : 'no result yet';
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 【2026-10-16 如如】新形状：`{"recent": ["wrong","right","right","right"]}`
+ *
+ * ⭐ 出处：`docs\18` §〇 / §2.2 —— **复习结果的唯一真相从"4 个计划格 + 最近一次"
+ *    换成"一条一条的流水"**（`ReviewEvent`），这个字段降级成**派生缓存**
+ *    （每次写流水之后从最近的流水算出来写回）。
+ *
+ *   约定（规格 §2.2）：
+ *     · `recent` **按时间正序** —— **末尾那个 = 最近一次**
+ *     · 最多 **`RECENT_REVIEW_LIMIT`（=4）** 条（与错题卡那 4 个圈一致）；
+ *       ⚠️ **流水里才是全部**，这里只是"显示用的最近 4 条"
+ *     · 空数组 `[]` = 没录过
+ *
+ *   ⚠️ **字段名不变**（还叫 `ErrorItem.reviewOutcomes`）⇒
+ *      `lib/constants/error-item-list-fields.ts` 与那条"字段同步"看门测试都不用动。
+ *   ⚠️ **老形状（`{planned,last}`）必须继续能读** —— 过渡期两套并存，
+ *      下面 `normalizeRecentOutcomes()` 新旧都认；迁移只做一件事：
+ *      把老形状**展开**成 `recent`（见 `legacyOutcomesToRecent`）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 错题卡上显示几条（= 新形状最多存几条） */
+export const RECENT_REVIEW_LIMIT = 4;
+
+/** 库里存的新形状 */
+export interface ReviewRecentOutcomes {
+    /** 最近几次的结果，**正序**（末尾 = 最近一次），长度 0..`RECENT_REVIEW_LIMIT` */
+    recent: ReviewOutcome[];
+}
+
+/** 内部：把 JSON 串 / 对象 / 垃圾值统一成"对象或 null" */
+function asObject(value: unknown): Record<string, unknown> | null {
+    let raw: unknown = value;
+    if (typeof value === 'string') {
+        const s = value.trim();
+        if (!s) return null;
+        try {
+            raw = JSON.parse(s);
+        } catch {
+            return null;
+        }
+    }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    return raw as Record<string, unknown>;
+}
+
+/**
+ * 是不是**老形状**（`{planned,last}`）。
+ * 判据：有 `planned` 或 `last` 这两个键之一，且**没有** `recent`（`recent` 优先）。
+ */
+export function isLegacyReviewOutcomes(value: unknown): boolean {
+    const obj = asObject(value);
+    if (!obj) return false;
+    if ('recent' in obj) return false;
+    return 'planned' in obj || 'last' in obj;
+}
+
+/**
+ * 老形状 ⇒ 最近结果序列。
+ *
+ * ⚠️⚠️ **展开规则必须与 `lib/review-status.ts` 的 `reviewEventSequence()` 逐字一致** ——
+ *    这是"迁移后读出来跟迁移前一样"的**验收点**（`docs\18` §2.3）。
+ *    规则就两条：① `planned` 里的非空值按序留下；② `last` 若与"最后一条"不同，追加到末尾。
+ *
+ * 例：`{"planned":["right","wrong",null,null],"last":"right"}` ⇒ `["right","wrong","right"]`
+ *     （前三条全对 ⇒ `["right","right","right"]`，不会多出一条）
+ */
+export function legacyOutcomesToRecent(value: unknown): ReviewOutcome[] {
+    const { planned, last } = normalizeReviewOutcomes(value);
+    const events = planned.filter((v): v is ReviewOutcome => v === 'right' || v === 'wrong');
+    if (last && last !== events[events.length - 1]) events.push(last);
+    return events;
+}
+
+/**
+ * 归一化：**新旧形状都认** ⇒ 一律返回"最近结果序列"（正序、≤ `RECENT_REVIEW_LIMIT`）。
+ *
+ * 任何一处不合法就当"没有结果"（**宁可显示灰圈，也不猜一个结果**）。
+ * ⚠️ 超出 4 条时**取末尾 4 条**（末尾才是最近几次）。
+ */
+export function normalizeRecentOutcomes(value: unknown): ReviewOutcome[] {
+    const obj = asObject(value);
+    if (!obj) return [];
+
+    if (!('recent' in obj)) {
+        // 老形状（或"两个键都没有"的空值）⇒ 走展开
+        return isLegacyReviewOutcomes(obj) ? legacyOutcomesToRecent(obj) : [];
+    }
+
+    const raw = Array.isArray(obj.recent) ? obj.recent : [];
+    const recent = raw.filter((v): v is ReviewOutcome => v === 'right' || v === 'wrong');
+    return recent.length > RECENT_REVIEW_LIMIT ? recent.slice(-RECENT_REVIEW_LIMIT) : recent;
+}
+
+/** 解析 → 存库字符串（**新形状**；写入侧统一走它，别处不许自己拼 JSON） */
+export function serializeRecentOutcomes(recent: readonly ReviewOutcome[]): string {
+    const capped = recent.length > RECENT_REVIEW_LIMIT ? recent.slice(-RECENT_REVIEW_LIMIT) : [...recent];
+    const payload: ReviewRecentOutcomes = { recent: capped };
+    return JSON.stringify(payload);
+}
+
+/** 追加一条结果到末尾（**裁到 4 条**）—— 派生时用 */
+export function appendRecentOutcome(
+    recent: readonly ReviewOutcome[],
+    outcome: ReviewOutcome,
+): ReviewOutcome[] {
+    const next = [...recent, outcome];
+    return next.length > RECENT_REVIEW_LIMIT ? next.slice(-RECENT_REVIEW_LIMIT) : next;
+}
+
+/**
+ * **从流水算派生值** —— 唯一实现在这里（纯函数，前端/服务端都能用）。
+ *
+ * 入参只要"有 `outcome` 的数组"，**按调用方给的顺序**（调用方按时间正序查出来）。
+ * ⚠️ 只取**末尾 4 条**：判等级/紧迫度都够用（规则里"连对 ≥3 就锁 1 级" ⇒ 封顶在 3），
+ *    这个结论见 `docs\18` §十.1（真真已论证）。
+ */
+export function deriveRecentFromEvents(events: readonly { outcome: unknown }[]): ReviewOutcome[] {
+    const all = events
+        .map((e) => e?.outcome)
+        .filter((v): v is ReviewOutcome => v === 'right' || v === 'wrong');
+    return all.length > RECENT_REVIEW_LIMIT ? all.slice(-RECENT_REVIEW_LIMIT) : all;
+}
+
+/** 派生值的存库字符串（= `serializeRecentOutcomes(deriveRecentFromEvents(...))` 的快捷方式） */
+export function deriveReviewOutcomesJson(events: readonly { outcome: unknown }[]): string {
+    return serializeRecentOutcomes(deriveRecentFromEvents(events));
+}
