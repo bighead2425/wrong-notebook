@@ -144,6 +144,7 @@ export function ScanVolumeView({
     onPickItem,
     onBack,
     backLabel,
+    highlightItemId,
 }: {
     /** 扫到的页二维码内容（`RE20260930001-02` 这种） */
     code: string;
@@ -156,6 +157,11 @@ export function ScanVolumeView({
      * 从复练卷页/积累纸打印页的【扫码图】进来时传 `回到预览`（点了回预览那一屏）。
      */
     backLabel?: string;
+    /**
+     * 【2026-10-18 空空第 2 条】要**凸显**的那道题（从错题详情页二维码 → 相关卷 → 预览里点【扫码图】）。
+     * 不传 ⇒ 这一屏与以前一模一样（扫码入口那条路不传它）。
+     */
+    highlightItemId?: string | null;
 }) {
     const { language } = useLanguage();
     // 稳定引用：下面几个录入回调把它放进依赖，若每次渲染都换新函数会让回调反复重建
@@ -464,8 +470,32 @@ export function ScanVolumeView({
             setSaveError(null);
             setVolMarks((prev) => ({ ...prev, [item.id]: optimistic }));
             try {
-                await apiClient.put(`/api/error-items/${item.id}`, { reviewEvent: body });
+                /**
+                 * 【2026-10-18 如如】接住服务端那句"这次录入被挡下了"。
+                 *
+                 * 之前这里是"发了 PUT 就当成了"，可服务端对**已掌握**的题会**忽略**流水
+                 * （`docs\18` 决策 ⑧：冻住就真冻住）⇒ 然后 `fetchVolumeMarks` 拉回旧值
+                 * ⇒ 他看到的是"点了对号，圈自己跳回来"，且没有任何解释
+                 * （空空 2026-10-18 报的第 3 条，他因此不敢确认是不是 bug）。
+                 *
+                 * ⇒ 现在服务端会回 `reviewEventIgnored: 'mastered'`：
+                 *   ① 提示他"先去把「会」点掉"；② **不再同步卷行的 markState**
+                 *      （记录都没写进去，卷行就不该记成"对/错"，否则纸面标记与流水打架）。
+                 */
+                const res = await apiClient.put<{ reviewEventIgnored?: 'mastered' }>(
+                    `/api/error-items/${item.id}`,
+                    { reviewEvent: body },
+                );
                 await fetchVolumeMarks(volume.id);
+                if (res?.reviewEventIgnored === 'mastered') {
+                    setSaveError(
+                        L(
+                            '这道题标着「已掌握」，所以这次对错没记上 —— 想录，先点左边的「会」取消已掌握',
+                            'This question is marked as mastered, so the result was not saved. Tap "会" to unmark it first.',
+                        ),
+                    );
+                    return;
+                }
                 const row = (volume.items || []).find((r) => r.errorItemId === item.id);
                 if (row) void saveItemMark(row.id, optimistic.mark);
             } catch (err) {
@@ -494,19 +524,49 @@ export function ScanVolumeView({
      * ⚠️ 走的是 `PATCH /mastery`（不是 PUT）—— 那条路由里带着**题间从属关系**的规则
      *    （人工标附题 ⇒ 断开；标主题 ⇒ 附题跟着标），PUT 那条不管这件事。
      */
+    /** 同一道题的"掌握状态"正在写 —— 防连点把两次相反的操作发成一对（返回顺序不定 ⇒ 最终状态随机） */
+    const masteryBusyRef = useRef<Set<string>>(new Set());
+
+    /**
+     * 点「会」字方框 ⇒ **即时**切换"已掌握 / 未掌握"。
+     *
+     * ⚠️⚠️【2026-10-18 如如】这个函数按"防连点 + 以服务端为准"重写了。
+     *
+     * 空空 2026-10-18 报的第 3 条（*"有时候好像没有落定……又不确定是不是我眼花了"*）
+     * 是典型的**竞态**特征，而原来这里恰好有两个口子：
+     *   ① **没有防连点**：手指连点两下 ⇒ 两个方向相反的 PATCH 同时在飞，
+     *      谁后返回谁赢 ⇒ 最终是"绿"还是"灰"**全看运气**（这就是"有时候对有时候不对"）；
+     *   ② **只信本地算的 `next`**，不看服务端回了什么 ⇒ 一旦服务端因为题间从属规则
+     *      （主题会向附题传播）算出别的值，界面就与库里分叉，而且再点一次会"反向抵消"。
+     *
+     * ⇒ 现在：同一道题同一时间只发一次请求；写成功后**用服务端返回的 `masteryLevel` 对齐**。
+     *   失败才回滚，并给出可见提示（不再静默）。
+     */
     const onMasteryToggle = useCallback(
         async (item: ErrorItem) => {
+            if (masteryBusyRef.current.has(item.id)) return;
             const next = nextMasteryLevel(item.masteryLevel);
             const before = item.masteryLevel;
+            masteryBusyRef.current.add(item.id);
+            setSaveError(null);
             patchItem(item.id, { masteryLevel: next });
             try {
-                await apiClient.patch(`/api/error-items/${item.id}/mastery`, { masteryLevel: next });
+                const saved = await apiClient.patch<{ masteryLevel?: number }>(
+                    `/api/error-items/${item.id}/mastery`,
+                    { masteryLevel: next },
+                );
+                /** 以服务端为准：它可能因为题间从属规则改了别的题，而本题一定回的是真值 */
+                if (typeof saved?.masteryLevel === 'number' && saved.masteryLevel !== next) {
+                    patchItem(item.id, { masteryLevel: saved.masteryLevel });
+                }
             } catch (err) {
                 console.error(err);
                 patchItem(item.id, { masteryLevel: before });
                 setSaveError(
                     L('这道题的掌握状态没存上，已还原，请再试一次', 'Failed to save mastery; reverted'),
                 );
+            } finally {
+                masteryBusyRef.current.delete(item.id);
             }
         },
         [patchItem, L],
@@ -1219,6 +1279,7 @@ export function ScanVolumeView({
                                       masteryOf={(it) => Number(it.masteryLevel) >= 2}
                                       onMasteryToggle={onMasteryToggle}
                                       onAnswerClick={openAnswer}
+                                      highlightItemId={highlightItemId ?? null}
                                       L={L}
                                   />
                               </div>
@@ -1274,6 +1335,7 @@ export function ScanVolumeView({
                                 masteryOf={(it) => Number(it.masteryLevel) >= 2}
                                 onMasteryToggle={onMasteryToggle}
                                 onAnswerClick={openAnswer}
+                                highlightItemId={highlightItemId ?? null}
                                 L={L}
                             />
                         </div>

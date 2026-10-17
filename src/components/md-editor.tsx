@@ -32,6 +32,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { Editor } from '@milkdown/kit/core';
 // 只是类型（会被编译期擦除）—— 不会把 ProseMirror 拖进 SSR
 import type { Transaction } from '@milkdown/kit/prose/state';
+// 【2026-10-18】点空白处落光标要用 `Selection.near`（值导入，运行时要用）
+import { Selection } from '@milkdown/kit/prose/state';
 // 样式：ProseMirror 的基础排版（contenteditable 行为），静态导入没问题；
 // 正文排版复用全局的 .markdown-content（挂在编辑器根节点上，见下）。
 import '@milkdown/kit/prose/view/style/prosemirror.css';
@@ -100,6 +102,17 @@ export interface MdEditorInstance {
      * 所以按钮和快捷键的效果永远一致（不自己另造一套历史）。
      */
     undo: () => void;
+    /**
+     * 【2026-10-18 空空第 6 条】**点编辑器空白处也能落光标**。
+     *
+     * 他的原话：*"我点击在 md 框没有文字的行且这个行已经在框中有文字的行的后面了，
+     *   那么就让光标跳到 md 框中有文字的最后一行的最后一个字符后面……空 md 框点后面行
+     *   光标根本就上不去。"*
+     *
+     * 传屏幕坐标：落在某一行（或该行右侧空白）⇒ 光标到**那一行末尾**；
+     * 落在整篇内容之后 ⇒ 光标到**全文末尾**。
+     */
+    placeCaretAtPoint: (clientX: number, clientY: number) => void;
     destroy: () => Promise<void>;
 }
 
@@ -766,6 +779,28 @@ export async function createMdEditorInstance(opts: {
             created.action((ctx) => replaceEmojiRange(ctx.get(editorViewCtx), from, to, expected, ch));
         },
         closeEmojiPicker: () => pickerCtl.close?.(),
+        placeCaretAtPoint: (clientX, clientY) => {
+            created.action((ctx) => {
+                const view = ctx.get(editorViewCtx);
+                const docEnd = view.state.doc.content.size;
+                const at = view.posAtCoords({ left: clientX, top: clientY });
+                let pos = docEnd;
+                if (at) {
+                    /**
+                     * 吸附到**点击所在那一块的末尾**（`$pos.end(depth)`）：
+                     *   · 点在某行右侧的空白 ⇒ 光标落到该行末尾（他要的"这一行的最末尾"）；
+                     *   · 点在最后一块之后（含空编辑器）⇒ 那一块就是最后一块 ⇒ 自然等于全文末尾。
+                     * ⚠️ 不做"按 x 坐标插到字中间"——那是点在正文里时的行为，不归这个方法管
+                     *    （调用方只在"点在正文之外"时才调它）。
+                     */
+                    const $pos = view.state.doc.resolve(Math.min(at.pos, docEnd));
+                    pos = $pos.end($pos.depth);
+                }
+                const sel = Selection.near(view.state.doc.resolve(Math.min(pos, docEnd)), -1);
+                view.dispatch(view.state.tr.setSelection(sel));
+                view.focus();
+            });
+        },
         undo: () => created.action(callCommand(undoCommand.key)),
         destroy: () => created.destroy().then(() => undefined),
     };
@@ -976,6 +1011,31 @@ export function MdEditor({
                     className="md-editor rounded-md border bg-background px-3 py-2 text-sm"
                     style={{ minHeight: `${minHeightPx}px` }}
                     data-placeholder={placeholder}
+                    /**
+                     * ═══ 【2026-10-18 空空第 6 条】点在空白处也要能落光标 ═══
+                     *
+                     * 现象（他的原话）：点空 md 框的第 2 行以后、或点内容之后的大片空白，
+                     * **一点反应都没有、光标上不去**，每次都得小心翼翼地点在第一行。
+                     *
+                     * 病因：`minHeight` 撑出来的是**容器**的空白，不是 `ProseMirror` 的；
+                     *   点在那儿 → 事件落在容器上（不是 contenteditable）⇒ 浏览器不给光标。
+                     *
+                     * 修法：只有"点在正文之外"时才接管（点在正文里一律交回 ProseMirror 自己，
+                     *   正常点词/拖选一个字都不改）。接管后由 `placeCaretAtPoint` 决定落点：
+                     *   该行有内容 ⇒ 该行末尾；点在整个内容之后（含空框）⇒ 全文末尾。
+                     */
+                    onPointerDown={(e) => {
+                        // 只处理主键；右键留给浏览器菜单
+                        if (e.pointerType === 'mouse' && e.button !== 0) return;
+                        const el = e.target as HTMLElement | null;
+                        // 点在正文（contenteditable）里 ⇒ 交给 ProseMirror，别抢
+                        if (el?.closest('[contenteditable="true"]')) return;
+                        const inst = instanceRef.current;
+                        if (!inst) return;
+                        // 阻止容器拿走焦点/开始选字（我们要自己放光标）
+                        e.preventDefault();
+                        inst.placeCaretAtPoint(e.clientX, e.clientY);
+                    }}
                 />
             )}
 

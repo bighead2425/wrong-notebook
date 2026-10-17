@@ -177,3 +177,58 @@ export function MasteryToggleBox({
         </button>
     );
 }
+
+/**
+ * 【2026-10-18 空空第 2 条】把**某一道题**在卷面上凸显出来。
+ *
+ * 场景：*"在点击二维码的条件进入已有组卷的，点击打开复练卷、模仿卷……
+ *       能够凸显一下这道题，比如把这道题前面的流水号标出颜色也可以"*
+ * ⇒ 他真正要的是"一眼找到它"。这里用**橙色描边 + 左上角小标签**，比改流水号颜色更醒目，
+ *   而且**完全不碰纸面元素** —— 流水号的颜色是要印到纸上的，不能为了屏幕改。
+ *
+ * ⚠️ 两层都必须：`no-print`（绝不落纸）+ `pointerEvents: none`（不挡"会"字框 / 灰圆 / 加号的点击，
+ *    也不挡拖动缩放）。`zIndex` 压在 4/5：那些按钮是 7，仍在其上。
+ * ⚠️ 必须放在一个 `position: relative` 的容器里（题块外框 / 模仿卷左栏的罩框外层）。
+ */
+export function HighlightBox({ label }: { label: string }) {
+    return (
+        <>
+            <span
+                className="no-print"
+                aria-hidden
+                style={{
+                    position: 'absolute',
+                    top: '-0.6mm',
+                    left: '-0.6mm',
+                    right: '-0.6mm',
+                    bottom: '-0.6mm',
+                    border: '0.7mm solid #f59e0b',
+                    borderRadius: '1.2mm',
+                    boxShadow: '0 0 0 0.6mm rgba(245, 158, 11, 0.22)',
+                    pointerEvents: 'none',
+                    zIndex: 4,
+                }}
+            />
+            <span
+                className="no-print"
+                style={{
+                    position: 'absolute',
+                    top: '-3.4mm',
+                    left: 0,
+                    background: '#f59e0b',
+                    color: '#ffffff',
+                    fontSize: '7pt',
+                    fontWeight: 700,
+                    lineHeight: 1.25,
+                    padding: '0.2mm 1.2mm',
+                    borderRadius: '0.8mm',
+                    whiteSpace: 'nowrap',
+                    pointerEvents: 'none',
+                    zIndex: 5,
+                }}
+            >
+                {label}
+            </span>
+        </>
+    );
+}

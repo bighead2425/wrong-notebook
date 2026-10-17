@@ -22,7 +22,7 @@ import {
 import { useFigureImages } from './use-print-images';
 import { PromoteBox } from './promote-box';
 // 【2026-10-11】扫码那两件控件抽到共用件（模仿纸也要同一套，见该文件头的说明）
-import { MasteryToggleBox, ScanBlockFrame, ScanPlusButton } from './scan-overlay';
+import { HighlightBox, MasteryToggleBox, ScanBlockFrame, ScanPlusButton } from './scan-overlay';
 // 【2026-10-12】题块右上角那对"上移/下移"（复练纸与模仿纸共用同一份，见该文件头）
 import { MoveButtons } from './move-buttons';
 import { PROMOTE_BOX, promoteDirectionFor, type PromoteDirection } from '@/lib/manage-type';
@@ -175,6 +175,11 @@ export interface ReviewSheetProps {
     reviewRoundsOf?: (item: ErrorItem) => number;
     /** 【2026-10-16】这道题已掌握 ⇒ 圆禁用（"录不了"，`docs\18` 验收 #10） */
     reviewMarkDisabledOf?: (item: ErrorItem) => boolean;
+    /**
+     * 【2026-10-18 空空第 2 条】要**凸显**的那道题（从错题详情页二维码跳过来时带的就是它）。
+     * 不传 ⇒ 一份卷里没有任何高亮，与以前一模一样。
+     */
+    highlightItemId?: string | null;
     /**
      * 【2026-10-17 空空第 2 条】题框左侧那个「会」字方框：
      * `masteryOf` 给"现在已掌握吗"，`onMasteryToggle` 点一下切换（**不传就根本不画**）。
@@ -612,6 +617,7 @@ export function ReviewQuestionBlock({
     reviewRounds,
     reviewMarkDisabled,
     masteryMastered,
+    highlighted,
     onMasteryToggle,
     masteryLeftMM,
     onMoveUp,
@@ -696,6 +702,11 @@ export function ReviewQuestionBlock({
      * 不传 `onMasteryToggle` ⇒ **这个方框根本不画**（打印预览/纸面那一路没有它）。
      */
     masteryMastered?: boolean;
+    /**
+     * 【2026-10-18 空空第 2 条】**把这道题凸显出来**（从详情页二维码跳进来看"相关卷"时）。
+     * 只画一圈橙色描边 + 一枚"这道题"小标签，**纯屏幕元素（`no-print`）** ⇒ 不碰纸面任何东西。
+     */
+    highlighted?: boolean;
     onMasteryToggle?: () => void;
     /**
      * 【2026-10-17】这个方框相对题块左缘往左多少毫米。
@@ -735,6 +746,11 @@ export function ReviewQuestionBlock({
                 borderTop: showDivider ? '0.3mm dashed #cfcfcf' : undefined,
             }}
         >
+            {/* ═══ 【2026-10-18 空空第 2 条】把**这道题**凸显出来 ═══
+                · 用在"从错题详情页二维码 → 相关卷 → 打开某卷"这条路上（他只关心那一道题）；
+                · 画法在 `scan-overlay.tsx` 的 `HighlightBox`（**只此一处实现**，模仿卷也用它）；
+                · 纯屏幕元素：`no-print` + `pointerEvents:none` ⇒ 不落纸、不挡按钮。 */}
+            {highlighted ? <HighlightBox label={L('这道题', 'This one')} /> : null}
             {/* 拖虚线调留白：一条**绝对定位**的透明条，盖在本块顶上的虚线上。
                 ⚠️ 必须 absolute —— 它不参与布局，量出来的高度才不会因为它变来变去。
                 调的是**上面那道题**（虚线在它脚底下）。 */}
@@ -977,9 +993,15 @@ const REVIEW_MARK_LONG_PRESS_MS = 550;
 /**
  * 【2026-10-16 如如】卷页上那颗**记录对错的圆**（抽出来是因为多了长按那套状态）。
  *
- * 手势（`docs\18` §4.3）：
+ * 手势（`docs\18` §4.3 + 他 2026-10-18 的修正）：
  *   · **点一下** ⇒ 对 ⇄ 错 两态切换（**永远不经过"清空"**）
- *   · **长按 / 右键** ⇒ 交给调用方弹菜单（再录一次：对 / 错 / 删除这一条）
+ *   · **右键**（鼠标）/ **长按**（手指、手写笔）⇒ 交给调用方弹菜单（再录一次 / 删除这一条）
+ *
+ * ⚠️⚠️【2026-10-18 他实测后定的】**鼠标不启用长按，只留右键**。
+ *    他的原话：*"电脑端长按与单击可能影响电脑判断……建议保留右击，去除电脑端长按，
+ *    这样判断是单击还是长按可能就比较容易了。"*（观感是"点圈反应不太快"）
+ *    ⇒ 判据用 `pointerType`：`'mouse'` ⇒ 只启动"点击"，长按定时器**根本不跑**。
+ *    触摸（`touch`）与手写笔（`pen`）保留长按 —— 它们没有右键可用。
  *
  * ⚠️ **长按触发后，松手那一次 click 必须吞掉** —— 否则"长按"会顺带当成一次点击、
  *    把他刚要看的东西又改了一次。用一个 ref 标记"这次长按已经生效"。
@@ -1014,8 +1036,14 @@ function ReviewMarkCircle({
         }
     };
 
-    const startPress = () => {
+    const startPress = (e: ReactPointerEvent<HTMLButtonElement>) => {
         if (!onLongPress || disabled) return;
+        /**
+         * 【2026-10-18 空空要求】**鼠标不做长按**。
+         * 电脑上"按住不放"和"点一下"在指针层面难以区分 ⇒ 干脆不判：
+         * 鼠标只有"点一下"和"右键"两种，判断立刻变干净（他说的"反应不太快"就是指这个）。
+         */
+        if (e.pointerType === 'mouse') return;
         fired.current = false;
         clearTimer();
         timer.current = window.setTimeout(() => {
@@ -1039,10 +1067,10 @@ function ReviewMarkCircle({
                     ? L('这道题已掌握 ⇒ 录不了（先取消已掌握）', 'Mastered — unmark it first to record')
                     : onLongPress
                       ? L(
-                            '点一下：对 ⇄ 错；长按：再录一次 / 删除这一条',
-                            'Tap: correct ⇄ wrong · Long-press: record again / delete',
+                            '点一下：对 ⇄ 错；右键（手机长按）：再录一次 / 删除这一条',
+                            'Click: correct ⇄ wrong · Right-click (long-press on touch): record again / delete',
                         )
-                      : L('点一下：对 ⇄ 错', 'Tap: correct ⇄ wrong')
+                      : L('点一下：对 ⇄ 错', 'Click: correct ⇄ wrong')
             }
             aria-label={L('记录这道题的对错', 'Record correct or wrong')}
             onClick={() => {
@@ -1147,6 +1175,7 @@ export function ReviewSheet({
     onReviewMarkLongPress,
     reviewRoundsOf,
     reviewMarkDisabledOf,
+    highlightItemId,
     masteryOf,
     onMasteryToggle,
     onMoveQuestion,
@@ -1286,6 +1315,7 @@ export function ReviewSheet({
                                                 reviewMarkDisabledOf ? reviewMarkDisabledOf(item) : undefined
                                             }
                                             masteryMastered={masteryOf ? masteryOf(item) : undefined}
+                                            highlighted={!!highlightItemId && highlightItemId === item.id}
                                             onMasteryToggle={
                                                 onMasteryToggle ? () => onMasteryToggle(item) : undefined
                                             }
@@ -1314,6 +1344,7 @@ export function ReviewSheet({
                                                     ? (e) => onDividerDragStart!(above.id, blankValueOf!(above.id))(e)
                                                     : undefined
                                             }
+                                            highlighted={!!highlightItemId && highlightItemId === item.id}
                                             {...movePropsFor(item, b.seq)}
                                             L={L}
                                         />

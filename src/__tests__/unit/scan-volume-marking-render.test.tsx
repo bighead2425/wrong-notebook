@@ -61,6 +61,8 @@ function renderSheet(opts: {
     answer?: string;
     /** 灰框能不能点开（= 传了 onAnswerClick） */
     answerClick?: boolean;
+    /** 【2026-10-18】要凸显哪道题（传题 id；不传 = 不凸显） */
+    highlight?: string;
 } = {}): string {
     const it = opts.it ?? item();
     const interactive = opts.interactive ?? true;
@@ -85,6 +87,7 @@ function renderSheet(opts: {
             onAnswerClick={
                 interactive && opts.answerClick ? () => undefined : undefined
             }
+            highlightItemId={opts.highlight ?? null}
             L={(zh) => zh}
         />,
     );
@@ -219,5 +222,38 @@ describe('扫卷录入 · 灰色答案框可点开', () => {
         const html = renderSheet({ answer: '很长很长的答案', answerClick: true });
         // 服务端渲染时量不出宽度 ⇒ `truncated` 初值 false，所以只断言答案文字在、且控件在
         expect(html).toContain('很长很长的答案');
+    });
+});
+
+/**
+ * 【2026-10-18 空空第 2 条】"从二维码进来看相关卷"时，把**那道题**凸显出来。
+ *
+ * 他原话：*"卷面内容比较多的话，一道一道去查看其实并不太方便……
+ *          希望有这样的一个标记，看上去比较醒目好认，而且从开发角度而言还不耽误其他功能。"*
+ * ⇒ 橙色描边 + "这道题"标签，纯屏幕元素。
+ */
+describe('卷面高亮 · 这道题', () => {
+    it('不传 ⇒ 一份卷里没有任何高亮（与以前一模一样）', () => {
+        const html = renderSheet();
+        /**
+         * ⚠️ 别用 `not.toContain('这道题')` —— 圈上那句 title 里也有"这道题已掌握 ⇒ 录不了"。
+         * 判据要**精确到"标签本身"**：`>这道题</span>`（高亮标签是唯一这样一个独立文本节点）。
+         */
+        expect(html).not.toContain('>这道题</span>');
+        expect(html).not.toContain('#f59e0b');
+    });
+
+    it('★★ 传了那道题的 id ⇒ 出现"这道题"标签 + 橙色描边', () => {
+        const html = renderSheet({ highlight: 'e1' });
+        expect(html).toContain('>这道题</span>');
+        expect(html).toContain('#f59e0b');
+    });
+
+    it('★ 高亮是屏幕元素 ⇒ 必须 `no-print`（绝不落纸）', () => {
+        const html = renderSheet({ highlight: 'e1' });
+        const idx = html.indexOf('>这道题</span>');
+        // 标签所在的那个 span 必须带 no-print
+        const tagStart = html.lastIndexOf('<span', idx);
+        expect(html.slice(tagStart, idx)).toContain('no-print');
     });
 });

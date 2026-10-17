@@ -14,7 +14,7 @@ import type { PromoteDirection } from '@/lib/manage-type';
 import type { ReviewMark } from '@/lib/scan-marking';
 import { useFigureImages } from './use-print-images';
 import { MissingQuestionBlock, ReviewQuestionBlock, VolumeHeader } from './review-card';
-import { MasteryToggleBox, MASTERY_BOX_SIZE_MM, ScanBlockFrame, ScanPlusButton } from './scan-overlay';
+import { HighlightBox, MasteryToggleBox, MASTERY_BOX_SIZE_MM, ScanBlockFrame, ScanPlusButton } from './scan-overlay';
 
 /**
  * T4 **模仿纸**的纸面（2026-10-11）。
@@ -246,6 +246,11 @@ export interface ImitateSheetProps {
     /** 【2026-10-16】这道题已掌握 ⇒ 圆禁用（"录不了"） */
     reviewMarkDisabledOf?: (item: ErrorItem) => boolean;
     /**
+     * 【2026-10-18 空空第 2 条】要**凸显**的那道题（从错题详情页二维码跳过来时带的就是它）。
+     * 主题与附题都认 —— 他要求过"对于模仿卷而言，无论是主题还是附题都进行筛选"，凸显同理。
+     */
+    highlightItemId?: string | null;
+    /**
      * 【2026-10-17 空空第 2 条】题框左侧那个「会」字方框（掌握开关）。
      * ⚠️ 模仿卷**主题和附题都要有** —— 他说"模仿卷主题的蓝框左边也放上这个会字框吧，
      *    无非就是这个模仿卷右边不设置是否回答正确的圆框罢了"。
@@ -297,6 +302,7 @@ export function ImitateSheet({
     onReviewMarkLongPress,
     reviewRoundsOf,
     reviewMarkDisabledOf,
+    highlightItemId,
     masteryOf,
     onMasteryToggle,
     onMoveQuestion,
@@ -409,6 +415,10 @@ export function ImitateSheet({
                             onFigureScaleStart={onFigureScaleStart}
                             L={L}
                         />
+                        {/* 【2026-10-18 空空第 2 条】主题被"相关卷"点名时也凸显出来 */}
+                        {highlightItemId && highlightItemId === theme.id ? (
+                            <HighlightBox label={L('这道题', 'This one')} />
+                        ) : null}
                         <ScanBlockFrame />
                         <ScanPlusButton onClick={() => onThemePlusClick!(theme)} title={plusTitle} />
                         {/* 【2026-10-17 空空第 2 条】主题的蓝框左边也要一个「会」字方框 ——
@@ -504,6 +514,7 @@ export function ImitateSheet({
                                        栏距只有 4mm ⇒ 方框必然压住线两侧各一点；`zIndex` 由组件给（7），
                                        高于那条线（它是同级的兄弟，默认层级）。 */
                                     masteryMastered={masteryOf ? masteryOf(item) : undefined}
+                                    highlighted={!!highlightItemId && highlightItemId === item.id}
                                     onMasteryToggle={
                                         onMasteryToggle ? () => onMasteryToggle(item) : undefined
                                     }
@@ -533,6 +544,7 @@ export function ImitateSheet({
                                     ? (e) => onDividerDragStart!(above.id, blankValueOf!(above.id))(e)
                                     : undefined
                             }
+                            highlighted={!!highlightItemId && highlightItemId === item.id}
                             {...movePropsFor(item, b.seq)}
                             L={L}
                         />

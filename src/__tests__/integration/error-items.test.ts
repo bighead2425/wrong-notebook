@@ -722,6 +722,29 @@ describe('/api/error-items', () => {
             return PUT(request, { params: Promise.resolve({ id: 'error-item-1' }) });
         };
 
+        it('★★ 已掌握的题 ⇒ 流水被忽略，但**响应里必须明确告诉前端**（2026-10-18）', async () => {
+            /**
+             * 为什么要这条：
+             *   服务端对已掌握的题会**忽略**流水（`docs\18` 决策 ⑧：冻住就真冻住）。
+             *   原来它只 `logger.warn` 就返回 200 —— 前端不知道，于是"乐观改了圈 → 重拉记录
+             *   → 圈跳回"，用户看到的是"我点错了 / 点了没反应"（空空 2026-10-18 报的第 3 条）。
+             * ⇒ 现在响应里带 `reviewEventIgnored: 'mastered'`，前端据此说一句人话。
+             */
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({
+                ...itemWith('{}'),
+                masteryLevel: 2, // 已掌握
+            });
+            mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
+            mocks.mockPrismaReviewEvent.create.mockClear();
+
+            const res = await put({ reviewEvent: reviewEventDraft({ outcome: 'wrong', plannedIndex: null }) });
+            const body = await res.json();
+
+            expect(res.status).toBe(200); // 不报错：同一条请求还可能带别的主字段更新
+            expect(mocks.mockPrismaReviewEvent.create).not.toHaveBeenCalled();
+            expect(body.reviewEventIgnored).toBe('mastered');
+        });
+
         it('★★ 传了 reviewEvent ⇒ 落一条流水（用前端那个构造器拼的，形状必须被认）', async () => {
             mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(itemWith(null));
             mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));

@@ -255,12 +255,23 @@ export async function PUT(
          *    （清了 = 她错题卡上的圈全没了）。
          */
         let autoMastered = false;
+        /**
+         * 【2026-10-18 如如】**被"已掌握"挡下来的那次录入，要告诉前端**。
+         *
+         * 原来这里只 `logger.warn` 就返回 200 —— 界面完全不知道，于是：
+         *   他点了圈（乐观改了颜色）→ 服务端忽略 → 前端重拉记录 → **圈跳回原值**，
+         *   看起来像"我点错了"或"点了没反应"（空空 2026-10-18 报的正是这个观感）。
+         * ⚠️ 这里仍然**不报错**（不改 HTTP 状态）：同一条请求里可能还带了别的主字段更新，
+         *    不该因为"复习结果被忽略"整条失败。⇒ 用响应里的标记让前端说一句话。
+         */
+        let reviewEventIgnored: 'mastered' | null = null;
         if (reviewEvent !== undefined && reviewEvent !== null) {
             const ev = parseReviewEventInput(reviewEvent);
             if (!ev) {
                 logger.warn({ id }, 'Ignored malformed reviewEvent');
             } else if (Number(errorItem.masteryLevel) === 2) {
                 logger.warn({ id, op: ev.op }, 'Ignored reviewEvent on a mastered item');
+                reviewEventIgnored = 'mastered';
             } else {
                 try {
                     // ① 老数据补流水（只补一次）
@@ -684,8 +695,16 @@ export async function PUT(
         // 注：按用户要求，保存错题时**不再自动导出**到 Obsidian。
         //     需要导出时走错题详情页的「导出到 ob」按钮（本文件的 export-obsidian 路由）。
 
-        /** `linkNote` 只是"这次顺带发生了什么"的一句人话，界面可选地弹一下；没有就不加这个键 */
-        return NextResponse.json(linkNote ? { ...updated, linkNote } : updated);
+        /**
+         * `linkNote` 只是"这次顺带发生了什么"的一句人话，界面可选地弹一下；没有就不加这个键。
+         * 【2026-10-18】`reviewEventIgnored` 同理 —— 它让前端能说"这次录入被挡下了，原因是什么"，
+         * 而不是让圈自己莫名其妙地跳回去。
+         */
+        return NextResponse.json({
+            ...updated,
+            ...(linkNote ? { linkNote } : {}),
+            ...(reviewEventIgnored ? { reviewEventIgnored } : {}),
+        });
     } catch (error) {
         logger.error({ error }, 'Error updating item');
         return internalError("Failed to update error item");
