@@ -211,6 +211,12 @@ export default function ReviewVolumesPage() {
      */
     const [gradeTermFilter, setGradeTermFilter] = useState<string>("");
     const [subjectFilter, setSubjectFilter] = useState<string>("");
+    /**
+     * 【2026-10-17 空空第 5 条】只看"**含某一道题**"的卷 —— 从错题详情页的「相关卷」跳过来。
+     * 判据在服务端（`ReviewVolumeItem.errorItemId` 存在即可）⇒ 模仿卷里**主题和附题都算**。
+     * 空 = 不筛。
+     */
+    const [hasItemFilter, setHasItemFilter] = useState<string>("");
     const [leftHidden, setLeftHidden] = useState(false);
 
     /**
@@ -304,11 +310,12 @@ export default function ReviewVolumesPage() {
             qs.set("kind", kindFilter);
             if (gradeTermFilter) qs.set("term", gradeTermFilter);
             if (subjectFilter) qs.set("subject", subjectFilter);
+            if (hasItemFilter) qs.set("hasItem", hasItemFilter);
             if (query.trim()) qs.set("q", query.trim());
             if (cursor) qs.set("cursor", cursor);
             return qs.toString();
         },
-        [kindFilter, gradeTermFilter, subjectFilter, query],
+        [kindFilter, gradeTermFilter, subjectFilter, query, hasItemFilter],
     );
 
     const fetchList = useCallback(async () => {
@@ -392,6 +399,16 @@ export default function ReviewVolumesPage() {
         const subject = qs.get("subject");
         if (grade) setGradeTermFilter(normalizeTerm(grade) || grade);
         if (subject) setSubjectFilter(subject);
+        /** 【2026-10-17】「相关卷」带过来的题 id */
+        const hasItem = qs.get("hasItem");
+        if (hasItem) setHasItemFilter(hasItem);
+        /**
+         * 【2026-10-17】深链也可以直接指定看哪一档（复练/模仿）。
+         * 目前「相关卷」按钮不带它（从题这边不知道那道题进过哪种卷）——
+         * 留着这条是为了将来能"直奔模仿卷"而不必先切一次 tab。
+         */
+        const kindParam = qs.get("kind");
+        if (kindParam === "review" || kindParam === "imitate") setKindFilter(kindParam);
         /**
          * 【2026-10-03】深链：`?vol=<卷 id>&scan=<第 1 页二维码内容>` ⇒
          * 打开这一卷**并直接进【扫码图】**那一屏。
@@ -1304,6 +1321,32 @@ export default function ReviewVolumesPage() {
                                             </option>
                                         ))}
                                     </select>
+
+                                    {/* 【2026-10-17 空空第 5 条】从错题详情页「相关卷」进来时，
+                                        这里显示"正在只看含这道题的卷"，并给一个 × 撤掉筛选
+                                        （否则他会被"怎么只有两份卷"困住）。 */}
+                                    {hasItemFilter ? (
+                                        <span className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 text-xs">
+                                            {L("只看含这道题的卷", "Only volumes with this question")}
+                                            <button
+                                                type="button"
+                                                className="rounded px-1 hover:bg-background/60"
+                                                title={L("撤掉这个筛选", "Clear this filter")}
+                                                onClick={() => {
+                                                    setHasItemFilter("");
+                                                    /**
+                                                     * 顺手把 URL 上的 `hasItem` 也去掉：
+                                                     * 否则一刷新它又回来了，看着像"筛不掉"。
+                                                     */
+                                                    const url = new URL(window.location.href);
+                                                    url.searchParams.delete("hasItem");
+                                                    window.history.replaceState(null, "", url.toString());
+                                                }}
+                                            >
+                                                ×
+                                            </button>
+                                        </span>
+                                    ) : null}
                                 </div>
 
                                 {listLoading && (
@@ -1312,13 +1355,35 @@ export default function ReviewVolumesPage() {
                                 {listError && <p className="text-xs text-red-600">{listError}</p>}
                                 {!listLoading && !listError && visibleVolumes.length === 0 && (
                                     <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
-                                        <p>{L("还没有组过卷。", "No volumes yet.")}</p>
-                                        <p>
-                                            {L(
-                                                "去「打印预览页」选好题、点「生成复练卷」，卷号与页二维码才会出现，然后在这里能回头改。",
-                                                "Open the print preview page, pick questions and press Build volume.",
-                                            )}
-                                        </p>
+                                        {/* 【2026-10-17】带"只看含这道题"的筛选时，空列表的**说法要不一样** ——
+                                            否则他会以为"这道题一份卷都没进过"，
+                                            而真相可能是"这一档（复练/模仿）没有，另一档有"。 */}
+                                        {hasItemFilter ? (
+                                            <>
+                                                <p>
+                                                    {L(
+                                                        `这道题还没有${VOLUME_KIND_LABEL[kindFilter]}卷。`,
+                                                        `No ${VOLUME_KIND_LABEL_EN[kindFilter]} volume with this question yet.`,
+                                                    )}
+                                                </p>
+                                                <p>
+                                                    {L(
+                                                        "切上面那个【复练 / 模仿】看看另一档；或者点筛选条上的 × 撤掉这个筛选。",
+                                                        "Switch the kind tab above, or clear the filter with ×.",
+                                                    )}
+                                                </p>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <p>{L("还没有组过卷。", "No volumes yet.")}</p>
+                                                <p>
+                                                    {L(
+                                                        "去「打印预览页」选好题、点「生成复练卷」，卷号与页二维码才会出现，然后在这里能回头改。",
+                                                        "Open the print preview page, pick questions and press Build volume.",
+                                                    )}
+                                                </p>
+                                            </>
+                                        )}
                                     </div>
                                 )}
 

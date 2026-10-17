@@ -35,7 +35,8 @@ import { ParsedQuestion } from "@/lib/ai";
 import { PrintCounts } from "@/components/print-counts";
 import { attentionFullName, attentionLevelOf } from "@/lib/attention-level";
 // 【2026-10-15】判"预掌握"（等级1 + 倒数0）—— 判据的唯一出处
-import { isPreMastered } from "@/lib/level-settle";
+// 【2026-10-17】`nextMasteryLevel`：掌握开关点一下变成哪一档 —— **唯一实现**（别自己写 `> 0 ? 0 : 1`）
+import { isPreMastered, nextMasteryLevel } from "@/lib/level-settle";
 import { GRADE_SEMESTER_OPTIONS as GRADE_SEMESTER_OPTIONS_SHARED } from "@/lib/grade-semester-options";
 // 【2026-10-16 如如】「复习结果」换成**表格**（流水 = 一条一次、带日期）——
 // 出处：`docs\18` §4.2。旧的 `ReviewOutcomeEditor`（四行计划格 + 最近一次）已删：
@@ -403,11 +404,23 @@ export default function ErrorDetailPage() {
     const toggleMastery = async () => {
         if (!item) return;
 
-        const newLevel = item.masteryLevel > 0 ? 0 : 1;
+        /**
+         * ⚠️⚠️【2026-10-17 修 bug】这里原来自己写了一个"下一档"：`masteryLevel > 0 ? 0 : 1`。
+         *
+         * 后果：**点"标记为已掌握"写进去的是 1（复习中），永远到不了 2** ⇒
+         *   ① 详情页看起来"开关打开了"（本地 state 改成 1）；
+         *   ② 可退出再进错题本，错题卡读的是 `masteryLevel >= 2` ⇒ 仍然显示"**待复习**"；
+         *   ③ 而"已掌握 ⇒ 未掌握"那个方向是对的（2 → 0），所以他只看到"一进一出不对劲"。
+         *
+         * ⇒ 下一档**只许用 `nextMasteryLevel()`**（唯一实现在 `lib/level-settle.ts`）。
+         *   掌握开关在本项目有**三个入口**（错题卡 / 扫码单题卡 / 详情页），
+         *   各写一套必然分叉 —— 这条已加看门测试（`mastery-toggle-guard.test.ts`）。
+         */
+        const newLevel = nextMasteryLevel(item.masteryLevel);
 
         try {
             const res = await apiClient.patch<{ linkNote?: string }>(`/api/error-items/${item.id}/mastery`, { masteryLevel: newLevel });
-            setItem({ ...item, masteryLevel: newLevel });
+            setItem((prev) => (prev ? { ...prev, masteryLevel: newLevel } : prev));
             /**
              * 【2026-10-10】标"已掌握"现在可能**顺带动了关联**（人工标附题 ⇒ 断开；
              * 标主题 ⇒ 附题跟着标）。服务端会把这件事用一句话回在 `linkNote` 里 ——
@@ -1067,15 +1080,34 @@ export default function ErrorDetailPage() {
                                            见 `lib/qr.ts`）⇒ 手机扫它 = 直接进这一屏，不是另一套地址。
                                         ⚠️ 宽度 56px（≈14.8mm，与深挖纸 14/16mm、错题卡 18mm 同一档）。 */}
                                     {itemQr && (
-                                        <img
-                                            src={itemQr}
-                                            alt={item.source || "QR"}
+                                        /* 【2026-10-17 空空第 5 条】**点这个二维码** ⇒ 看"相关卷"
+                                           （他先要"下面加一个按钮"，随即改成"点二维码本身"——
+                                             少一个控件、少占一行，功能一样）。
+                                           · 点 ⇒ 组卷页，并把**含这道题**的卷筛出来
+                                             （判据在服务端：`VolumeItem.errorItemId` 存在即可，
+                                               模仿卷里**主题与附题都算**）
+                                           · 这个码**本身仍然能扫**（载荷 = 题号，与纸上那个同一个）
+                                             ⇒ 手机上"扫它"和"点它"是两条不同的路，都在提示里写明
+                                           ⚠️ 尺寸仍是 56px（= 左边两行 `h-14`）⇒ 上沿齐题号、下沿齐深挖那行。 */
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                router.push(
+                                                    `/review-volumes?hasItem=${encodeURIComponent(item.id)}`,
+                                                )
+                                            }
                                             title={L(
-                                                "扫这个码 = 直接跳到这道题（与纸上印的同一个码）",
-                                                "Scan to open this question (same code as printed)",
+                                                "点一下：看这道题出现在哪些复练卷 / 模仿卷里（这个码本身也能扫，扫它 = 打开这道题）",
+                                                "Click: which volumes contain this question (or scan the code)",
                                             )}
-                                            className="w-14 shrink-0 self-stretch rounded border bg-white p-0.5"
-                                        />
+                                            className="w-14 shrink-0 self-stretch rounded border bg-white p-0.5 transition hover:border-primary"
+                                        >
+                                            <img
+                                                src={itemQr}
+                                                alt={item.source || "QR"}
+                                                className="h-full w-full object-contain"
+                                            />
+                                        </button>
                                     )}
                                     {/* 【2026-10-15 新】右上角两行：第一行「图标 + 还剩几天」，
                                         第二行「字母 + 名称」（预掌握时显示"预掌握"）。

@@ -177,6 +177,8 @@ export async function GET(request: Request) {
     const term = (searchParams.get("term") || "").trim();
     const subject = (searchParams.get("subject") || "").trim();
     const q = (searchParams.get("q") || "").trim();
+    /** 【2026-10-17】只看含这道题的卷（错题详情页「相关卷」带过来的题 id） */
+    const hasItem = (searchParams.get("hasItem") || "").trim();
     const cursor = searchParams.get("cursor");
     const limitParam = Number(searchParams.get("limit"));
     const limit = Number.isFinite(limitParam) && limitParam > 0
@@ -210,6 +212,18 @@ export async function GET(request: Request) {
          */
         if (subject) {
             filters.push({ items: { some: { itemNo: { startsWith: subjectKeyToCode(subject) } } } });
+        }
+
+        /**
+         * 【2026-10-17】只看"**含这道题**"的卷 —— 错题详情页那个「相关卷」按钮带过来的。
+         *
+         * ⭐ 判据是 `ReviewVolumeItem.errorItemId` 的**存在性** ⇒
+         *    模仿卷里**主题与附题都算**（两者都是卷内的一行）—— 正是他第 5 条要的
+         *    "无论是主题还是附题都进行筛选"。
+         * ⚠️ 用 `errorItemId` 而不是题号：题号可能重复/改过，id 才是那条软链接。
+         */
+        if (hasItem) {
+            filters.push({ items: { some: { errorItemId: hasItem } } });
         }
 
         if (q) {

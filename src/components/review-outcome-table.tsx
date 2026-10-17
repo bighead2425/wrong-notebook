@@ -139,8 +139,13 @@ export function ReviewOutcomeTable({
     /** 表下面那两个圆的点亮态（互斥：存一个值就天然互斥了） */
     const [picked, setPicked] = useState<ReviewOutcome | null>(null);
 
-    // 最多 4 行、**新的在上面**（与规格里那两行示例一致）
-    const rows = [...events].slice(-RECENT_REVIEW_LIMIT).reverse();
+    /**
+     * 最多 4 行、**旧的在上、最新的在下**（`docs\18` §4.2 原写"新的在上面"，
+     * 空空 2026-10-17 实测后改口）：
+     *   · 错题卡那 4 个圈是"**从左到右 = 从旧到新**"；
+     *   · 这张表跟着改成"**从上到下 = 从旧到新**"，两处读起来才是同一个方向。
+     */
+    const rows = [...events].slice(-RECENT_REVIEW_LIMIT);
     const locked = disabled || busy;
 
     const record = () => {
