@@ -22,7 +22,7 @@ import {
 import { useFigureImages } from './use-print-images';
 import { PromoteBox } from './promote-box';
 // 【2026-10-11】扫码那两件控件抽到共用件（模仿纸也要同一套，见该文件头的说明）
-import { ScanBlockFrame, ScanPlusButton } from './scan-overlay';
+import { MasteryToggleBox, ScanBlockFrame, ScanPlusButton } from './scan-overlay';
 // 【2026-10-12】题块右上角那对"上移/下移"（复练纸与模仿纸共用同一份，见该文件头）
 import { MoveButtons } from './move-buttons';
 import { PROMOTE_BOX, promoteDirectionFor, type PromoteDirection } from '@/lib/manage-type';
@@ -151,6 +151,8 @@ export interface ReviewSheetProps {
      * 不传 ⇒ 纸上/卷页上完全没有这个标签，行为与之前一字不差。
      */
     answerOf?: (item: ErrorItem) => string | null;
+    /** 【2026-10-17 空空第 3 条】点灰色答案框 ⇒ 弹"看/改完整答案"的对话框 */
+    onAnswerClick?: (item: ErrorItem) => void;
     /**
      * 【2026-10-02 扫码录入】**纸面上直接改类型 / 记对错**这两组控件的出入口。
      *
@@ -173,6 +175,12 @@ export interface ReviewSheetProps {
     reviewRoundsOf?: (item: ErrorItem) => number;
     /** 【2026-10-16】这道题已掌握 ⇒ 圆禁用（"录不了"，`docs\18` 验收 #10） */
     reviewMarkDisabledOf?: (item: ErrorItem) => boolean;
+    /**
+     * 【2026-10-17 空空第 2 条】题框左侧那个「会」字方框：
+     * `masteryOf` 给"现在已掌握吗"，`onMasteryToggle` 点一下切换（**不传就根本不画**）。
+     */
+    masteryOf?: (item: ErrorItem) => boolean;
+    onMasteryToggle?: (item: ErrorItem) => void;
     /** 加号的悬停提示（可选） */
     plusTitle?: string;
     /** 按住两题之间的虚线（调上面那道题的留白行数） */
@@ -376,7 +384,19 @@ export function VolumeHeader({
  * 实现：渲染后量一次 `scrollWidth > clientWidth` ⇒ 溢出就加上 `＞…` 前缀、
  * 尾部直接裁掉（不用 text-overflow，它只能截尾）。
  */
-function AnswerLabel({ label, L }: { label: string; L: (zh: string, en: string) => string }) {
+function AnswerLabel({
+    label,
+    onClick,
+    L,
+}: {
+    label: string;
+    /**
+     * 【2026-10-17 空空第 3 条】点这个灰框 ⇒ 弹对话框看/改**完整答案**。
+     * 不传 ⇒ 仍是只读的一小块（打印预览那一路没有它）。
+     */
+    onClick?: () => void;
+    L: (zh: string, en: string) => string;
+}) {
     const boxRef = useRef<HTMLSpanElement | null>(null);
     const [truncated, setTruncated] = useState(false);
 
@@ -399,25 +419,24 @@ function AnswerLabel({ label, L }: { label: string; L: (zh: string, en: string) 
         return () => ro.disconnect();
     }, [label]);
 
-    return (
-        <span
-            className="no-print"
-            title={L('这道题的正确答案（点中间的加号看完整解答）', 'Answer (tap + for the full solution)')}
-            style={{
-                display: 'flex',
-                alignItems: 'center',
-                flex: '0 1 auto',
-                minWidth: 0,
-                maxWidth: '100%',
-                background: '#bdbdbd',
-                color: '#e6e6e6',
-                fontSize: '6.5pt',
-                lineHeight: 1.6,
-                padding: '0.2mm 1.2mm',
-                borderRadius: '0.8mm',
-                overflow: 'hidden',
-            }}
-        >
+    /** 【2026-10-17 空空第 3 条】灰色的答案小框 ⇒ 点它弹对话框看/改完整答案 */
+    const boxStyle: React.CSSProperties = {
+        display: 'flex',
+        alignItems: 'center',
+        flex: '0 1 auto',
+        minWidth: 0,
+        maxWidth: '100%',
+        background: '#bdbdbd',
+        color: '#e6e6e6',
+        fontSize: '6.5pt',
+        lineHeight: 1.6,
+        padding: '0.2mm 1.2mm',
+        borderRadius: '0.8mm',
+        overflow: 'hidden',
+    };
+
+    const inner = (
+        <>
             {truncated && (
                 // 【2026-10-02】用**半角** `>…`（他原话写的就是半角）——
                 // 意思是"这个框里的答案不全"，一上来就能看见。
@@ -431,6 +450,36 @@ function AnswerLabel({ label, L }: { label: string; L: (zh: string, en: string) 
             <span ref={boxRef} style={{ overflow: 'hidden', whiteSpace: 'nowrap' }}>
                 {label}
             </span>
+        </>
+    );
+
+    /**
+     * ⭐【2026-10-17】他决定改章程：**这个灰框要能点开看完整答案**。
+     * 他的理由很实在 —— "看住了孩子不直接抄答案，但事实上也限制住了家长对答案，
+     * 而且限制孩子抄答案这个过程本身也是掩耳盗铃的"。⇒ 点开即完整答案 + 可编辑。
+     */
+    if (onClick) {
+        return (
+            <button
+                type="button"
+                className="no-print"
+                title={L('点开看完整答案（可改）', 'Open the full answer (editable)')}
+                onClick={onClick}
+                onDoubleClick={(e) => e.stopPropagation()}
+                style={{ ...boxStyle, border: 'none', cursor: 'pointer', textAlign: 'left' }}
+            >
+                {inner}
+            </button>
+        );
+    }
+
+    return (
+        <span
+            className="no-print"
+            title={L('这道题的正确答案（点中间的加号看完整解答）', 'Answer (tap + for the full solution)')}
+            style={boxStyle}
+        >
+            {inner}
         </span>
     );
 }
@@ -554,6 +603,7 @@ export function ReviewQuestionBlock({
     onFigureScaleStart,
     onDividerDragStart,
     answerLabel,
+    onAnswerClick,
     onPromoteToggle,
     promoteOverride,
     onReviewMarkTap,
@@ -561,6 +611,9 @@ export function ReviewQuestionBlock({
     onReviewMarkLongPress,
     reviewRounds,
     reviewMarkDisabled,
+    masteryMastered,
+    onMasteryToggle,
+    masteryLeftMM,
     onMoveUp,
     onMoveDown,
     L,
@@ -604,6 +657,11 @@ export function ReviewQuestionBlock({
      */
     answerLabel?: string | null;
     /**
+     * 【2026-10-17 空空第 3 条】点那个**灰色答案小框** ⇒ 交给调用方弹对话框（看/改完整答案）。
+     * 不传 ⇒ 仍是只读（打印预览/纸面那一路）。
+     */
+    onAnswerClick?: () => void;
+    /**
      * 【2026-10-02 扫码录入】**点升降框 ⇒ 直接改这道题的类型**。
      * 不传 ⇒ 走只读的 `PromoteBox`（纸面/打印那一路，行为一字不变）。
      */
@@ -629,6 +687,22 @@ export function ReviewQuestionBlock({
      * （**服务端也一样会忽略**，这里只是别让他白点一下没反应）。
      */
     reviewMarkDisabled?: boolean;
+    /**
+     * 【2026-10-17 如如】**已掌握吗** + 点一下切换（题框左侧那个「会」字方框）。
+     *
+     * 出处：空空 2026-10-17 第 2 条 —— *"所有题框（蓝色框）左侧，与右侧那个圆圈对称的地方，
+     * 设置一个方形按钮……已掌握 ⇒ 绿底白字；未掌握 ⇒ 灰底白字。点一下切换，同时即时录入。"*
+     *
+     * 不传 `onMasteryToggle` ⇒ **这个方框根本不画**（打印预览/纸面那一路没有它）。
+     */
+    masteryMastered?: boolean;
+    onMasteryToggle?: () => void;
+    /**
+     * 【2026-10-17】这个方框相对题块左缘往左多少毫米。
+     * · 单栏（复练卷）：默认 `-11mm` —— 与右侧灰圆 `right:-11mm` **对称**
+     * · 模仿卷的附题：由调用方给"落在中间那条分栏线上"的位置（栏距只有 4mm）
+     */
+    masteryLeftMM?: number;
     /**
      * 【2026-10-16 如如】这道题**在这张卷上**录过几轮 —— `>1` 时在圈左上方画一个上标数字。
      * 不传/为 1 ⇒ 不画角标。
@@ -838,7 +912,7 @@ export function ReviewQuestionBlock({
                         `textOverflow` 用了**自定义字符串** `"……"`（中文省略号两个点），
                         CSS Overflow 3 支持，浏览器实测可用；不支持时退化成裁切，不影响功能。 */}
                     {answerLabel ? (
-                        <AnswerLabel label={answerLabel} L={L} />
+                        <AnswerLabel label={answerLabel} onClick={onAnswerClick} L={L} />
                     ) : null}
                     {/* 升降级小框：**每道题都有**（未定按复练处理）。
                         扫码那屏（传了 onPromoteToggle）换成**能点**的版本 —— 点一下直接改类型；
@@ -874,6 +948,23 @@ export function ReviewQuestionBlock({
                     onTap={onReviewMarkTap}
                     onLongPress={onReviewMarkLongPress}
                     L={L}
+                />
+            ) : null}
+
+            {/* 【2026-10-17 空空第 2 条】题框**左侧**那个「会」字方框 —— 与右边那颗灰圆左右对称。
+                · 已掌握 ⇒ 绿底白字；未掌握 ⇒ 灰底白字；点一下**即时**改库
+                · `no-print`（屏幕控件，绝不落纸）；与灰圆同一条"跟着纸走"的绝对定位
+                · 不传 `onMasteryToggle` ⇒ 根本不画（打印预览/纸面那一路没有它） */}
+            {onMasteryToggle ? (
+                <MasteryToggleBox
+                    mastered={!!masteryMastered}
+                    onClick={onMasteryToggle}
+                    leftMM={masteryLeftMM}
+                    title={
+                        masteryMastered
+                            ? L('已掌握 · 点一下改成"未掌握"', 'Mastered · tap to unmark')
+                            : L('未掌握 · 点一下标成"已掌握"', 'Not mastered · tap to mark')
+                    }
                 />
             ) : null}
         </div>
@@ -1048,6 +1139,7 @@ export function ReviewSheet({
     onQuestionPlusClick,
     plusTitle,
     answerOf,
+    onAnswerClick,
     onPromoteToggle,
     promoteOverrideOf,
     onReviewMarkTap,
@@ -1055,6 +1147,8 @@ export function ReviewSheet({
     onReviewMarkLongPress,
     reviewRoundsOf,
     reviewMarkDisabledOf,
+    masteryOf,
+    onMasteryToggle,
     onMoveQuestion,
     totalSeq,
     L,
@@ -1171,6 +1265,9 @@ export function ReviewSheet({
                                             showDivider={bi > 0}
                                             figureScale={figureScaleOf ? figureScaleOf(item.id) : 100}
                                             answerLabel={answerOf ? answerOf(item) : undefined}
+                                            onAnswerClick={
+                                                onAnswerClick ? () => onAnswerClick(item) : undefined
+                                            }
                                             onPromoteToggle={
                                                 onPromoteToggle ? () => onPromoteToggle(item) : undefined
                                             }
@@ -1187,6 +1284,10 @@ export function ReviewSheet({
                                             reviewRounds={reviewRoundsOf ? reviewRoundsOf(item) : undefined}
                                             reviewMarkDisabled={
                                                 reviewMarkDisabledOf ? reviewMarkDisabledOf(item) : undefined
+                                            }
+                                            masteryMastered={masteryOf ? masteryOf(item) : undefined}
+                                            onMasteryToggle={
+                                                onMasteryToggle ? () => onMasteryToggle(item) : undefined
                                             }
                                             {...movePropsFor(item, b.seq)}
                                             L={L}

@@ -57,6 +57,10 @@ function renderSheet(opts: {
     disabled?: boolean;
     /** 要不要给长按回调 */
     longPress?: boolean;
+    /** 这道题的答案（给了才会画那个灰色小框） */
+    answer?: string;
+    /** 灰框能不能点开（= 传了 onAnswerClick） */
+    answerClick?: boolean;
 } = {}): string {
     const it = opts.it ?? item();
     const interactive = opts.interactive ?? true;
@@ -77,6 +81,10 @@ function renderSheet(opts: {
             onReviewMarkLongPress={interactive && opts.longPress ? () => undefined : undefined}
             reviewRoundsOf={interactive ? () => opts.rounds ?? 1 : undefined}
             reviewMarkDisabledOf={interactive ? () => !!opts.disabled : undefined}
+            answerOf={interactive && opts.answer ? () => opts.answer! : undefined}
+            onAnswerClick={
+                interactive && opts.answerClick ? () => undefined : undefined
+            }
             L={(zh) => zh}
         />,
     );
@@ -183,5 +191,33 @@ describe('扫卷录入 · 打印那一路一个都不许冒出来', () => {
         expect(html).not.toContain('M5 13l4 4L19 7');
         // 但只读的升降框照旧在（纸面本来每道题都有）
         expect(html).toContain('print-promote-box');
+    });
+});
+
+/**
+ * 【2026-10-17 空空第 3 条】那个**灰色答案小框**：点它 ⇒ 弹对话框看/改完整答案。
+ *
+ * 他只要求"能点开"；这里钉住的是**两个方向的退化**：
+ *   · 不给 `onAnswerClick`（打印预览/纸面那一路）⇒ 仍是只读的 `<span>`，不许变成按钮；
+ *   · 给了 ⇒ 必须带那句"点开看完整答案"的提示（否则没人知道它能点）。
+ */
+describe('扫卷录入 · 灰色答案框可点开', () => {
+    it('★ 不给回调 ⇒ 只读（没有"点开"那句提示）', () => {
+        const html = renderSheet({ answer: '周长 26 厘米' });
+        expect(html).toContain('周长 26 厘米');
+        expect(html).not.toContain('点开看完整答案');
+    });
+
+    it('★★ 给了回调 ⇒ 变成可点的框，并写明"点开看完整答案"', () => {
+        const html = renderSheet({ answer: '周长 26 厘米', answerClick: true });
+        expect(html).toContain('点开看完整答案');
+        // 仍然是屏幕控件：绝不落纸
+        expect(html).toContain('no-print');
+    });
+
+    it('★ 长答案照旧带 `>…` 提示（这个行为没被本次改动碰掉）', () => {
+        const html = renderSheet({ answer: '很长很长的答案', answerClick: true });
+        // 服务端渲染时量不出宽度 ⇒ `truncated` 初值 false，所以只断言答案文字在、且控件在
+        expect(html).toContain('很长很长的答案');
     });
 });

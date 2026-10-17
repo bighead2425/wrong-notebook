@@ -65,6 +65,8 @@ import {
 } from "@/lib/review-event-draft";
 // 【2026-10-16】来源：卷页记的流水是"复练纸/模仿纸 + 卷号"（由卷的 kind 定，见该文件头）
 import { paperSourceForKind } from "@/lib/review-event-source";
+// 【2026-10-17】掌握开关的下一档 —— 唯一实现（别自己写 `> 0 ? 0 : 1`）
+import { nextMasteryLevel } from "@/lib/level-settle";
 import {
     Dialog,
     DialogContent,
@@ -74,6 +76,9 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog";
 import { SheetZoom } from "@/components/print/sheet-zoom";
+// 【2026-10-17 空空第 3 条】答案对话框里的 md 编辑框（与详情页同一个组件，橙边脏标记也同源）
+import { MdEditor } from "@/components/md-editor";
+import { dayKey } from "@/lib/calendar-grid";
 import { makeQrDataUrl } from "@/lib/qr";
 import { cleanMarkdown } from "@/lib/markdown-utils";
 
@@ -481,6 +486,33 @@ export function ScanVolumeView({
     const markSource = useMemo(() => paperSourceForKind(volume?.kind), [volume?.kind]);
 
     /**
+     * 【2026-10-17 空空第 2 条】点题框左边那个「会」字方框 ⇒ 切换"已掌握 / 未掌握"，**即时入库**。
+     *
+     * ⚠️ 下一档**只许用 `nextMasteryLevel()`**（唯一实现 `lib/level-settle.ts`）——
+     *    详情页曾自己写 `> 0 ? 0 : 1`，把"已掌握"写成了 1，卡片一直显示"待复习"（10-17 修）。
+     *    📌 有看门测试盯着（`unit/mastery-toggle-guard.test.ts`）。
+     * ⚠️ 走的是 `PATCH /mastery`（不是 PUT）—— 那条路由里带着**题间从属关系**的规则
+     *    （人工标附题 ⇒ 断开；标主题 ⇒ 附题跟着标），PUT 那条不管这件事。
+     */
+    const onMasteryToggle = useCallback(
+        async (item: ErrorItem) => {
+            const next = nextMasteryLevel(item.masteryLevel);
+            const before = item.masteryLevel;
+            patchItem(item.id, { masteryLevel: next });
+            try {
+                await apiClient.patch(`/api/error-items/${item.id}/mastery`, { masteryLevel: next });
+            } catch (err) {
+                console.error(err);
+                patchItem(item.id, { masteryLevel: before });
+                setSaveError(
+                    L('这道题的掌握状态没存上，已还原，请再试一次', 'Failed to save mastery; reverted'),
+                );
+            }
+        },
+        [patchItem, L],
+    );
+
+    /**
      * 【2026-10-16 如如】卷拉回来之后，再拉**这一卷上每道题的复习记录**
      * （决定那圈绿/粉 + 轮次角标，`docs\18` §4.3）。
      *
@@ -493,8 +525,7 @@ export function ScanVolumeView({
         if (volume?.id) void fetchVolumeMarks(volume.id);
     }, [volume?.id, fetchVolumeMarks]);
 
-    /**
-     * **点圈：对 ⇄ 错**（两态，他 2026-10-16 改定的）。
+    /** 点圈：对 ⇄ 错（两态，他 2026-10-16 改定的）。
      *   · 这张卷上还没有记录 ⇒ 新增一条（`add`）
      *   · 已经有记录 ⇒ **改那一条**（`update`）—— "修正这一轮的结果"，不是又录一轮
      *     （要"再录一轮"就走**长按菜单**，这是两态循环与"再录一次"的分工）
@@ -568,8 +599,121 @@ export function ScanVolumeView({
         [markOfItem, writeMark],
     );
 
-    /** 点升降框：第一次改类型、第二次改回来（都乐观 + 失败回滚） */
-    const onPromoteToggle = useCallback(
+    /* ══════════════════════════════════════════════════════════════════════
+     * 【2026-10-17 空空第 3 条】点**灰色答案框** ⇒ 对话框里看/改**完整答案**
+     *
+     * 他的原话（改章程）：*"有些答案比较长，可能不容易对答案……尽管看住了孩子不直接抄答案，
+     *   但事实上也限制住了家长对答案，而且限制孩子抄答案这个过程本身也是掩耳盗铃的。"*
+     * ⇒ 点灰框弹出：上面三个按钮【积累 / 保存 / 关闭】+ 左边写"N题"（这道题在这张卷的流水号），
+     *   下面一个 md 编辑框（**内部滚动**，所以按钮永远看得见）。
+     * ⚠️ 遮罩用 Radix Dialog 自带的半透明层 ⇒ 看长答案时后面的卷面**不会跟着滚**。
+     * ══════════════════════════════════════════════════════════════════════ */
+
+    /** 正在看答案的那道题（null = 对话框关着） */
+    const [answerItem, setAnswerItem] = useState<ErrorItem | null>(null);
+    const [answerDraft, setAnswerDraft] = useState("");
+    const [answerBusy, setAnswerBusy] = useState(false);
+    /** 答案改过没有 —— 两个用途：关闭时问"保存吗"、md 框外边框变橙 */
+    const answerDirty = !!answerItem && answerDraft !== (answerItem.answerText ?? "");
+
+    /** 这道题在**这张卷**上的流水号（对话框标题左边那个"1题"） */
+    const seqOfItem = useCallback(
+        (itemId: string) => (volume?.items || []).find((r) => r.errorItemId === itemId)?.seqInVolume ?? null,
+        [volume],
+    );
+
+    const openAnswer = useCallback((item: ErrorItem) => {
+        setAnswerItem(item);
+        setAnswerDraft(item.answerText ?? "");
+        setInsightOpen(false);
+    }, []);
+
+    /** 保存答案（只改 `answerText`，别的一个字不动） */
+    const saveAnswer = useCallback(async (): Promise<boolean> => {
+        if (!answerItem) return false;
+        setAnswerBusy(true);
+        try {
+            await apiClient.put(`/api/error-items/${answerItem.id}`, { answerText: answerDraft });
+            patchItem(answerItem.id, { answerText: answerDraft });
+            /**
+             * ⚠️ 本地那份 `answerItem` 也要更新 —— 否则"改过没有"一直为真（橙边不消失），
+             *    而且下次打开会读到旧答案。
+             */
+            setAnswerItem((prev) => (prev ? { ...prev, answerText: answerDraft } : prev));
+            setItems((prev) => prev.map((it) => (it.id === answerItem.id ? { ...it, answerText: answerDraft } : it)));
+            return true;
+        } catch (err) {
+            console.error(err);
+            setSaveError(L("答案没存上，请再试一次", "Failed to save the answer"));
+            return false;
+        } finally {
+            setAnswerBusy(false);
+        }
+    }, [answerItem, answerDraft, patchItem, L]);
+
+    /**
+     * 关闭：**改过就问一句**（他明确要的）。
+     * `confirm` 的 OK = 保存并关闭，Cancel = 不保存直接关闭 —— 两选项正好对上他说的那两句。
+     */
+    const closeAnswer = useCallback(async () => {
+        if (answerBusy) return;
+        if (answerDirty) {
+            const save = window.confirm(
+                L("答案改过了，保存吗？\n\n确定 = 保存后关闭\n取消 = 不保存，直接关闭", "Save the edited answer?"),
+            );
+            if (save) {
+                const ok = await saveAnswer();
+                if (!ok) return; // 存失败就**别关**（否则改动白丢）
+            }
+        }
+        setAnswerItem(null);
+        setAnswerDraft("");
+    }, [answerBusy, answerDirty, saveAnswer, L]);
+
+    /* ── 嵌套的"这道题的积累"（点【积累】打开；关掉就回到答案对话框）─────────────────
+     * 用的是详情页那套接口：`GET /api/insights?errorItemNo=…` + `POST /api/insights`
+     * （服务端按**题号**当钥匙：有就覆盖、没有才新建）。 */
+    const [insightOpen, setInsightOpen] = useState(false);
+    const [insightDraft, setInsightDraft] = useState("");
+    const [insightBusy, setInsightBusy] = useState(false);
+
+    const openInsight = useCallback(async () => {
+        if (!answerItem?.source) return;
+        setInsightOpen(true);
+        setInsightDraft("");
+        try {
+            const res = await apiClient.get<{ insights: Array<{ content: string | null }> }>(
+                `/api/insights?errorItemNo=${encodeURIComponent(answerItem.source)}`,
+            );
+            setInsightDraft(res?.insights?.[0]?.content ?? "");
+        } catch (err) {
+            console.error(err);
+            setSaveError(L("这道题的积累没读上来", "Failed to load the notes"));
+        }
+    }, [answerItem, L]);
+
+    const saveInsight = useCallback(async () => {
+        if (!answerItem?.source) return;
+        setInsightBusy(true);
+        try {
+            await apiClient.post("/api/insights", {
+                dateKey: dayKey(new Date()),
+                gradeSemester: answerItem.gradeSemester || null,
+                subject: answerItem.notebook?.subject || null,
+                content: insightDraft,
+                errorItemNo: answerItem.source,
+                source: "question",
+            });
+            setInsightOpen(false); // 存完回到答案对话框
+        } catch (err) {
+            console.error(err);
+            setSaveError(L("积累没存上，请再试一次", "Failed to save the notes"));
+        } finally {
+            setInsightBusy(false);
+        }
+    }, [answerItem, insightDraft, L]);
+
+    /** 点升降框：第一次改类型、第二次改回来（都乐观 + 失败回滚） */    const onPromoteToggle = useCallback(
         (item: ErrorItem) => {
             if (busyRef.current.has(item.id)) return;
             const existing = promoteState[item.id];
@@ -879,6 +1023,111 @@ export function ScanVolumeView({
                 </DialogContent>
             </Dialog>
 
+            {/* ══════════════════════════════════════════════════════════════
+                【2026-10-17 空空第 3 条】点灰色答案框 ⇒ **看 / 改完整答案**
+                · 上面一行：左边"N题"（这道题在这张卷的流水号），右边三个按钮【积累】【保存】【关闭】
+                · 下面：md 编辑框，**框内滚动**（所以按钮永远看得见，看长答案也能随时操作）
+                · md 框改过 ⇒ 外边框变橙（`dirty` 那个现成的机制，与详情页同一个编辑器）
+                · 遮罩是 Radix Dialog 自带的半透明层 ⇒ 后面卷面不会跟着滚
+                ══════════════════════════════════════════════════════════════ */}
+            <Dialog
+                open={!!answerItem}
+                onOpenChange={(open) => {
+                    if (!open) void closeAnswer();
+                }}
+            >
+                <DialogContent className="max-w-2xl">
+                    <DialogHeader>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <DialogTitle className="mr-auto font-mono text-base">
+                                {answerItem
+                                    ? `${seqOfItem(answerItem.id) ?? "?"}题`
+                                    : L("答案", "Answer")}
+                            </DialogTitle>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={!answerItem?.source}
+                                title={
+                                    answerItem?.source
+                                        ? L("管理这道题的积累内容", "Manage this question's notes")
+                                        : L("这道题还没有题号，没法关联积累", "No question number, cannot link notes")
+                                }
+                                onClick={() => void openInsight()}
+                            >
+                                {L("积累", "Notes")}
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={answerBusy || !answerDirty}
+                                onClick={() => void saveAnswer()}
+                            >
+                                {answerBusy ? L("保存中…", "Saving…") : L("保存", "Save")}
+                            </Button>
+                            <Button type="button" size="sm" onClick={() => void closeAnswer()}>
+                                {L("关闭", "Close")}
+                            </Button>
+                        </div>
+                    </DialogHeader>
+                    {/* `max-h` + `overflow-y-auto`：**框里滚**，不靠对话框长高 */}
+                    <div className="max-h-[62vh] overflow-y-auto rounded-md">
+                        <MdEditor
+                            value={answerDraft}
+                            onChange={setAnswerDraft}
+                            placeholder={L("这道题的答案（可编辑）", "This question's answer (editable)")}
+                            minHeightPx={240}
+                            dirty={answerDirty}
+                        />
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* 【2026-10-17 第 3 条】嵌套的"这道题的积累" —— 关掉回到上面的答案对话框 */}
+            <Dialog
+                open={insightOpen}
+                onOpenChange={(open) => {
+                    if (!open) setInsightOpen(false);
+                }}
+            >
+                <DialogContent className="max-w-2xl">
+                    <DialogHeader>
+                        <DialogTitle>
+                            {L("这道题的积累", "Notes for this question")}
+                            {answerItem?.source ? (
+                                <span className="ml-2 font-mono text-xs text-muted-foreground">
+                                    {answerItem.source}
+                                </span>
+                            ) : null}
+                        </DialogTitle>
+                        <DialogDescription>
+                            {L(
+                                "写这道题的理解、易错点、一句话要点都行；保存后与「日积月累」里那条是同一个。",
+                                "Saved into the same note as the Insights page.",
+                            )}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="max-h-[55vh] overflow-y-auto rounded-md">
+                        <MdEditor
+                            value={insightDraft}
+                            onChange={setInsightDraft}
+                            placeholder={L("写点什么…", "Write something…")}
+                            minHeightPx={200}
+                        />
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setInsightOpen(false)}>
+                            {L("返回", "Back")}
+                        </Button>
+                        <Button disabled={insightBusy} onClick={() => void saveInsight()}>
+                            {insightBusy ? L("保存中…", "Saving…") : L("保存并返回", "Save & back")}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             <div
                 ref={scrollRef}
                 className="max-h-[78vh] overflow-auto rounded-md border bg-zinc-100 p-3 dark:bg-zinc-900"
@@ -967,6 +1216,9 @@ export function ScanVolumeView({
                                       onReviewMarkLongPress={onReviewMarkLongPress}
                                       reviewRoundsOf={(it) => markOfItem(it).rounds}
                                       reviewMarkDisabledOf={(it) => Number(it.masteryLevel) >= 2}
+                                      masteryOf={(it) => Number(it.masteryLevel) >= 2}
+                                      onMasteryToggle={onMasteryToggle}
+                                      onAnswerClick={openAnswer}
                                       L={L}
                                   />
                               </div>
@@ -1019,6 +1271,9 @@ export function ScanVolumeView({
                                 onReviewMarkLongPress={onReviewMarkLongPress}
                                 reviewRoundsOf={(it) => markOfItem(it).rounds}
                                 reviewMarkDisabledOf={(it) => Number(it.masteryLevel) >= 2}
+                                masteryOf={(it) => Number(it.masteryLevel) >= 2}
+                                onMasteryToggle={onMasteryToggle}
+                                onAnswerClick={openAnswer}
                                 L={L}
                             />
                         </div>

@@ -97,3 +97,83 @@ export function ScanPlusButton({
         </button>
     );
 }
+
+/**
+ * 【2026-10-17 空空要的】题框**左侧**那个「会」字方框 —— 一眼看掌握、点一下切换。
+ *
+ * 他的原话：*"所有题框（蓝色框）左侧，与右侧点击正确、错误那个圆圈对称的地方，
+ * 设置一个方形按钮……中间写一个'会'字。已掌握 ⇒ 绿底白字；未掌握 ⇒ 灰底白字。
+ * 点击这个按钮切换……同时将对应结果即时录入到这道题的'已掌握/未掌握'。"*
+ *
+ * ⚠️ 为什么放在这个文件：它与蓝框、蓝加号、右侧灰圆是**同一类东西**
+ *    （屏幕控件、`no-print`、绝对定位跟着纸走）。散到各自的卡片里写，迟早一边变样。
+ * ⚠️ **位置由调用方给**（`leftMM`）—— 三类纸的"左边"不是同一个地方：
+ *    · 复练卷 / 模仿卷的主题：`-11mm`（纸的左边距里，与右侧灰圆 `right:-11mm` 对称）
+ *    · 模仿卷的附题：**落在中间那条分栏线上**（`-(栏距/2 + 半宽)`）——
+ *      栏距只有 4mm，方框必然压住线两侧各一点，这是他要的效果（"摆放在线的上面"）
+ * ⚠️ 配色与错题卡的圈、卷页的圆**同一族**（绿=已掌握/对，灰=未掌握/没记）。
+ */
+/** 方框边长（mm）—— 只有这一处定，调用方算位置时也用它，免得两边对不上 */
+export const MASTERY_BOX_SIZE_MM = 8;
+
+export const MASTERY_BOX_COLOR = {
+    /** 已掌握：绿底白字（与 `REVIEW_MARK_COLORS.right` 同色系，但语义是"会"） */
+    mastered: '#6fbf8b',
+    /** 未掌握：灰底白字 */
+    notMastered: '#9ca3af',
+} as const;
+
+export function MasteryToggleBox({
+    mastered,
+    onClick,
+    title,
+    sizeMM = MASTERY_BOX_SIZE_MM,
+    leftMM = -11,
+    zIndex = 7,
+}: {
+    /** 这道题现在是"已掌握"吗 */
+    mastered: boolean;
+    onClick: () => void;
+    title?: string;
+    /** 方框边长（他说"不用太大，小点就可以"） */
+    sizeMM?: number;
+    /** 相对题块左缘往左多少毫米（见上面的三类位置） */
+    leftMM?: number;
+    /** 必须**高于**模仿卷那条分栏线（线是同级兄弟、默认 z-index） */
+    zIndex?: number;
+}) {
+    return (
+        <button
+            type="button"
+            className="no-print"
+            title={title}
+            aria-pressed={mastered}
+            onClick={onClick}
+            onDoubleClick={(e) => e.stopPropagation()}
+            style={{
+                position: 'absolute',
+                left: `${leftMM}mm`,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                width: `${sizeMM}mm`,
+                height: `${sizeMM}mm`,
+                borderRadius: '1.2mm',
+                border: 'none',
+                background: mastered ? MASTERY_BOX_COLOR.mastered : MASTERY_BOX_COLOR.notMastered,
+                color: '#ffffff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '8.5pt',
+                fontWeight: 700,
+                lineHeight: 1,
+                cursor: 'pointer',
+                boxShadow: '0 0.3mm 1mm rgba(0,0,0,0.3)',
+                zIndex,
+                touchAction: 'manipulation',
+            }}
+        >
+            会
+        </button>
+    );
+}

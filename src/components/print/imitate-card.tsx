@@ -14,7 +14,7 @@ import type { PromoteDirection } from '@/lib/manage-type';
 import type { ReviewMark } from '@/lib/scan-marking';
 import { useFigureImages } from './use-print-images';
 import { MissingQuestionBlock, ReviewQuestionBlock, VolumeHeader } from './review-card';
-import { ScanBlockFrame, ScanPlusButton } from './scan-overlay';
+import { MasteryToggleBox, MASTERY_BOX_SIZE_MM, ScanBlockFrame, ScanPlusButton } from './scan-overlay';
 
 /**
  * T4 **模仿纸**的纸面（2026-10-11）。
@@ -231,6 +231,8 @@ export interface ImitateSheetProps {
     plusTitle?: string;
     /** 每题正确答案（扫码浏览时给；不传 ⇒ 纸上完全没有这个标签） */
     answerOf?: (item: ErrorItem) => string | null;
+    /** 【2026-10-17 空空第 3 条】点灰色答案框 ⇒ 弹"看/改完整答案"的对话框 */
+    onAnswerClick?: (item: ErrorItem) => void;
     /** 点升降框 ⇒ 直接改类型（扫码录入那一路） */
     onPromoteToggle?: (item: ErrorItem) => void;
     promoteOverrideOf?: (item: ErrorItem) => { direction: PromoteDirection; checked: boolean } | undefined;
@@ -243,6 +245,14 @@ export interface ImitateSheetProps {
     reviewRoundsOf?: (item: ErrorItem) => number;
     /** 【2026-10-16】这道题已掌握 ⇒ 圆禁用（"录不了"） */
     reviewMarkDisabledOf?: (item: ErrorItem) => boolean;
+    /**
+     * 【2026-10-17 空空第 2 条】题框左侧那个「会」字方框（掌握开关）。
+     * ⚠️ 模仿卷**主题和附题都要有** —— 他说"模仿卷主题的蓝框左边也放上这个会字框吧，
+     *    无非就是这个模仿卷右边不设置是否回答正确的圆框罢了"。
+     * ⚠️ 附题的那个**落在中间的分栏线上**（见下面的 `masteryLeftMM`）。
+     */
+    masteryOf?: (item: ErrorItem) => boolean;
+    onMasteryToggle?: (item: ErrorItem) => void;
     /**
      * 【2026-10-12】右栏的**附题**上移 / 下移一位（与相邻那道附题交换顺序与流水号）。
      * 与复练纸那套**同一份**（`ReviewSheet` 也是这两个名字）——
@@ -279,6 +289,7 @@ export function ImitateSheet({
     onThemePlusClick,
     plusTitle,
     answerOf,
+    onAnswerClick,
     onPromoteToggle,
     promoteOverrideOf,
     onReviewMarkTap,
@@ -286,6 +297,8 @@ export function ImitateSheet({
     onReviewMarkLongPress,
     reviewRoundsOf,
     reviewMarkDisabledOf,
+    masteryOf,
+    onMasteryToggle,
     onMoveQuestion,
     totalSeq,
     L,
@@ -398,6 +411,19 @@ export function ImitateSheet({
                         />
                         <ScanBlockFrame />
                         <ScanPlusButton onClick={() => onThemePlusClick!(theme)} title={plusTitle} />
+                        {/* 【2026-10-17 空空第 2 条】主题的蓝框左边也要一个「会」字方框 ——
+                            只有第 1 页有蓝框，所以它也跟着只在第 1 页出现（同一套定位参照系）。 */}
+                        {onMasteryToggle ? (
+                            <MasteryToggleBox
+                                mastered={!!(masteryOf && masteryOf(theme))}
+                                onClick={() => onMasteryToggle(theme)}
+                                title={
+                                    masteryOf && masteryOf(theme)
+                                        ? L('已掌握 · 点一下改成"未掌握"', 'Mastered · tap to unmark')
+                                        : L('未掌握 · 点一下标成"已掌握"', 'Not mastered · tap to mark')
+                                }
+                            />
+                        ) : null}
                     </div>
                 ) : (
                     <ImitateSegments
@@ -460,6 +486,9 @@ export function ImitateSheet({
                                     showDivider={bi > 0}
                                     figureScale={figureScaleOf ? figureScaleOf(item.id) : 100}
                                     answerLabel={answerOf ? answerOf(item) : undefined}
+                                    onAnswerClick={
+                                        onAnswerClick ? () => onAnswerClick(item) : undefined
+                                    }
                                     onPromoteToggle={onPromoteToggle ? () => onPromoteToggle(item) : undefined}
                                     promoteOverride={promoteOverrideOf ? promoteOverrideOf(item) : undefined}
                                     onReviewMarkTap={onReviewMarkTap ? () => onReviewMarkTap(item) : undefined}
@@ -471,6 +500,14 @@ export function ImitateSheet({
                                     reviewMarkDisabled={
                                         reviewMarkDisabledOf ? reviewMarkDisabledOf(item) : undefined
                                     }
+                                    /* 「会」字方框：**落在中间那条分栏线上**（他 2026-10-17 第 2 条）。
+                                       栏距只有 4mm ⇒ 方框必然压住线两侧各一点；`zIndex` 由组件给（7），
+                                       高于那条线（它是同级的兄弟，默认层级）。 */
+                                    masteryMastered={masteryOf ? masteryOf(item) : undefined}
+                                    onMasteryToggle={
+                                        onMasteryToggle ? () => onMasteryToggle(item) : undefined
+                                    }
+                                    masteryLeftMM={-(COLUMN_GAP_MM / 2 + MASTERY_BOX_SIZE_MM / 2)}
                                     {...movePropsFor(item, b.seq)}
                                     L={L}
                                 />
