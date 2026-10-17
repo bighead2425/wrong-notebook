@@ -431,7 +431,17 @@ export default function ErrorDetailPage() {
                 setLinkNote(res.linkNote);
                 await fetchItem(item.id);
             }
-            alert(newLevel > 0 ? (t.common?.messages?.markMastered || 'Marked as mastered') : (t.common?.messages?.unmarkMastered || 'Unmarked'));
+            /**
+             * 【2026-10-18 空空要求】**成功不弹窗**。
+             *
+             * 他的原话：*"我点击左上角的'标记为已掌握'，总要跳出一个要我确定的对话框，
+             *   这个是没有必要的，反正只有一个确定键，而且能够调整掌握情况的地方又不止这一处。"*
+             *
+             * 这本来就是个 `alert('Marked as mastered')` 成功提示（只有一个确定键，与确认框长得一样）。
+             * ⇒ 直接删掉：**界面本身已经变了**（按钮文字与角标跟着换），再点一次"确定"纯属多余。
+             * ⚠️ 失败提示**保留**（`catch` 里那条 `alert(updateFailed)`）—— "静默失败"才是最坏的。
+             * 📌 这与项目既定的"界面反馈代替成功提示、失败才弹"一致（见 `actOnLink` 那段注释）。
+             */
         } catch (error) {
             console.error(error);
             alert(t.common?.messages?.updateFailed || 'Update failed');

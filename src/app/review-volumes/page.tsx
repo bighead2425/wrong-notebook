@@ -217,6 +217,23 @@ export default function ReviewVolumesPage() {
      * 空 = 不筛。
      */
     const [hasItemFilter, setHasItemFilter] = useState<string>("");
+    /**
+     * 【2026-10-18 修 bug】**URL 参数还没解析完 ⇒ 先别拉列表**。
+     *
+     * 病因（空空 2026-10-18 报的"从二维码进来时，复练卷页列的是全部卷"）：
+     *   挂载时两条 effect 抢跑 —— `fetchList` 那条先跑（此时 `hasItemFilter` 还是空串），
+     *   URL 解析那条后跑（才 `setHasItemFilter`）⇒ **先发了一次"不带筛选"的请求**，
+     *   再发一次带筛选的。两次请求没有先后保证：先发的那次**后返回**就会把正确结果覆盖掉
+     *   ⇒ 屏幕上看到"全部复练卷"。
+     *   （所以他"切到模仿卷再切回复练卷"就对了 —— 那时 state 里已有 `hasItem`，两次请求都带筛选。）
+     *
+     * 修法两层：
+     *   ① 本标记：URL 解析完之前不拉列表 ⇒ 只发**一次**请求，且一开始就带筛选；
+     *   ② `fetchSeqRef`：即使后续快速切筛选，也只认**最后发出**的那次结果。
+     */
+    const [urlReady, setUrlReady] = useState(false);
+    /** 只认最后发出的那次列表请求（`fetchList` 的返回顺序没有保证） */
+    const fetchSeqRef = useRef(0);
     const [leftHidden, setLeftHidden] = useState(false);
 
     /**
@@ -319,25 +336,34 @@ export default function ReviewVolumesPage() {
     );
 
     const fetchList = useCallback(async () => {
+        /**
+         * 【2026-10-18】请求序号：**只有最后发出的那次**才允许写结果。
+         * 竞态是真实存在的（见 `urlReady` 上面那段）：两个请求同时在飞，
+         * 返回顺序没有保证 —— 谁后返回谁赢，那"先发的旧结果"就可能盖掉新的。
+         */
+        const seq = ++fetchSeqRef.current;
         setListLoading(true);
         setListError("");
         try {
             const res = await apiClient.get<VolumeListResponse>(
                 `/api/review-volumes?${buildListQuery(null)}`,
             );
+            if (seq !== fetchSeqRef.current) return; // 已经有更新的请求发出去了 ⇒ 本次作废
             setVolumes(res.volumes || []);
             setNextCursor(res.nextCursor ?? null);
         } catch (error) {
+            if (seq !== fetchSeqRef.current) return;
             console.error("Failed to load volumes:", error);
             setListError(L("加载卷列表失败", "Failed to load volumes"));
         } finally {
-            setListLoading(false);
+            if (seq === fetchSeqRef.current) setListLoading(false);
         }
     }, [L, buildListQuery]);
 
     useEffect(() => {
+        if (!urlReady) return; // URL 参数没解析完 ⇒ 不发（否则会先发一次不带筛选的）
         fetchList();
-    }, [fetchList]);
+    }, [fetchList, urlReady]);
 
     /** 【2026-10-09】滚到底／点按钮 ⇒ 再要一页，**追加**在后面（不替换） */
     const loadMoreVolumes = useCallback(async () => {
@@ -423,6 +449,8 @@ export default function ReviewVolumesPage() {
                 if (scan) setScanCode(scan);
             });
         }
+        // 参数都读进 state 了 ⇒ 放行列表请求（**只发一次**，且一开始就带着 hasItem）
+        setUrlReady(true);
         // `openVolume` 是 useCallback([L, closeScan])：进依赖会随语言切换重建 ⇒ 只在挂载时跑一次
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -1530,6 +1558,8 @@ export default function ReviewVolumesPage() {
                                         backLabel={L("回到预览", "Back to preview")}
                                         onBack={closeScan}
                                         onPickItem={(item) => setScanItemId(item.id)}
+                                        /* 【2026-10-18 第 2 条】在"扫到的卷"这一屏同样凸显那道题 */
+                                        highlightItemId={hasItemFilter || null}
                                     />
                                 )}
                             </div>
@@ -1782,6 +1812,8 @@ export default function ReviewVolumesPage() {
                                               missing={missingMap}
                                               blankValueOf={blankValueOf}
                                               figureScaleOf={figureScaleOf}
+                                              /* 【2026-10-18 第 2 条】主题与附题都凸显得对得上（服务端筛选也是两边都算） */
+                                              highlightItemId={hasItemFilter || null}
                                               /* 【2026-10-12 他要的】模仿卷也要能调：
                                                  · **左栏（主题）的题图大小** —— 走 `onFigureScaleStart`
                                                    （`ImitateSheet` 把它转交给 `ImitateSegments`）；
@@ -1814,6 +1846,12 @@ export default function ReviewVolumesPage() {
                                         onFigureScaleStart={handleFigureDown}
                                         onDividerDragStart={handleDividerDown}
                                         missing={missingMap}
+                                        /**
+                                         * 【2026-10-18 空空第 2 条】从"相关卷"进来时（URL 带 `hasItem=`），
+                                         * 预览里把**那道题**染成橙色描边 + "这道题"标签 ——
+                                         * 一份卷里十几道题，他不想一道一道去找。
+                                         */
+                                        highlightItemId={hasItemFilter || null}
                                         L={L}
                                     />
                                 ))}
