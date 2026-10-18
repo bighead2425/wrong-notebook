@@ -10,7 +10,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
 import { ccwCanvasMatrix, rotateCanvasSize, rotateRectCCW } from "@/lib/image-rotation";
 import { fitEditSize } from "@/lib/edit-canvas-size";
-import { toCropBoxKind, rebaseCropRegions, clipCropBoxes, figuresForSplit, type CropRegions } from "@/lib/crop-regions";
+import { toCropBoxKind, rebaseCropRegions, clipCropBoxes, figuresForSplit, unionRect, type CropRegions } from "@/lib/crop-regions";
 
 /**
  * 取 2D 上下文。**两种后端，按画布用途选**（v36 审计后改的口径，别再混用）：
@@ -78,6 +78,22 @@ interface ImageCropperProps {
      *    绝不能只取 blobs[0] 把其余几张默默丢掉。
      */
     onCropBatch?: (blobs: Blob[]) => void;
+    /**
+     * 【2026-10-18】绿框的**另一种用法：合并，而不是分割**。
+     *
+     * 默认（不传）绿框 = "一处一道题"，有几个绿框就切几张图（`onCropBatch` 那条路）。
+     * 传 `true` ⇒ 画几个绿框都只切**一张**，切的是它们的**并集包围盒**：
+     *   · 走不了 `onCropBatch`（不传那个回调），仍走单张 `onCropComplete`；
+     *   · 导出区 `regionClip` 由"第一个绿框"换成"所有绿框的并集"。
+     *
+     * 谁在用：日积月累录入页。那本东西是"一条笔记"，一张图上分两段摘抄，
+     * 两段都要、但**还是同一条积累** —— 切成两张就变成两条了。
+     *
+     * ⚠️ 并集是**保守**的（两段之间的大片空白也带进来）。这在那边是安全的：
+     *    OCR 是按红/蓝框**各自单独裁**的，绿框只当"范围限制"，
+     *    带进来的空白根本不会被读进正文。
+     */
+    scopeUnion?: boolean;
     /**
      * 【M1 / 2026-09-26】确认时回传**四类框的坐标 + 基准图尺寸**。
      *
@@ -320,6 +336,7 @@ export function ImageCropper({
     onCropBatch,
     onCropRegions,
     onCropRegionsMulti,
+    scopeUnion = false,
 }: ImageCropperProps) {
     const { t } = useLanguage();
 
@@ -2035,8 +2052,14 @@ export function ImageCropper({
          *    **橙框跟红蓝同层**，没有理由跟绿框一起被排除。
          */
         const labelBoxes = boxes.filter((b) => !isScopeKind(b.kind));
-        /** 兜底：调用方没接 onCropBatch（理论上不存在）时，至少按第一个绿框裁一张 */
-        const regionClip = regionBoxes.length > 0 ? (mergeRegions(regionBoxes)[0] ?? null) : null;
+        /**
+         * 兜底：调用方没接 onCropBatch（理论上不存在）时，至少按绿框裁一张。
+         *
+         * 【2026-10-18】`scopeUnion` 时取**并集**而不是第一个 —— 日积月累那边
+         * "几个绿框 = 一条积累里的几段"，只裁第一个等于把其余几段丢了。
+         */
+        const mergedRegions = regionBoxes.length > 0 ? mergeRegions(regionBoxes) : [];
+        const regionClip = scopeUnion ? unionRect(mergedRegions) : (mergedRegions[0] ?? null);
 
         // 【custom-v22 循环模式】
         // 情形一：用户切过橡皮擦/标注模式 → bakeCropIntoBase 已把整页坐标记进 lastCropRectRef；

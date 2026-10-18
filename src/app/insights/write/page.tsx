@@ -61,6 +61,9 @@ import { ImageCropper } from "@/components/image-cropper";
 import { ImageZoomViewer } from "@/components/image-zoom-viewer";
 import { apiClient } from "@/lib/api-client";
 import { processImageFile } from "@/lib/image-utils";
+import { planInsightSource } from "@/lib/insight-source";
+import { cutInsightCrops, toQuoteBlock } from "@/lib/insight-image";
+import type { CropRegions } from "@/lib/crop-regions";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { dayKey } from "@/lib/calendar-grid";
 import { GRADE_SEMESTER_OPTIONS } from "@/lib/grade-semester-options";
@@ -105,6 +108,16 @@ export default function InsightWritePage() {
 
     const [aiBusy, setAiBusy] = useState(false);
     const [ocrBusy, setOcrBusy] = useState(false);
+    /** 剪裁页「确认」之后那一段（拆图 + 读字）—— 有一两秒，锁住按钮防重复提交 */
+    const [cropBusy, setCropBusy] = useState(false);
+    /**
+     * 剪裁页回传的框坐标。
+     *
+     * ⚠️ 必须用 **ref** 而不是 state：`onCropRegions` 与 `onCropComplete` 是
+     *    同一次点击里先后同步调用的，setState 那一刻还没生效 ⇒ 在 `onCropComplete`
+     *    里读 state 会读到**上一张图**的框（"这张图的框套在上一张上"，不报错只裁歪）。
+     */
+    const regionsRef = useRef<CropRegions | null>(null);
     /**
      * 「整理」覆盖正文之前的原文。
      * 整理是**覆盖式写入**（把她的原料换成整理好的卡片），所以必须留一条退路 ——
@@ -133,13 +146,22 @@ export default function InsightWritePage() {
 
     /** 页面上有没有东西（决定暂存/保存能不能点 —— 他的原话："不是全新页面状态"） */
     const hasContent = content.trim().length > 0;
+    /**
+     * 【2026-10-18】"能不能存"的判据要**把图算进来**。
+     *
+     * 一条积累可以**只有一张图、一个字都没有**（拍下来就是这张图本身）。
+     * 只看 `content` 的话，保存按钮是灰的 —— 她拍完图发现存不了，
+     * 会以为软件坏了（这正是"没人用往往是入口的问题"那一类）。
+     * ⚠️ 但「整理」仍然只认文字：没有原料，AI 无从下手。
+     */
+    const hasSomething = hasContent || !!photo;
 
     /**
      * 写进去。
      * @param status `draft` = 暂存 / `final` = 保存（正式）
      */
     const put = async (status: "draft" | "final") => {
-        if (!hasContent || busy) return;
+        if (!hasSomething || busy) return;
         setBusy(status === "draft" ? "draft" : "save");
         setNotice("");
         setError("");
@@ -210,18 +232,86 @@ export default function InsightWritePage() {
     };
 
     // ── 图片：拍照/相册 → 去底漂白 → 剪裁 → 缩在正文上方 ────────────
-    /** 剪裁页「确认」⇒ 压缩成 data URL，暂存在这一页，保存时才进库 */
+    /**
+     * 剪裁页「确认」⇒ 按框把这一张拆成三块（2026-10-18 他定的那套）：
+     *
+     *   红框（印刷体）→ OCR → 正文里的**引文块**（别人说的话）
+     *   蓝框（她手写）→ OCR → 正文里的**普通段落**（她自己的话）
+     *   橙框（图）    → 直接当这条的**附图**，不进 OCR
+     *
+     * 一个框都没画 ⇒ 老行为：整张图当附图（他的原话："录入了图片，
+     * 那个图片当然就是这条积累的附图"）。
+     *
+     * ⚠️ 画了橙框就**不留整图**：正文里已经有字了，再存一张同样的图只是重复。
+     *    这正是他说的"其他打印和手写的内容就可以剔除掉了"。
+     */
     const handleCropComplete = async (blob: Blob) => {
+        setCropBusy(true);
+        setError("");
         try {
             const dataUrl = await processImageFile(new File([blob], "insight.jpg", { type: "image/jpeg" }));
-            setPhoto(dataUrl);
-            setPhotoDirty(true);
-            setCroppingImage(null);
+            const regions = regionsRef.current;
+
+            /**
+             * ⚠️ 这里**不能** `setCroppingImage(null)`：它是 `<ImageCropper>` 的开关条件，
+             *    一清就把整块卸了 —— 下面读字那一两秒里界面会闪一下，
+             *    而且"读失败留在原地重试"也就无从谈起。
+             *    只关 `open`（下面 `setIsCropperOpen(false)`）；图等在下次打开时被覆盖。
+             */
+
+            // 没画框（或只有一张空白图）：整图当附图，不折腾
+            if (!regions || regions.boxes.length === 0) {
+                setPhoto(dataUrl);
+                setPhotoDirty(true);
+                setIsCropperOpen(false);
+                return;
+            }
+
+            const plan = planInsightSource(regions);
+            const crops = await cutInsightCrops(dataUrl, plan);
+
+            /**
+             * 读字。**失败只提示、不中断** —— 图已经拍好了，
+             * 不能因为一次读不出来就把整张图也丢了（她还能自己照着打）。
+             */
+            if (crops.printed || crops.handwritten) {
+                try {
+                    const res = await apiClient.post<{ printed?: string; handwritten?: string }>(
+                        "/api/insights/ocr",
+                        {
+                            ...(crops.printed ? { printed: crops.printed } : {}),
+                            ...(crops.handwritten ? { handwritten: crops.handwritten } : {}),
+                        },
+                    );
+                    const parts: string[] = [];
+                    // 书上的话进引文块，她的话进正文 —— 这个区分就是"红框/蓝框"的全部意义
+                    if (res?.printed) parts.push(toQuoteBlock(res.printed));
+                    if (res?.handwritten) parts.push(res.handwritten.trim());
+                    if (parts.length > 0) {
+                        const next = [content.trim(), ...parts].filter(Boolean).join("\n\n");
+                        setContent(next);
+                        editorRef.current?.setMarkdown(next);
+                    }
+                } catch (e) {
+                    console.error(e);
+                    setError(L("字没读出来（图已经存下了），可以照着打。", "Could not read the text (photo saved). You can type it."));
+                }
+            }
+
+            // 附图：有橙框就只要橙框那块；没橙框就整图
+            const figure = crops.figure ?? (plan.photoCrop ? null : dataUrl);
+            if (figure) {
+                setPhoto(figure);
+                setPhotoDirty(true);
+            }
+
             setIsCropperOpen(false);
         } catch (e) {
             console.error(e);
             // 失败**不关剪裁页**：她修了半天的图不能因为一次读不出来就丢了
             setError(L("这张图读不出来，换一张试试。", "Could not read that image."));
+        } finally {
+            setCropBusy(false);
         }
     };
 
@@ -276,6 +366,8 @@ export default function InsightWritePage() {
             void runOcr(blob);
             return;
         }
+        // 上一张图的框绝不能留到这一张（坐标换了，框还在 = 不报错只裁歪）
+        regionsRef.current = null;
         const url = URL.createObjectURL(blob);
         setCroppingImage(url);
         setIsCropperOpen(true);
@@ -337,14 +429,14 @@ export default function InsightWritePage() {
 
     /** 正在写、又直接关页面 ⇒ 拦一下（写下来的东西不能无声丢掉） */
     useEffect(() => {
-        if (!hasContent) return;
+        if (!hasSomething) return;
         const onBeforeUnload = (e: BeforeUnloadEvent) => {
             e.preventDefault();
             e.returnValue = "";
         };
         window.addEventListener("beforeunload", onBeforeUnload);
         return () => window.removeEventListener("beforeunload", onBeforeUnload);
-    }, [hasContent]);
+    }, [hasSomething]);
 
     /**
      * 标签外观。
@@ -393,7 +485,7 @@ export default function InsightWritePage() {
                     <Button
                         variant="outline"
                         size="icon"
-                        disabled={!hasContent || !!busy}
+                        disabled={!hasSomething || !!busy}
                         title={L("暂存（先存进库里，等你在管理页整理）", "Save as draft")}
                         onClick={() => void put("draft")}
                     >
@@ -401,7 +493,7 @@ export default function InsightWritePage() {
                     </Button>
                     <Button
                         size="icon"
-                        disabled={!hasContent || !!busy}
+                        disabled={!hasSomething || !!busy}
                         title={L("保存（正式记入日积月累）", "Save")}
                         onClick={() => void put("final")}
                     >
@@ -458,7 +550,10 @@ export default function InsightWritePage() {
                         variant="outline"
                         size="sm"
                         disabled={!!busy || aiBusy}
-                        title={L("给这条配一张图（拍照 / 相册）", "Attach a photo")}
+                        title={L(
+                            "拍照/相册。拍完能画框：红=书上的字，蓝=你写的，橙=图，绿=只要这一块",
+                            "Photo. Then draw boxes: red = printed, blue = your writing, orange = picture, green = only this part",
+                        )}
                         onClick={() => {
                             scanModeRef.current = "photo";
                             scannerRef.current?.openCamera();
@@ -507,8 +602,8 @@ export default function InsightWritePage() {
                         </button>
                         <p className="min-w-0 flex-1 text-xs text-muted-foreground">
                             {L(
-                                "这张图会跟着这条一起存（一条最多一张）。点图能放大看。",
-                                "This photo is saved with the note (one per note). Click to enlarge.",
+                                "这条的附图（一条最多一张）。点图能放大看。画了橙框就只留橙框里那块。",
+                                "Attached picture (one per note). Click to enlarge. With an orange box, only that part is kept.",
                             )}
                         </p>
                         <Button variant="ghost" size="icon" onClick={removePhoto} title={L("去掉这张图", "Remove photo")}>
@@ -605,11 +700,22 @@ export default function InsightWritePage() {
                 <ImageCropper
                     imageSrc={croppingImage}
                     open={isCropperOpen}
+                    analyzing={cropBusy}
                     onClose={() => {
                         setIsCropperOpen(false);
                         setCroppingImage(null);
+                        regionsRef.current = null;
                     }}
                     onCropComplete={handleCropComplete}
+                    /**
+                     * 框坐标：**ref 收**（见 regionsRef 的说明）。
+                     * `scopeUnion`：日积月累里画几个绿框 = 一条积累的几段，
+                     * 要**合并**，不能像错题那样切成好几条。
+                     */
+                    onCropRegions={(p) => {
+                        regionsRef.current = p;
+                    }}
+                    scopeUnion
                 />
             )}
             <ImageZoomViewer open={isViewerOpen} src={photo} onClose={() => setIsViewerOpen(false)} />
