@@ -1009,7 +1009,14 @@ export function MdEditor({
                     ref={containerRef}
                     data-md-editor
                     className="md-editor rounded-md border bg-background px-3 py-2 text-sm"
-                    style={{ minHeight: `${minHeightPx}px` }}
+                    style={{
+                        minHeight: `${minHeightPx}px`,
+                        /**
+                         * 【2026-10-18】触摸端明确允许**纵向滚动**：这是"在框里上下拖 = 滚页面"的前提。
+                         * （桌面端这条属性没有副作用；它只影响触摸。）
+                         */
+                        touchAction: 'pan-y',
+                    }}
                     data-placeholder={placeholder}
                     /**
                      * ═══ 【2026-10-18 空空第 6 条】点在空白处也要能落光标 ═══
@@ -1025,8 +1032,24 @@ export function MdEditor({
                      *   该行有内容 ⇒ 该行末尾；点在整个内容之后（含空框）⇒ 全文末尾。
                      */
                     onPointerDown={(e) => {
+                        /**
+                         * ⚠️⚠️【2026-10-18 空空二次实测】**只给鼠标接管，触摸/手写笔一律不接管**。
+                         *
+                         * 他的原话：*"在电脑端的更改我非常满意…… 同时在手机端出现了一个情况，
+                         *   我按在 md 框内进行拖拉实现页面上下滚动时，有时候会触发点击 md 框内，
+                         *   自动弹出键盘…… 在移动端上还是用原来的那种方式（点空白没反应），
+                         *   从而使移动端拖拉页面上下滚动时更加丝滑。"*
+                         *
+                         * 为什么触摸必须让开：
+                         *   · 手机上没有"悬停"，按下即命中；我们在 `pointerdown` 里 `preventDefault`
+                         *     会**打断原生滚动手势**的判定，且紧接着 `focus()` 会弹键盘；
+                         *   · 他要的是"手指按在框里上下拖 = 滚页面"，这跟"点一下落光标"在触摸上
+                         *     是**同一起手式**，无法可靠区分 ⇒ 只能二选一，**选滚动**。
+                         *   · 手机上"点第一行"本来就能进编辑器，代价可接受。
+                         */
+                        if (e.pointerType !== 'mouse') return;
                         // 只处理主键；右键留给浏览器菜单
-                        if (e.pointerType === 'mouse' && e.button !== 0) return;
+                        if (e.button !== 0) return;
                         const el = e.target as HTMLElement | null;
                         // 点在正文（contenteditable）里 ⇒ 交给 ProseMirror，别抢
                         if (el?.closest('[contenteditable="true"]')) return;
