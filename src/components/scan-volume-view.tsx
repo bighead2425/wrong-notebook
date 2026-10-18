@@ -203,6 +203,13 @@ export function ScanVolumeView({
                     const params = new URLSearchParams();
                     params.set("ids", ids.join(","));
                     params.set("pageSize", String(Math.max(50, ids.length)));
+                    /**
+                     * ⚠️⚠️【2026-10-18 如如】与组卷页同一个病：**不带 `withImages=1` 就没有题图**。
+                     * 2026-10-16 的性能修复让列表接口默认不返回 `originalImageUrl`；
+                     * 这一屏要把"这张纸"按原样画出来（题图是纸的一部分）⇒ 必须带。
+                     * 详情见 `app/review-volumes/page.tsx` 里同一段注释。
+                     */
+                    params.set("withImages", "1");
                     const list = await apiClient.get<PaginatedResponse<ErrorItem>>(
                         `/api/error-items/list?${params.toString()}`,
                     );

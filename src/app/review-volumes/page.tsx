@@ -482,6 +482,21 @@ export default function ReviewVolumesPage() {
                     const params = new URLSearchParams();
                     params.set("ids", ids.join(","));
                     params.set("pageSize", String(Math.max(50, ids.length)));
+                    /**
+                     * ⚠️⚠️【2026-10-18 如如】**必须带 `withImages=1`**，否则这一卷的题**全都没有题图**。
+                     *
+                     * 病因（空空 2026-10-18 报的）：2026-10-16 那次性能修复让列表接口**默认不返回
+                     * `originalImageUrl`**（题图 base64，单张最大 ~1.4MB，是其它 37 个字段的几百倍），
+                     * 只有显式 `?withImages=1` 才给。当时核的 6 个调用方里漏了这里
+                     * （以及扫码页 `scan-volume-view`，同一处病）。
+                     *
+                     * ⇒ 前端拿到的题没有图 ⇒ `useFigureImages(item)` 的 `src` 为空 ⇒ 预览里静默无图。
+                     *   **不报错、不提示**，只表现为"该有图的题没图"（正是他描述的样子）。
+                     *
+                     * 📌 取舍：这一屏本来就是"看这张纸长什么样"，**图是刚需** ⇒ 宁可慢一点也要带。
+                     *    一次只打开一卷（通常 6~20 题），不是列表那种成百上千条的场景。
+                     */
+                    params.set("withImages", "1");
                     const res = await apiClient.get<PaginatedResponse<ErrorItem>>(
                         `/api/error-items/list?${params.toString()}`,
                     );

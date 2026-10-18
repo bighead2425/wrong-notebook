@@ -24,10 +24,23 @@
  *
  * ⇒ 响应体缩小 **400 倍**，而且**连库都不用读那 9MB**（所以选"不读"而不是"读完再摘"）。
  *
- * ⚠️ **为什么可以安全地不返回**：真真 2026-10-16 逐个查过列表接口的 **6 个调用方** ——
- *    `error-list` / `scan-volume-view` / `review-volumes` / `trash` / `print-preview` / 详情页 `mode=ids`。
- *    **只有"打印预览"需要题图**（它要印题图，见 `components/print/question-bodies.tsx`）
- *    ⇒ 它显式传 `?withImages=1`；其余 5 个连 `originalImageUrl` 这个名字都没出现过。
+ * ⚠️ **哪些调用方真的需要题图**（2026-10-18 如如更正，**别再照下面那句旧结论做**）：
+ *
+ *    真真 2026-10-16 当时逐个查过 **6 个调用方** ——
+ *    `error-list` / `scan-volume-view` / `review-volumes` / `trash` / `print-preview` / 详情页 `mode=ids`，
+ *    结论写的是"**只有打印预览需要题图**"。**这个结论错了**，代价是两个屏静默无图：
+ *
+ *    | 调用方 | 要不要图 | 为什么当时漏了 |
+ *    |---|---|---|
+ *    | `print-preview` | ✅ 要（已传） | 一眼看得出（要印题图） |
+ *    | **`review-volumes`（打开某一卷）** | ✅ **要** | 它要画"这张纸"的预览，题图是纸的一部分 |
+ *    | **`scan-volume-view`（扫到某一卷）** | ✅ **要** | 同上，而且这屏就是"按纸的样子看" |
+ *    | `error-list` / `trash` / 详情页 `mode=ids` | ❌ 不要 | 只显示题干文字，不画图 |
+ *
+ *    📌 判据不是"有没有出现 `originalImageUrl` 这个名字"（那三个要图的文件**从来没写这个名字**，
+ *       它们是让 `useFigureImages(item)` 自己从 `item.originalImageUrl` 里取的）——
+ *       **真正的判据是"这一屏要不要把纸画出来"**。
+ *    📌 这条由 `__tests__/unit/image-needers-guard.test.ts` 钉住（三个文件必须都带 `withImages`）。
  *
  * ══════════════════════════════════════════════════════════════════════
  * ⚠️ 维护约定
