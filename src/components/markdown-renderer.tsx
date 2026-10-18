@@ -56,9 +56,20 @@ export function MarkdownRenderer({ content, className = '' }: MarkdownRendererPr
                     ul: ({ node, ...props }) => <ul className="list-disc list-outside mb-3 space-y-1 pl-5" {...props} />,
                     ol: ({ node, ...props }) => <ol className="list-decimal list-outside mb-3 space-y-1 pl-5" {...props} />,
                     li: ({ node, ...props }) => <li {...props} />,
-                    blockquote: ({ node, ...props }) => (
-                        <blockquote className="border-l-4 border-primary pl-4 italic my-4 text-muted-foreground" {...props} />
-                    ),
+                    /**
+                     * 【2026-10-18】引用块的样式**只留一处**。
+                     *
+                     * 原来这里写着 `border-l-4 border-primary pl-4 italic my-4`，
+                     * 而 `globals.css` 的 `.markdown-content blockquote` 写的是
+                     * 浅灰 `#d0d0d4` + 12px 缩进 + 0.75em 间距 —— **两套值在打架**，
+                     * 谁赢取决于优先级（目前是 CSS 那份赢，但这是运气，不是设计）。
+                     *
+                     * 空空 10-18 的原话："引用左侧的竖线改成浅灰，太黑了影响积累纸的观感。"
+                     * ⇒ 把 Tailwind 那一串删掉，交给 `.markdown-content blockquote` 统一管，
+                     *   编辑器和纸上才是同一个观感（那条注释里写的就是这个要求）。
+                     * ⚠️ 别再往这里加颜色/间距：加一次就又变成两份实现。
+                     */
+                    blockquote: ({ node, ...props }) => <blockquote {...props} />,
                     /**
                      * 块级代码块：样式全在这层。react-markdown 10.x 已无 `code` 的
                      * inline 参数，只能靠「pre 包 code」的结构来区分行内/块级。
