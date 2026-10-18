@@ -86,12 +86,41 @@ export async function POST(req: Request) {
          * 一整页手写 OCR 全塞进去，模型反而会被细节淹掉）。
          */
         const customTemplate = getAppConfig().prompts?.insights || '';
+
+        /**
+         * 【2026-10-18】把**同学科最近记过的几条**一起带上，让 AI 能"回指"。
+         *
+         * 空空的原话："后续可以开发将同学科的积累标题交给 AI，让 AI 分析当前这条
+         * 和此前那条积累是有关系的，而且看是不是能调用那条相关积累来看看，
+         * 这样积累和积累之间的关系就建立起来了。"
+         *
+         * 这一步只做**最轻的那半**：把旧条目的标题 + 开头给模型看，
+         * 它愿意回指就在 AI 段里写一句（"这个你上次也写过"）。
+         * **不建立任何数据库关系** —— 关系要落定，得等她真的看见并认可
+         * （与"AI 只做错因归类、只建议不落定"同一条定盘星）。
+         *
+         * 取 8 条、每条截 120 字：多了会把这次的原料淹掉，模型会拿旧内容糊弄。
+         * ⚠️ 只取 `final`：草稿是她还没想清楚的，不该被当成"以前的看法"引用。
+         */
+        const related = await prisma.insight.findMany({
+            where: {
+                userId: user.id,
+                status: 'final',
+                ...(bodySubject ? { subject: bodySubject } : {}),
+                content: { not: null },
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 8,
+            select: { code: true, content: true },
+        });
+
         const prompt = generateInsightsPrompt({
             rawContent: content,
             subject: bodySubject,
             questionText: item?.questionText,
             mistakeReason: reason,
             mistakeAnalysis: item?.mistakeAnalysis,
+            relatedNotes: related,
             customTemplate,
         });
 

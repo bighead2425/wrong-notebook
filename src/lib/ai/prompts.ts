@@ -801,6 +801,16 @@ AI 段只补一句记忆钩子 —— 既没把错的那句留在正文里，也
 - ❌ 把她错的地方悄悄改对，却不说她原来错在哪（她会以为自己一直就是这么想的）。
 - ❌ 把三件事硬压成三条，最后一条塞了两件事，谁也说不清。
 
+【她以前记过的同类（可能有，也可能没有）】
+{{related_notes}}
+
+上面如果真有内容，先扫一眼 —— 这本词典的价值就在"不同时期的看法能串起来"：
+· **只在你确实看到"同一个点"时**，才在 AI 段里回指，写法：
+  AI: 这个你在 JL20261012003 那条里也写过，那次你举的是分蛋糕的例子。
+· 回指的意思是"你以前也想过这个"，**不是**"你以前错了"；
+· **没有真的相关就一个字都别提**（硬凑的关联比不关联更烦人）；
+· 她这次要是写得更清楚了，可以点一句"比上次多走了哪一步"。
+
 【她这次的原料】
 学科：{{subject}}
 题目：{{question_text}}
@@ -823,10 +833,29 @@ export function generateInsightsPrompt(opts: {
     questionText?: string | null;
     mistakeReason?: string | null;
     mistakeAnalysis?: string | null;
+    /**
+     * 【2026-10-18】她以前记过的同类条目（服务端按学科取的最近几条）。
+     * 目的只有一个：让 AI 能"回指" —— 空空原话："这样积累和积累之间的关系就建立起来了"。
+     * ⚠️ 只给**标题 + 开头一小段**，不给全文：给多了模型会拿旧内容糊弄，
+     *    写成"总结"而不是"整理她这一次的原料"。
+     */
+    relatedNotes?: { code: string; content: string | null }[] | null;
     customTemplate?: string | null;
     languageInstruction?: string;
 }): string {
     const template = opts.customTemplate || DEFAULT_INSIGHTS_TEMPLATE;
+
+    /**
+     * 旧条目的拼法：一条一行，`编号（日期不必进模型）：标题 + 开头`。
+     * 每条正文截 120 字 —— 8 条 × 120 = 不到 1K 字，不会把原料淹掉。
+     */
+    const relatedText =
+        opts.relatedNotes && opts.relatedNotes.length > 0
+            ? opts.relatedNotes
+                  .map((n) => `· ${n.code}：${(n.content || '').replace(/\s+/g, ' ').slice(0, 120)}`)
+                  .join('\n')
+            : '（她以前还没记过类似的。）';
+
     return replaceVariables(template, {
         language_instruction: opts.languageInstruction || '',
         subject: opts.subject || '（没填）',
@@ -834,5 +863,6 @@ export function generateInsightsPrompt(opts: {
         mistake_reason: opts.mistakeReason || '（没打错因）',
         mistake_analysis: (opts.mistakeAnalysis || '').slice(0, 600) || '（无）',
         raw_content: opts.rawContent.slice(0, 4000),
+        related_notes: relatedText,
     }).trim();
 }
