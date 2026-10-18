@@ -1061,8 +1061,18 @@
 }
 
 /* 引用：左侧主色竖条 + 斜体灰字（打印端：border-l-4 border-primary pl-4 italic） */
-.md-editor blockquote {
-  border-left: 4px solid var(--primary);
+/**
+ * 【2026-10-18 空空要求】**引用左侧的竖线改成浅灰**。
+ *
+ * 原话：*"md 的引用部分一般左边是一条黑色的竖线，我建议调整为浅灰色，
+ *        太黑了影响整个积累纸的观感，很容易把注意力吸引过去。"*
+ * ⇒ 先前的 `--primary`（主色，浅色主题下接近黑）对比太强；
+ *    改成静态浅灰 `#d0d0d4`：还看得见"这是一段引用"，但绝不抢正文的注意力。
+ * ⚠️ 渲染端（`.markdown-content`，打印/纸上用）也补了同一条 —— 编辑时和印出来必须是一个观感。
+ */
+.md-editor blockquote,
+.markdown-content blockquote {
+  border-left: 4px solid #d0d0d4;
   padding-left: 12px;
   margin: 0.75em 0;
   font-style: italic;

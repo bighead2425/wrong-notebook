@@ -6,20 +6,24 @@ import { unauthorized, badRequest, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { chatText } from "@/lib/ai/text-chat";
 import { getMistakeCategoryLabel } from "@/lib/mistake-category";
+/**
+ * 【2026-10-18 如如】提示词**不再写死在这里** —— 从设置页读（`config.prompts.insights`），
+ * 空则用默认模板。出处：空空原话"不要在软件中写死，要让用户自己配置"。
+ * ⚠️ 结构（`#### ` 标题 / `> *AI: …*`）由 `normalizeInsightMarkdown` 再兜一次：
+ *    纸面排版不能靠模型守规矩（详见 `lib/insight-note.ts` 文件头）。
+ */
+import { generateInsightsPrompt } from "@/lib/ai/prompts";
+import { normalizeInsightMarkdown } from "@/lib/insight-note";
+import { getAppConfig } from "@/lib/config";
 
 const logger = createLogger('api:insights:ai');
 
-/** 【AI 送】的批注生成提示词 —— 判据只有这一份（界面说的和给 AI 看的必须是同一件事） */
-const SYSTEM_PROMPT = [
-    '你是一位小学生的学习教练。任务是：读完一个孩子自己写的"日积月累"（她从一道做错的题里攒下的收获），',
-    '把她对这道题的理解与看法**理顺**成一段通顺的话，作为一条批注还给她。',
-    '规矩：',
-    '1. 只根据她写的内容 + 题目 + 错因说话，**不要替她做题、不要给新的解题步骤、不要拓新的知识点**。',
-    '2. 用她的口吻和视角（"我这次明白的是……"），要说人话，不要术语堆砌。',
-    '3. 她说得对的地方先肯定；她说得含糊的地方帮她点明"其实你是想说……"；她说错的地方温和指出。',
-    '4. 输出**只有一段批注正文**，120 字以内，不要标题、不要列表、不要客套、不要任何 markdown 语法',
-    '   （客户端会把整段包成斜体批注）。',
-].join('\n');
+/**
+ * 【2026-10-18】这里原来是一段写死的 SYSTEM_PROMPT（"把她的理解理顺成一段批注"）。
+ * 现在改由设置页的「日积月累提示词」提供（`DEFAULT_INSIGHTS_TEMPLATE` 是默认值），
+ * 理由：① 空空要求"不要在软件中写死"；② 这个场景是开放的，提示词一定会反复调，
+ *       每调一次就发一次版是不可接受的。
+ */
 
 /**
  * POST /api/insights/ai —— 【AI 送】的分析一步（2026-10-01 他拍板的形态）。
@@ -62,20 +66,34 @@ export async function POST(req: Request) {
 
         const reason = getMistakeCategoryLabel(item.mistakeCategory) || '没打错因';
 
-        const prompt = [
-            '【题目】',
-            (item.questionText || '（无题干文本）').slice(0, 1200),
-            '',
-            `【错因】${reason}`,
-            item.mistakeAnalysis ? `【错因分析】${item.mistakeAnalysis.slice(0, 600)}` : '',
-            '',
-            '【她写的日积月累】',
-            content.slice(0, 2000),
-        ]
-            .filter((s) => s !== '')
-            .join('\n');
+        /**
+         * 提示词：**用户在设置页填的那份**优先；没填就用默认模板。
+         * 变量拼装在 `generateInsightsPrompt`（那里对原料做了长度截断 ——
+         * 一整页手写 OCR 全塞进去，模型反而会被细节淹掉）。
+         */
+        const customTemplate = getAppConfig().prompts?.insights || '';
+        const prompt = generateInsightsPrompt({
+            rawContent: content,
+            subject: null,
+            questionText: item.questionText,
+            mistakeReason: reason,
+            mistakeAnalysis: item.mistakeAnalysis,
+            customTemplate,
+        });
 
-        const note = (await chatText({ system: SYSTEM_PROMPT, user: prompt, timeoutMs: 120000 })).trim();
+        const raw = await chatText({
+            // 模板里已经含了"她这次的原料"，所以整段放 system，user 只做一句启动
+            system: prompt,
+            user: '请按上面的要求直接输出这张卡片（不要任何解释或前后缀）。',
+            timeoutMs: 120000,
+        });
+
+        /**
+         * 【结构兜底】模型偶尔会写 `###`、`**AI:**`、或者包一层 ```。
+         * 这些在**纸面上**就是破版 ⇒ 由程序统一成 `#### ` 与 `> *AI: …*`。
+         * ⚠️ 只改结构、不改内容（内容怎么压缩是模型的事）。
+         */
+        const note = normalizeInsightMarkdown(raw);
         if (!note) return internalError("AI 没有返回内容，请重试");
 
         return NextResponse.json({ note });

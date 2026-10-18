@@ -37,6 +37,12 @@ export interface AppConfig {
     prompts?: {
         analyze?: string;
         similar?: string;
+        /**
+         * 【2026-10-18】日积月累"整理"的提示词。
+         * 空 = 用 `lib/ai/prompts.ts` 的 `DEFAULT_INSIGHTS_TEMPLATE`。
+         * 这个场景是**开放的**（不是固定靶），提示词一定会反复调 ⇒ 必须可配置、不能写死。
+         */
+        insights?: string;
     };
     timeouts?: {
         analyze?: number; // 毫秒
@@ -125,6 +131,7 @@ const DEFAULT_CONFIG: AppConfig = {
     prompts: {
         analyze: '',
         similar: '',
+        insights: '',
     },
     timeouts: {
         analyze: 180000,

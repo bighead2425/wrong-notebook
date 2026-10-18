@@ -207,6 +207,8 @@ export interface AppConfig {
     prompts?: {
         analyze?: string;
         similar?: string;
+        /** 【2026-10-18】日积月累整理提示词（空 = 用默认模板） */
+        insights?: string;
     };
     timeouts?: {
         analyze?: number; // 毫秒

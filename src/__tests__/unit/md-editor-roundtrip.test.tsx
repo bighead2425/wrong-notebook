@@ -218,7 +218,16 @@ describe('MdEditor · 编辑器必须自己补回被 preflight 冲掉的样式',
         expect(css).toMatch(/\.md-editor pre,/); // pre 与 code 共享字体那条
         expect(css).toMatch(/\.md-editor pre \{/);
         expect(css).toMatch(/\.md-editor code \{/);
-        expect(css).toMatch(/\.md-editor blockquote \{/);
+        /**
+         * ⚠️【2026-10-18 如如】**这条断言原来钉的是"规则必须单独起一行"**，而
+         * 2026-10-18 把引用样式改成编辑器与渲染端**共用一条**（`.md-editor blockquote,
+.markdown-content blockquote {`）
+         * ⇒ 旧断言反而拦住了正确修法。按项目纪律（教训 #17）：
+         * **先问"它钉的行为本身对不对"** —— 它要的是"引用有样式"，不是"必须两行分开"。
+         * ⇒ 改成：两处都要被覆盖（**顺带把渲染端也钉住**，以前只钉了编辑器）。
+         */
+        expect(css).toMatch(/\.md-editor blockquote[^{]*\{/);
+        expect(css).toMatch(/\.markdown-content blockquote[^{]*\{/);
         // 代码块里的 code 必须把底色/内边距去掉，否则出"块中块"
         // （渲染端靠 `.markdown-content pre code` 同一条，见 globals.css 上面的注释）
         expect(css).toMatch(/\.md-editor pre code \{[\s\S]*?background:\s*transparent/);
