@@ -50,21 +50,35 @@ export async function POST(req: Request) {
         if (!user) return unauthorized("Authentication required");
 
         const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+        /**
+         * 【2026-10-18 改】`errorItemNo` **从必填改成可选**。
+         *
+         * 原来这个接口只有一条来路：错题本 →「AI 送」→ 带着题号。
+         * 现在多了第二条：日积月累**录入页**（`/insights/write`）—— 那里是"进门就写"，
+         * 大部分时候**根本没在讲某道题**（书上一段话、老师随口一句、她自己的一个念头）。
+         * 他 2026-10-13 也定过："日积月累**不绑定题**，是一本笔记"。
+         * ⇒ 不带题号 = 按**笔记**处理（提示词里 `question_text` 本来就写好了这种情况的兜底：
+         *    "（没有题干——这条可能与某道题无关，按笔记处理）"）。
+         * ⚠️ 但如果**给了题号却查不到题**，仍然报错：那是"题号打错了"，
+         *    静默降级成笔记会让他以为关联上了。
+         */
         const errorItemNo =
             typeof body.errorItemNo === 'string' && body.errorItemNo.trim()
                 ? body.errorItemNo.trim().toUpperCase()
                 : '';
         const content = typeof body.content === 'string' ? body.content.trim() : '';
-        if (!errorItemNo) return badRequest("errorItemNo is required");
+        const bodySubject = typeof body.subject === 'string' && body.subject.trim() ? body.subject.trim() : null;
         if (!content) return badRequest("她写的内容是 AI 分析的原料，不能为空");
 
-        const item = await prisma.errorItem.findFirst({
-            where: { userId: user.id, source: errorItemNo },
-            select: { questionText: true, mistakeCategory: true, mistakeAnalysis: true },
-        });
-        if (!item) return badRequest("按题号没找到这道题");
+        const item = errorItemNo
+            ? await prisma.errorItem.findFirst({
+                  where: { userId: user.id, source: errorItemNo },
+                  select: { questionText: true, mistakeCategory: true, mistakeAnalysis: true },
+              })
+            : null;
+        if (errorItemNo && !item) return badRequest("按题号没找到这道题");
 
-        const reason = getMistakeCategoryLabel(item.mistakeCategory) || '没打错因';
+        const reason = item ? getMistakeCategoryLabel(item.mistakeCategory) || '没打错因' : '';
 
         /**
          * 提示词：**用户在设置页填的那份**优先；没填就用默认模板。
@@ -74,10 +88,10 @@ export async function POST(req: Request) {
         const customTemplate = getAppConfig().prompts?.insights || '';
         const prompt = generateInsightsPrompt({
             rawContent: content,
-            subject: null,
-            questionText: item.questionText,
+            subject: bodySubject,
+            questionText: item?.questionText,
             mistakeReason: reason,
-            mistakeAnalysis: item.mistakeAnalysis,
+            mistakeAnalysis: item?.mistakeAnalysis,
             customTemplate,
         });
 
