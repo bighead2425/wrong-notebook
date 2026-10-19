@@ -1034,10 +1034,27 @@ export default function InsightsPage() {
                                         key={`g:${entry.key}`}
                                         className="rounded-md border border-dashed bg-accent/10 p-1.5"
                                     >
-                                        <div className="px-1 pb-1 text-[10px] text-muted-foreground">
-                                            {L('同一个词', 'Same word')} ·{' '}
-                                            {headwordCounts[entry.key] ?? entry.rows.length}
-                                            {L(' 条', ' entries')}
+                                        {/**
+                                         * 【2026-10-19 真真】**这里必须显示每组的实际词头**。
+                                         *
+                                         * 上一版把「同一个词」这四个字**写死在代码里**（当字面量），
+                                         * 于是屏幕上每一个框都写着"同一个词 · N 条"。
+                                         * 空空 2026-10-19 截图里两组明明是两个不同的词
+                                         * （一组「同一个词」、一组「测试12345」），框上却都写"同一个词"，
+                                         * 一眼看去像"系统把两件事混成一件"，反而比不分组更让人犯嘀咕。
+                                         *
+                                         * ⚠️ `entry.headline` 是**组里最早那条**的词头（她自己的写法）——
+                                         *    不是当前这条、也不是归一化后的 key（key 去掉了标点，是拿来比较的）。
+                                         * ⚠️ 有一条看门测试（`insight-group-label-guard`）钉着这一行，别改回去。
+                                         */}
+                                        <div className="flex items-center gap-1 px-1 pb-1 text-[10px] text-muted-foreground">
+                                            <span className="min-w-0 truncate font-medium text-foreground">
+                                                {entry.headline}
+                                            </span>
+                                            <span className="shrink-0">
+                                                · {headwordCounts[entry.key] ?? entry.rows.length}
+                                                {L(' 条', ' entries')}
+                                            </span>
                                         </div>
                                         <div className="space-y-1.5">{entry.rows.map(renderRow)}</div>
                                     </div>
