@@ -282,6 +282,27 @@ export default function InsightsPage() {
             return next;
         });
 
+    /**
+     * 【2026-10-19 空空】**组框前面那个勾** —— 一下把整组（框里所有条目）勾上或取消。
+     *
+     * 他原话："并在前面增加一个选择框，这个框如果点了选中（对号），选线框中所有的条目就全部选中。"
+     *
+     * 判据用"整组是否**已经全选**"：
+     *   · 全选 ⇒ 点一下**全取消**（否则这个勾再也点不掉）；
+     *   · 其他（一条没选 / 只选了一部分）⇒ **全选**。
+     * ⇒ 只选了一部分时点一下是"补齐"，不是"清空"—— 那更符合"我想把这一组都拿去印"的意图。
+     */
+    const toggleGroupPick = (ids: string[]) =>
+        setPicked((prev) => {
+            const next = new Set(prev);
+            const all = ids.every((id) => next.has(id));
+            for (const id of ids) {
+                if (all) next.delete(id);
+                else next.add(id);
+            }
+            return next;
+        });
+
     const sendToPrint = () => {
         if (picked.size === 0) return;
         // 按**左栏当前顺序**送过去（他挑的时候看到的就是这个顺序）
@@ -1026,13 +1047,31 @@ export default function InsightsPage() {
                              * ⚠️ N 来自服务端 `headwordCounts`（全量、与当前筛选同口径），
                              *    不是数当前页 —— 翻页时数字不会变小。
                              */}
-                            {listEntries.map((entry) =>
-                                entry.kind === 'single' ? (
-                                    renderRow(entry.row)
-                                ) : (
+                            {listEntries.map((entry) => {
+                                if (entry.kind === 'single') return renderRow(entry.row);
+
+                                /**
+                                 * 【2026-10-19 空空】**组框变黄 + 前面加一个"整组勾"**。
+                                 *
+                                 * 他的两条原话：
+                                 *  · "把虚线框变为黄色"；
+                                 *  · "并在前面增加一个选择框，这个框如果点了选中（对号），
+                                 *    选线框中所有的条目就全部选中。"
+                                 *
+                                 * ⚠️ 那个勾与每条自己的勾是**同一个集合**（`picked`）——
+                                 *    不是另建一套"组选中"状态。否则"组选了但条目没选"这种
+                                 *    半截状态会一路传到打印页（`sendToPrint` 只认 `picked`）。
+                                 * ⚠️ 部分选中时用 `indeterminate`（一条横杠），而不是假装没选 ——
+                                 *    不然她勾了组里一条，组框那个勾看起来像"一个都没选"。
+                                 */
+                                const ids = entry.rows.map((r) => r.id);
+                                const allPicked = ids.every((id) => picked.has(id));
+                                const somePicked = ids.some((id) => picked.has(id));
+
+                                return (
                                     <div
                                         key={`g:${entry.key}`}
-                                        className="rounded-md border border-dashed bg-accent/10 p-1.5"
+                                        className="rounded-md border border-dashed border-amber-400 bg-amber-50/70 p-1.5 dark:border-amber-500/60 dark:bg-amber-500/10"
                                     >
                                         {/**
                                          * 【2026-10-19 真真】**这里必须显示每组的实际词头**。
@@ -1047,7 +1086,17 @@ export default function InsightsPage() {
                                          *    不是当前这条、也不是归一化后的 key（key 去掉了标点，是拿来比较的）。
                                          * ⚠️ 有一条看门测试（`insight-group-label-guard`）钉着这一行，别改回去。
                                          */}
-                                        <div className="flex items-center gap-1 px-1 pb-1 text-[10px] text-muted-foreground">
+                                        <div className="flex items-center gap-1.5 px-1 pb-1 text-[10px] text-muted-foreground">
+                                            <input
+                                                type="checkbox"
+                                                className="shrink-0"
+                                                checked={allPicked}
+                                                ref={(el) => {
+                                                    if (el) el.indeterminate = somePicked && !allPicked;
+                                                }}
+                                                onChange={() => toggleGroupPick(ids)}
+                                                title={L('选中这一组（框里所有条目）', 'Pick the whole group')}
+                                            />
                                             <span className="min-w-0 truncate font-medium text-foreground">
                                                 {entry.headline}
                                             </span>
@@ -1058,8 +1107,8 @@ export default function InsightsPage() {
                                         </div>
                                         <div className="space-y-1.5">{entry.rows.map(renderRow)}</div>
                                     </div>
-                                ),
-                            )}
+                                );
+                            })}
 
                             {/* 【2026-10-09】上拉加载更多：滚到这附近自动要下一页；
                                 不支持自动触发的浏览器（或就是想手动点）用这个按钮一样行。 */}
