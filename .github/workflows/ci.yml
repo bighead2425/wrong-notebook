@@ -166,9 +166,28 @@ jobs:
         run: npm run build
 
       - name: Run Playwright tests
-        run: npx playwright test
+        id: pw
+        run: npx playwright test --reporter=line 2>&1 | tee /tmp/pw.log
         env:
           CI: true
+        # 【2026-10-20】失败**不要**让 job 立刻中断 —— 先让下面那一步把错误打成注解，
+        # 否则远端只能看到一句 "Process completed with exit code 1"，等于盲修。
+        continue-on-error: true
+
+      # 【2026-10-20】把 Playwright 的失败行写成 `::error::` 注解。
+      # 目的：GitHub 的 job 日志匿名拿不到（403），但**注解是匿名可读的** ——
+      # 下一棒/我都能直接从 `…/check-runs/<id>/annotations` 拿到"哪个用例、哪一行、报了什么"，
+      # 不用再靠猜（这次就是因为看不到内容，先误判成"老账"）。
+      - name: Surface failures as annotations
+        if: steps.pw.outcome == 'failure'
+        run: |
+          echo "=== failing lines ==="
+          grep -nE "✘|✓|Error:|Timed out|expect\(|waiting for|locator" /tmp/pw.log | head -40 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
+          echo "====================="
+          tail -60 /tmp/pw.log
+          exit 1
 
       - name: Upload Playwright Report
         if: failure()

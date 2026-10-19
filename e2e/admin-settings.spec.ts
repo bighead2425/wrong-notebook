@@ -14,7 +14,9 @@ test('Admin can configure OpenAI settings with multi-instance support', async ({
     await page.waitForURL('**/', { timeout: 15000 });
 
     // 2. Open Settings
-    await page.getByRole('button', { name: '设置' }).click();
+    // 【2026-10-20】主页的"设置"齿轮**撤掉了**（改成点左上角用户名进设置）
+    // ⇒ 原来 `getByRole('button', { name: '设置' })` 必然超时。改用 title 定位。
+    await page.getByTitle(/进设置|logout is inside/).click();
 
     // Wait for dialog to be visible
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
@@ -71,7 +73,7 @@ test('Admin can configure OpenAI settings with multi-instance support', async ({
     await page.waitForLoadState('networkidle');
 
     // 重新打开 Settings Dialog
-    await page.getByRole('button', { name: '设置' }).click();
+    await page.getByTitle(/进设置|logout is inside/).click();
 
     // 等待对话框显示
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
