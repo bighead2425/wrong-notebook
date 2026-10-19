@@ -103,7 +103,26 @@ export async function GET(req: Request) {
             filters.push({ status: { not: 'draft' } });
         }
         if (grade) filters.push({ gradeSemester: grade });
-        if (subjects.length) filters.push({ subject: { in: subjects } });
+        if (subjects.length) {
+            /**
+             * 【2026-10-19 真真】**点「其他」要把"没设学科"的也筛出来**（空空报的 bug）。
+             *
+             * 界面上 `subjectLabel(null)` 返回的就是"其他"（`lib/notebook-fields.ts:67`），
+             * 所以她看到的"其他"里混着两种：真的选了 `other`、以及压根没选（`null`）。
+             * 而这里原来只写 `subject: { in: subjects }` ⇒ **后者一条都筛不出来** ——
+             * 她点「其他」看到空列表，会以为那些条目没了。
+             *
+             * ⚠️ 为什么不是"改显示"（把 null 显示成"未设学科"）：
+             *    她已经在用"其他"这个词理解这些条目了，改显示等于让她重新学一遍。
+             *    筛的时候把 null 并进来，与她的理解一致。
+             */
+            const wantsOther = subjects.includes('other');
+            filters.push(
+                wantsOther
+                    ? { OR: [{ subject: { in: subjects } }, { subject: null }] }
+                    : { subject: { in: subjects } },
+            );
+        }
         if (errorItemNo) filters.push({ errorItemNo });
         if (codes.length) filters.push({ code: { in: codes } });
         if (q) {

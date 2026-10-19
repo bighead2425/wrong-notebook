@@ -49,6 +49,18 @@ import { getSubjectHex } from '@/lib/subject-colors';
 import { cleanMarkdown } from '@/lib/markdown-utils';
 import { dayKey } from '@/lib/calendar-grid';
 import { ErrorItemCard } from '@/components/error-item-card';
+import { MarkdownRenderer } from '@/components/markdown-renderer';
+import { QrScanDialog } from '@/components/qr-scan-dialog';
+import { ScanVolumeView } from '@/components/scan-volume-view';
+import { InsightScanView } from '@/components/insight-scan-view';
+import { parsePageCode } from '@/lib/volume-code';
+import { nextSubjectByAi } from '@/lib/insight-subject';
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
 import { DocScanner, type DocScannerHandle } from '@/components/doc-scanner';
 import { ImageCropper } from '@/components/image-cropper';
 import { ImageZoomViewer } from '@/components/image-zoom-viewer';
@@ -68,13 +80,16 @@ import {
     Image as ImageIcon,
     Layers,
     Link2,
+    Loader2,
     PanelLeftClose,
     PanelLeftOpen,
     PenLine,
     Plus,
     Printer,
+    QrCode,
     Save,
     Search,
+    Sparkles,
     Trash2,
     X,
 } from 'lucide-react';
@@ -339,6 +354,36 @@ export default function InsightsPage() {
     const [content, setContent] = useState('');
     const [photo, setPhoto] = useState<string | null>(null);
     /**
+     * 【2026-10-19 空空第 3 条】**"参见"里点编号 ⇒ 弹对话框看那条的内容**。
+     *
+     * 他原话："每条关联的积累，可以点击积累号，跳出一个对话框，上面是那条积累的内容，
+     *          但现在点击积累号后直接跳到目前右边栏的顶端，然后就没有了。"
+     *
+     * ── 为什么会"跳一下就没了"（真因）────────────────────────────────
+     * 原来那个编号是 `<Link href="/insights?pick=JL…">`。**人已经在 `/insights` 上**，
+     * 这是**同一个路由** ⇒ Next 走客户端跳转、**组件不重新挂载** ⇒
+     * 读 `?pick=` 的那个 `useEffect(..., [])`（还带 `pickedRef` 一次性闸门）**根本不会重跑**
+     * ⇒ 右栏什么都没换，只是 URL 多了个参数（浏览器还可能因为路由变化滚回顶部）。
+     *
+     * ⇒ 改成**就地弹框**：不跳路由、不打断她正在写的东西。
+     *   想真去改那一条，框里给一个「在右栏打开」。
+     */
+    const [peekEntry, setPeekEntry] = useState<{ code: string; content: string | null } | null>(null);
+
+    /* ── 【2026-10-19 空空第 2 条】右栏顶部的「扫码」与「整理」 ──────────────
+     * 他要把管理页右栏和录入页"稍微一致起来"：左边年级/学科、右边两个动作。
+     */
+    /** AI 整理中（锁按钮，防重复提交） */
+    const [aiBusy, setAiBusy] = useState(false);
+    /** 整理前的原文 —— 整理是**覆盖式写入**，必须留一条退路（与录入页同一条规矩） */
+    const [undoRaw, setUndoRaw] = useState<string | null>(null);
+    /** 扫一扫弹层 */
+    const [scanOpen, setScanOpen] = useState(false);
+    /** 扫到卷 / 积累纸的页二维码 ⇒ 本页摊开那一张，等她点 */
+    const [pickedVolume, setPickedVolume] = useState<{ code: string; kind: string } | null>(null);
+    /** 关联成功/失败的一句轻提示（不弹 alert —— 扫码是连续动作，弹窗会打断） */
+    const [relationNotice, setRelationNotice] = useState('');
+    /**
      * 【2026-10-13 第 6 条】"入版"开关的当前值（默认开）。
      * ⚠️ 它**不参与"脏判断"**：开关是**点一下就立即存**的（与四圆点同一路数）——
      *    一个开关还要"按保存才生效"，他会以为开关坏了。
@@ -503,6 +548,13 @@ export default function InsightsPage() {
                 setPhotoIncluded(d.photoIncludedInPrint !== false);
                 /** 【2026-10-19 第 4 条】扫码链出去的那几条 */
                 setLinkedEntries(d.links ?? []);
+                /**
+                 * 【2026-10-19 第 2 条】换了一条 ⇒ 把上一条留下的两样东西清掉：
+                 *  · `undoRaw`：那是**上一条**整理前的原文，留着会让"撤回原样"把这一条写成别的；
+                 *  · `relationNotice`：那是上一条的关联结果，留在这一条上会误导。
+                 */
+                setUndoRaw(null);
+                setRelationNotice('');
             })
             .catch((error) => console.error(error));
         return () => {
@@ -558,40 +610,39 @@ export default function InsightsPage() {
      *    见 `next-build-conventions.test.ts`）。这里只需"挂载后读一次"，
      *    不需要响应 URL 变化 —— 正是 `window.location` 的适用场景（`/scan`、`/review-volumes` 同）。
      */
+    /**
+     * 【2026-10-19 真真】**按编号把一条取回来并选中** —— 抽出来给两处共用：
+     *   ① 深链 `?pick=JL…`（错题详情页 / 回录流程跳过来）；
+     *   ② 「参见」对话框里那个「在右栏打开」。
+     *
+     * ⚠️ 为什么不用"在 `rows` 里 find"：列表一次只加载 50 条，跳过来的**多半是老条目**
+     *    ⇒ 找不到就静默失效（页面开了、什么都没选中，用户以为链接坏了）。
+     *    取回来之后**插到列表最前面**，这样"跳过来看的那条"就在眼前。
+     */
+    const openByCode = useCallback(async (code: string) => {
+        try {
+            const res = await apiClient.get<InsightListResponse>(
+                `/api/insights?limit=1&codes=${encodeURIComponent(code.toUpperCase())}`,
+            );
+            const hit = (res.insights || [])[0] ?? null;
+            if (!hit) return;
+            setRows((prev) => (prev.some((r) => r.id === hit.id) ? prev : [hit, ...prev]));
+            setSelectedRow(hit);
+            setCurrentId(hit.id);
+        } catch (e) {
+            console.error(e);
+        }
+    }, []);
+
     const pickedRef = useRef(false);
     useEffect(() => {
         if (pickedRef.current) return;
         const pick = new URLSearchParams(window.location.search).get('pick');
-        if (!pick) {
-            pickedRef.current = true;
-            return;
-        }
         pickedRef.current = true;
-        /**
-         * 【2026-10-09 改法】**直接按编号把这一条取回来**，不再"在当前列表里找"。
-         *
-         * 原来是从 `rows` 里 `find(code === pick)` —— 那时列表是"一次全拿"，总能找到。
-         * 现在一次只加载 50 条，而跳过来的这条**多半是老条目**（从错题详情页点"看全文"
-         * 或从回录流程点"去查看"）⇒ 继续在列表里找会**静默失效**：
-         * 页面打开了、却什么都没选中，用户以为链接坏了。
-         * 取回来之后**插到列表最前面**，这样"跳过来看的那条"就在眼前，不用再翻。
-         */
-        void (async () => {
-            try {
-                const res = await apiClient.get<InsightListResponse>(
-                    `/api/insights?limit=1&codes=${encodeURIComponent(pick.toUpperCase())}`,
-                );
-                const hit = (res.insights || [])[0] ?? null;
-                if (!hit) return;
-                setRows((prev) => (prev.some((r) => r.id === hit.id) ? prev : [hit, ...prev]));
-                setSelectedRow(hit);
-                setCurrentId(hit.id);
-            } catch (e) {
-                console.error(e);
-            }
-        })();
+        if (!pick) return;
+        void openByCode(pick);
         // 只在挂载时跑一次：这段读的是 URL，不随列表/筛选变化
-    }, []);
+    }, [openByCode]);
 
     /**
      * 【2026-10-13】保存这一条 —— 抽出来是为了让「保存」与「定稿」走**同一条 PATCH**。
@@ -637,6 +688,131 @@ export default function InsightsPage() {
      * "在日积月累·管理页中用标识标出等待后续整理（或删除）" ⇒ **整理完要能定稿**。
      */
     const finalizeDraft = () => persist({ status: 'final' });
+
+    /* ── 【2026-10-19 空空第 2 条】右栏那两个动作：扫码关联 / AI 整理 ───────── */
+
+    /**
+     * 只刷新**关系**（相关错题 + 参见），**不碰正文/年级/学科**。
+     *
+     * ⚠️ 为什么不能直接复用那个"选中某条就拉详情"的 effect：它会把 `content` 一起写回，
+     *    而她可能正在编辑、还没保存 —— 关联一道题不该顺手把她写了一半的东西冲掉。
+     */
+    const refreshRelations = useCallback(async (id: string) => {
+        try {
+            const d = await apiClient.get<InsightDetail>(`/api/insights/${id}`);
+            if (d.question) {
+                const no = d.question.source;
+                if (no) setQuestions((prev) => ({ ...prev, [no]: d.question as ErrorItem }));
+            }
+            setLinkedEntries(d.links ?? []);
+        } catch (e) {
+            console.error(e);
+        }
+    }, []);
+
+    /**
+     * 【2026-10-19 第 2 条】「整理」—— 与录入页同一套：把正文整理成卡片，**填进编辑框**。
+     *
+     * ⚠️ 整理完**不自动保存**：她还要看一眼、可能改，再按「保存」。
+     *    （录入页那边也是这个规矩 —— AI 写的东西不能绕过她直接落库。）
+     * ⚠️ 覆盖式写入 ⇒ 原文留一份，给「撤回原样」。
+     */
+    const runAi = async () => {
+        if (!content.trim() || aiBusy || !current) return;
+        setAiBusy(true);
+        try {
+            const res = await apiClient.post<{ note?: string; subject?: string | null }>('/api/insights/ai', {
+                content,
+                subject: subjectDraft || null,
+                ...(current.errorItemNo ? { errorItemNo: current.errorItemNo } : {}),
+            });
+            const note = (res?.note ?? '').trim();
+            if (!note) throw new Error('empty');
+            setUndoRaw(content);
+            setContent(note);
+            /** 学科：与录入页同一条规则（AI 判出的可以覆盖已选的，但"其他"不覆盖） */
+            const next = nextSubjectByAi(subjectDraft, res?.subject);
+            if (next) setSubjectDraft(next);
+        } catch (e) {
+            console.error(e);
+            alert(L('整理没成功，再试一次。', 'Could not tidy it. Try again.'));
+        } finally {
+            setAiBusy(false);
+        }
+    };
+
+    /**
+     * 把当前这条关联到一道题（扫深挖纸、或从卷页点了某题）。
+     * ⚠️ 服务端对"一题一条"有唯一约束 ⇒ 那道题已经有积累了会回 400，
+     *    这里把那句话**原样显示**（比"保存失败"有用得多）。
+     */
+    const linkQuestionNo = async (no: string) => {
+        if (!current) return;
+        try {
+            await apiClient.patch(`/api/insights/${current.id}`, { errorItemNo: no });
+            setRows((prev) => prev.map((r) => (r.id === current.id ? { ...r, errorItemNo: no } : r)));
+            setSelectedRow((prev) => (prev && prev.id === current.id ? { ...prev, errorItemNo: no } : prev));
+            await refreshRelations(current.id);
+            setRelationNotice(L(`已关联到这道题：${no}`, `Linked to ${no}`));
+        } catch (e) {
+            console.error(e);
+            const detail = (e as { data?: { error?: string; message?: string } })?.data;
+            setRelationNotice(
+                detail?.error ||
+                    detail?.message ||
+                    L('没关联上（这道题可能已经有积累了）', 'Could not link — the question may already have an entry'),
+            );
+        }
+    };
+
+    /** 扫到一个码：先试卷/积累纸的页号，不是就当题号查（与录入页同一条判断顺序） */
+    const handleQrCode = async (code: string) => {
+        setScanOpen(false);
+        const page = parsePageCode(code);
+        if (page) {
+            setPickedVolume({ code: page.pageCode, kind: page.kind });
+            return;
+        }
+        try {
+            const res = await apiClient.get<{ found: boolean; item?: { source?: string | null } }>(
+                `/api/scan?no=${encodeURIComponent(code)}`,
+            );
+            const no = res.item?.source;
+            if (!res.found || !no) {
+                setRelationNotice(L(`没找到这个码对应的题：${code}`, `No question found for ${code}`));
+                return;
+            }
+            await linkQuestionNo(no);
+        } catch (e) {
+            console.error(e);
+            setRelationNotice(L('查询失败，再扫一次试试。', 'Lookup failed. Try scanning again.'));
+        }
+    };
+
+    /** 积累纸上点了某一条 ⇒ 给它和当前这条建一条「参见」链接（可以多条） */
+    const linkInsightToCurrent = async (code: string) => {
+        setPickedVolume(null);
+        if (!current) return;
+        try {
+            await apiClient.post(`/api/insights/${current.id}/links`, { codes: [code] });
+            await refreshRelations(current.id);
+            setRelationNotice(L(`已链上：${code}`, `Linked: ${code}`));
+        } catch (e) {
+            console.error(e);
+            setRelationNotice(L('没链上，再试一次。', 'Could not link. Try again.'));
+        }
+    };
+
+    /** 取消一条「参见」（连错了要能撤） */
+    const unlinkInsight = async (code: string) => {
+        if (!current) return;
+        try {
+            await apiClient.post(`/api/insights/${current.id}/links`, { codes: [code], action: 'remove' });
+            await refreshRelations(current.id);
+        } catch (e) {
+            console.error(e);
+        }
+    };
 
     /**
      * 【2026-10-13 第 6 条】点「入版」开关 —— **立即落库**（不经过"保存"）。
@@ -1145,72 +1321,122 @@ export default function InsightsPage() {
                             <div className="space-y-4">
                                 {/* ① 年级/学期 + 学科（10 个按钮：9 科 + 其他） */}
                                 <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-sm text-muted-foreground">
-                                            {L('年级/学期', 'Grade')}:
-                                        </span>
-                                        <Select
-                                            value={gradeDraft || '__none__'}
-                                            onValueChange={(v) => setGradeDraft(v === '__none__' ? '' : v)}
-                                        >
-                                            <SelectTrigger className="h-8 w-[150px]">
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="__none__">
-                                                    {t.common?.notSet || 'Not set'}
-                                                </SelectItem>
-                                                {GRADE_SEMESTER_OPTIONS.map((g) => (
-                                                    <SelectItem key={g} value={g}>
-                                                        {g}
+                                    {/**
+                                     * 【2026-10-19 空空第 2 条】**左：年级学期 + 学科；右：扫码 + 整理**。
+                                     * 他说"主要改日积月累点击一条积累的右边栏……与录入页的格式稍微一致起来"。
+                                     * 录入页顶栏就是"标签在左、动作在右"，这里对齐它。
+                                     */}
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-sm text-muted-foreground">
+                                                {L('年级/学期', 'Grade')}:
+                                            </span>
+                                            <Select
+                                                value={gradeDraft || '__none__'}
+                                                onValueChange={(v) => setGradeDraft(v === '__none__' ? '' : v)}
+                                            >
+                                                <SelectTrigger className="h-8 w-[150px]">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="__none__">
+                                                        {t.common?.notSet || 'Not set'}
                                                     </SelectItem>
-                                                ))}
-                                                {gradeDraft && !GRADE_SEMESTER_OPTIONS.includes(gradeDraft) && (
-                                                    <SelectItem value={gradeDraft}>{gradeDraft}（原值）</SelectItem>
-                                                )}
-                                            </SelectContent>
-                                        </Select>
+                                                    {GRADE_SEMESTER_OPTIONS.map((g) => (
+                                                        <SelectItem key={g} value={g}>
+                                                            {g}
+                                                        </SelectItem>
+                                                    ))}
+                                                    {gradeDraft && !GRADE_SEMESTER_OPTIONS.includes(gradeDraft) && (
+                                                        <SelectItem value={gradeDraft}>{gradeDraft}（原值）</SelectItem>
+                                                    )}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-sm text-muted-foreground">
+                                                {L('学科', 'Subject')}:
+                                            </span>
+                                            {/*
+                                             * 【2026-10-01 他要求】10 个按钮 ⇒ **收进一个下拉菜单**：
+                                             *   · 菜单里的科目**各自用本科目的颜色**（取自
+                                             *     `lib/subject-colors.ts` —— 与深挖纸/复练纸左上角那个
+                                             *     科目标识同一份，5.4/5.6 定稿"勿擅自调色"）；
+                                             *   · **选中后菜单收起来，触发器上直接显示那个科目名**，同色；
+                                             *   · 好处正是他说的："不同科目用不同科目的颜色标识出来"。
+                                             */}
+                                            <Select
+                                                value={subjectDraft || '__none__'}
+                                                onValueChange={(v) => setSubjectDraft(v === '__none__' ? '' : v)}
+                                            >
+                                                <SelectTrigger
+                                                    className="h-8 w-[120px] font-medium"
+                                                    style={
+                                                        subjectDraft
+                                                            ? { color: getSubjectHex(subjectDraft) }
+                                                            : undefined
+                                                    }
+                                                >
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="__none__">
+                                                        {t.common?.notSet || 'Not set'}
+                                                    </SelectItem>
+                                                    {SUBJECT_OPTIONS.map((s) => (
+                                                        <SelectItem key={s.key} value={s.key}>
+                                                            <span style={{ color: getSubjectHex(s.key) }}>
+                                                                {s.label}
+                                                            </span>
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
                                     </div>
 
+                                    {/* ===== 右边：扫码关联 / AI 整理 ===== */}
                                     <div className="flex items-center gap-2">
-                                        <span className="text-sm text-muted-foreground">
-                                            {L('学科', 'Subject')}:
-                                        </span>
-                                        {/*
-                                         * 【2026-10-01 他要求】10 个按钮 ⇒ **收进一个下拉菜单**：
-                                         *   · 菜单里的科目**各自用本科目的颜色**（取自
-                                         *     `lib/subject-colors.ts` —— 与深挖纸/复练纸左上角那个
-                                         *     科目标识同一份，5.4/5.6 定稿"勿擅自调色"）；
-                                         *   · **选中后菜单收起来，触发器上直接显示那个科目名**，同色；
-                                         *   · 好处正是他说的："不同科目用不同科目的颜色标识出来"。
+                                        {/**
+                                         * 【2026-10-19 空空第 2 条】「扫描二维码」——与录入页那一个同一个组件。
+                                         * 扫深挖纸 ⇒ 直接关联这道题；扫复练/模仿卷、积累纸 ⇒
+                                         * 本页摊开那一张，点哪条关联哪条。
                                          */}
-                                        <Select
-                                            value={subjectDraft || '__none__'}
-                                            onValueChange={(v) => setSubjectDraft(v === '__none__' ? '' : v)}
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            disabled={!current || aiBusy}
+                                            title={L(
+                                                '扫码关联：扫深挖纸的题号，或复练/模仿卷、积累纸的页码',
+                                                'Scan to link a question or another entry',
+                                            )}
+                                            onClick={() => setScanOpen(true)}
                                         >
-                                            <SelectTrigger
-                                                className="h-8 w-[120px] font-medium"
-                                                style={
-                                                    subjectDraft
-                                                        ? { color: getSubjectHex(subjectDraft) }
-                                                        : undefined
-                                                }
-                                            >
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="__none__">
-                                                    {t.common?.notSet || 'Not set'}
-                                                </SelectItem>
-                                                {SUBJECT_OPTIONS.map((s) => (
-                                                    <SelectItem key={s.key} value={s.key}>
-                                                        <span style={{ color: getSubjectHex(s.key) }}>
-                                                            {s.label}
-                                                        </span>
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
+                                            <QrCode className="h-4 w-4 sm:mr-1.5" />
+                                            <span className="hidden sm:inline">{L('扫码', 'Scan')}</span>
+                                        </Button>
+                                        {/**
+                                         * 【2026-10-19 空空第 2 条】「整理」—— 与录入页同一套：
+                                         * 把当前正文整理成一张卡片，**直接填进编辑框**（不落库，
+                                         * 她还要看一眼、可能改，再按保存）。原文留一份，给「撤回原样」。
+                                         */}
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            disabled={!content.trim() || aiBusy}
+                                            title={L('把这段原料整理成一张卡片，直接填进编辑框', 'Tidy into a card')}
+                                            onClick={() => void runAi()}
+                                        >
+                                            {aiBusy ? (
+                                                <Loader2 className="h-4 w-4 animate-spin sm:mr-1.5" />
+                                            ) : (
+                                                <Sparkles className="h-4 w-4 sm:mr-1.5" />
+                                            )}
+                                            <span className="hidden sm:inline">
+                                                {aiBusy ? L('整理中', 'Tidying') : L('整理', 'Tidy')}
+                                            </span>
+                                        </Button>
                                     </div>
                                 </div>
 
@@ -1265,6 +1491,36 @@ export default function InsightsPage() {
                                     minHeightPx={110}
                                     dirty={dirty}
                                 />
+
+                                {/**
+                                 * 【2026-10-19 第 2 条】「整理」之后的两条提示：
+                                 *  · 整理是**覆盖式写入** ⇒ 给「撤回原样」（与录入页同一条退路）；
+                                 *  · 扫码关联的结果（成功/失败）也显示在这儿 —— 用一句轻提示，
+                                 *    不弹 alert：扫码是连续动作，弹窗会打断。
+                                 */}
+                                {(undoRaw !== null || relationNotice) && (
+                                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-1.5 text-sm">
+                                        <span className="min-w-0 flex-1 text-muted-foreground">
+                                            {relationNotice ||
+                                                L(
+                                                    '整理好了，已经填进编辑框 —— 改完记得按「保存」。',
+                                                    'Tidied into the editor — remember to Save.',
+                                                )}
+                                        </span>
+                                        {undoRaw !== null && (
+                                            <button
+                                                type="button"
+                                                className="shrink-0 rounded border px-2 py-0.5 text-xs hover:bg-accent"
+                                                onClick={() => {
+                                                    setContent(undoRaw);
+                                                    setUndoRaw(null);
+                                                }}
+                                            >
+                                                {L('撤回原样', 'Restore')}
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
 
                                 {/* ④ 图片（左）+ 图片 / 删除（右）—— 【2026-10-01 重排】。
                                     他原话："拍照按钮往右放，靠近右边的删除，这样能空余出一部分空间，
@@ -1454,12 +1710,35 @@ export default function InsightsPage() {
                                         <ul className="space-y-1.5">
                                             {linkedEntries.map((e) => (
                                                 <li key={e.id} className="rounded-md border px-3 py-2 text-sm">
-                                                    <Link
-                                                        href={`/insights?pick=${encodeURIComponent(e.code)}&noleft=1`}
-                                                        className="font-mono text-xs text-muted-foreground hover:underline"
-                                                    >
-                                                        {e.code}
-                                                    </Link>
+                                                    <div className="flex items-center gap-2">
+                                                        {/**
+                                                         * 【2026-10-19 空空第 3 条】点编号 ⇒ **就地弹框**看全文。
+                                                         *
+                                                         * 原来这里是 `<Link href="/insights?pick=…">` ——
+                                                         * 人已经在 `/insights` 上，同一个路由 ⇒ 组件不重挂载
+                                                         * ⇒ 读 `?pick=` 的 effect 不重跑 ⇒ **什么都没发生**
+                                                         * （只有 URL 多了个参数、页面被滚回顶部）。
+                                                         * 改成弹框：不跳路由、不打断她正在写的东西。
+                                                         */}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setPeekEntry({ code: e.code, content: e.content ?? null })}
+                                                            className="font-mono text-xs text-muted-foreground hover:underline"
+                                                            title={L('点开看这一条的全文', 'Open this entry')}
+                                                        >
+                                                            {e.code}
+                                                        </button>
+                                                        <span className="flex-1" />
+                                                        {/* 连错了要能撤 —— 否则"参见"只会越攒越多、没法收 */}
+                                                        <button
+                                                            type="button"
+                                                            className="shrink-0 text-muted-foreground hover:text-destructive"
+                                                            title={L('取消这条参见', 'Unlink')}
+                                                            onClick={() => void unlinkInsight(e.code)}
+                                                        >
+                                                            <X className="h-3 w-3" />
+                                                        </button>
+                                                    </div>
                                                     <p className="mt-0.5 line-clamp-2 text-muted-foreground">
                                                         {(e.content || '').replace(/\s+/g, ' ').trim() || L('（空）', '(empty)')}
                                                     </p>
@@ -1505,6 +1784,80 @@ export default function InsightsPage() {
                 src={photo}
                 onClose={() => setIsViewerOpen(false)}
             />
+
+            {/**
+             * 【2026-10-19 空空第 3 条】「参见」点编号 ⇒ 弹框看全文。
+             *
+             * 内容直接用 `linkedEntries` 里带着的 `content`（详情接口已经给了全文），
+             * **不再发一次请求** —— 点一下就该立刻出来。
+             * 想真去改那一条，框里给「在右栏打开」（走 `openByCode`，与深链同一条路）。
+             */}
+            <Dialog
+                open={!!peekEntry}
+                onOpenChange={(o) => {
+                    if (!o) setPeekEntry(null);
+                }}
+            >
+                <DialogContent className="max-w-2xl">
+                    <DialogHeader>
+                        <DialogTitle className="font-mono text-sm">{peekEntry?.code}</DialogTitle>
+                    </DialogHeader>
+                    <div className="max-h-[60vh] overflow-y-auto pr-1">
+                        {peekEntry?.content ? (
+                            <MarkdownRenderer content={peekEntry.content} />
+                        ) : (
+                            <p className="text-sm text-muted-foreground">{L('（没有正文）', '(empty)')}</p>
+                        )}
+                    </div>
+                    <div className="flex justify-end gap-2">
+                        <Button variant="outline" size="sm" onClick={() => setPeekEntry(null)}>
+                            {L('关上', 'Close')}
+                        </Button>
+                        <Button
+                            size="sm"
+                            onClick={() => {
+                                const code = peekEntry?.code;
+                                setPeekEntry(null);
+                                if (code) void openByCode(code);
+                            }}
+                        >
+                            {L('在右栏打开', 'Open in editor')}
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* ===== 【2026-10-19 第 2 条】扫码关联（与录入页同一个组件） ===== */}
+            <QrScanDialog open={scanOpen} onClose={() => setScanOpen(false)} onScanned={(code) => void handleQrCode(code)} />
+
+            {/**
+             * 扫到卷 / 积累纸的页二维码 ⇒ **在本页摊开那一张**（不跳走，右栏的编辑不丢）。
+             * 摊开的是 `/scan` 页用的同一个组件，只把回调改成"关联并关掉"。
+             */}
+            {pickedVolume && (
+                <div className="fixed inset-0 z-50 overflow-auto bg-background">
+                    <div className="mx-auto w-full max-w-6xl p-4 md:p-6">
+                        {pickedVolume.kind === 'build' ? (
+                            <InsightScanView
+                                code={pickedVolume.code}
+                                onPickItem={(insightCode) => void linkInsightToCurrent(insightCode)}
+                                onBack={() => setPickedVolume(null)}
+                                backLabel={L('返回管理', 'Back')}
+                            />
+                        ) : (
+                            <ScanVolumeView
+                                code={pickedVolume.code}
+                                onPickItem={(item) => {
+                                    setPickedVolume(null);
+                                    if (item.source) void linkQuestionNo(item.source);
+                                }}
+                                onBack={() => setPickedVolume(null)}
+                                backLabel={L('返回管理', 'Back')}
+                            />
+                        )}
+                    </div>
+                </div>
+            )}
         </main>
     );
 }
