@@ -33,6 +33,32 @@ export async function readPhoto(insightId: string): Promise<string | null> {
 }
 
 /**
+ * 【2026-10-19 真真】**取"可以印进纸里"的图** —— 入版开关在这里落地（唯一一处）。
+ *
+ * ── 为什么非要有这个函数（这是个真 bug 的修复）──────────────────────
+ * 空空 2026-10-19 反馈："管理页里图片旁边的『入版 / 不入版』切换似乎不起作用"。
+ *
+ * 真因：开关**存得住**（探针验过：`updateMany` 写进去、读回来都对），
+ * 但**建卷时没人看它** —— `api/review-volumes` 的 POST 与 PATCH 各自写了一段
+ * `insightPhoto.findUnique({ select: { data: true } })`，只取图、不看开关。
+ * 而打印页前端算的 `photoUrl`（`photoIncludedInPrint === false ? null : …`）
+ * **根本没被用上** —— 建卷只传 `insightId`，图是**服务端按 id 补进快照**的。
+ * ⇒ 开关拨到"不入版"，纸上照样有图。
+ *
+ * 修法：把"要不要这张图"的判断收进**这一个函数**，两条补图路径都调它。
+ * ⚠️ 以后再加新的建卷/重排路径，也必须走这里 —— 别再自己 `findUnique` 取图。
+ *
+ * @returns 入版 = 图（data URL）；不入版 / 没图 = null
+ */
+export async function readPhotoForPrint(insightId: string): Promise<string | null> {
+    const row = await prisma.insightPhoto.findUnique({
+        where: { insightId },
+        select: { data: true, includedInPrint: true },
+    });
+    return row && row.includedInPrint ? row.data : null;
+}
+
+/**
  * 【2026-10-13 第 6 条】**"入版"开关** —— 组成积累纸时这张图跟不跟着进去。
  *
  * 他原话："点中入版，则表示在组成积累纸的时候，这个图片是跟随进入的，

@@ -13,6 +13,7 @@ import {
 } from "@/lib/volume-input";
 import { VOLUME_KINDS, type VolumeKind } from "@/lib/volume-code";
 import { ensureVolumeEmojiMark } from "@/lib/emoji-mark-store";
+import { readPhotoForPrint } from "@/lib/insight-photo";
 
 const logger = createLogger("api:review-volumes/[id]");
 
@@ -170,14 +171,12 @@ export async function PATCH(request: Request, ctx: Ctx) {
         );
 
         const items = parseVolumeItems(rawItems, defaultBlankLines);
-        // 【积累纸】与建卷同一处补图（共用 `attachInsightFigures`，不写第二份）
-        await attachInsightFigures(items, async (insightId) => {
-            const row = await prisma.insightPhoto.findUnique({
-                where: { insightId },
-                select: { data: true },
-            });
-            return row?.data ?? null;
-        });
+        /**
+         * 【积累纸】与建卷同一处补图（共用 `attachInsightFigures`，不写第二份）。
+         * ⚠️【2026-10-19 真真】取图一律走 `readPhotoForPrint` —— 它把"入版"开关算进去。
+         *    原来这里只 `select: { data: true }`，开关拨到"不入版"纸上照样有图。
+         */
+        await attachInsightFigures(items, readPhotoForPrint);
         const pageCount = resolvePageCount(raw.pageCount, items);
 
         /**
