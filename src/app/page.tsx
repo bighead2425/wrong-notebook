@@ -24,7 +24,6 @@ import {
     Settings,
     Monitor,
     Tags,
-    Camera,
     NotebookPen,
     Printer,
     Sparkles,
@@ -50,6 +49,7 @@ import { useSession } from "next-auth/react";
 import { ProgressFeedback, ProgressStatus } from "@/components/ui/progress-feedback";
 import { frontendLogger } from "@/lib/frontend-logger";
 import { subjectLabel } from "@/lib/notebook-fields";
+import { GRADE_SEMESTER_OPTIONS } from "@/lib/grade-semester-options";
 
 function HomeContent() {
     const [step, setStep] = useState<"upload" | "review">("upload");
@@ -68,9 +68,15 @@ function HomeContent() {
      */
     const { data: session } = useSession();
     const [settingsOpen, setSettingsOpen] = useState(false);
-    /** 年级 / 学期：先作**当前工作上下文**放在顶上，暂记忆在本地（筛选还没接，见 HANDOFF） */
-    const [grade, setGrade] = useState("");
-    const [term, setTerm] = useState("");
+    /**
+     * 【2026-10-19 空空第 1 条】**年级 / 学期合成一个下拉**（他给了下拉截图与选项列表：
+     * 一年级上 / 一年级下 / … / 六年级下）。
+     *
+     * 它的作用不只是显示 —— 他原话："如果选定了这里的年级/学期，则录入的新题、
+     * 录入的日积月累缺省设置都是这个年级/学期，这样就关联起来了。"
+     * ⇒ 存在 localStorage 的 `home.gradeTerm`，录入页/新建题默认读它。
+     */
+    const [gradeTerm, setGradeTerm] = useState("");
     const L = (zh: string, en: string) => (language === "zh" ? zh : en);
     const userName = session?.user?.name || session?.user?.email || "User";
     const userInitial = userName.slice(0, 1).toUpperCase();
@@ -82,22 +88,32 @@ function HomeContent() {
          *    项目的 `react-hooks/set-state-in-effect` 是 error，所以显式豁免并说明理由。
          */
         try {
-            const g = localStorage.getItem("home.grade");
-            const tm = localStorage.getItem("home.term");
-            if (g) setGrade(g);
-            if (tm) setTerm(tm);
+            const gt = localStorage.getItem("home.gradeTerm");
+            if (gt) setGradeTerm(gt);
         } catch {
             // 隐私模式下 localStorage 会抛：当没存过
         }
     }, []);
     useEffect(() => {
         try {
-            localStorage.setItem("home.grade", grade);
-            localStorage.setItem("home.term", term);
+            localStorage.setItem("home.gradeTerm", gradeTerm);
+            /**
+             * 【第 1 条的核心】"选定之后，新录入的题、录入的日积月累**缺省**就是这个年级/学期。"
+             *
+             * 两个录入页各自有记忆键（历史原因，没去合并）：
+             *   · 错题校对页 `CorrectionEditor` → `wn_default_gradeSemester`
+             *   · 日积月累录入页 → `insight.write.gradeSemester`
+             * ⇒ 这里把主页这一个值**同步写进那两个键**，它们下次打开就默认成这个。
+             * ⚠️ 只在**非空**时写：清空选择不该把她录入页里的旧记忆抹掉。
+             */
+            if (gradeTerm) {
+                localStorage.setItem("wn_default_gradeSemester", gradeTerm);
+                localStorage.setItem("insight.write.gradeSemester", gradeTerm);
+            }
         } catch {
-            // 同上，存不了就算了
+            // 隐私模式存不了，忽略
         }
-    }, [grade, term]);
+    }, [gradeTerm]);
     const [notebooks, setNotebooks] = useState<Notebook[]>([]);
     const [autoSelectedNotebookId, setAutoSelectedNotebookId] = useState<string | null>(null);
 
@@ -113,12 +129,15 @@ function HomeContent() {
      * 空空以为它是个死按钮。现在改成**这一步的入口**：点它进流水线。
      * 流水线自己管一套队列，与下面单题流互不干扰。
      */
-    const [batchMode, setBatchMode] = useState(false);
     /**
      * 【custom-v25 绿框】单题流的裁剪对话框里画了「区🟩」→ 一图裁出多道，
      * 这不是单题流吃得下的（它的下一步只有一个 CorrectionEditor）。
      * 于是把这批**已经裁好的图**交给流水线去逐道送 AI + 审阅入库。
      * 只在这里中转一次：退出流水线时立刻清空，避免下次进流水线又灌一遍。
+     *
+     * 【2026-10-19 第 7 条】「批量上传」按钮已经搬到 `/batch` 独立页面，
+     * 所以 `batchMode` 这个开关没用了（删掉）。但**绿框多图**这条路还得有落点：
+     * `batchFiles` 一非空就在主页下方临时渲染流水线（做完即清空，不算"挤在主页"）。
      */
     const [batchFiles, setBatchFiles] = useState<File[]>([]);
 
@@ -212,7 +231,6 @@ function HomeContent() {
         // 单张通道的值留着只会污染后面某一道单张录入，就地清掉。
         setPendingCropRegions(null);
         setBatchFiles(blobs.map((b, i) => new File([b], `region-${i + 1}.jpg`, { type: "image/jpeg" })));
-        setBatchMode(true);
     };
 
     /** 【M1】绿框多图路的框坐标，与 batchFiles 同序（下标一一对应） */
@@ -460,40 +478,24 @@ function HomeContent() {
                         <Settings className="h-3.5 w-3.5 opacity-40" />
                     </button>
 
-                    <div className="flex items-center gap-1.5">
-                        <select
-                            value={grade}
-                            onChange={(e) => setGrade(e.target.value)}
-                            className="rounded-md border bg-background px-2 py-1.5 text-xs"
-                            aria-label={L("年级", "Grade")}
-                        >
-                            <option value="">{L("年级", "Grade")}</option>
-                            {[1, 2, 3, 4, 5, 6].map((n) => (
-                                <option key={n} value={String(n)}>
-                                    {language === "zh" ? `${n}年级` : `G${n}`}
-                                </option>
-                            ))}
-                        </select>
-                        <select
-                            value={term}
-                            onChange={(e) => setTerm(e.target.value)}
-                            className="rounded-md border bg-background px-2 py-1.5 text-xs"
-                            aria-label={L("学期", "Term")}
-                        >
-                            <option value="">{L("学期", "Term")}</option>
-                            <option value="上">{L("上", "1st")}</option>
-                            <option value="下">{L("下", "2nd")}</option>
-                        </select>
-                    </div>
+                    {/* 【2026-10-19 第 1 条】年级 / 学期**合成一个下拉**（选项 = 一年级上 … 六年级下）。
+                        【第 3 条】右边的「扫一扫」撤掉了 —— 第一行已经有「扫二维码」，两个功能一模一样。 */}
+                    <select
+                        value={gradeTerm}
+                        onChange={(e) => setGradeTerm(e.target.value)}
+                        className="rounded-md border bg-background px-2 py-1.5 text-xs"
+                        aria-label={L("年级学期", "Grade and term")}
+                        title={L("选定后，新录入的题和日积月累默认用这个年级/学期", "New questions and notes default to this")}
+                    >
+                        <option value="">{L("年级/学期", "Grade / term")}</option>
+                        {GRADE_SEMESTER_OPTIONS.map((g) => (
+                            <option key={g} value={g}>
+                                {g}
+                            </option>
+                        ))}
+                    </select>
 
                     <span className="flex-1" />
-
-                    <Link href="/scan">
-                        <Button variant="outline" size="sm">
-                            <QrCode className="h-4 w-4 sm:mr-1.5" />
-                            <span className="hidden sm:inline">{L("扫一扫", "Scan")}</span>
-                        </Button>
-                    </Link>
                 </div>
 
                 <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} hideTrigger />
@@ -515,22 +517,35 @@ function HomeContent() {
                  */}
                 {initialNotebookId ? (
                     <div className="flex justify-center">
-                        <Button className="h-11 w-full max-w-md text-sm" onClick={() => setBatchMode(true)}>
-                            <Upload className="mr-2 h-4 w-4 shrink-0" />
-                            <span className="truncate">{t.app.uploadNew}</span>
-                        </Button>
+                        {/* 【第 7 条】批量上传已经是独立页面 ⇒ 这里也改成跳过去（不再页内插板块） */}
+                        <Link href="/batch" className="w-full max-w-md">
+                            <Button className="h-11 w-full text-sm">
+                                <Upload className="mr-2 h-4 w-4 shrink-0" />
+                                <span className="truncate">{t.app.uploadNew}</span>
+                            </Button>
+                        </Link>
                     </div>
                 ) : (
                     <>
-                        {/* ② 四个快捷 */}
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                            <Button variant="outline" className="h-11 justify-start" onClick={() => setBatchMode(true)}>
-                                <Upload className="mr-2 h-4 w-4 shrink-0" />
-                                <span className="truncate">{L("批量上传", "Bulk upload")}</span>
-                            </Button>
+                        {/**
+                         * ② 四个快捷 —— 【第 2 条】电脑一行、**手机也一行**。
+                         * 做法：`grid-cols-4` 四等分 + 手机字号/图标小一号（`text-[11px]` / `h-3.5`），
+                         * 不再靠 `sm:grid-cols-4` 在窄屏退回两行。
+                         * 【第 7 条】「批量上传」不再是页内板块，改为**跳 `/batch` 独立页面**。
+                         */}
+                        <div className="grid grid-cols-4 gap-1.5">
+                            <Link href="/batch">
+                                <Button
+                                    variant="outline"
+                                    className="h-9 w-full justify-center gap-1 px-1 text-[11px] sm:h-10 sm:text-xs"
+                                >
+                                    <Upload className="h-3.5 w-3.5 shrink-0" />
+                                    <span className="truncate">{L("批量上传", "Bulk")}</span>
+                                </Button>
+                            </Link>
                             <Button
                                 variant="outline"
-                                className="h-11 justify-start"
+                                className="h-9 justify-center gap-1 px-1 text-[11px] sm:h-10 sm:text-xs"
                                 title={
                                     isScreenshotSupported()
                                         ? L("抓取屏幕或某个标签页", "Capture the screen or a tab")
@@ -546,46 +561,55 @@ function HomeContent() {
                                     }
                                 }}
                             >
-                                <Monitor className="mr-2 h-4 w-4 shrink-0" />
-                                <span className="truncate">{L("屏幕截图", "Screenshot")}</span>
+                                <Monitor className="h-3.5 w-3.5 shrink-0" />
+                                <span className="truncate">{L("屏幕截图", "Shot")}</span>
                             </Button>
                             <Link href="/tags">
-                                <Button variant="outline" className="h-11 w-full justify-start">
-                                    <Tags className="mr-2 h-4 w-4 shrink-0" />
+                                <Button
+                                    variant="outline"
+                                    className="h-9 w-full justify-center gap-1 px-1 text-[11px] sm:h-10 sm:text-xs"
+                                >
+                                    <Tags className="h-3.5 w-3.5 shrink-0" />
                                     <span className="truncate">{L("标签管理", "Tags")}</span>
                                 </Button>
                             </Link>
                             <Link href="/scan">
-                                <Button variant="outline" className="h-11 w-full justify-start">
-                                    <QrCode className="mr-2 h-4 w-4 shrink-0" />
-                                    <span className="truncate">{L("扫二维码", "Scan QR")}</span>
+                                <Button
+                                    variant="outline"
+                                    className="h-9 w-full justify-center gap-1 px-1 text-[11px] sm:h-10 sm:text-xs"
+                                >
+                                    <QrCode className="h-3.5 w-3.5 shrink-0" />
+                                    <span className="truncate">{L("扫二维码", "QR")}</span>
                                 </Button>
                             </Link>
                         </div>
 
-                        {/* ③ 拍摄习题（大）+ 查看题册 / 日积月累 */}
-                        <div className="grid grid-cols-3 gap-2">
-                            <button
-                                type="button"
-                                onClick={() => setBatchMode(false)}
-                                className="col-span-2 row-span-2 flex flex-col items-center justify-center gap-1.5 rounded-lg border bg-primary/5 px-3 py-7 transition-colors hover:bg-primary/10"
-                            >
-                                <Camera className="h-7 w-7 text-primary" />
-                                <span className="text-base font-medium">{L("拍摄习题", "Photograph")}</span>
-                                <span className="text-[11px] text-muted-foreground">
-                                    {L("拍照 / 相册 / 拖进来", "Camera · album · drop")}
-                                </span>
-                            </button>
+                        {/**
+                         * ③ 【第 4、5 条】左边「拍摄习题」= 拖拽区 + 拍照（`UploadZone compact`），
+                         * 右边上下叠「查看题册」「日积月累」。
+                         *
+                         * 宽度：`grid-cols-2` ⇒ 左右**各占一半**；
+                         * 左边跨两行 ⇒ 与右边两块**合计高度**对齐。
+                         * （原来我用的是 3 列、左 2/3，他觉得"拍摄习题太宽、右边两个太窄"。）
+                         */}
+                        <div className="grid grid-cols-2 gap-2">
+                            <div className="row-span-2">
+                                <UploadZone
+                                    compact
+                                    onImageSelect={onImageSelect}
+                                    isAnalyzing={analysisStep !== "idle"}
+                                />
+                            </div>
                             <Link
                                 href="/notebooks"
-                                className="rounded-lg border bg-card px-3 py-3 transition-colors hover:bg-accent/40"
+                                className="flex flex-col justify-center rounded-lg border bg-card px-3 py-3 transition-colors hover:bg-accent/40"
                             >
                                 <BookOpen className="mb-1 h-4 w-4 text-muted-foreground" />
                                 <div className="text-sm font-medium">{L("查看题册", "Notebooks")}</div>
                             </Link>
                             <Link
                                 href="/insights/write"
-                                className="rounded-lg border bg-card px-3 py-3 transition-colors hover:bg-accent/40"
+                                className="flex flex-col justify-center rounded-lg border bg-card px-3 py-3 transition-colors hover:bg-accent/40"
                             >
                                 <Sprout className="mb-1 h-4 w-4 text-muted-foreground" />
                                 <div className="text-sm font-medium">{L("日积月累", "Notes")}</div>
@@ -632,47 +656,54 @@ function HomeContent() {
                     </>
                 )}
 
-                {batchMode ? (
-                    /* 【custom-v23 · 蓝图 #5/#6/#7】流水线：多张收进来 → 逐张加工 → 批量送 AI → 一道道录入 */
+                {/**
+                 * 【2026-10-19 第 6、7 条】
+                 *   · **主页不再内嵌上传区**：那个大框（"AI 智能解析 / 拍照扫描 / 屏幕截图"）
+                 *     的功能已经被上面「拍摄习题」和第一行「屏幕截图」接走 ⇒ 删掉。
+                 *   · **批量上传搬去 `/batch` 独立页面**（他说"不要再挤在主页中"）⇒ 这里不再有 `batchMode` 分支。
+                 *   · 只留下"拍到图之后"的两步：裁剪 → 校对保存。
+                 */}
+                {/**
+                 * 【绿框多图】一图裁出多道时，临时用流水线接手（做完即清空）。
+                 * 这是主页上唯一会出现流水线的地方 —— 入口仍是裁剪对话框里的绿框，
+                 * 不是按钮，所以不违背"批量上传搬去独立页面"。
+                 */}
+                {batchFiles.length > 0 && (
                     <BatchPipeline
                         language={language}
                         aiTimeout={aiTimeout}
                         defaultNotebookId={initialNotebookId || autoSelectedNotebookId || undefined}
                         initialFiles={batchFiles}
-                        onExit={() => { setBatchMode(false); setBatchFiles([]); setBatchCropRegions([]); }}
+                        onExit={() => {
+                            setBatchFiles([]);
+                            setBatchCropRegions([]);
+                        }}
                         initialCropRegions={batchCropRegions}
                     />
-                ) : (
-                    <>
-                        {step === "upload" && (
-                            <UploadZone onImageSelect={onImageSelect} isAnalyzing={analysisStep !== 'idle'} />
-                        )}
+                )}
 
-                        {croppingImage && (
-                            <ImageCropper
-                                imageSrc={croppingImage}
-                                open={isCropperOpen}
-                                onClose={() => setIsCropperOpen(false)}
-                                onCropComplete={handleCropComplete}
-                                onCropBatch={handleCropBatch}
-                                onCropRegions={handleCropRegions}
-                                onCropRegionsMulti={handleCropRegionsMulti}
-                                analyzing={analysisStep !== 'idle'}
-                            />
-                        )}
+                {croppingImage && (
+                    <ImageCropper
+                        imageSrc={croppingImage}
+                        open={isCropperOpen}
+                        onClose={() => setIsCropperOpen(false)}
+                        onCropComplete={handleCropComplete}
+                        onCropBatch={handleCropBatch}
+                        onCropRegions={handleCropRegions}
+                        onCropRegionsMulti={handleCropRegionsMulti}
+                        analyzing={analysisStep !== 'idle'}
+                    />
+                )}
 
-
-                        {step === "review" && parsedData && (
-                            <CorrectionEditor
-                                initialData={parsedData}
-                                onSave={handleSave}
-                                onCancel={() => setStep("upload")}
-                                imagePreview={currentImage}
-                                initialSubjectId={initialNotebookId || autoSelectedNotebookId || undefined}
-                                aiTimeout={aiTimeout}
-                            />
-                        )}
-                    </>
+                {step === "review" && parsedData && (
+                    <CorrectionEditor
+                        initialData={parsedData}
+                        onSave={handleSave}
+                        onCancel={() => setStep("upload")}
+                        imagePreview={currentImage}
+                        initialSubjectId={initialNotebookId || autoSelectedNotebookId || undefined}
+                        aiTimeout={aiTimeout}
+                    />
                 )}
 
                 {/**

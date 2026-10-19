@@ -24,10 +24,24 @@ interface UploadZoneProps {
     isAnalyzing: boolean;
     /** H4：不拍照，直接进编辑页手填（有的题手动输入更快） */
     onManualInput?: () => void;
+    /**
+     * 【2026-10-19 空空第 4、6 条】**紧凑模式**：只留一个方块。
+     *
+     * 他要的是："拍摄习题按钮，作为下面『AI 智能解析拖拽框』和『拍照扫描』按钮的集合 ——
+     *           电脑端可以拖一张照片进来，点击就进入拍照扫描。"
+     * 同时"AI 智能解析 / 拍照扫描 / 屏幕截图 那个框可以删去了"。
+     *
+     * ⇒ 紧凑模式做三件事：
+     *   ① **不渲染**底部那排按钮（拍照扫描 / 屏幕截图 / 手动输入）—— 功能已并入方块本身；
+     *   ② **点击 = 开相机**（不是开文件选择）；`useDropzone` 要 `noClick`，
+     *      否则两次都会触发（先弹相机再弹文件框）；
+     *   ③ **拖拽照旧**（桌面端 drop 直接收图，走同一条 `onImageSelect`）。
+     */
+    compact?: boolean;
 }
 
-export function UploadZone({ onImageSelect, isAnalyzing, onManualInput }: UploadZoneProps) {
-    const { t } = useLanguage();
+export function UploadZone({ onImageSelect, isAnalyzing, onManualInput, compact = false }: UploadZoneProps) {
+    const { t, language } = useLanguage();
     const [isScreenshotting, setIsScreenshotting] = useState(false);
     const [isClient, setIsClient] = useState(false);
     const scannerRef = useRef<DocScannerHandle>(null);
@@ -72,6 +86,8 @@ export function UploadZone({ onImageSelect, isAnalyzing, onManualInput }: Upload
         },
         maxFiles: 1,
         disabled: isAnalyzing,
+        /** 紧凑模式：点击由我们自己接管（开相机），别让它再弹一次文件选择 */
+        noClick: compact,
     });
     // 检查是否支持屏幕截图
     const isScreenshotSupported = () => {
@@ -194,6 +210,51 @@ export function UploadZone({ onImageSelect, isAnalyzing, onManualInput }: Upload
             setIsScreenshotting(false);
         }
     };
+    /**
+     * 【2026-10-19 空空第 4、6 条】**紧凑模式**：一个方块 = 拖拽区 + 拍照入口
+     *
+     * 他要的："拍摄习题按钮，作为下面『AI 智能解析拖拽框』和『拍照扫描』的集合 ——
+     *          电脑端可以拖一张照片进来，点击就进入拍照扫描。"
+     * 并且"AI 智能解析 / 拍照扫描 / 屏幕截图那个框可以删去了"。
+     *
+     * ⚠️ 高度 `h-full`：它要和右边上下叠着的两个按钮**等高**（父容器是 grid，左边跨两行）。
+     */
+    if (compact) {
+        return (
+            <div
+                {...getRootProps()}
+                onClick={() => scannerRef.current?.openCamera()}
+                className={`flex h-full min-h-[104px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border bg-primary/5 px-3 py-6 text-center transition-colors hover:bg-primary/10 ${
+                    isDragActive ? "border-primary bg-primary/10" : "border-border"
+                }`}
+            >
+                <input {...getInputProps()} />
+                {isAnalyzing ? (
+                    <Loader2 className="h-7 w-7 animate-spin text-primary" />
+                ) : (
+                    <Camera className="h-7 w-7 text-primary" />
+                )}
+                <span className="text-base font-medium">
+                    {isAnalyzing ? t.app.analyzing : language === "zh" ? "拍摄习题" : "Photograph"}
+                </span>
+                <span className="text-[11px] text-muted-foreground">
+                    {language === "zh" ? "点击拍照 · 电脑上可以拖一张进来" : "Tap to shoot · or drop a photo"}
+                </span>
+                {/* 相机浮层：点击方块时由它接管（自动找纸边、拉正、漂白） */}
+                <DocScanner
+                    ref={scannerRef}
+                    onScanComplete={(blob: Blob) => {
+                        const file = new File([blob], `scan-${Date.now()}.jpg`, {
+                            type: 'image/jpeg'
+                        });
+                        onImageSelect(file);
+                    }}
+                    onClose={() => { }}
+                />
+            </div>
+        );
+    }
+
     return (
         <div className="space-y-4">
             <Card
