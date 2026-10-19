@@ -5,6 +5,8 @@ import { getServerSession } from "next-auth";
 import { unauthorized, badRequest, notFound, forbidden, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { writePhoto, setPhotoPrintIncluded } from "@/lib/insight-photo";
+// 【2026-10-19 如如】词头：正文第一行的归一化结果（主附积累的落库依据）
+import { headwordOfContent } from "@/lib/insight-headword";
 
 const logger = createLogger('api:insights:id');
 
@@ -48,6 +50,12 @@ export async function PATCH(
         }
         if ('content' in body) {
             data.content = typeof body.content === 'string' ? body.content : null;
+            /**
+             * 【2026-10-19 如如】词头跟着正文走。
+             * 改标题 = 这条搬到另一个词头底下，所以**每次正文变更都要重算**，
+             * 不能只在建的时候算一次（那会让"改了标题的条目"一直挂在老词头上）。
+             */
+            data.headword = headwordOfContent(typeof body.content === 'string' ? body.content : null);
         }
         if ('errorItemNo' in body) {
             const no = typeof body.errorItemNo === 'string' && body.errorItemNo.trim()

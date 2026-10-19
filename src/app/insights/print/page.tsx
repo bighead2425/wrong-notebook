@@ -69,6 +69,8 @@ import {
 import { SheetZoom } from '@/components/print/sheet-zoom';
 import { InsightScanView } from '@/components/insight-scan-view';
 import { buildPageCode } from '@/lib/volume-code';
+// 【2026-10-19 如如】同词头：印积累纸时主积累在前、附积累在后
+import { orderForPrint } from '@/lib/insight-headword';
 import { shouldWarnBeforeLeaving, unsavedLeaveMessage } from '@/lib/unsaved-guard';
 // 【2026-10-12 需求第 2 条】手机端划一下就收 / 叫左栏（三个页面共用这一份）
 import { usePanelSwipe } from '@/lib/use-panel-swipe';
@@ -484,6 +486,8 @@ function NewVolume({ ids }: { ids: string[] }) {
                                 /** 【2026-10-13 第 6 条】"入版"开关 */
                                 photoIncludedInPrint?: boolean;
                                 gradeSemester?: string | null;
+                                /** 【2026-10-19】同词头排序要用（主积累 = 最早那条） */
+                                createdAt?: string;
                             }>(`/api/insights/${id}`)
                             .catch(() => null),
                     ),
@@ -496,9 +500,25 @@ function NewVolume({ ids }: { ids: string[] }) {
                     photo?: string | null;
                     photoIncludedInPrint?: boolean;
                     gradeSemester?: string | null;
+                    createdAt?: string;
                 }>;
+                /**
+                 * 【2026-10-19 如如】**同词头的条目，主积累在前、附积累在后**。
+                 *
+                 * 空空 2026-10-18 原话："拍板印刷积累的时候，主积累在前面，附积累在后面，
+                 * 这样内容就串联并联系起来了。"
+                 *
+                 * ⚠️ 只动**同词头组内部**的顺序（组内按时间正序），
+                 *    组与组之间、以及她勾选的先后，一个字都不动 ——
+                 *    她勾的时候心里的顺序是有意义的（比如按课本进度）。
+                 * ⚠️ 只走**新建卷**这条路。打开已有卷时顺序以卷里的快照为准
+                 *    （那张纸已经印出去了，不能因为后来补了一条就重排）。
+                 */
+                const ordered = orderForPrint(
+                    ok.map((r) => ({ ...r, content: r.content ?? null, createdAt: r.createdAt ?? '' })),
+                );
                 setRows(
-                    ok.map((r) => ({
+                    ordered.map((r) => ({
                         id: r.id,
                         code: r.code,
                         content: r.content || '',

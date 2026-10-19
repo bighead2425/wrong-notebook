@@ -8,6 +8,8 @@ import { createLogger } from "@/lib/logger";
 import { formatInsightCode, nextInsightSeq } from "@/lib/insight-code";
 import { writePhoto, setPhotoPrintIncluded } from "@/lib/insight-photo";
 import { decodeCursor, encodeCursor } from "@/lib/list-cursor";
+// 【2026-10-19 如如】词头：正文第一行的归一化结果（主附积累的落库依据）
+import { headwordOfContent } from "@/lib/insight-headword";
 // 【2026-10-16】关联题的字段清单（唯一出处；默认不含题图）—— 见该文件头的性能说明
 import { LIST_ITEM_SCALARS } from "@/lib/constants/error-item-list-fields";
 
@@ -113,6 +115,11 @@ export async function GET(req: Request) {
             });
         }
         /**
+         * 翻页前把筛选条件存一份 —— 下面"同词头共几条"要用**同一套筛选**，
+         * 否则会出现"筛了数学，徽章却说这个词有 5 条"（那 5 条里有语文的）。
+         */
+        const filterBase = [...filters];
+        /**
          * 游标按 `(dateKey desc, seq desc)` 这个**复合序**往后走：
          * "日期更早" 或 "同一天但序号更小" —— 两条都要写。
          * ⚠️ 只写日期那一条会**漏掉同一天的条目**（同一天往往有好几条，这是常态）。
@@ -144,7 +151,32 @@ export async function GET(req: Request) {
             page.map((r) => r.errorItemNo || ''),
         );
 
-        return NextResponse.json({ insights: page, questions, nextCursor });
+        /**
+         * 【2026-10-19 如如】**同词头共几条** —— 主附积累那行小字要用。
+         *
+         * 一条 `groupBy` 问完这一页出现的所有词头，**不是**在前端数当前页：
+         * 列表是游标翻页的，同词头的条目很可能一半在这一页、一半在下一批 ——
+         * 前端数出来的是"本页 2 条"，而她看到的却是"这个词我记过 2 次"，两者不是一回事。
+         *
+         * ⚠️ 用 `filterBase`（不含游标）⇒ 数字与"当前筛选下能看到的总数"一致。
+         * ⚠️ 词头为空的（摘抄、感受）不参与 —— 它们本来就没有"第几次"这件事。
+         */
+        const headwordKeys = Array.from(
+            new Set(page.map((r) => r.headword).filter((k): k is string => !!k)),
+        );
+        const headwordCounts: Record<string, number> = {};
+        if (headwordKeys.length > 0) {
+            const grouped = await prisma.insight.groupBy({
+                by: ['headword'],
+                where: { AND: [...filterBase, { headword: { in: headwordKeys } }] },
+                _count: { _all: true },
+            });
+            for (const g of grouped) {
+                if (g.headword) headwordCounts[g.headword] = g._count._all;
+            }
+        }
+
+        return NextResponse.json({ insights: page, questions, nextCursor, headwordCounts });
     } catch (error) {
         logger.error({ error }, 'Error listing insights');
         return internalError("Failed to list insights");
@@ -197,7 +229,14 @@ export async function POST(req: Request) {
          */
         const status = body.status === 'draft' ? 'draft' : 'final';
 
-        const dataForWrite = { gradeSemester, subject, content, source: src, status };
+        /**
+         * 【2026-10-19 如如】`headword` 必须**跟着 content 一起写**。
+         *
+         * 它不是一个独立字段，是"正文第一行归一化后的值" —— 正文一改它就变了。
+         * 所以放在 `dataForWrite` 里、由 content 现算，**不给调用方传**：
+         * 传得进来就会有不一致（前端拼的 key 与后端规则不一样 ⇒ 同一组裂成两组）。
+         */
+        const dataForWrite = { gradeSemester, subject, content, source: src, status, headword: headwordOfContent(content) };
 
         // ★ 题号当钥匙：已有这一题的条目 ⇒ 覆盖（编号不变）。
         // ⚠️ 覆盖时**只动正文和来源**，不动 gradeSemester/subject ——
@@ -221,7 +260,7 @@ export async function POST(req: Request) {
                 }
                 const updated = await prisma.insight.update({
                     where: { id: existing.id },
-                    data: { content, source: src },
+                    data: { content, source: src, headword: headwordOfContent(content) },
                 });
                 if (photo !== undefined) await writePhoto(updated.id, photo);
                 if (photoIncludedInPrint === false) await setPhotoPrintIncluded(updated.id, false);

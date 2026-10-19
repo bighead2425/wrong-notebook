@@ -7,9 +7,11 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+    buildHeadwordList,
     extractHeadword,
     groupByHeadword,
     headwordKey,
+    headwordOfContent,
     occurrenceOf,
     type HeadwordItem,
 } from '@/lib/insight-headword';
@@ -112,5 +114,65 @@ describe('occurrenceOf', () => {
     it('没有词头的条目 ⇒ null（不显示序号）', () => {
         const quote = item('q', '> 一段摘抄', 5);
         expect(occurrenceOf(quote, groupByHeadword([quote]))).toBeNull();
+    });
+});
+
+describe('headwordOfContent（落库用）', () => {
+    it('四级标题 ⇒ 归一化后落库（去 emoji / 标点 / 空白）', () => {
+        expect(headwordOfContent('#### 📌 中心思想，怎么写\n\n正文')).toBe('中心思想怎么写');
+    });
+
+    it('没有词头 ⇒ null（摘抄、感受不参与分组）', () => {
+        expect(headwordOfContent('> 一段摘抄')).toBeNull();
+        expect(headwordOfContent('')).toBeNull();
+        expect(headwordOfContent(null)).toBeNull();
+    });
+
+    it('标题里只剩 emoji / 标点 ⇒ null（不让一条"空词头"把整组带歪）', () => {
+        expect(headwordOfContent('#### 📌 。')).toBeNull();
+    });
+});
+
+describe('buildHeadwordList（左栏排法）', () => {
+    it('没有同词头 ⇒ 全是散条，顺序不动', () => {
+        const rows = [
+            item('b', '#### 📌 甲\n正文', 9),
+            item('a', '#### 📌 乙\n正文', 3),
+        ];
+        const out = buildHeadwordList(rows);
+        expect(out.map((e) => e.kind)).toEqual(['single', 'single']);
+        expect(out.map((e) => (e.kind === 'single' ? e.row.id : ''))).toEqual(['b', 'a']);
+    });
+
+    it('同词头聚成一组，组内按时间正序（主积累在最上）', () => {
+        const rows = [
+            item('c', '#### 📌 中心思想怎么写\n第三次', 20),
+            item('d', '> 一条没有标题的摘抄', 15),
+            item('b', '#### 📌 中心思想怎么写\n第二次', 11),
+            item('a', '#### 📌 中心思想怎么写\n第一次', 3),
+        ];
+        const out = buildHeadwordList(rows);
+
+        // 组落在"最新那条"的位置（第一位），摘抄在第二位
+        expect(out.map((e) => e.kind)).toEqual(['group', 'single']);
+        const group = out[0];
+        if (group.kind !== 'group') throw new Error('expected group');
+        expect(group.rows.map((r) => r.id)).toEqual(['a', 'b', 'c']); // 正序
+        expect(group.headline).toBe('中心思想怎么写');
+    });
+
+    it('组的位置 = 组里**最新**那条的位置 —— 老词不许把整组拖到最底', () => {
+        const rows = [
+            item('x', '> 刚写的一条', 30),
+            item('old2', '#### 📌 老词\n第二次', 20),
+            item('old1', '#### 📌 老词\n第一次', 2),
+        ];
+        const out = buildHeadwordList(rows);
+        expect(out.map((e) => e.kind)).toEqual(['single', 'group']);
+    });
+
+    it('只有一条的"组"退化成散条（不做单条的空框）', () => {
+        const rows = [item('a', '#### 📌 只记过一次的词\n正文', 3)];
+        expect(buildHeadwordList(rows)[0].kind).toBe('single');
     });
 });

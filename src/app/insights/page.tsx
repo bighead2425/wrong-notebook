@@ -53,12 +53,15 @@ import { DocScanner, type DocScannerHandle } from '@/components/doc-scanner';
 import { ImageCropper } from '@/components/image-cropper';
 import { ImageZoomViewer } from '@/components/image-zoom-viewer';
 import { cycleManageType } from '@/lib/manage-type';
+// 【2026-10-19 如如】同词头 = 主附积累（左栏把同一个词的条目排在一起）
+import { buildHeadwordList } from '@/lib/insight-headword';
 // 【2026-10-15】掌握开关点一下变成什么（唯一实现在 level-settle.ts）
 import { nextMasteryLevel } from '@/lib/level-settle';
 // 【2026-10-12 需求第 2 条】手机端划一下就收 / 叫左栏（三个页面共用这一份）
 import { usePanelSwipe } from '@/lib/use-panel-swipe';
 import type { ErrorItem } from '@/types/api';
 import {
+    BookOpen,
     Check,
     ExternalLink,
     House,
@@ -92,6 +95,12 @@ interface InsightRow {
      * `final` = 正式内容。这一页**要看得到草稿**并标出来，别处（打印 / 内阁）默认都不收。
      */
     status?: string | null;
+    /**
+     * 【2026-10-19 如如】**词头** —— 正文第一行 `#### ` 的归一化值。
+     * 有它 ⇒ 这条属于某个"词"（主附积累按词头成组）；
+     * 空 ⇒ 摘抄 / 一段感受 / 一封信，**本来就没有"词"**，不参与分组。
+     */
+    headword?: string | null;
 }
 
 /** 选中的条目单独取详情时，接口额外给的（图片本体 + 活题） */
@@ -122,6 +131,13 @@ interface InsightListResponse {
     insights: InsightRow[];
     questions: Record<string, ErrorItem>;
     nextCursor?: string | null;
+    /**
+     * 【2026-10-19 如如】**同词头共几条**（服务端 groupBy 算的，不是前端数当前页）。
+     * 列表是游标翻页的，同词头的条目可能一半在这一页、一半在下一批 ——
+     * 前端数出来的是"本页 2 条"，而她看到的是"这个词我记过 2 次"，两者不是一回事。
+     * 键是 `headword`（归一化后的值），没有词头的条目不在里面。
+     */
+    headwordCounts?: Record<string, number>;
 }
 
 /**
@@ -196,6 +212,11 @@ export default function InsightsPage() {
     const [loading, setLoading] = useState(true);
     /** 【2026-10-09】还有更早的条目没拿（null = 已经到底了） */
     const [nextCursor, setNextCursor] = useState<string | null>(null);
+    /**
+     * 【2026-10-19 如如】同词头共几条（键 = 归一化词头）。
+     * 只用来显示"同一个词 · N 条"这行小字；**不在前端数当前页**（跨页会数少）。
+     */
+    const [headwordCounts, setHeadwordCounts] = useState<Record<string, number>>({});
     /** 【2026-10-09】正在要下一页（防止滚到底时连发请求） */
     const [loadingMore, setLoadingMore] = useState(false);
     /** 列表滚动容器 + 底部哨兵（滚到哨兵露头就自动要下一页） */
@@ -373,6 +394,7 @@ export default function InsightsPage() {
                 });
                 setQuestions(res.questions || {});
                 setNextCursor(res.nextCursor ?? null);
+                setHeadwordCounts(res.headwordCounts || {});
                 return res.insights || [];
             } catch (error) {
                 console.error(error);
@@ -412,6 +434,7 @@ export default function InsightsPage() {
             });
             setQuestions((prev) => ({ ...prev, ...(res.questions || {}) }));
             setNextCursor(res.nextCursor ?? null);
+            setHeadwordCounts((prev) => ({ ...prev, ...(res.headwordCounts || {}) }));
         } catch (error) {
             console.error(error);
         } finally {
@@ -687,6 +710,81 @@ export default function InsightsPage() {
         );
     }, [rows, query]);
 
+    /**
+     * 【2026-10-19 如如】左栏的排法：**同一个词头的条目挨在一起**。
+     *
+     * 这是"个人词典"那个比喻落到界面上的第一步 —— 词典里一个词只有一处，
+     * 不同时期写的理解都排在它下面，不是散在整本里。
+     *
+     * ⚠️ 只在**当前已加载的条目**里分组。同词头的条目跨页时，这一页只显示这几条，
+     *    但"同一个词 · N 条"里的 N 是**服务端算的全量**（`headwordCounts`），
+     *    所以那个数字是准的 —— 不会出现"本页 2 条就说 2 次"的假话。
+     */
+    const listEntries = useMemo(() => buildHeadwordList(visible), [visible]);
+
+    /**
+     * 左栏里的一行 —— **散条和组内条目共用这一份**。
+     *
+     * 抽出来的理由：同词头分组只是"外面多一圈框"，条目本身一个字都不该变。
+     * 两处各写一份的话，改一处的样式另一处就不跟了（这种"看起来一样、其实两份"的
+     * 分叉在这个项目里已经踩过好几次）。
+     */
+    function renderRow(r: InsightRow) {
+        const active = r.id === currentId;
+        const preview = cleanMarkdown((r.content || '').split('\n')[0] || '');
+        const checked = picked.has(r.id);
+        return (
+            <div
+                key={r.id}
+                className={`flex w-full items-start gap-2 rounded-md border px-2.5 py-2 transition-colors ${
+                    active ? 'border-primary bg-accent/60' : 'hover:bg-accent/30'
+                }`}
+            >
+                {/* 【2026-10-01】勾选（送去排积累纸用）。
+                    ⚠️ checkbox 放在 button **外面** —— "勾选"和"点开编辑"
+                    是两个互不相干的动作，嵌套在一起会互相打架。 */}
+                <input
+                    type="checkbox"
+                    className="mt-0.5 shrink-0"
+                    checked={checked}
+                    onChange={() => togglePick(r.id)}
+                    title={L('勾上，之后可以送去排积累纸', 'Pick to print later')}
+                />
+                <button
+                    type="button"
+                    onClick={() => selectRow(r.id)}
+                    className="min-w-0 flex-1 text-left"
+                >
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-xs font-semibold">{r.code}</span>
+                        {/* 【2026-10-13】暂存条一眼认出来 ——
+                            他："在管理页中用标识标出等待后续整理（或删除）" */}
+                        {r.status === 'draft' && (
+                            <Badge variant="secondary" className="px-1 py-0 text-[10px]">
+                                {L('待整理', 'Draft')}
+                            </Badge>
+                        )}
+                        {r.errorItemNo && (
+                            <Badge variant="outline" className="px-1 py-0 text-[10px]">
+                                {L('题', 'Q')} {r.errorItemNo}
+                            </Badge>
+                        )}
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <span>{r.gradeSemester || L('未设年级', 'no grade')}</span>
+                        <span>·</span>
+                        <span>{subjectLabel(r.subject)}</span>
+                    </div>
+                    {preview && (
+                        <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                            {preview}
+                        </div>
+                    )}
+                </button>
+            </div>
+        );
+    }
+
     /** 右栏要出的错题卡（关联题号 → 活题；回收箱里的题卡片会带提示） */
     const linkedQuestion: ErrorItem | null =
         current?.errorItemNo && questions[current.errorItemNo]
@@ -792,6 +890,14 @@ export default function InsightsPage() {
                         <Button variant="outline" size="sm" title={L('去录入页（进门就写的那一页）', 'Go to the writing page')}>
                             <PenLine className="h-4 w-4 sm:mr-1.5" />
                             <span className="hidden sm:inline">{L('去写', 'Write')}</span>
+                        </Button>
+                    </Link>
+                    {/* 【2026-10-19 如如】**读**的那一页 —— 单栏、没筛选器、没编辑框。
+                        管理页是"查"的工具，`/insights/read` 才是"读"的书（两个视角，同一批数据）。 */}
+                    <Link href="/insights/read">
+                        <Button variant="outline" size="sm" title={L('像翻书一样往下读', 'Read through them like a book')}>
+                            <BookOpen className="h-4 w-4 sm:mr-1.5" />
+                            <span className="hidden sm:inline">{L('读', 'Read')}</span>
                         </Button>
                     </Link>
                     {/* 【2026-10-01 第三轮】**打印另开一屏**（他担心的对）：
@@ -909,61 +1015,34 @@ export default function InsightsPage() {
                                     {L('没有符合条件的条目。点右上角「新建一条」开始。', 'Nothing here — press New to start.')}
                                 </p>
                             )}
-                            {visible.map((r) => {
-                                const active = r.id === currentId;
-                                const preview = cleanMarkdown((r.content || '').split('\n')[0] || '');
-                                const checked = picked.has(r.id);
-                                return (
+                            {/**
+                             * 【2026-10-19 如如】左栏改成按"同词头"排。
+                             *
+                             * 一个词一组：外面一圈**虚线框** + 一行小字"同一个词 · N 条"，
+                             * 组内按时间**正序**（主积累＝第一次在最上面，附积累往下长）。
+                             * 组的位置 = 组里**最新那条**的位置（这个词最近一次被记的时刻），
+                             * 所以刚写的东西不会被一个老词拖到列表最底下。
+                             *
+                             * ⚠️ N 来自服务端 `headwordCounts`（全量、与当前筛选同口径），
+                             *    不是数当前页 —— 翻页时数字不会变小。
+                             */}
+                            {listEntries.map((entry) =>
+                                entry.kind === 'single' ? (
+                                    renderRow(entry.row)
+                                ) : (
                                     <div
-                                        key={r.id}
-                                        className={`flex w-full items-start gap-2 rounded-md border px-2.5 py-2 transition-colors ${
-                                            active ? 'border-primary bg-accent/60' : 'hover:bg-accent/30'
-                                        }`}
+                                        key={`g:${entry.key}`}
+                                        className="rounded-md border border-dashed bg-accent/10 p-1.5"
                                     >
-                                        {/* 【2026-10-01】勾选（送去排积累纸用）。
-                                            ⚠️ checkbox 放在 button **外面** —— "勾选"和"点开编辑"
-                                            是两个互不相干的动作，嵌套在一起会互相打架。 */}
-                                        <input
-                                            type="checkbox"
-                                            className="mt-0.5 shrink-0"
-                                            checked={checked}
-                                            onChange={() => togglePick(r.id)}
-                                            title={L('勾上，之后可以送去排积累纸', 'Pick to print later')}
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => selectRow(r.id)}
-                                            className="min-w-0 flex-1 text-left"
-                                        >
-                                            <div className="flex flex-wrap items-center gap-2">
-                                                <span className="font-mono text-xs font-semibold">{r.code}</span>
-                                                {/* 【2026-10-13】暂存条一眼认出来 ——
-                                                    他："在管理页中用标识标出等待后续整理（或删除）" */}
-                                                {r.status === 'draft' && (
-                                                    <Badge variant="secondary" className="px-1 py-0 text-[10px]">
-                                                        {L('待整理', 'Draft')}
-                                                    </Badge>
-                                                )}
-                                                {r.errorItemNo && (
-                                                    <Badge variant="outline" className="px-1 py-0 text-[10px]">
-                                                        {L('题', 'Q')} {r.errorItemNo}
-                                                    </Badge>
-                                                )}
-                                            </div>
-                                            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                                                <span>{r.gradeSemester || L('未设年级', 'no grade')}</span>
-                                                <span>·</span>
-                                                <span>{subjectLabel(r.subject)}</span>
-                                            </div>
-                                            {preview && (
-                                                <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                                                    {preview}
-                                                </div>
-                                            )}
-                                        </button>
+                                        <div className="px-1 pb-1 text-[10px] text-muted-foreground">
+                                            {L('同一个词', 'Same word')} ·{' '}
+                                            {headwordCounts[entry.key] ?? entry.rows.length}
+                                            {L(' 条', ' entries')}
+                                        </div>
+                                        <div className="space-y-1.5">{entry.rows.map(renderRow)}</div>
                                     </div>
-                                );
-                            })}
+                                ),
+                            )}
 
                             {/* 【2026-10-09】上拉加载更多：滚到这附近自动要下一页；
                                 不支持自动触发的浏览器（或就是想手动点）用这个按钮一样行。 */}
