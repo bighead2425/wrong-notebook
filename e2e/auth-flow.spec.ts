@@ -77,7 +77,14 @@ test.describe('Authentication Flow', () => {
         await expect(page.locator('body')).toContainText(user.name);
 
         // --- Logout User ---
-        await page.locator('button[title*="Logout"], button[title*="退出"]').click();
+        /**
+         * 【2026-10-20】主页那颗「退出」按钮**撤掉了**（空空的要求：
+         * "退出放入设置的『关于』中"）⇒ 这条路径改成 设置 → 关于 → 退出。
+         * 入口是左上角那颗带用户名的按钮（title 里有"进设置"）。
+         */
+        await page.getByTitle(/进设置|logout is inside/).click();
+        await page.getByRole('tab', { name: /About|关于/ }).click();
+        await page.getByRole('button', { name: /退出登录|Sign out/ }).click();
         await page.waitForURL('**/login');
 
         // --- Login as Admin ---
@@ -89,8 +96,8 @@ test.describe('Authentication Flow', () => {
         await page.waitForURL('**/');
 
         // --- Go to Settings > User Management ---
-        // Open Settings (Button with gear icon, sr-only text "Settings" or "设置")
-        await page.getByRole('button').filter({ has: page.locator('svg.lucide-settings') }).click();
+        // 【2026-10-20】主页的齿轮按钮撤掉了 ⇒ 入口改成左上角用户名（title 含"进设置"）
+        await page.getByTitle(/进设置|logout is inside/).click();
 
         // Wait for Dialog
         await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
@@ -127,7 +134,10 @@ test.describe('Authentication Flow', () => {
         await expect(page.getByRole('dialog')).not.toBeVisible();
 
         // Click Logout
-        await page.locator('button[title*="Logout"], button[title*="退出"]').click();
+        // 【2026-10-20】同上：退出在「设置 → 关于」里
+        await page.getByTitle(/进设置|logout is inside/).click();
+        await page.getByRole('tab', { name: /About|关于/ }).click();
+        await page.getByRole('button', { name: /退出登录|Sign out/ }).click();
         await page.waitForURL('**/login');
 
     });

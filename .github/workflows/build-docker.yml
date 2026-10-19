@@ -65,6 +65,30 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ============================================
+      # 【2026-10-20 如如】**清洗 tag 输入**（custom-v108 构建失败的根因）
+      #
+      # 失败日志原文：
+      #   ERROR: failed to build: invalid tag
+      #   "ghcr.io/bighead2425/wrong-notebook: custom-v108": invalid reference format
+      #                                          ↑ 冒号后面多了一个空格
+      #
+      # 原因：`workflow_dispatch` 的输入框**原样**拼进了 tags（`${{ inputs.tag }}`），
+      # 手动填的时候多一个空格/换行就直接炸，而且炸在"已经跑完测试、镜像准备推"的最后一步。
+      #
+      # 修法：build 之前先清洗一遍（去所有空白 + 把 Docker 不接受的字符换成 `-` + 空值兜底 latest）。
+      # ⚠️ 用 `env:` 传值而不是直接 `${{ }}` 插进 shell —— 后者等于把输入当代码执行。
+      # ============================================
+      - name: Normalize image tag
+        id: norm
+        env:
+          RAW_TAG: ${{ inputs.tag }}
+        run: |
+          CLEAN=$(printf '%s' "$RAW_TAG" | tr -d '[:space:]' | sed 's/[^A-Za-z0-9._-]/-/g')
+          if [ -z "$CLEAN" ]; then CLEAN=latest; fi
+          echo "tag=$CLEAN" >> "$GITHUB_OUTPUT"
+          echo "input was  : [$RAW_TAG]"
+          echo "using tag  : [$CLEAN]"
 
       # Set up QEMU for multi-arch builds
       - name: Set up QEMU
@@ -92,11 +116,12 @@ jobs:
           #   2) custom-latest —— 固定标签，NAS 上的自动更新程序监控它，
           #      这样在无法 SSH 到 NAS 的网络环境下（如外出办公）也能完成部署
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.norm.outputs.tag }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:custom-latest
           # 把本次的 tag 烧进镜像（Dockerfile 的 ARG APP_VERSION）：
           # 「设置 → 关于」据此显示当前部署版本，一眼能确认 NAS 上跑的是哪一版。
+          # ⚠️ 用清洗后的值，不然「关于」里会显示成 "custom-v108 "（带空格）
           build-args: |
-            APP_VERSION=${{ inputs.tag }}
+            APP_VERSION=${{ steps.norm.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
