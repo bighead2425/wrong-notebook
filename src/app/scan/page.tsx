@@ -92,6 +92,17 @@ export default function ScanPage() {
      *   · `linkFound`  = 扫到并查询成功的那道题（等他说"添加"）
      */
     const [linkFromId, setLinkFromId] = useState<string | null>(null);
+    /**
+     * 【2026-10-19 手机版面第 2 批】**从哪儿进来，返回就回哪儿**。
+     *
+     * 起因：详情页的「举一反三 → 扫码关联」会 push 到 `/scan?linkFrom=…`，
+     * 而这一页的返回键原来**写死回主页**（`fallbackUrl="/"`）——
+     * 他扫不出来想退出，一按返回就跳回主页，那道题还得重新找一遍。
+     *
+     * ⚠️ 只认**站内路径**（以单个 `/` 开头）：`//evil.com` 是协议相对 URL，
+     *    直接拿来 push 就等于开放重定向。
+     */
+    const [backTo, setBackTo] = useState<string | null>(null);
     const [linkFromNo, setLinkFromNo] = useState<string>("");
     const [linkFound, setLinkFound] = useState<{
         id: string;
@@ -260,12 +271,21 @@ export default function ScanPage() {
         [syncUrl],
     );
 
-    /** 不找了：退回刚才那道题的卡 */
+    /** 不找了：退回刚才那道题的卡（没有"那道卡"时退回详情页） */
     const cancelLinkScan = useCallback(() => {
+        const fromId = linkFromId;
         setLinkFromId(null);
         setLinkFound(null);
-        if (itemId) setView("card");
-    }, [itemId]);
+        if (itemId) {
+            setView("card");
+            return;
+        }
+        /**
+         * 【2026-10-19 第 2 批】从**详情页**进来时这一屏没有"那道卡"——
+         * 原来这里什么也不做，他就卡在扫码屏上了。⇒ 退回详情页（优先用 `?back=`）。
+         */
+        if (fromId) router.push(backTo || `/error-items/${fromId}`);
+    }, [itemId, linkFromId, backTo, router]);
 
     /**
      * 确认"把扫到的这道题挂上去"。
@@ -312,7 +332,7 @@ export default function ScanPage() {
                  * ⇒ 直接把他送回那道题的详情页，让他看见新挂上的那一组。
                  */
                 if (!itemId) {
-                    router.push(`/error-items/${linkFromId}`);
+                    router.push(backTo || `/error-items/${linkFromId}`);
                     return;
                 }
                 setView("card");
@@ -323,7 +343,7 @@ export default function ScanPage() {
                 setLinkScanBusy(false);
             }
         },
-        [L, linkFound, linkFromId, itemId, router],
+        [L, linkFound, linkFromId, itemId, backTo, router],
     );
 
     /**
@@ -447,6 +467,9 @@ export default function ScanPage() {
         const qs = new URLSearchParams(window.location.search);
         const vol = qs.get("vol");
         const item = qs.get("item");
+        /** 【2026-10-19 第 2 批】`?back=` 只认站内路径（防协议相对 URL 开放重定向） */
+        const back = qs.get("back");
+        if (back && back.startsWith("/") && !back.startsWith("//")) setBackTo(back);
         /**
          * 【2026-10-19 空空第 2 条】**从错题详情页的「举一反三」直接进关联模式**。
          *
@@ -573,7 +596,8 @@ export default function ScanPage() {
         <main className="min-h-screen p-4 md:p-8 bg-background">
             <div className="max-w-3xl mx-auto space-y-5">
                 <div className="flex items-start gap-4">
-                    <BackButton fallbackUrl="/" />
+                    {/* 【2026-10-19 第 2 批】从详情页进来的（`?back=`）就回那道题，别再一律回主页 */}
+                    <BackButton fallbackUrl={backTo || "/"} />
                     <div className="flex-1 space-y-1">
                         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
                             <ScanLine className="h-6 w-6" />

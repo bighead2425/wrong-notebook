@@ -105,6 +105,12 @@ export function PracticeLinkDialog({
                             const qs = new URLSearchParams({
                                 linkFrom: itemId,
                                 linkFromNo: itemNo,
+                                /**
+                                 * 返回键的落点：**这道题的详情页**。
+                                 * 不加这个的话，扫不出来想退出，一按返回就跳回主页 ——
+                                 * 那道题还得重新找一遍（`/scan` 的返回键是 push 固定目标，不是 history.back）。
+                                 */
+                                back: `/error-items/${itemId}`,
                             });
                             router.push(`/scan?${qs.toString()}`);
                         }}

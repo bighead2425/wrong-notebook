@@ -731,6 +731,15 @@ export default function InsightWritePage() {
                     {/* 三个动作：配图 / 拍字识文 / 整理。都排在标签同一行右侧，
                         手机上文字收起只留图标（标签本来就没几个字，别把编辑框挤下去）。 */}
                     <span className="flex-1" />
+                    {/**
+                     * 【2026-10-19 手机版面第 2 批】**手机上一行放标签、一行放动作**。
+                     *
+                     * 三个动作用图标就够（`hidden sm:inline` 藏文字），但挤在两个下拉标签旁边时，
+                     * 手机上一行会贴得很紧、还容易被挤到第三行去。
+                     * ⇒ 整组在 `sm` 以下 `w-full`（强制换行）+ 贴右 + 上面一条细线，
+                     *    与日积月累·管理页顶栏是同一套写法（同一批规则，别两处不一样）。
+                     */}
+                    <div className="flex items-center gap-2 max-sm:w-full max-sm:justify-end max-sm:border-t max-sm:pt-2">
                     <Button
                         variant="outline"
                         size="sm"
@@ -770,6 +779,7 @@ export default function InsightWritePage() {
                         {aiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4 sm:mr-1.5" />}
                         <span className="hidden sm:inline">{aiBusy ? L("整理中", "Tidying") : L("整理", "Tidy")}</span>
                     </Button>
+                    </div>
                 </div>
 
                 {/* ===== 配图缩略图：有图才出现（没图时不占版面）===== */}
