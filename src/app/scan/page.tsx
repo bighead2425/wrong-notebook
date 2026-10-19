@@ -306,6 +306,15 @@ export default function ScanPage() {
                 alert(res.message || L("已关联", "Linked"));
                 setLinkFound(null);
                 setLinkFromId(null);
+                /**
+                 * 【2026-10-19 第 2 条】从**错题详情页**进来的（`?linkFrom=`，没有 `itemId`）：
+                 * 这里没有"那道卡"可回 —— `setView("card")` 会落在一个空屏上。
+                 * ⇒ 直接把他送回那道题的详情页，让他看见新挂上的那一组。
+                 */
+                if (!itemId) {
+                    router.push(`/error-items/${linkFromId}`);
+                    return;
+                }
                 setView("card");
             } catch (error) {
                 console.error(error);
@@ -314,7 +323,7 @@ export default function ScanPage() {
                 setLinkScanBusy(false);
             }
         },
-        [L, linkFound, linkFromId],
+        [L, linkFound, linkFromId, itemId, router],
     );
 
     /**
@@ -438,6 +447,23 @@ export default function ScanPage() {
         const qs = new URLSearchParams(window.location.search);
         const vol = qs.get("vol");
         const item = qs.get("item");
+        /**
+         * 【2026-10-19 空空第 2 条】**从错题详情页的「举一反三」直接进关联模式**。
+         *
+         * 原来"给某道题找关联题"只能从 `/scan` 屏内那层面板点进去（`startLinkScan`），
+         * 没有 URL 入口。详情页合并了那个入口之后，必须能从外面直接进来 ⇒
+         * `?linkFrom=<id>&linkFromNo=<题号>`。
+         *
+         * ⚠️ **放在最前面并 return**：关联模式要的就是"扫到不跳转"，
+         *    不能被下面的 `item`/`vol` 分支带去看卡或看卷。
+         */
+        const linkFrom = qs.get("linkFrom");
+        if (linkFrom) {
+            setLinkFromId(linkFrom);
+            setLinkFromNo(qs.get("linkFromNo") || "");
+            setView("scanner");
+            return;
+        }
         if (vol) setVolumeCode(vol);
         if (item) {
             setItemId(item);

@@ -1034,7 +1034,7 @@ export default function InsightsPage() {
         <main className="min-h-screen bg-background">
             {/* 顶栏 */}
             <div className="border-b bg-background">
-                <div className="mx-auto flex w-full max-w-[1400px] items-center gap-2 px-4 py-3 md:px-8">
+                <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center gap-2 px-4 py-3 md:px-8">
                     {/* 【2026-10-03 需求第 11 条】返回键去哪看 `?back=`：
                         从积累纸预览页跳来的要**退回那张纸**，平时还是回主页。
                         （`backTo` 已在挂载时校验过是站内路径。） */}
@@ -1043,7 +1043,7 @@ export default function InsightsPage() {
                         他自己就是这么叫这一页的（原话："原日积月累页，现在我叫其『日积月累·管理』页"）。
                         录入已经搬到 `/insights/write`（进门就写），这一页的职责只剩**管**，
                         标题不写清楚，他会以为"日积月累"有两页是同一个东西。 */}
-                    <h1 className="text-lg font-semibold">{L('日积月累 · 管理', 'Takeaways · Manage')}</h1>
+                    <h1 className="min-w-0 truncate text-base font-semibold sm:text-lg">{L('日积月累 · 管理', 'Takeaways · Manage')}</h1>
                     {/* 【2026-10-01 加】隐藏 / 显示左栏（手机上价值最大 —— 见 leftOpen 的说明）。
                         【2026-10-12 需求第 3 条】从右上角挪到**标题后面**：它管的是左栏，
                         站在左栏这一侧才找得到（与打印预览页、复练卷页同一版式）。 */}
@@ -1073,6 +1073,20 @@ export default function InsightsPage() {
                         )}
                     </span>
                     <span className="flex-1" />
+                    {/**
+                     * 【2026-10-19 空空第 5 条】手机上这排按钮**折到第二行**、靠右对齐。
+                     *
+                     * 他原话："在手机端，将右上角的新建一条到返回主页按钮，折行到下面，
+                     *          现在手机端都挤在一起，实在是难看至极。"
+                     *
+                     * 做法：父容器 `flex-wrap` + 这一组在 `md` 以下 `w-full`（强制换行）、
+                     * `justify-end`（贴右）、上面一条细分隔线（跟第一行的标题分开）。
+                     * 桌面端（md 以上）仍然是原来的一行，一点没变。
+                     *
+                     * ⚠️ 之所以是"整组一起换行"而不是"逐个挤下去"：逐个换行会出现
+                     *    "新建在上一行末尾、返回在下一行开头"这种更难看的断层。
+                     */}
+                    <div className="flex items-center gap-2 max-md:w-full max-md:justify-end max-md:border-t max-md:pt-2">
                     {/* 【2026-10-02 他要求】窄屏/手机上**只留图标**（文字藏起来）——
                         "当浏览器变窄，或者在手机端屏幕比较窄的时候，右上角的新建一条按钮，
                         文字隐藏，只留前面的加号既可"。打印按钮同样处理。 */}
@@ -1111,6 +1125,7 @@ export default function InsightsPage() {
                             <House className="h-5 w-5" />
                         </Button>
                     </Link>
+                    </div>
                 </div>
             </div>
 

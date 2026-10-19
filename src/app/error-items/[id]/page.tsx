@@ -56,6 +56,8 @@ import { ErrorItemCard } from "@/components/error-item-card";
 import { linkRoleColor, linkRoleLabel, type LinkView } from "@/lib/item-link";
 // 【2026-10-12 需求第 15 条】详情页题号后面那个二维码（载荷与纸上印的同一个 = 题号）
 import { makeQrDataUrl } from "@/lib/qr";
+// 【2026-10-19 空空第 2 条】「举一反三」= 一扇门（练习 / 扫码关联 / 拍照新增）
+import { PracticeLinkDialog } from "@/components/practice-link-dialog";
 // 【2026-10-13 他拍板的设计】"这道题现在该怎么处置"——由四个圆圈的事实现算，不落库
 import { reviewStatusOf, reviewStatusSentence } from "@/lib/review-status";
 
@@ -246,6 +248,8 @@ export default function ErrorDetailPage() {
     const [isEditingTags, setIsEditingTags] = useState(false);
     const [tagsInput, setTagsInput] = useState<string[]>([]);
     const [exportState, setExportState] = useState<"idle" | "doing" | "ok" | "err">("idle");
+    /** 【2026-10-19 空空第 2 条】右上角「举一反三」现在是一扇门（练习 / 扫码关联 / 拍照新增） */
+    const [practiceOpen, setPracticeOpen] = useState(false);
     // 需求六：「AI 重新分析」——用原图重跑 AI，进审核页，确认保存才覆盖
     const [reanalyzeData, setReanalyzeData] = useState<ParsedQuestion | null>(null);
     const [isReanalyzing, setIsReanalyzing] = useState(false);
@@ -999,12 +1003,13 @@ export default function ErrorDetailPage() {
                         {exportState === "err" && (
                             <span className="self-center text-red-600 text-sm">导出失败</span>
                         )}
-                        <Link href={`/practice?id=${item.id}`}>
-                            <Button variant="outline" size="sm">
-                                <RefreshCw className="mr-2 h-4 w-4" />
-                                {t.detail.practice}
-                            </Button>
-                        </Link>
+                        {/* 【2026-10-19 空空第 2 条】原来是**直接跳**去生成练习题；
+                            现在它是一扇门：练习 / 扫码关联 / 拍照新增，三选一。
+                            入口名字保留「举一反三」（他说的是"合并"，没说改名）。 */}
+                        <Button variant="outline" size="sm" onClick={() => setPracticeOpen(true)}>
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            {t.detail.practice}
+                        </Button>
                         <Button
                             size="sm"
                             variant={item.masteryLevel > 0 ? "default" : "default"}
@@ -1835,6 +1840,14 @@ export default function ErrorDetailPage() {
                     </div>
                 )
             }
+            {/* 【2026-10-19 空空第 2 条】「举一反三」那扇门 */}
+            <PracticeLinkDialog
+                open={practiceOpen}
+                onOpenChange={setPracticeOpen}
+                itemId={item.id}
+                itemNo={item.source || item.id}
+                notebookId={item.notebookId}
+            />
         </main >
     );
 }

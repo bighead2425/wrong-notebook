@@ -994,6 +994,29 @@ export default function ReviewVolumesPage() {
         fetchList,
     ]);
 
+    /**
+     * 【2026-10-19 空空第 3 条】**取消** —— 把纸面退回"上次保存的样子"。
+     *
+     * 他原话："如果我是误操作，那么我就不需要更新组卷，而是想取消，
+     *          让卷面恢复到编辑前的状态。所以将更新组卷按钮改为『更新』，
+     *          右边增加一个按钮『取消』。"
+     *
+     * 退回什么：**只退三样可编辑的东西** —— 默认留白行数、每题的留白覆盖、每题的题图大小。
+     * 它们正好就是 `dirty` 用来判脏的那三样（`reviewLayoutDirty`），
+     * 所以"取消之后 dirty 一定是 false"这件事是自洽的，不用另外记状态。
+     *
+     * ⚠️ **不重新拉卷**：重拉一次也能回到原样，但会白等一次网络、还会闪一下。
+     *    基线本来就在内存里（`savedBaseline`），直接照着它覆盖更快也更稳。
+     * ⚠️ 卷号、页归属、题目本身都不动 —— 那些本来就不归这一屏管（页归属只认快照）。
+     */
+    const cancelEdits = useCallback(() => {
+        if (!savedBaseline) return;
+        setBlankDefault(savedBaseline.defaultBlankLines);
+        setBlankOverrides({ ...savedBaseline.blankLines });
+        setFigureScales({ ...savedBaseline.figureScale });
+        setNotice(L("已还原到上次保存的样子", "Reverted to the last saved version"));
+    }, [savedBaseline, L]);
+
     // ================= 【2026-10-12 需求第 1 条】离开前的三选一 =================
 
     /**
@@ -1658,22 +1681,37 @@ export default function ReviewVolumesPage() {
 
                                 {selectedId && (
                                     <div className="mb-3 flex flex-wrap items-center gap-2 no-print">
-                                        {/* 【2026-10-03 需求第 4 条】没改 ⇒ 不显示【更新组卷】；改了才显示 */}
+                                        {/* 【2026-10-03 需求第 4 条】没改 ⇒ 不显示；改了才显示。
+                                            【2026-10-19 空空第 3 条】文案从「更新组卷」缩成「更新」，
+                                            右边补一个「取消」（误操作时退回编辑前的样子）。 */}
                                         {dirty && (
-                                            <Button
-                                                size="sm"
-                                                onClick={updateVolume}
-                                                disabled={busy === "saving" || !layoutReady || overfullForKind.length > 0}
-                                                title={
-                                                    overfullForKind.length > 0
-                                                        ? L("有页面装不下了，先把那几页调小", "Some page is overfull")
-                                                        : undefined
-                                                }
-                                            >
-                                                {busy === "saving"
-                                                    ? L("保存中…", "Saving…")
-                                                    : L("更新组卷", "Update volume")}
-                                            </Button>
+                                            <>
+                                                <Button
+                                                    size="sm"
+                                                    onClick={updateVolume}
+                                                    disabled={busy === "saving" || !layoutReady || overfullForKind.length > 0}
+                                                    title={
+                                                        overfullForKind.length > 0
+                                                            ? L("有页面装不下了，先把那几页调小", "Some page is overfull")
+                                                            : undefined
+                                                    }
+                                                >
+                                                    {busy === "saving"
+                                                        ? L("保存中…", "Saving…")
+                                                        : L("更新", "Update")}
+                                                </Button>
+                                                {/* ⚠️ 取消**不受**"页面装不下"影响 —— 那正是最该点它的时刻：
+                                                    调崩了、不想收拾了，直接退回上次保存的样子。 */}
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={cancelEdits}
+                                                    disabled={busy === "saving"}
+                                                    title={L("不要这次的改动，退回上次保存的样子", "Discard these edits")}
+                                                >
+                                                    {L("取消", "Cancel")}
+                                                </Button>
+                                            </>
                                         )}
                                         {/*
                                          * 【2026-10-03 需求第 5 条】【扫码图】：

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
-import { ChevronLeft, ChevronRight, House, Pencil, Printer, Sparkles, ArchiveRestore, Layers } from "lucide-react";
+import { ChevronLeft, ChevronRight, House, Pencil, Printer, Sparkles, ArchiveRestore } from "lucide-react";
 import Link from "next/link";
 import { ErrorList } from "@/components/error-list";
 import { EditNotebookDialog, type EditNotebookPayload } from "@/components/edit-notebook-dialog";
@@ -108,15 +108,12 @@ export default function NotebookDetailPage() {
     };
 
     /**
-     * 【2026-10-03 他要求】「添加错题」与「复练」对调：「复练」挪到页头右上角。
-     * 带上本子的年级学期 + 学科当筛选（与列表里原来那个「复练」按钮同一套参数）。
+     * 【2026-10-19 空空第 1 条】**「复练」入口已删除**（右上角那个按钮他说用不上）。
+     *
+     * 原来这里还有个 `openReviewVolumes()`，带着本子的年级+学科跳 `/review-volumes`。
+     * 按钮没了，它就成了一块没人调的代码 —— 一并删掉，别留"看起来还有入口"的假象。
+     * 复练卷页本身照旧能从主页进（`/review-volumes`），只是不再从"某一本错题本"里带筛选跳过去。
      */
-    const openReviewVolumes = () => {
-        const qs = new URLSearchParams();
-        if (notebook?.grade) qs.set("grade", `${notebook.grade}${notebook.semester || "上"}`);
-        if (notebook?.subject) qs.set("subject", notebook.subject);
-        router.push(`/review-volumes${qs.toString() ? `?${qs.toString()}` : ""}`);
-    };
 
     if (loading) {
         return (
@@ -147,67 +144,12 @@ export default function NotebookDetailPage() {
                         </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                        {/* #10 三级打印 · 第 2 级：只打这一本里还没打过的 */}
-                        <Button
-                            variant="secondary"
-                            size="sm"
-                            className="hidden sm:flex"
-                            onClick={() => router.push(`/print-preview?notebookId=${notebook.id}&unprinted=1&mode=card`)}
-                        >
-                            <Printer className="mr-2 h-4 w-4" />
-                            {t.notebooks?.printThisUnprinted || "打印本册未打印"}
-                        </Button>
-                        <Button
-                            variant="secondary"
-                            size="icon"
-                            className="sm:hidden"
-                            title={t.notebooks?.printThisUnprinted || "打印本册未打印"}
-                            onClick={() => router.push(`/print-preview?notebookId=${notebook.id}&unprinted=1&mode=card`)}
-                        >
-                            <Printer className="h-4 w-4" />
-                        </Button>
-
-                        {/* #15 本集 AI 分析 */}
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="hidden sm:flex"
-                            onClick={() => setAnalyzeOpen(true)}
-                        >
-                            <Sparkles className="mr-2 h-4 w-4" />
-                            {t.notebooks?.aiAnalyze || "AI 分析"}
-                        </Button>
-                        <Button
-                            variant="outline"
-                            size="icon"
-                            className="sm:hidden"
-                            title={t.notebooks?.aiAnalyze || "AI 分析"}
-                            onClick={() => setAnalyzeOpen(true)}
-                        >
-                            <Sparkles className="h-4 w-4" />
-                        </Button>
-
-                        {/* 【2026-10-03 他要求】「添加错题」与「复练」对调后，
-                            右上角这里换成「复练」（原「添题」已挪到下面那一排）。 */}
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="hidden sm:flex"
-                            title={L("看这本的复练卷", "Review volumes of this notebook")}
-                            onClick={openReviewVolumes}
-                        >
-                            <Layers className="mr-2 h-4 w-4" />
-                            {L("复练", "Volumes")}
-                        </Button>
-                        <Button
-                            variant="outline"
-                            size="icon"
-                            className="sm:hidden"
-                            title={L("看这本的复练卷", "Review volumes of this notebook")}
-                            onClick={openReviewVolumes}
-                        >
-                            <Layers className="h-4 w-4" />
-                        </Button>
+                        {/* 【2026-10-19 空空第 1 条】**右上角只留返回主页**。
+                            他原话："右上角有一个『复练』的按钮，这个按钮其实有点用不上，所以把这个按钮取消吧。
+                            并且把右上角的『印新录入』『AI分析』两个按钮，向下调整，放到
+                            共 XX 道、选中 XX 道、小于号、大于号这一行，并放在靠右的位置。"
+                            ⇒ 三个按钮（打印本册未打印 / AI 分析 / 复练）全搬走，
+                              前两个移到下面那一行的右侧，复练**直接删掉**。 */}
                         <Link href="/">
                             <Button variant="ghost" size="icon">
                                 <House className="h-5 w-5" />
@@ -254,6 +196,51 @@ export default function NotebookDetailPage() {
                             </Button>
                         </div>
                     )}
+                    {/* 【2026-10-19 空空第 1 条】原来在右上角的两个按钮搬到这里，**靠右**。
+                        `ml-auto` 把它推到这一行最右边；与"上一本 / 下一本"那组之间靠容器 `gap-2`
+                        拉开距离（他要求"和小于号、大于号中间留有距离"）。
+                        手机上只用图标（这一行本来就不宽，带文字会挤成两行）。 */}
+                    <div className="ml-auto flex items-center gap-2">
+                        {/* #10 三级打印 · 第 2 级：只打这一本里还没打过的 */}
+                        <Button
+                            variant="secondary"
+                            size="sm"
+                            className="hidden sm:flex"
+                            onClick={() => router.push(`/print-preview?notebookId=${notebook.id}&unprinted=1&mode=card`)}
+                        >
+                            <Printer className="mr-2 h-4 w-4" />
+                            {t.notebooks?.printThisUnprinted || "打印本册未打印"}
+                        </Button>
+                        <Button
+                            variant="secondary"
+                            size="icon"
+                            className="sm:hidden"
+                            title={t.notebooks?.printThisUnprinted || "打印本册未打印"}
+                            onClick={() => router.push(`/print-preview?notebookId=${notebook.id}&unprinted=1&mode=card`)}
+                        >
+                            <Printer className="h-4 w-4" />
+                        </Button>
+
+                        {/* #15 本集 AI 分析 */}
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="hidden sm:flex"
+                            onClick={() => setAnalyzeOpen(true)}
+                        >
+                            <Sparkles className="mr-2 h-4 w-4" />
+                            {t.notebooks?.aiAnalyze || "AI 分析"}
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="icon"
+                            className="sm:hidden"
+                            title={t.notebooks?.aiAnalyze || "AI 分析"}
+                            onClick={() => setAnalyzeOpen(true)}
+                        >
+                            <Sparkles className="h-4 w-4" />
+                        </Button>
+                    </div>
                 </div>
 
                 {notebook.archiveStatus === "archived" && (

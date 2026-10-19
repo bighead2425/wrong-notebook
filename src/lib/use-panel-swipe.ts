@@ -21,7 +21,8 @@ import { useRef } from "react";
  *   ② **够平**：纵向位移 < 40px（上下滑页面不能被当成划栏 —— 这条最关键）；
  *   ③ **够快**：从按下到抬起 < 400ms（**慢拖**不当手势：纸上的题图缩放把手
  *      正是"慢慢往右拖"，不加这条，手机上每次拖图都会把左栏叫出来）。
- * 三条同时满足才触发，触发后**不 preventDefault**（页面该怎么滚还怎么滚）。
+ * 三条同时满足才触发。触发后 `preventDefault()` **只吃掉这一次的 click**（别让它顺手
+ * 点开一条卷 / 一条积累），**不影响滚动** —— 滚动早在 touchmove 阶段就走完了。
  */
 export interface PanelSwipeHandlers {
     onTouchStart: (e: React.TouchEvent) => void;
@@ -45,15 +46,25 @@ export function usePanelSwipe(opts: {
     return {
         onTouchStart: (e: React.TouchEvent) => {
             /**
-             * ⚠️ **从滑块 / 输入框 / 按钮上开始的这一下，不算划栏手势。**
+             * ⚠️ **只排除"按一下就要生效、而且真的需要拖"的表单控件。**
              *
-             * 这几个左栏里全是滑块（留白高度、题图宽度都是 `<input type="range">`），
-             * 手机上"按住滑块往右拖"既够长、又够平、也够快 —— 三条判据全都满足，
-             * 于是**每次调滑块都会把左栏收掉**。这条是专门堵它的：
-             * 手指落在表单控件上，就不记起点（自然也不会触发）。
+             * 原来这里还写着 `button, a` —— 那是错的，也正是他 2026-10-19 报的那个毛病：
+             *
+             *   "在『复练』『模仿』『年级』『学科』左右这个位置能够划动成功，
+             *    在下面的卷名卷号的位置上面，如果我也从右向左划动，是无法隐藏左边框的。
+             *    日积月累·管理页，左边框也是这个问题，在积累条目上面从右向左划动无法隐藏。"
+             *
+             * 原因：**左栏里每一张卷、每一条积累，整块就是一个 `<button>`**
+             * （点它 = 打开这一条）。判据把 button 排除了 ⇒ 在最该划的地方（卷名、条目正文）
+             * 开始的那一下**根本没记起点**，自然永远不会触发；
+             * 而筛选栏的缝隙里 target 是 `div`，反而能划 —— 于是就成了"时灵时不灵"。
+             *
+             * 按钮/链接的误触不用担心：手势要求横向 > 60px，
+             * 移动端浏览器在手指划出十几像素后就会**取消这次 click**；
+             * 真判定成功时下面还会 `preventDefault()` 兜一道。
              */
             const el = e.target as HTMLElement | null;
-            if (el?.closest?.("input, select, textarea, button, a, [role='slider']")) {
+            if (el?.closest?.("input, select, textarea, [role='slider']")) {
                 start.current = null;
                 return;
             }
@@ -78,8 +89,14 @@ export function usePanelSwipe(opts: {
             if (Date.now() - s.t > maxDuration) return; // ③ 太慢 ⇒ 那是拖着别的东西
             if (Math.abs(dx) < threshold) return; // ① 不够长
 
-            if (dx < 0) opts.onSwipeLeft?.();
-            else opts.onSwipeRight?.();
+            if (dx < 0) {
+                // 判定成功 ⇒ 吃掉这次触摸的收尾，别让它再派发成一次点击
+                e.preventDefault();
+                opts.onSwipeLeft?.();
+            } else {
+                e.preventDefault();
+                opts.onSwipeRight?.();
+            }
         },
     };
 }
