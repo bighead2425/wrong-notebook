@@ -224,10 +224,12 @@ export function UploadZone({ onImageSelect, isAnalyzing, onManualInput, compact 
             <div
                 {...getRootProps()}
                 onClick={() => scannerRef.current?.openCamera()}
-                className={`flex h-full min-h-[104px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border bg-primary/5 px-3 py-6 text-center transition-colors hover:bg-primary/10 ${
+                className={`relative flex h-full min-h-[104px] cursor-pointer flex-col items-center justify-center gap-1.5 overflow-hidden rounded-lg border bg-primary/5 px-3 py-6 text-center transition-colors hover:bg-primary/10 ${
                     isDragActive ? "border-primary bg-primary/10" : "border-border"
                 }`}
             >
+                {/* 【第 3 条】底部一道主色底纹 —— 与上面四个快捷是同一套"有颜色的块" */}
+                <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-primary/15 to-transparent" />
                 <input {...getInputProps()} />
                 {isAnalyzing ? (
                     <Loader2 className="h-7 w-7 animate-spin text-primary" />

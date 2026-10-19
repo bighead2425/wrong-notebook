@@ -534,18 +534,25 @@ function HomeContent() {
                          * 【第 7 条】「批量上传」不再是页内板块，改为**跳 `/batch` 独立页面**。
                          */}
                         <div className="grid grid-cols-4 gap-1.5">
+                            {/**
+                             * 【2026-10-19 第 1 条】按钮内**居中**；电脑宽度够 ⇒ 图标在左、文字在右；
+                             * 手机四等分太窄 ⇒ **图标在上、文字在下**（`flex-col` → `sm:flex-row`）。
+                             * 【第 3 条】每个按钮底部加一道**淡色底纹**（`from-*-500/15` 往上渐隐），
+                             * 让它看起来是"一块有颜色的东西"，不是四个白框。
+                             */}
                             <Link href="/batch">
                                 <Button
                                     variant="outline"
-                                    className="h-9 w-full justify-center gap-1 px-1 text-[11px] sm:h-10 sm:text-xs"
+                                    className="relative h-12 w-full flex-col gap-0.5 overflow-hidden px-1 text-[10px] sm:h-10 sm:flex-row sm:gap-1.5 sm:text-xs"
                                 >
-                                    <Upload className="h-3.5 w-3.5 shrink-0" />
+                                    <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-sky-500/15 to-transparent" />
+                                    <Upload className="h-4 w-4 shrink-0" />
                                     <span className="truncate">{L("批量上传", "Bulk")}</span>
                                 </Button>
                             </Link>
                             <Button
                                 variant="outline"
-                                className="h-9 justify-center gap-1 px-1 text-[11px] sm:h-10 sm:text-xs"
+                                className="relative h-12 flex-col gap-0.5 overflow-hidden px-1 text-[10px] sm:h-10 sm:flex-row sm:gap-1.5 sm:text-xs"
                                 title={
                                     isScreenshotSupported()
                                         ? L("抓取屏幕或某个标签页", "Capture the screen or a tab")
@@ -561,24 +568,27 @@ function HomeContent() {
                                     }
                                 }}
                             >
-                                <Monitor className="h-3.5 w-3.5 shrink-0" />
+                                <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-teal-500/15 to-transparent" />
+                                <Monitor className="h-4 w-4 shrink-0" />
                                 <span className="truncate">{L("屏幕截图", "Shot")}</span>
                             </Button>
                             <Link href="/tags">
                                 <Button
                                     variant="outline"
-                                    className="h-9 w-full justify-center gap-1 px-1 text-[11px] sm:h-10 sm:text-xs"
+                                    className="relative h-12 w-full flex-col gap-0.5 overflow-hidden px-1 text-[10px] sm:h-10 sm:flex-row sm:gap-1.5 sm:text-xs"
                                 >
-                                    <Tags className="h-3.5 w-3.5 shrink-0" />
+                                    <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-violet-500/15 to-transparent" />
+                                    <Tags className="h-4 w-4 shrink-0" />
                                     <span className="truncate">{L("标签管理", "Tags")}</span>
                                 </Button>
                             </Link>
                             <Link href="/scan">
                                 <Button
                                     variant="outline"
-                                    className="h-9 w-full justify-center gap-1 px-1 text-[11px] sm:h-10 sm:text-xs"
+                                    className="relative h-12 w-full flex-col gap-0.5 overflow-hidden px-1 text-[10px] sm:h-10 sm:flex-row sm:gap-1.5 sm:text-xs"
                                 >
-                                    <QrCode className="h-3.5 w-3.5 shrink-0" />
+                                    <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-emerald-500/15 to-transparent" />
+                                    <QrCode className="h-4 w-4 shrink-0" />
                                     <span className="truncate">{L("扫二维码", "QR")}</span>
                                 </Button>
                             </Link>
@@ -602,22 +612,29 @@ function HomeContent() {
                             </div>
                             <Link
                                 href="/notebooks"
-                                className="flex flex-col justify-center rounded-lg border bg-card px-3 py-3 transition-colors hover:bg-accent/40"
+                                className="relative flex items-center justify-center gap-2 overflow-hidden rounded-lg border bg-card px-3 py-3 transition-colors hover:bg-accent/40"
                             >
-                                <BookOpen className="mb-1 h-4 w-4 text-muted-foreground" />
-                                <div className="text-sm font-medium">{L("查看题册", "Notebooks")}</div>
+                                <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-amber-500/12 to-transparent" />
+                                <BookOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                <span className="text-sm font-medium">{L("查看题册", "Notebooks")}</span>
                             </Link>
                             <Link
                                 href="/insights/write"
-                                className="flex flex-col justify-center rounded-lg border bg-card px-3 py-3 transition-colors hover:bg-accent/40"
+                                className="relative flex items-center justify-center gap-2 overflow-hidden rounded-lg border bg-card px-3 py-3 transition-colors hover:bg-accent/40"
                             >
-                                <Sprout className="mb-1 h-4 w-4 text-muted-foreground" />
-                                <div className="text-sm font-medium">{L("日积月累", "Notes")}</div>
+                                <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-lime-500/12 to-transparent" />
+                                <Sprout className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                <span className="text-sm font-medium">{L("日积月累", "Notes")}</span>
                             </Link>
                         </div>
 
-                        {/* ④ 12 个标签 —— 图案在上、文字在下 */}
-                        <div className="grid grid-cols-4 gap-2">
+                        {/**
+                         * ④ 12 个标签 —— 【第 2 条】**一个大的虚线框把它们包起来，不是 12 个独立按钮**。
+                         * 里面只有很轻的 hover 底色，没有各自的边框。
+                         * 排列：电脑宽度够 ⇒ **图标在左、文字在右**；手机 ⇒ **图标在上、文字在下**。
+                         */}
+                        <div className="rounded-xl border border-dashed p-2">
+                        <div className="grid grid-cols-4 gap-0.5">
                             {[
                                 { zh: "复练纸", en: "Review sheet", Icon: Layers, href: "/review-volumes?kind=review" },
                                 { zh: "模仿纸", en: "Imitate sheet", Icon: Copy, href: "/review-volumes?kind=imitate" },
@@ -636,22 +653,23 @@ function HomeContent() {
                                     <Link
                                         key={zh}
                                         href={href}
-                                        className="flex flex-col items-center gap-1.5 rounded-lg border bg-card px-1 py-3 transition-colors hover:bg-accent/40"
+                                        className="flex flex-col items-center justify-center gap-1 rounded-md px-1 py-2 text-center transition-colors hover:bg-accent/50 sm:flex-row sm:gap-2"
                                     >
-                                        <Icon className="h-5 w-5 text-muted-foreground" />
-                                        <span className="text-[11px] leading-tight">{L(zh, en)}</span>
+                                        <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                        <span className="text-[10px] leading-tight sm:text-xs">{L(zh, en)}</span>
                                     </Link>
                                 ) : (
                                     <div
                                         key={zh}
-                                        className="flex cursor-not-allowed flex-col items-center gap-1.5 rounded-lg border border-dashed px-1 py-3 opacity-45"
+                                        className="flex cursor-not-allowed flex-col items-center justify-center gap-1 rounded-md px-1 py-2 text-center opacity-40 sm:flex-row sm:gap-2"
                                         title={L("还没做", "Not built yet")}
                                     >
-                                        <Icon className="h-5 w-5" />
-                                        <span className="text-[11px] leading-tight">{L(zh, en)}</span>
+                                        <Icon className="h-4 w-4 shrink-0" />
+                                        <span className="text-[10px] leading-tight sm:text-xs">{L(zh, en)}</span>
                                     </div>
                                 ),
                             )}
+                        </div>
                         </div>
                     </>
                 )}
