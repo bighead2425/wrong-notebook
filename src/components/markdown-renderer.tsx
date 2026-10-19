@@ -92,9 +92,17 @@ export function MarkdownRenderer({ content, className = '' }: MarkdownRendererPr
                     // Obsidian 的 ==高亮==。底色/打印适配统一交给 globals.css
                     // （浅色与深色主题需要不同的半透明度）
                     mark: ({ node, ...props }) => <mark {...props} />,
+                    /**
+                     * 【2026-10-19 手机版面第 1 批】表格**允许横向滚动**（空空拍板第 3 条）。
+                     *
+                     * 外面那层 `overflow-x-auto` 本来就有，但表格是 `min-w-full`：
+                     * 手机上"最小宽度 = 屏宽"，列一多就**把每一列压到 50px**、字挤成竖排。
+                     * 加 `w-max` ⇒ 表格按**内容**撑开，撑不下才让外层滚。
+                     * ⚠️ 只对表格这么做；其他元素仍然不许横向滚（`docs\27` §六-3）。
+                     */
                     table: ({ node, ...props }) => (
                         <div className="overflow-x-auto my-4">
-                            <table className="min-w-full border-collapse border border-border" {...props} />
+                            <table className="w-max min-w-full border-collapse border border-border" {...props} />
                         </div>
                     ),
                     th: ({ node, ...props }) => (

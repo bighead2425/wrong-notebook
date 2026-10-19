@@ -1276,15 +1276,11 @@ export default function ReviewVolumesPage() {
                         {L("已生成的卷都在这里（新卷请到打印预览页组）", "All built volumes live here")}
                     </span>
                     <span className="flex-1" />
-                    <Button
-                        variant="outline"
-                        size="icon"
-                        title={L("打印这一卷（会把卷内每道题的复练纸次数 +1）", "Print this volume")}
-                        disabled={!layoutReady}
-                        onClick={handlePrint}
-                    >
-                        <Printer className="h-4 w-4" />
-                    </Button>
+                    {/* 【2026-10-19 如如 · 手机版面第 1 批】**「打印这一卷」从顶栏搬到右栏**。
+                        理由：它作用的是**右栏那张纸**，站在纸旁边点最顺；
+                        顶栏留出位置给"返回 / 标题 / 左栏开关 / 主页"，手机上一行就不挤了
+                        （他在 `docs\27` 里拍板"折行 + 允许调整电脑端"）。
+                        按钮本体在右边那行（`selectedId && …`）的末尾。 */}
                     <Link
                         href="/"
                         onClick={(e) => {
@@ -1713,6 +1709,18 @@ export default function ReviewVolumesPage() {
                                                 </Button>
                                             </>
                                         )}
+                                        {/* 【2026-10-19 手机版面第 1 批】从顶栏搬过来 —— 见顶栏那段注释。
+                                            带文字版：右栏有空间，而且它本来就该说明"打的是哪一份"。 */}
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            title={L("打印这一卷（会把卷内每道题的复练纸次数 +1）", "Print this volume")}
+                                            disabled={!layoutReady}
+                                            onClick={handlePrint}
+                                        >
+                                            <Printer className="mr-1.5 h-4 w-4" />
+                                            {L("打印这一卷", "Print")}
+                                        </Button>
                                         {/*
                                          * 【2026-10-03 需求第 5 条】【扫码图】：
                                          * 进"扫描这份卷第一页"的预览。**改过版面没保存时不可点** ——

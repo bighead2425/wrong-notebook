@@ -928,7 +928,9 @@ export default function ErrorDetailPage() {
                             </Button>
                         </Link>
                         <h1
-                            className="text-2xl font-bold"
+                            /* 【2026-10-19 手机版面第 1 批】标题分档：手机上 `text-lg`。
+                               24px 的"错题详情"在手机上一行就吃掉小半屏高度（`docs\27` 病根 3）。 */
+                            className="text-lg font-bold sm:text-2xl"
                             /* 【2026-10-10】"错题详情"四个字按从属角色着色：主题深红 / 附题绿
                                （颜色只在 lib/item-link.ts 定；孤题不着色 = 保持原样） */
                             style={{ color: (item.link && linkRoleColor(item.link.role)) || undefined }}

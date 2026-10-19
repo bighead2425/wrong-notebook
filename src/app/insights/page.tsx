@@ -511,7 +511,8 @@ export default function InsightsPage() {
     /**
      * 【2026-10-09】滚到底自动加载下一页（他说的"上拉显示更多"）。
      *
-     * ⚠️ `root` 必须是**列表自己的滚动容器**（`max-h-[62vh] overflow-y-auto` 那个框），
+     * ⚠️ `root` 必须是**列表自己的滚动容器**（`max-h-[62vh] overflow-y-auto` 那个框；
+     *    手机上是 `45vh`），
      *    用默认视口当 root 的话这个框永远"在视口里"，哨兵会被认为一直可见 ⇒ 一进页面全拉下来。
      * ⚠️ 不支持 `IntersectionObserver` 的老浏览器也不会出事：下面的按钮一直都在。
      */
@@ -598,6 +599,19 @@ export default function InsightsPage() {
             return;
         }
         setCurrentId(id);
+        /**
+         * 【2026-10-19 空空拍板第 1 条】**手机上选中一条 ⇒ 自动收起选择区**。
+         *
+         * 他原话："我同意你的建议，先试试看选择区的收起功能如何，如果好用以后坚持，如果不好用再改。"
+         * ⇒ 这是**试运行**，不是定论。要退回"选中后也不收起"，删掉下面这四行即可。
+         *
+         * 桌面端不收：那边左右并排，收起左栏等于把半屏空着（没有收益）。
+         * ⚠️ 用 `matchMedia` 一次性判断当前窄不窄，**不用 state**：这不是要跟着窗口变化
+         *    重渲染的东西，收不收只取决于"点下去那一刻是不是手机"。
+         */
+        if (typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches) {
+            setLeftOpen(false);
+        }
     };
 
     /**
@@ -1215,7 +1229,7 @@ export default function InsightsPage() {
 
                         <div
                             ref={listScrollRef}
-                            className="max-h-[62vh] space-y-1.5 overflow-y-auto rounded-md border p-2"
+                            className="max-h-[45vh] space-y-1.5 overflow-y-auto rounded-md border p-2 md:max-h-[62vh]"
                         >
                             {loading && (
                                 <p className="px-2 py-6 text-center text-sm text-muted-foreground">

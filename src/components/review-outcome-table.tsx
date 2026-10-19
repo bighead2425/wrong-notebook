@@ -158,7 +158,10 @@ export function ReviewOutcomeTable({
         <div className="space-y-2">
             <div className="text-sm font-medium">{L("复习结果", "Review results")}</div>
 
-            <table className="w-full text-xs">
+            {/* 【2026-10-19 手机版面第 1 批】表格允许横滚（空空拍板第 3 条）——
+                现在三列够放，但以后加一列就会挤；先给它一个能滚的壳，不用再改这里。 */}
+            <div className="overflow-x-auto">
+            <table className="w-max min-w-full text-xs">
                 <thead>
                     <tr className="text-left text-muted-foreground">
                         <th className="w-[42%] py-1 font-normal">{L("时间", "Time")}</th>
@@ -236,6 +239,7 @@ export function ReviewOutcomeTable({
                     })}
                 </tbody>
             </table>
+            </div>
 
             {/* 表下面那一行：两个圆互斥 + 「记录」*/}
             <div className="flex items-center gap-2 pt-1">
