@@ -20,10 +20,10 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, Trash2, Loader2, AlertTriangle, Save, Eye, EyeOff, Languages, User, Bot, Shield, RefreshCw, Plus, Zap, CheckCircle2, XCircle, Download, Upload, BarChart3 } from "lucide-react";
+import { Settings, Trash2, Loader2, AlertTriangle, Save, Eye, EyeOff, Languages, User, Bot, Shield, RefreshCw, Plus, Zap, CheckCircle2, XCircle, Download, Upload, BarChart3, LogOut } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useSession, signOut } from "next-auth/react";
 import { UserManagement } from "@/components/admin/user-management";
 import { apiClient } from "@/lib/api-client";
 import { frontendLogger } from "@/lib/frontend-logger";
@@ -1553,6 +1553,22 @@ export function SettingsDialog({
                                 <Info className="h-4 w-4" />
                                 <span>{t.settings?.about?.version || "Version"}: {versionLabel}</span>
                             </div>
+
+                            {/**
+                             * 【2026-10-19 空空第 1 条】**退出登录搬到这里**。
+                             *
+                             * 他原话："退出放入设置的『关于』中。"
+                             * ⚠️ 主页那颗退出按钮已经撤掉了 —— 如果这里也没有，他就**退不出去**。
+                             *    加完这一块要顺手验一遍：点头像 → 关于 → 退出 → 回登录页。
+                             */}
+                            <Button
+                                variant="outline"
+                                className="w-full gap-2 text-destructive hover:text-destructive sm:w-auto"
+                                onClick={() => signOut({ callbackUrl: "/login" })}
+                            >
+                                <LogOut className="h-4 w-4" />
+                                {language === "zh" ? "退出登录" : "Sign out"}
+                            </Button>
 
                             <div className="flex flex-col sm:flex-row flex-wrap justify-center gap-4 w-full sm:w-auto px-4 sm:px-0">
                                 <Button variant="outline" asChild className="gap-2 w-full sm:w-auto">
