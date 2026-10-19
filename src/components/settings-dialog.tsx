@@ -52,10 +52,25 @@ interface ProfileFormState {
     password: string;
 }
 
-export function SettingsDialog() {
+export function SettingsDialog({
+    open: controlledOpen,
+    onOpenChange,
+    hideTrigger = false,
+}: {
+    /**
+     * 【2026-10-19】受控打开 —— 主页改成"点左上角用户名就进设置"（空空第 1 条），
+     * 那个齿轮按钮随之撤掉。不传 `open` 时行为与原来一模一样（自带齿轮、自己管开关）。
+     */
+    open?: boolean;
+    onOpenChange?: (open: boolean) => void;
+    /** 受控时把自带的齿轮按钮藏掉（入口由调用方提供） */
+    hideTrigger?: boolean;
+} = {}) {
     const { data: session } = useSession();
     const { t, language, setLanguage } = useLanguage();
-    const [open, setOpen] = useState(false);
+    const [innerOpen, setInnerOpen] = useState(false);
+    const open = controlledOpen ?? innerOpen;
+    const setOpen = onOpenChange ?? setInnerOpen;
     const dialogContentRef = useRef<HTMLDivElement>(null);
     const [clearingPractice, setClearingPractice] = useState(false);
     const [clearingError, setClearingError] = useState(false);
@@ -673,12 +688,14 @@ export function SettingsDialog() {
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
+            {!hideTrigger && (
             <DialogTrigger asChild>
                 <Button variant="ghost" size="icon" className="rounded-full">
                     <Settings className="h-5 w-5" />
                     <span className="sr-only">{t.settings?.title || "Settings"}</span>
                 </Button>
             </DialogTrigger>
+            )}
             <DialogContent ref={dialogContentRef} className="w-[calc(100vw-2rem)] sm:max-w-[900px] max-h-[85vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle>{t.settings?.title || "Settings"}</DialogTitle>

@@ -9,20 +9,43 @@ import { ImageCropper, type CropRegionsPayload } from "@/components/image-croppe
 import { serializeCropRegions } from "@/lib/crop-regions";
 import { BatchPipeline } from "@/components/batch-pipeline";
 import { ParsedQuestion } from "@/lib/ai";
-import { UserWelcome } from "@/components/user-welcome";
 import { apiClient } from "@/lib/api-client";
 import { AnalyzeResponse, Notebook, AppConfig } from "@/types/api";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { processImageFile } from "@/lib/image-utils";
-import { Upload, BookOpen, LogOut, QrCode, Layers, Sprout, ScanText, LayoutDashboard } from "lucide-react";
+import {
+    Upload,
+    BookOpen,
+    QrCode,
+    Layers,
+    Sprout,
+    ScanText,
+    Settings,
+    Monitor,
+    Tags,
+    Camera,
+    NotebookPen,
+    Printer,
+    Sparkles,
+    ListChecks,
+    BarChart3,
+    MessageSquare,
+    Brain,
+    GraduationCap,
+    LayoutGrid,
+    Copy,
+} from "lucide-react";
 import { SettingsDialog } from "@/components/settings-dialog";
+import { TaskBrief } from "@/components/home/task-brief";
+import { WrongAnswerStats } from "@/components/wrong-answer-stats";
+import { captureScreen, ScreenshotError, isScreenshotSupported } from "@/lib/screenshot";
 /**
  * 【custom-v24】公告通知按钮按用户要求从首页撤下（功能保留，组件文件不动）。
  * 需要恢复时把 import 与 <BroadcastNotification /> 一起放回图右上角工具条即可。
  */
 // import { BroadcastNotification } from "@/components/broadcast-notification";
-import { signOut } from "next-auth/react";
+import { useSession } from "next-auth/react";
 
 import { ProgressFeedback, ProgressStatus } from "@/components/ui/progress-feedback";
 import { frontendLogger } from "@/lib/frontend-logger";
@@ -38,6 +61,43 @@ function HomeContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const initialNotebookId = searchParams.get("notebook");
+
+    /**
+     * 【2026-10-19 空空第 1、2 条】主页顶栏改成"用户名 + 年级学期 + 扫一扫"。
+     * 用户名点开就是设置（齿轮撤掉）；退出搬进设置的「关于」里。
+     */
+    const { data: session } = useSession();
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    /** 年级 / 学期：先作**当前工作上下文**放在顶上，暂记忆在本地（筛选还没接，见 HANDOFF） */
+    const [grade, setGrade] = useState("");
+    const [term, setTerm] = useState("");
+    const L = (zh: string, en: string) => (language === "zh" ? zh : en);
+    const userName = session?.user?.name || session?.user?.email || "User";
+    const userInitial = userName.slice(0, 1).toUpperCase();
+
+    useEffect(() => {
+        /**
+         * 从 localStorage 读上次选的年级/学期。
+         * ⚠️ 只能在挂载后读（服务端没有 localStorage）⇒ 这里必须 `setState` 一次；
+         *    项目的 `react-hooks/set-state-in-effect` 是 error，所以显式豁免并说明理由。
+         */
+        try {
+            const g = localStorage.getItem("home.grade");
+            const tm = localStorage.getItem("home.term");
+            if (g) setGrade(g);
+            if (tm) setTerm(tm);
+        } catch {
+            // 隐私模式下 localStorage 会抛：当没存过
+        }
+    }, []);
+    useEffect(() => {
+        try {
+            localStorage.setItem("home.grade", grade);
+            localStorage.setItem("home.term", term);
+        } catch {
+            // 同上，存不了就算了
+        }
+    }, [grade, term]);
     const [notebooks, setNotebooks] = useState<Notebook[]>([]);
     const [autoSelectedNotebookId, setAutoSelectedNotebookId] = useState<string | null>(null);
 
@@ -379,133 +439,198 @@ function HomeContent() {
                 message={getProgressMessage()}
             />
 
-            <div className="container mx-auto p-4 space-y-8 pb-20">
-                {/* Header Section */}
-                <div className="flex justify-between items-start gap-4">
-                    <UserWelcome />
+            <div className="container mx-auto space-y-4 p-4 pb-20">
+                {/**
+                 * 【2026-10-19 空空第 1、2 条】顶栏：
+                 *   · 左上角 = **用户名**，点它进设置（齿轮撤掉，退出也搬进设置里）
+                 *   · 顶端中间 = **年级 / 学期**
+                 *   · 右侧 = **扫一扫**（单独一个按钮，不再和设置/退出挤成一小撮）
+                 */}
+                <div className="flex flex-wrap items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={() => setSettingsOpen(true)}
+                        className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-left transition-colors hover:bg-accent/40"
+                        title={L("点这里进设置（退出也在里面）", "Settings — logout is inside too")}
+                    >
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">
+                            {userInitial}
+                        </span>
+                        <span className="max-w-[9rem] truncate text-sm font-medium">{userName}</span>
+                        <Settings className="h-3.5 w-3.5 opacity-40" />
+                    </button>
 
-                    <div className="flex items-center gap-2 bg-card p-2 rounded-lg border shadow-sm shrink-0">
-                        {/* #11：主页左上扫描按钮 —— 纸上的二维码扫回来 */}
-                        <Link href="/scan">
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                className="rounded-full text-muted-foreground hover:text-primary"
-                                title={t.app?.scan || "扫一扫"}
-                            >
-                                <QrCode className="h-5 w-5" />
-                            </Button>
-                        </Link>
-                        {/* 【custom-v24】公告通知按钮已按用户要求撤下，功能组件保留备用 */}
-                        {/* <BroadcastNotification /> */}
-                        <SettingsDialog />
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            className="rounded-full text-muted-foreground hover:text-destructive"
-                            onClick={() => signOut({ callbackUrl: '/login' })}
-                            title={t.app?.logout || 'Logout'}
+                    <div className="flex items-center gap-1.5">
+                        <select
+                            value={grade}
+                            onChange={(e) => setGrade(e.target.value)}
+                            className="rounded-md border bg-background px-2 py-1.5 text-xs"
+                            aria-label={L("年级", "Grade")}
                         >
-                            <LogOut className="h-5 w-5" />
+                            <option value="">{L("年级", "Grade")}</option>
+                            {[1, 2, 3, 4, 5, 6].map((n) => (
+                                <option key={n} value={String(n)}>
+                                    {language === "zh" ? `${n}年级` : `G${n}`}
+                                </option>
+                            ))}
+                        </select>
+                        <select
+                            value={term}
+                            onChange={(e) => setTerm(e.target.value)}
+                            className="rounded-md border bg-background px-2 py-1.5 text-xs"
+                            aria-label={L("学期", "Term")}
+                        >
+                            <option value="">{L("学期", "Term")}</option>
+                            <option value="上">{L("上", "1st")}</option>
+                            <option value="下">{L("下", "2nd")}</option>
+                        </select>
+                    </div>
+
+                    <span className="flex-1" />
+
+                    <Link href="/scan">
+                        <Button variant="outline" size="sm">
+                            <QrCode className="h-4 w-4 sm:mr-1.5" />
+                            <span className="hidden sm:inline">{L("扫一扫", "Scan")}</span>
+                        </Button>
+                    </Link>
+                </div>
+
+                <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} hideTrigger />
+
+                {/**
+                 * 【2026-10-19 空空第 3~5 条】主页入口按**他的设计**重排：
+                 *
+                 * ② 四个快捷：批量上传 / 屏幕截图 / 标签管理 / 扫二维码
+                 * ③ 三块：拍摄习题（大，左）+ 查看题册 / 日积月累（右，上下叠）
+                 * ④ 12 个标签（4 列 3 行，图案在上、文字在下）：
+                 *    复练纸 / 模仿纸 / 积累管理 / 积累打印
+                 *    回录分析 / 举一反三 / 当前任务 / 数据图表
+                 *    AI对话 / 分析记忆 / 针对课程 / 全部
+                 *
+                 * ⚠️ 从错题本"添加错题"进来（`?notebook=`）时**整块不显示** ——
+                 *    他是来加题的，不该先看见一屏入口。
+                 * ⚠️ 还没做的四个（举一反三 / AI对话 / 分析记忆 / 针对课程 / 全部）画成**灰态**、
+                 *    不可点，`title` 写"还没做"。**不装成能点的样子**（那比不做更糟）。
+                 */}
+                {initialNotebookId ? (
+                    <div className="flex justify-center">
+                        <Button className="h-11 w-full max-w-md text-sm" onClick={() => setBatchMode(true)}>
+                            <Upload className="mr-2 h-4 w-4 shrink-0" />
+                            <span className="truncate">{t.app.uploadNew}</span>
                         </Button>
                     </div>
-                </div>
-
-                {/* Action Center
-                    【custom-v24】两个改动：
-                    ① 按钮宽度统一 —— 由 flex-wrap 换成 grid。flex-wrap 在放不下时换行，
-                       最后一行不满的按钮会各自拉伸，宽度就对不齐；grid 强制等宽。
-                    ② 「回收箱」入口从这里撤掉 —— 用户要求以后统一从「查看题册」页进。
-
-                    【2026-10-05 他要求】主页固定六个入口，顺序：
-                    批量上传 / 查看题册 / 复练卷页 / 日积月累 / 回录分析 / 总理内阁。
-                    窄屏 2 列（3 行）、宽屏 **3 列**（正好 2 行）—— 6 个按钮排成整行，
-                    不会出现"最后一行只占两格"的空缺。 */}
-                <div className={initialNotebookId ? "flex justify-center mb-6" : "grid grid-cols-2 lg:grid-cols-3 gap-3"}>
-                    <Button
-                        className={`h-11 text-sm shadow-sm hover:shadow-md transition-all ${initialNotebookId ? "w-full max-w-md" : "w-full"}`}
-                        variant={batchMode ? "default" : (step === "upload" ? "default" : "secondary")}
-                        onClick={() => setBatchMode(true)}
-                    >
-                        <Upload className="mr-2 h-4 w-4 shrink-0" />
-                        <span className="truncate">{t.app.uploadNew}</span>
-                    </Button>
-
-                    {!initialNotebookId && (
-                        <>
-                            <Link href="/notebooks">
-                                <Button
-                                    variant="outline"
-                                    className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
-                                >
-                                    <BookOpen className="mr-2 h-4 w-4 shrink-0" />
-                                    <span className="truncate">{t.app.viewNotebook}</span>
+                ) : (
+                    <>
+                        {/* ② 四个快捷 */}
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                            <Button variant="outline" className="h-11 justify-start" onClick={() => setBatchMode(true)}>
+                                <Upload className="mr-2 h-4 w-4 shrink-0" />
+                                <span className="truncate">{L("批量上传", "Bulk upload")}</span>
+                            </Button>
+                            <Button
+                                variant="outline"
+                                className="h-11 justify-start"
+                                title={
+                                    isScreenshotSupported()
+                                        ? L("抓取屏幕或某个标签页", "Capture the screen or a tab")
+                                        : L("这个浏览器不支持屏幕截图", "This browser cannot capture the screen")
+                                }
+                                onClick={async () => {
+                                    try {
+                                        onImageSelect(await captureScreen());
+                                    } catch (e) {
+                                        // 用户点了「取消」不算错，别弹红字
+                                        if (e instanceof ScreenshotError && e.cancelled) return;
+                                        alert((e as Error)?.message || L("截图失败", "Screenshot failed"));
+                                    }
+                                }}
+                            >
+                                <Monitor className="mr-2 h-4 w-4 shrink-0" />
+                                <span className="truncate">{L("屏幕截图", "Screenshot")}</span>
+                            </Button>
+                            <Link href="/tags">
+                                <Button variant="outline" className="h-11 w-full justify-start">
+                                    <Tags className="mr-2 h-4 w-4 shrink-0" />
+                                    <span className="truncate">{L("标签管理", "Tags")}</span>
                                 </Button>
                             </Link>
-
-                            {/* 【2026-10-05 他要求】主页只留六个入口：
-                                批量上传 / 查看题册 / 复练卷页 / 日积月累 / 回录分析 / 总理内阁。
-                                「标签管理」与「统计中心」**搬进总理内阁**（那两个是低频入口，
-                                和"今天该干什么"不是一类事，摆主页会跟主线抢注意力）。 */}
-
-                            {/* 【2026-09-29】他要的「复练卷页」入口：已生成的卷都在那里
-                                （看纸面 / 改留白与图大小 / 更新组卷 / 删除 / 打印）。
-                                新卷不在这里生成 —— 还是去打印预览页组。 */}
-                            <Link href="/review-volumes">
-                                <Button
-                                    variant="outline"
-                                    className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
-                                >
-                                    <Layers className="mr-2 h-4 w-4 shrink-0" />
-                                    <span className="truncate">{t.app?.reviewVolumes || '复练卷页'}</span>
+                            <Link href="/scan">
+                                <Button variant="outline" className="h-11 w-full justify-start">
+                                    <QrCode className="mr-2 h-4 w-4 shrink-0" />
+                                    <span className="truncate">{L("扫二维码", "Scan QR")}</span>
                                 </Button>
                             </Link>
+                        </div>
 
-                            {/* 【2026-10-01 他要求】「日积月累」入口，就放在复练卷页旁边。
-                                那一页是"从错题里攒下来的一句话"，条目按 JLyyyymmddxxx 编号。
-                                【2026-10-13 第 3 条·他改了去向】这个入口现在指向**录入页**
-                                （`/insights/write`）——他原话："在主页点击日积月累，进入日积月累页，
-                                这个页我们要重新设计……一进入日积月累页，就是建立日积月累条目的界面。"
-                                ⇒ 管理页与打印页从那页顶栏的两个按钮进（老路由一个都没动，
-                                   它们被扫码/内阁/错题详情页一串深链用着）。 */}
-                            <Link href="/insights/write">
-                                <Button
-                                    variant="outline"
-                                    className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
-                                >
-                                    <Sprout className="mr-2 h-4 w-4 shrink-0" />
-                                    <span className="truncate">{t.app?.insights || '日积月累'}</span>
-                                </Button>
+                        {/* ③ 拍摄习题（大）+ 查看题册 / 日积月累 */}
+                        <div className="grid grid-cols-3 gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setBatchMode(false)}
+                                className="col-span-2 row-span-2 flex flex-col items-center justify-center gap-1.5 rounded-lg border bg-primary/5 px-3 py-7 transition-colors hover:bg-primary/10"
+                            >
+                                <Camera className="h-7 w-7 text-primary" />
+                                <span className="text-base font-medium">{L("拍摄习题", "Photograph")}</span>
+                                <span className="text-[11px] text-muted-foreground">
+                                    {L("拍照 / 相册 / 拖进来", "Camera · album · drop")}
+                                </span>
+                            </button>
+                            <Link
+                                href="/notebooks"
+                                className="rounded-lg border bg-card px-3 py-3 transition-colors hover:bg-accent/40"
+                            >
+                                <BookOpen className="mb-1 h-4 w-4 text-muted-foreground" />
+                                <div className="text-sm font-medium">{L("查看题册", "Notebooks")}</div>
                             </Link>
+                            <Link
+                                href="/insights/write"
+                                className="rounded-lg border bg-card px-3 py-3 transition-colors hover:bg-accent/40"
+                            >
+                                <Sprout className="mb-1 h-4 w-4 text-muted-foreground" />
+                                <div className="text-sm font-medium">{L("日积月累", "Notes")}</div>
+                            </Link>
+                        </div>
 
-                            {/* 【2026-10-04 他要求】「回录分析」入口：拍深挖纸正面下半部分她手写的分析，
-                                读二维码认出题号 → AI 整理成一条日积月累 → 打印，形成循环。
-                                紧挨日积月累放（同一条链路的两端）。 */}
-                            <Link href="/recover">
-                                <Button
-                                    variant="outline"
-                                    className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
-                                >
-                                    <ScanText className="mr-2 h-4 w-4 shrink-0" />
-                                    <span className="truncate">{t.app?.recover || '回录分析'}</span>
-                                </Button>
-                            </Link>
-
-                            {/* 【2026-10-04 他要求】「总理内阁」：给他自己的控制台 ——
-                                统计总览 + 当前错题本一览 + **任务台**（"今天该干什么"自动排好，
-                                点一下就去做）。他原话："不用再自己思考现在哪个纸、哪个卷是不是该干什么了。" */}
-                            <Link href="/cabinet">
-                                <Button
-                                    variant="outline"
-                                    className="w-full h-11 text-sm shadow-sm hover:shadow-md transition-all border hover:border-primary/50 hover:bg-accent/50"
-                                >
-                                    <LayoutDashboard className="mr-2 h-4 w-4 shrink-0" />
-                                    <span className="truncate">{t.app?.cabinet || '总理内阁'}</span>
-                                </Button>
-                            </Link>
-                        </>
-                    )}
-                </div>
+                        {/* ④ 12 个标签 —— 图案在上、文字在下 */}
+                        <div className="grid grid-cols-4 gap-2">
+                            {[
+                                { zh: "复练纸", en: "Review sheet", Icon: Layers, href: "/review-volumes?kind=review" },
+                                { zh: "模仿纸", en: "Imitate sheet", Icon: Copy, href: "/review-volumes?kind=imitate" },
+                                { zh: "积累管理", en: "Notes · manage", Icon: NotebookPen, href: "/insights" },
+                                { zh: "积累打印", en: "Notes · print", Icon: Printer, href: "/insights/print" },
+                                { zh: "回录分析", en: "Recover", Icon: ScanText, href: "/recover" },
+                                { zh: "举一反三", en: "Similar", Icon: Sparkles, href: null },
+                                { zh: "当前任务", en: "Tasks", Icon: ListChecks, href: "/tasks" },
+                                { zh: "数据图表", en: "Charts", Icon: BarChart3, href: "/stats" },
+                                { zh: "AI对话", en: "AI chat", Icon: MessageSquare, href: null },
+                                { zh: "分析记忆", en: "Memory", Icon: Brain, href: null },
+                                { zh: "针对课程", en: "By course", Icon: GraduationCap, href: null },
+                                { zh: "全部", en: "All", Icon: LayoutGrid, href: null },
+                            ].map(({ zh, en, Icon, href }) =>
+                                href ? (
+                                    <Link
+                                        key={zh}
+                                        href={href}
+                                        className="flex flex-col items-center gap-1.5 rounded-lg border bg-card px-1 py-3 transition-colors hover:bg-accent/40"
+                                    >
+                                        <Icon className="h-5 w-5 text-muted-foreground" />
+                                        <span className="text-[11px] leading-tight">{L(zh, en)}</span>
+                                    </Link>
+                                ) : (
+                                    <div
+                                        key={zh}
+                                        className="flex cursor-not-allowed flex-col items-center gap-1.5 rounded-lg border border-dashed px-1 py-3 opacity-45"
+                                        title={L("还没做", "Not built yet")}
+                                    >
+                                        <Icon className="h-5 w-5" />
+                                        <span className="text-[11px] leading-tight">{L(zh, en)}</span>
+                                    </div>
+                                ),
+                            )}
+                        </div>
+                    </>
+                )}
 
                 {batchMode ? (
                     /* 【custom-v23 · 蓝图 #5/#6/#7】流水线：多张收进来 → 逐张加工 → 批量送 AI → 一道道录入 */
@@ -548,6 +673,26 @@ function HomeContent() {
                             />
                         )}
                     </>
+                )}
+
+                {/**
+                 * 【2026-10-19 空空第 6、7 条】
+                 *   · 任务简报：**手机接在下面、电脑接在右侧**
+                 *   · 图表：**两边都在最下端**
+                 *
+                 * 用一个 grid + order 把两种排法写在一处（不渲染两份，省掉第二次请求）：
+                 *   手机（单列）：任务 → 图表
+                 *   电脑（两列）：任务在第 2 列、图表在第 1 列（即最下那块的主位）
+                 */}
+                {!initialNotebookId && (
+                    <div className="grid gap-3 lg:grid-cols-[1fr_320px]">
+                        <div className="order-1 lg:order-none lg:col-start-2 lg:row-start-1">
+                            <TaskBrief />
+                        </div>
+                        <div className="order-2 lg:order-none lg:col-start-1 lg:row-start-1">
+                            <WrongAnswerStats />
+                        </div>
+                    </div>
                 )}
 
             </div>
