@@ -64,6 +64,7 @@ import {
     House,
     Image as ImageIcon,
     Layers,
+    Link2,
     PanelLeftClose,
     PanelLeftOpen,
     PenLine,
@@ -105,6 +106,11 @@ interface InsightDetail extends InsightRow {
      * ⚠️ 这一条**没有图**时后端给 `true`（与 schema 默认一致）⇒ 前端按 `!== false` 读。
      */
     photoIncludedInPrint?: boolean;
+    /**
+     * 【2026-10-19 第 4 条】扫码链出去的**别的积累**（"参见"）。
+     * 一条可以链多条；只给编号 + 正文（右栏这块地方小）。
+     */
+    links?: { id: string; code: string; content?: string | null }[];
     question: ErrorItem | null;
 }
 
@@ -296,6 +302,11 @@ export default function InsightsPage() {
      *    一个开关还要"按保存才生效"，他会以为开关坏了。
      */
     const [photoIncluded, setPhotoIncluded] = useState(true);
+    /**
+     * 【2026-10-19 第 4 条】这条积累**扫码链出去的**那几条（"参见"）。
+     * 跟详情一起取（`GET /api/insights/[id]`），不在列表里 —— 列表不该背这些。
+     */
+    const [linkedEntries, setLinkedEntries] = useState<{ id: string; code: string; content?: string | null }[]>([]);
     /** 打开这条时**库里的**图片长什么样（脏判断的基准；改了图没保存 ⇒ photo !== loadedPhoto） */
     const [loadedPhoto, setLoadedPhoto] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
@@ -446,6 +457,8 @@ export default function InsightsPage() {
                 setPhoto(d.photo ?? null);
                 /** 【2026-10-13 第 6 条】入版开关跟着这一条走（没图时后端给 true） */
                 setPhotoIncluded(d.photoIncludedInPrint !== false);
+                /** 【2026-10-19 第 4 条】扫码链出去的那几条 */
+                setLinkedEntries(d.links ?? []);
             })
             .catch((error) => console.error(error));
         return () => {
@@ -1276,6 +1289,40 @@ export default function InsightsPage() {
                                         </div>
                                     )}
                                 </div>
+
+                                {/**
+                                 * ④ 【2026-10-19 第 4 条】**参见** —— 扫码时链上的那几条别的积累。
+                                 *
+                                 * 有才显示（没链过就不占版面）。点编号跳过去看那一条 ——
+                                 * 只读展示、这里**不提供编辑**：要改去那条自己的页面上改
+                                 * （与"相关错题"给一个明确的跳转按钮同一个道理）。
+                                 */}
+                                {linkedEntries.length > 0 && (
+                                    <div>
+                                        <div className="mb-2 flex items-center gap-1.5 text-sm font-medium">
+                                            <Link2 className="h-4 w-4" />
+                                            {L('参见', 'See also')}
+                                            <span className="text-xs font-normal text-muted-foreground">
+                                                {L('（扫码链上的）', '(linked by scanning)')}
+                                            </span>
+                                        </div>
+                                        <ul className="space-y-1.5">
+                                            {linkedEntries.map((e) => (
+                                                <li key={e.id} className="rounded-md border px-3 py-2 text-sm">
+                                                    <Link
+                                                        href={`/insights?pick=${encodeURIComponent(e.code)}&noleft=1`}
+                                                        className="font-mono text-xs text-muted-foreground hover:underline"
+                                                    >
+                                                        {e.code}
+                                                    </Link>
+                                                    <p className="mt-0.5 line-clamp-2 text-muted-foreground">
+                                                        {(e.content || '').replace(/\s+/g, ' ').trim() || L('（空）', '(empty)')}
+                                                    </p>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
 
                             </div>
                         )}

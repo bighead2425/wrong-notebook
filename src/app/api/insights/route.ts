@@ -6,7 +6,7 @@ import { getServerSession } from "next-auth";
 import { unauthorized, badRequest, internalError, conflict } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { formatInsightCode, nextInsightSeq } from "@/lib/insight-code";
-import { writePhoto } from "@/lib/insight-photo";
+import { writePhoto, setPhotoPrintIncluded } from "@/lib/insight-photo";
 import { decodeCursor, encodeCursor } from "@/lib/list-cursor";
 // 【2026-10-16】关联题的字段清单（唯一出处；默认不含题图）—— 见该文件头的性能说明
 import { LIST_ITEM_SCALARS } from "@/lib/constants/error-item-list-fields";
@@ -179,6 +179,12 @@ export async function POST(req: Request) {
         const subject = typeof body.subject === 'string' && body.subject ? body.subject : null;
         const content = typeof body.content === 'string' ? body.content : null;
         const photo = typeof body.photo === 'string' && body.photo ? body.photo : body.photo === null ? null : undefined;
+        /**
+         * 【2026-10-19 空空第 3 条】**录入时就能定"入版"**。
+         * 只认显式的 `false`（缺省 = 入版，与 schema 默认一致）——
+         * 老调用方（错题直送 / AI 送）不传这个字段，行为一个字都不变。
+         */
+        const photoIncludedInPrint = body.photoIncludedInPrint === false ? false : undefined;
         const src = typeof body.source === 'string' && body.source ? body.source : null;
         const errorItemNo =
             typeof body.errorItemNo === 'string' && body.errorItemNo.trim()
@@ -201,11 +207,24 @@ export async function POST(req: Request) {
                 where: { userId: user.id, errorItemNo },
             });
             if (existing) {
+                /**
+                 * 【2026-10-19 第 4 条】录入页**扫码链接**进来的题，**绝不许覆盖**已有条目。
+                 *
+                 * 老行为（AI 送 / 直送）是"一题一条 ⇒ 再送一次就覆盖正文"，那是对的：
+                 * 送的是同一道题的新分析。但录入页的语义完全不同 ——
+                 * 她只是"把这条新积累链到那道题上"，覆盖会把那道题**原来那条积累的正文整段抹掉**，
+                 * 而且是**静默**的（界面上只会显示"已保存"）。
+                 * ⇒ 带 `linkQuestion: true` 时，冲突就明确拒绝，让她去那条上改。
+                 */
+                if (body.linkQuestion === true) {
+                    return conflict(`这道题已经有积累了（${existing.code}）。一条积累只能链一道题 —— 去那条上改。`);
+                }
                 const updated = await prisma.insight.update({
                     where: { id: existing.id },
                     data: { content, source: src },
                 });
                 if (photo !== undefined) await writePhoto(updated.id, photo);
+                if (photoIncludedInPrint === false) await setPhotoPrintIncluded(updated.id, false);
                 logger.info({ userId: user.id, code: updated.code }, 'Insight overwritten by question no');
                 return NextResponse.json({ ...updated, replaced: true });
             }
@@ -233,6 +252,33 @@ export async function POST(req: Request) {
             },
         });
         if (photo) await writePhoto(created.id, photo);
+        if (photo && photoIncludedInPrint === false) await setPhotoPrintIncluded(created.id, false);
+
+        /**
+         * 【2026-10-19 空空第 4 条】**扫积累纸建立的那几条"参见"链接**，跟着这一条一起落库。
+         *
+         * 为什么在保存时才建、而不是扫码那一刻就建：
+         *   扫码时这条积累**还不存在**（录入页是"进门就写"，没点保存就没有 id）。
+         *   ⇒ 链接先挂在前端 state 上，保存时随 `linkCodes` 一起提交。
+         *   ⚠️ 这样也顺带解决了"扫了但最后没保存"—— 没保存就没有链接，不会有孤儿。
+         *
+         * 只认 `JL…` 编号（不是内部 id）：与 `errorItemNo` 同一条规矩 ——
+         * 扫码链路里手里只有纸上的编号，编号当钥匙最稳。
+         */
+        const linkCodes = Array.isArray(body.linkCodes)
+            ? [...new Set(body.linkCodes.filter((c): c is string => typeof c === 'string' && !!c.trim()).map((c) => c.trim().toUpperCase()))].slice(0, 20)
+            : [];
+        if (linkCodes.length > 0) {
+            const targets = await prisma.insight.findMany({
+                where: { userId: user.id, code: { in: linkCodes } },
+                select: { id: true },
+            });
+            if (targets.length > 0) {
+                await prisma.insightLink.createMany({
+                    data: targets.map((t) => ({ fromId: created.id, toId: t.id })),
+                });
+            }
+        }
 
         logger.info({ userId: user.id, code: created.code }, 'Insight created');
         return NextResponse.json(created);

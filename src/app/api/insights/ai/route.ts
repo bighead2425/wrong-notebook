@@ -14,6 +14,7 @@ import { getMistakeCategoryLabel } from "@/lib/mistake-category";
  */
 import { generateInsightsPrompt } from "@/lib/ai/prompts";
 import { normalizeInsightMarkdown } from "@/lib/insight-note";
+import { takeSubjectMark } from "@/lib/insight-subject";
 import { getAppConfig } from "@/lib/config";
 
 const logger = createLogger('api:insights:ai');
@@ -136,10 +137,21 @@ export async function POST(req: Request) {
          * 这些在**纸面上**就是破版 ⇒ 由程序统一成 `#### ` 与 `> *AI: …*`。
          * ⚠️ 只改结构、不改内容（内容怎么压缩是模型的事）。
          */
-        const note = normalizeInsightMarkdown(raw);
+        /**
+         * 【2026-10-19 空空第 2 条】**顺手判学科**：模型在末尾多写一行 `[[学科:数学]]`，
+         * 这里取出来、从正文里剥掉（不剥就会被印到纸上）。
+         * ⚠️ 顺序很重要：**先剥标记、再做结构兜底** —— 反过来的话，
+         *    `normalizeInsightMarkdown` 可能把那一行当成正文段落处理。
+         */
+        const marked = takeSubjectMark(raw);
+        const note = normalizeInsightMarkdown(marked.text);
         if (!note) return internalError("AI 没有返回内容，请重试");
 
-        return NextResponse.json({ note });
+        /**
+         * 返回 `subject` 是**归一化后的 key**（`math` 这种），不是中文标签。
+         * 认不出就是 `null` —— 前端据此决定"填上 / 改掉 / 不动"（见 `nextSubjectByAi`）。
+         */
+        return NextResponse.json({ note, subject: marked.subject });
     } catch (error) {
         logger.error({ error }, 'Insight AI note failed');
         return internalError("AI 分析失败");

@@ -20,8 +20,9 @@
  *     等他后续在管理页整理或删除；**列表 / 打印 / 内阁默认都不收草稿**。
  *   · **保存**（`✓`）= 正式内容（`status='final'`）。
  *   两个按钮都**只在"页面上已经有东西"时可点**（他："不是全新页面状态"）。
- *   ⚠️ 暂存之后再改再按保存 ⇒ 走 PATCH 把那条**转正**（不新建第二条，
- *      否则同一次记录会在库里留两份）。
+ *   ⚠️【2026-10-19 改】暂存**存完就清空页面、直接另起一条**（他的原话："暂存就是把内容
+ *      赶快记下来……不需要再问是不是想另起一条了"）。原来那条"暂存后接着写 = 改那条暂存条"
+ *      的路已删 —— 要改草稿去管理页改。
  *
  * ── 【2026-10-18】接上三件"进门就写"要用到的东西 ─────────────────
  *   ① **图片**：DocScanner（拍/相册/去底/漂白）→ ImageCropper（剪/擦/转）→ 缩在编辑框上方，
@@ -46,8 +47,10 @@ import {
     Check,
     ImagePlus,
     Inbox,
+    Link2,
     Loader2,
     Printer,
+    QrCode,
     ScanText,
     Settings2,
     Sparkles,
@@ -59,10 +62,15 @@ import { MdEditor, type MdEditorInstance } from "@/components/md-editor";
 import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
 import { ImageCropper } from "@/components/image-cropper";
 import { ImageZoomViewer } from "@/components/image-zoom-viewer";
+import { QrScanDialog } from "@/components/qr-scan-dialog";
+import { ScanVolumeView } from "@/components/scan-volume-view";
+import { InsightScanView } from "@/components/insight-scan-view";
 import { apiClient } from "@/lib/api-client";
 import { processImageFile } from "@/lib/image-utils";
 import { planInsightSource } from "@/lib/insight-source";
 import { cutInsightCrops, toQuoteBlock } from "@/lib/insight-image";
+import { nextSubjectByAi } from "@/lib/insight-subject";
+import { parsePageCode } from "@/lib/volume-code";
 import type { CropRegions } from "@/lib/crop-regions";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { dayKey } from "@/lib/calendar-grid";
@@ -83,8 +91,6 @@ export default function InsightWritePage() {
 
     /** 编辑器实例（撤销按钮要用；MdEditor 不是 forwardRef，走 `onReady` 回调） */
     const editorRef = useRef<MdEditorInstance | null>(null);
-    /** 这条已经以草稿存过库的 id —— 保存时把它转正，而不是再新建一条 */
-    const [draftId, setDraftId] = useState<string | null>(null);
     const [busy, setBusy] = useState<"draft" | "save" | null>(null);
     const [notice, setNotice] = useState("");
     const [error, setError] = useState("");
@@ -92,11 +98,20 @@ export default function InsightWritePage() {
     /** 配图（data URL）。一条最多一张 —— 与 `InsightPhoto` 的唯一索引同一条规矩 */
     const [photo, setPhoto] = useState<string | null>(null);
     /**
-     * 图**有没有变过**。
-     * ⚠️ 必须单独记：PATCH 每次都带 `photo` 的话，几百 KB 的 data URL 会**每条都重写一遍**
-     *    （服务端 `writePhoto` 是 upsert，写一次就多一次 IO）。只在真改过时才带。
+     * 这张图**要不要印进积累纸**（"入版"）。
+     *
+     * 【2026-10-19 空空第 3 条】录入的时候就要能定：他原话是"在编辑过程中就可以
+     * 指定日积月累的图片到底需不需要入版了，缺省设置为『入版』，点击后变为『不入版』"。
+     * 以前只有管理页能改（事后整理时才想起来），而"这张图只是我自己看的、别印出去"
+     * 这个判断，往往在拍完照那一刻就已经有了。
+     * ⚠️ 关掉**不等于删图**（图还在、编辑区还看得见），只是**这一版纸不排它**。
      */
-    const [photoDirty, setPhotoDirty] = useState(false);
+    const [photoIncluded, setPhotoIncluded] = useState(true);
+    /**
+     * ⚠️【2026-10-19】原来的 `photoDirty`（"图有没有变过"）已删：
+     *    它是给"暂存后接着改那条"的 PATCH 分支用的（怕每次重写几百 KB 的 data URL）。
+     *    暂存即另起之后，这一页只剩 POST 一条路，每次都是新的一条 ⇒ 无所谓"变没变"。
+     */
 
     /** DocScanner 这次是"给这条配一张图"还是"把图上的字抄下来" */
     const scanModeRef = useRef<"photo" | "ocr">("photo");
@@ -124,6 +139,24 @@ export default function InsightWritePage() {
      * 模型整理跑偏的时候，她要能一键退回自己写的样子，而不是靠 Ctrl+Z 碰运气。
      */
     const [undoRaw, setUndoRaw] = useState<string | null>(null);
+
+    /* ── 【2026-10-19 第 4 条】扫码链接 ──────────────────────────────────
+     *
+     * 她要的：在暂存按钮左边点一下扫码 ——
+     *   · 扫**深挖纸**（裸题号）⇒ 直接把这道题链到这条积累上；
+     *   · 扫**复练纸 / 模仿纸**（页二维码）⇒ 摊开那一卷，点某道题 ⇒ 链上；
+     *   · 扫**积累纸**（页二维码）⇒ 摊开那一张，点某条积累 ⇒ 链上（可以链多条）。
+     *
+     * ⚠️ 链接**先挂在前端**，保存时才落库：这一页是"进门就写"，扫码那一刻
+     *    这条积累还没有 id（没点保存）。顺带解决"扫了但最后没保存"的孤儿问题。
+     */
+    const [scanOpen, setScanOpen] = useState(false);
+    /** 扫到卷/积累纸的页二维码 ⇒ 弹层里摊开那一张，等她点 */
+    const [pickedVolume, setPickedVolume] = useState<{ code: string; kind: string } | null>(null);
+    /** 链到的那道题（题号 + 题干开头，只用于界面显示；落库时只存题号） */
+    const [linkedItem, setLinkedItem] = useState<{ no: string; text: string } | null>(null);
+    /** 链到的别的积累（`JL…` 编号 + 开头一段）—— 一条积累可以链多条 */
+    const [linkedInsights, setLinkedInsights] = useState<{ code: string; content: string }[]>([]);
 
     /** 打开就用上次的年级/学科（本地存，不上云） */
     useEffect(() => {
@@ -157,6 +190,82 @@ export default function InsightWritePage() {
     const hasSomething = hasContent || !!photo;
 
     /**
+     * 【2026-10-19 第 4 条】扫到一个码。
+     *
+     * 判断顺序与 `/scan` 页一致（两条路互不干扰）：**先试卷/积累纸的页号，再当题号查**。
+     *   · 页号 ⇒ **不跳转**，在本页弹层里摊开那一张（录入页上还有没保存的正文，跳走就没了）；
+     *   · 题号 ⇒ 查一下这道题，直接链上（他："如果扫到了深挖纸，就直接将这道题链接到这个积累上"）。
+     */
+    const handleQrCode = async (code: string) => {
+        setScanOpen(false);
+        setError("");
+        const page = parsePageCode(code);
+        if (page) {
+            setPickedVolume({ code: page.pageCode, kind: page.kind });
+            return;
+        }
+        try {
+            const res = await apiClient.get<{
+                found: boolean;
+                item?: { id: string; source?: string | null; questionText?: string | null };
+            }>(`/api/scan?no=${encodeURIComponent(code)}`);
+            if (!res.found || !res.item) {
+                setError(L(`没找到这个码对应的题：${code}`, `No question found for ${code}`));
+                return;
+            }
+            const text = (res.item.questionText || "").replace(/\s+/g, " ").trim();
+            setLinkedItem({
+                no: res.item.source || code,
+                text: text.length > 50 ? `${text.slice(0, 50)}…` : text,
+            });
+            setNotice(L(`已链接到这道题：${res.item.source || code}`, `Linked to ${res.item.source || code}`));
+        } catch (e) {
+            console.error(e);
+            setError(L("查询失败，再扫一次试试。", "Lookup failed. Try scanning again."));
+        }
+    };
+
+    /** 卷页里点了某道题的加号 ⇒ 链上（卷页弹层随即关掉） */
+    const linkVolumeItem = (item: { source?: string | null; questionText?: string | null }) => {
+        const text = (item.questionText || "").replace(/\s+/g, " ").trim();
+        setLinkedItem({
+            no: item.source || "",
+            text: text.length > 50 ? `${text.slice(0, 50)}…` : text,
+        });
+        setPickedVolume(null);
+        setNotice(L(`已链接到这道题：${item.source || ""}`, `Linked to ${item.source || ""}`));
+    };
+
+    /**
+     * 积累纸里点了某一条 ⇒ 链上（**可以链多条**，他："链接的积累可以形成多个"）。
+     * ⚠️ 点到的可能就是"她正在写的这一条"（同一条积累又扫到自己那张纸）—— 拦掉，
+     *    自己链自己没有意义，还会在库里留一条自环。
+     */
+    const linkInsight = async (insightCode: string) => {
+        setPickedVolume(null);
+        if (linkedInsights.some((l) => l.code === insightCode)) return;
+        try {
+            const res = await apiClient.get<{ insights?: { code: string; content?: string | null }[] }>(
+                `/api/insights?codes=${encodeURIComponent(insightCode)}`,
+            );
+            const hit = res.insights?.[0];
+            if (!hit) {
+                setError(L(`没找到这条积累：${insightCode}`, `No entry found: ${insightCode}`));
+                return;
+            }
+            const text = (hit.content || "").replace(/\s+/g, " ").trim();
+            setLinkedInsights((prev) => [
+                ...prev,
+                { code: hit.code, content: text.length > 40 ? `${text.slice(0, 40)}…` : text },
+            ]);
+            setNotice(L(`已链接到这条积累：${hit.code}`, `Linked to ${hit.code}`));
+        } catch (e) {
+            console.error(e);
+            setError(L("查询失败，再扫一次试试。", "Lookup failed. Try scanning again."));
+        }
+    };
+
+    /**
      * 写进去。
      * @param status `draft` = 暂存 / `final` = 保存（正式）
      */
@@ -166,56 +275,72 @@ export default function InsightWritePage() {
         setNotice("");
         setError("");
         try {
-            if (draftId) {
-                // 已经在库里（先前暂存过）⇒ 就地改，不新建
-                await apiClient.patch(`/api/insights/${draftId}`, {
-                    content,
-                    status,
+            /**
+             * ⚠️【2026-10-19 空空第 1 条】这一页**只有"新建一条"这一条路**了。
+             *
+             * 原来是"暂存后记住 id，接着写 = 改那条暂存条"（为了不攒重复条）。
+             * 他 2026-10-19 推翻了：
+             *   "暂存就是把内容赶快记下来，但又怕回头忘了要整理什么，这才有了这个功能，
+             *    因此不需要再问是不是想另起一条了。"
+             * ⇒ **暂存 = 存进库里 + 立刻清空页面 + 直接开始下一条**。
+             *
+             * 顺带把"暂存后接着改"那条 PATCH 分支一起删了：那条路现在根本走不到，
+             * 留着只会让下一个人以为"暂存条还能在录入页里接着改"（它其实在管理页改）。
+             */
+            const created = await apiClient.post<{ id?: string; code?: string; replaced?: boolean }>(
+                "/api/insights",
+                {
                     gradeSemester: gradeSemester || null,
                     subject: subject || null,
-                    // 只在图真变过时才带（否则每存一次都重写一遍几百 KB）
-                    ...(photoDirty ? { photo } : {}),
-                });
-                setPhotoDirty(false);
-                if (status === "final") {
-                    setNotice(L("已保存。可以接着写下一条了。", "Saved. Ready for the next one."));
-                    resetForNext();
-                } else {
-                    setNotice(L("已暂存（在管理页里标着「待整理」）。", "Saved as draft (marked in the manage page)."));
-                }
+                    content,
+                    // 有图就一起落库；没有就不传（服务端 `photo` 缺省 = 不动）
+                    ...(photo ? { photo } : {}),
+                    /** 【2026-10-19 第 3 条】"入版"跟着这条一起存 */
+                    ...(photo ? { photoIncludedInPrint: photoIncluded } : {}),
+                    /**
+                     * 【2026-10-19 第 4 条】扫深挖纸/卷页链到的那道题。
+                     * ⚠️ 必须带 `linkQuestion: true` —— 否则服务端会走"一题一条 ⇒ 覆盖"
+                     *    那条老路，把这道题原来那条积累的正文**静默抹掉**。
+                     */
+                    ...(linkedItem ? { errorItemNo: linkedItem.no, linkQuestion: true } : {}),
+                    /** 扫积累纸链到的那几条（一条可以多条） */
+                    ...(linkedInsights.length > 0 ? { linkCodes: linkedInsights.map((l) => l.code) } : {}),
+                    source: "page",
+                    status,
+                    // 日期由**客户端**算（容器跑 UTC，服务端算日子会差一天 —— 项目老规矩）
+                    dateKey: dayKey(new Date()),
+                },
+            );
+            if (status === "draft") {
+                setNotice(L("已暂存（在管理页里标着「待整理」），可以直接记下一条。", "Saved as draft (marked in the manage page). Ready for the next one."));
+                resetForNext();
             } else {
-                const created = await apiClient.post<{ id?: string; code?: string; replaced?: boolean }>(
-                    "/api/insights",
-                    {
-                        gradeSemester: gradeSemester || null,
-                        subject: subject || null,
-                        content,
-                        // 有图就一起落库；没有就不传（服务端 `photo` 缺省 = 不动）
-                        ...(photo ? { photo } : {}),
-                        source: "page",
-                        status,
-                        // 日期由**客户端**算（容器跑 UTC，服务端算日子会差一天 —— 项目老规矩）
-                        dateKey: dayKey(new Date()),
-                    },
+                setNotice(
+                    L(
+                        `已保存${created?.code ? `（${created.code}）` : ""}。可以接着写下一条了。`,
+                        `Saved${created?.code ? ` (${created.code})` : ""}. Ready for the next one.`,
+                    ),
                 );
-                setPhotoDirty(false);
-                if (status === "draft") {
-                    setDraftId(created?.id ?? null);
-                    setNotice(L("已暂存（在管理页里标着「待整理」）。", "Saved as draft."));
-                } else {
-                    setNotice(
-                        L(
-                            `已保存${created?.code ? `（${created.code}）` : ""}。可以接着写下一条了。`,
-                            `Saved${created?.code ? ` (${created.code})` : ""}. Ready for the next one.`,
-                        ),
-                    );
-                    resetForNext();
-                }
+                resetForNext();
             }
             rememberPicks(gradeSemester, subject);
         } catch (e) {
             console.error(e);
-            setError(L("没存上，再试一次。", "Could not save. Try again."));
+            /**
+             * 【2026-10-19 第 4 条】链的那道题**已经有积累了** ⇒ 服务端回 409。
+             * 这句必须说清楚"为什么没存上"—— 否则她会以为软件坏了（内容明明在页面上）。
+             */
+            const status = (e as { status?: number })?.status;
+            const detail = (e as { data?: { error?: string; message?: string } })?.data;
+            if (status === 409) {
+                setError(
+                    detail?.error ||
+                        detail?.message ||
+                        L("这道题已经有积累了，一条积累只能链一道题。", "That question already has an entry."),
+                );
+            } else {
+                setError(L("没存上，再试一次。", "Could not save. Try again."));
+            }
         } finally {
             setBusy(null);
         }
@@ -224,10 +349,13 @@ export default function InsightWritePage() {
     /** 存完一条就清空，**接着写第二条**（这一页存在的意义就是"进门就记"） */
     const resetForNext = () => {
         setContent("");
-        setDraftId(null);
         setPhoto(null);
-        setPhotoDirty(false);
+        /** 下一条默认回到「入版」—— 不重置的话，上一条关了入版，新的一条也跟着关（界面与库不一致） */
+        setPhotoIncluded(true);
         setUndoRaw(null);
+        /** 【2026-10-19 第 4 条】链接是**这一条**的，下一条不能继承 */
+        setLinkedItem(null);
+        setLinkedInsights([]);
         editorRef.current?.setMarkdown("");
     };
 
@@ -262,7 +390,6 @@ export default function InsightWritePage() {
             // 没画框（或只有一张空白图）：整图当附图，不折腾
             if (!regions || regions.boxes.length === 0) {
                 setPhoto(dataUrl);
-                setPhotoDirty(true);
                 setIsCropperOpen(false);
                 return;
             }
@@ -276,7 +403,7 @@ export default function InsightWritePage() {
              */
             if (crops.printed || crops.handwritten) {
                 try {
-                    const res = await apiClient.post<{ printed?: string; handwritten?: string }>(
+                    const res = await apiClient.post<{ printed?: string; handwritten?: string; subject?: string | null }>(
                         "/api/insights/ocr",
                         {
                             ...(crops.printed ? { printed: crops.printed } : {}),
@@ -292,6 +419,8 @@ export default function InsightWritePage() {
                         setContent(next);
                         editorRef.current?.setMarkdown(next);
                     }
+                    /** 【2026-10-19 第 2 条】画框读字这一步也判了学科 —— 只在空着时填（理由同 `runOcr`） */
+                    applyAiSubject(res?.subject, false);
                 } catch (e) {
                     console.error(e);
                     setError(L("字没读出来（图已经存下了），可以照着打。", "Could not read the text (photo saved). You can type it."));
@@ -302,7 +431,6 @@ export default function InsightWritePage() {
             const figure = crops.figure ?? (plan.photoCrop ? null : dataUrl);
             if (figure) {
                 setPhoto(figure);
-                setPhotoDirty(true);
             }
 
             setIsCropperOpen(false);
@@ -319,7 +447,6 @@ export default function InsightWritePage() {
         if (croppingImage) URL.revokeObjectURL(croppingImage);
         setCroppingImage(null);
         setPhoto(null);
-        setPhotoDirty(true); // 「原本有图 → 现在没图」也是一次改动，保存时要让服务端删掉
     };
 
     // ── 拍字识文（OCR）────────────────────────────────────────────
@@ -332,6 +459,29 @@ export default function InsightWritePage() {
      *  ③ 结果落到正文之后**不再自动整理**：抄错了她自己能改，
      *     而"顺手帮我整理"会让她失去"我记的就是我写的"这件事。
      */
+    /** 学科 key → 中文标签（提示语里要用） */
+    const subjectLabel = (key: string) => SUBJECT_OPTIONS.find((s) => s.key === key)?.label ?? key;
+
+    /**
+     * 【2026-10-19 空空第 2 条】把 AI 判出的学科落到界面上。
+     *
+     * @param aiSubject AI 给的 key（认不出就是 null）
+     * @param mayOverwrite `true` = 与已选不一致就**改掉**（整理那一步）；
+     *                     `false` = **只在空着时填**（读字那一步，见 `runOcr` 的说明）
+     *
+     * ⚠️ 定义在 `runOcr` **之前**：`runOcr` 要调它（先声明后使用）。
+     */
+    const applyAiSubject = (aiSubject: string | null | undefined, mayOverwrite: boolean) => {
+        const target = mayOverwrite ? nextSubjectByAi(subject, aiSubject) : (!subject && aiSubject ? nextSubjectByAi("", aiSubject) : null);
+        if (!target) return;
+        setSubject(target);
+        setNotice((prev) =>
+            prev
+                ? L(`${prev}（学科按内容改成了「${subjectLabel(target)}」）`, `${prev} (subject set to ${subjectLabel(target)})`)
+                : L(`学科按内容改成了「${subjectLabel(target)}」`, `Subject set to ${subjectLabel(target)}`),
+        );
+    };
+
     const runOcr = async (blob: Blob) => {
         if (ocrBusy) return;
         setOcrBusy(true);
@@ -339,13 +489,23 @@ export default function InsightWritePage() {
         setNotice("");
         try {
             const dataUrl = await processImageFile(new File([blob], "ocr.jpg", { type: "image/jpeg" }));
-            const res = await apiClient.post<{ text?: string }>("/api/insights/ocr", { image: dataUrl });
+            const res = await apiClient.post<{ text?: string; subject?: string | null }>("/api/insights/ocr", { image: dataUrl });
             const text = (res?.text ?? "").trim();
             if (!text) throw new Error("empty");
             const next = content.trim() ? `${content.trim()}\n\n${text}` : text;
             setContent(next);
             editorRef.current?.setMarkdown(next);
+            /**
+             * 【2026-10-19 第 2 条】**只在学科还空着时填**。
+             *
+             * 为什么读字这一步不覆盖已有学科：它只看到**半张图**（印刷体那一块），
+             * 不足以说"明显不一致"—— 用半张图去改她已经选好的学科，是拿弱证据推翻强证据。
+             * 覆盖留给「整理」那一步（它看到完整正文）。
+             *
+             * ⚠️ 顺序：先写主提示再追加（`applyAiSubject` 用函数式更新读 prev）。
+             */
             setNotice(L("照片上的字已经抄进正文，可以自己改。", "Text pulled into the note — edit as you like."));
+            applyAiSubject(res?.subject, false);
         } catch (e) {
             console.error(e);
             setError(L("没读出字来，换一张清楚点的、正着拍的试试。", "Could not read that photo. Try a clearer, straight-on shot."));
@@ -388,7 +548,7 @@ export default function InsightWritePage() {
         setError("");
         setNotice("");
         try {
-            const res = await apiClient.post<{ note?: string }>("/api/insights/ai", {
+            const res = await apiClient.post<{ note?: string; subject?: string | null }>("/api/insights/ai", {
                 content,
                 subject: subject || null,
             });
@@ -397,7 +557,16 @@ export default function InsightWritePage() {
             setUndoRaw(content);
             setContent(note);
             editorRef.current?.setMarkdown(note);
+            /**
+             * ⚠️ 顺序：先写主提示，再让 `applyAiSubject` 追加 —— 它用的是**函数式更新**
+             *    （`setNotice(prev => …)`），会读到刚写进去的那句；反过来会被覆盖掉。
+             */
             setNotice(L("整理好了，已经填进正文 —— 可以直接改，也可以撤回原样。", "Tidied into the note. Edit it, or restore your original."));
+            /**
+             * 【2026-10-19 第 2 条】**整理这一步可以覆盖已选学科** ——
+             * 它看到的是完整正文（不是半张图），才谈得上"明显不一致"。
+             */
+            applyAiSubject(res?.subject, true);
         } catch (e) {
             console.error(e);
             setError(L("整理没成功，再试一次。", "Could not tidy it. Try again."));
@@ -425,7 +594,7 @@ export default function InsightWritePage() {
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [content, busy, draftId, gradeSemester, subject]);
+    }, [content, busy, gradeSemester, subject, photo, photoIncluded]);
 
     /** 正在写、又直接关页面 ⇒ 拦一下（写下来的东西不能无声丢掉） */
     useEffect(() => {
@@ -482,6 +651,22 @@ export default function InsightWritePage() {
                         </Button>
                     </Link>
                     <span className="flex-1" />
+                    {/**
+                     * 【2026-10-19 第 4 条】扫一扫 —— 摆在暂存左边（他指定的位置）。
+                     * 扫深挖纸 ⇒ 直接链那道题；扫卷/积累纸 ⇒ 本页摊开那张纸，点哪条链哪条。
+                     */}
+                    <Button
+                        variant="outline"
+                        size="icon"
+                        disabled={!!busy}
+                        title={L(
+                            "扫码链接：扫深挖纸的题号，或复练/模仿卷、积累纸的页码",
+                            "Scan to link a question or another entry",
+                        )}
+                        onClick={() => setScanOpen(true)}
+                    >
+                        <QrCode className="h-4 w-4" />
+                    </Button>
                     <Button
                         variant="outline"
                         size="icon"
@@ -606,9 +791,64 @@ export default function InsightWritePage() {
                                 "Attached picture (one per note). Click to enlarge. With an orange box, only that part is kept.",
                             )}
                         </p>
+                        {/**
+                         * 【2026-10-19 第 3 条】「入版」开关 —— 录入的时候就能定这张图印不印。
+                         * 缺省「入版」；点一下变「不入版」（图还在，只是这一版纸不排它）。
+                         * 与"去掉这张图"是两件事：那个是**删图**，这个是**不印**。
+                         */}
+                        <button
+                            type="button"
+                            onClick={() => setPhotoIncluded((v) => !v)}
+                            title={
+                                photoIncluded
+                                    ? L("入版中：组积累纸时会带上这张图（点一下改成不带）", "In print — click to exclude it")
+                                    : L("未入版：组积累纸时不带这张图，图仍在库里（点一下恢复）", "Not printed — the photo is still kept")
+                            }
+                            className={`shrink-0 rounded border px-2 py-1 text-xs hover:bg-accent ${photoIncluded ? "text-emerald-600" : "text-muted-foreground"}`}
+                        >
+                            {photoIncluded ? L("入版 ✓", "In print ✓") : L("不入版", "Not printed")}
+                        </button>
                         <Button variant="ghost" size="icon" onClick={removePhoto} title={L("去掉这张图", "Remove photo")}>
                             <X className="h-4 w-4" />
                         </Button>
+                    </div>
+                )}
+
+                {/* ===== 【2026-10-19 第 4 条】已链接的东西（有才出现）===== */}
+                {(linkedItem || linkedInsights.length > 0) && (
+                    <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 p-2 text-xs">
+                        <span className="flex items-center gap-1 text-muted-foreground">
+                            <Link2 className="h-3.5 w-3.5" />
+                            {L("这条链到了", "Linked to")}
+                        </span>
+                        {linkedItem && (
+                            <span className="inline-flex max-w-full items-center gap-1 rounded border bg-background px-2 py-0.5">
+                                <span className="font-medium">{linkedItem.no}</span>
+                                {linkedItem.text && <span className="truncate text-muted-foreground">{linkedItem.text}</span>}
+                                <button
+                                    type="button"
+                                    className="shrink-0 text-muted-foreground hover:text-destructive"
+                                    title={L("取消这个链接", "Unlink")}
+                                    onClick={() => setLinkedItem(null)}
+                                >
+                                    <X className="h-3 w-3" />
+                                </button>
+                            </span>
+                        )}
+                        {linkedInsights.map((l) => (
+                            <span key={l.code} className="inline-flex max-w-full items-center gap-1 rounded border bg-background px-2 py-0.5">
+                                <span className="font-medium">{l.code}</span>
+                                {l.content && <span className="truncate text-muted-foreground">{l.content}</span>}
+                                <button
+                                    type="button"
+                                    className="shrink-0 text-muted-foreground hover:text-destructive"
+                                    title={L("取消这个链接", "Unlink")}
+                                    onClick={() => setLinkedInsights((prev) => prev.filter((x) => x.code !== l.code))}
+                                >
+                                    <X className="h-3 w-3" />
+                                </button>
+                            </span>
+                        ))}
                     </div>
                 )}
 
@@ -655,37 +895,19 @@ export default function InsightWritePage() {
                             </button>
                         )}
                         {/**
-                         * 【2026-10-13】「另起一条」—— 暂存之后那个**死结**的出口。
+                         * 【2026-10-13】「另起一条」—— **2026-10-19 起这个按钮不需要了**。
                          *
-                         * 暂存会把这一条的 id 记下来（接着写 = 改它，这是对的：不会攒出一堆重复条）。
-                         * 但他要是想"再记一条新的"，原来只有一条路 —— 手动把内容删光；
-                         * 而删光之后按钮变灰、重新写的内容一按保存又会**盖回那条暂存条**，
-                         * 他会以为"写了半天没存上"。⇒ 给一个明确的脱身按钮。
+                         * 原来暂存会记住这条的 id（接着写 = 改它），所以得给一个明确的脱身按钮。
+                         * 空空 2026-10-19 定了："暂存就是把内容赶快记下来……不需要再问是不是想另起一条了。"
+                         * ⇒ 暂存**本身就是**另起一条（存完立刻清空），这条死结从根上没有了。
                          */}
-                        {draftId && !error && (
-                            <button
-                                type="button"
-                                className="shrink-0 rounded border px-2 py-0.5 text-xs hover:bg-accent"
-                                onClick={() => {
-                                    resetForNext();
-                                    setNotice(
-                                        L(
-                                            "已另起一条（刚暂存的那条在「管理」里等着整理）。",
-                                            "Started a new one — the draft is waiting in Manage.",
-                                        ),
-                                    );
-                                }}
-                            >
-                                {L("另起一条", "New one")}
-                            </button>
-                        )}
                     </div>
                 )}
 
                 <p className="text-xs text-muted-foreground">
                     {L(
-                        "提示：暂存 = 先扔进库里等整理（打印与内阁都看不见它）；保存 = 正式内容。Ctrl/⌘ + S 也能保存。「拍字」只留文字，照片本身不留底。",
-                        "Draft = parked in the library (hidden from printing and the cabinet). Save = final. Ctrl/⌘+S works too. “Read” keeps only the text, not the photo.",
+                        "提示：暂存 = 先扔进库里等整理（打印与内阁都看不见它），存完立刻空出这一页、直接记下一条；保存 = 正式内容。Ctrl/⌘ + S 也能保存。「拍字」只留文字，照片本身不留底。",
+                        "Draft = parked in the library (hidden from printing and the cabinet) and the page clears itself for the next note. Save = final. Ctrl/⌘+S works too. “Read” keeps only the text, not the photo.",
                     )}
                 </p>
             </div>
@@ -719,6 +941,38 @@ export default function InsightWritePage() {
                 />
             )}
             <ImageZoomViewer open={isViewerOpen} src={photo} onClose={() => setIsViewerOpen(false)} />
+
+            {/* ===== 【2026-10-19 第 4 条】扫码链接 ===== */}
+            <QrScanDialog open={scanOpen} onClose={() => setScanOpen(false)} onScanned={(code) => void handleQrCode(code)} />
+
+            {/**
+             * 扫到卷 / 积累纸的页二维码 ⇒ **在本页摊开那一张**（不跳走）。
+             *
+             * 为什么不跳 `/scan`：这一页上还有**没保存的正文**，一跳就没了。
+             * 摊开的这两个组件就是 `/scan` 页用的同一个（`ScanVolumeView` / `InsightScanView`），
+             * 点加号/圆圈的回调改成"链上并关掉"，其余一模一样 —— 不另写一套渲染。
+             */}
+            {pickedVolume && (
+                <div className="fixed inset-0 z-50 overflow-auto bg-background">
+                    <div className="mx-auto w-full max-w-6xl p-4 md:p-6">
+                        {pickedVolume.kind === "build" ? (
+                            <InsightScanView
+                                code={pickedVolume.code}
+                                onPickItem={(insightCode) => void linkInsight(insightCode)}
+                                onBack={() => setPickedVolume(null)}
+                                backLabel={L("返回录入", "Back")}
+                            />
+                        ) : (
+                            <ScanVolumeView
+                                code={pickedVolume.code}
+                                onPickItem={(item) => linkVolumeItem(item)}
+                                onBack={() => setPickedVolume(null)}
+                                backLabel={L("返回录入", "Back")}
+                            />
+                        )}
+                    </div>
+                </div>
+            )}
         </main>
     );
 }

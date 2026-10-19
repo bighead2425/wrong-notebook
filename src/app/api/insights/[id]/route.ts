@@ -156,6 +156,18 @@ export async function GET(
         }
 
         const { photo, ...rest } = row;
+
+        /**
+         * 【2026-10-19 空空第 4 条】这条积累**扫码链出去的**那几条（"参见"）。
+         * 只给"编号 + 开头一段"：右栏那块地方小，全文放不下也没必要 ——
+         * 真要看全文，点一下去那一条。
+         */
+        const links = await prisma.insightLink.findMany({
+            where: { fromId: id },
+            orderBy: { createdAt: 'asc' },
+            select: { to: { select: { id: true, code: true, content: true } } },
+        });
+
         return NextResponse.json({
             ...rest,
             photo: photo?.data ?? null,
@@ -165,6 +177,8 @@ export async function GET(
              *    没图时反正排不出来，给 true 才不会让"有没有开关"这件事变得不可预测。
              */
             photoIncludedInPrint: photo?.includedInPrint ?? true,
+            /** 【2026-10-19 第 4 条】扫码链出去的那几条（见上面那段说明） */
+            links: links.map((l) => ({ id: l.to.id, code: l.to.code, content: l.to.content })),
             question,
         });
     } catch (error) {

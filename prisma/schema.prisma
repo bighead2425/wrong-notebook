@@ -747,6 +747,21 @@ model Insight {
   /// 卷里那一行存的是**快照**，所以删掉这条不影响已经印出去的纸（定盘星）。
   volumeItems ReviewVolumeItem[]
 
+  /// 【2026-10-19 空空第 4 条】**扫码建立的"参见"关系**（当前这条 → 被扫到的那条）。
+  ///
+  /// 他原话："如果是扫描的积累纸，则链接的积累可以形成多个，
+  ///          相关逻辑可以参照错题本中主题、附题的管理关系设计。"
+  ///
+  /// ⚠️ 与"同词头自动成组"（`lib/insight-headword.ts`）**是两回事，别合并**：
+  ///   · 同词头 = **确定性**的（标题一样就是一组，主 = 最早那条），不需要落库；
+  ///   · 本关系 = **她扫码时亲手点的**（一次一条，可以多条），必须落库。
+  ///   前者是"词典自己排好的顺序"，后者是"她画的参见线"。
+  ///
+  /// ⚠️ 也**不是** parentId 那套父子树：没有层级、没有"副的副"，
+  ///    就是"这条也值得看那条"。谁先谁后只体现在 `createdAt`，不构成上下级。
+  linksOut InsightLink[] @relation("InsightLinkFrom")
+  linksIn  InsightLink[] @relation("InsightLinkTo")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -783,4 +798,36 @@ model InsightPhoto {
   ///          如果这个按钮开关是关着的……在排版积累纸的时候，这个图片是不跟随进入的。"
   /// ⇒ 默认 **true**（插了图就是要用），关掉=这条只留文字。
   includedInPrint Boolean @default(true)
+}
+
+// 【2026-10-19 空空第 4 条】**积累之间的"参见"链接**（扫码建的那条线）。
+//
+// 场景：她在写一条新的积累，扫了**积累纸**上的页码 ⇒ 屏幕上摊开那张纸 ⇒
+//      她点其中某一条 ⇒ 那条就被链到当前这条上。一条积累可以链**多条**。
+//
+// ⚠️ 为什么单独一张表，而不是在 `Insight` 上加 `parentId`：
+//   ① 这不是父子（没有"上一条/下一条"的层级，也没有"副的副"那种绕的逻辑）；
+//   ② 一条可以链多条、而且将来可能要"双向看"（那条也想知道"谁引用了我"）；
+//   ③ 加字段会让"同词头成组"和"手动链接"两种关系挤在同一个字段上，
+//      以后分不清一条积累到底是被"排"进组的还是被"点"进来的。
+//
+// ⚠️ 两个 `onDelete: Cascade`：删掉任意一端，这条线自己消失 ——
+//    链接是"看一眼"的东西，不该拦住删条目。
+model InsightLink {
+  id String @id @default(cuid())
+
+  /// 谁指向谁：`from` = 当前在写的这条，`to` = 被扫到的那条
+  fromId String
+  from   Insight @relation("InsightLinkFrom", fields: [fromId], references: [id], onDelete: Cascade)
+  toId   String
+  to     Insight @relation("InsightLinkTo", fields: [toId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  /// 同一条线不重复建（连扫两次同一张纸，不该多出两条）
+  @@unique([fromId, toId])
+  /// 列表页按"这条链出去了哪些"查
+  @@index([fromId])
+  /// 将来做"谁引用了我"时按这个查
+  @@index([toId])
 }

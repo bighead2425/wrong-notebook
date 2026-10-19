@@ -5,6 +5,7 @@ import { getServerSession } from "next-auth";
 import { unauthorized, badRequest, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { chatVision } from "@/lib/ai/text-chat";
+import { takeSubjectMark } from "@/lib/insight-subject";
 
 const logger = createLogger('api:insights:ocr');
 
@@ -61,7 +62,14 @@ ${who}
 - 不要解释、不要总结、不要写"以下是图片中的文字"。
 - 不要用代码块或引号把结果包起来。
 
-直接输出抄下来的文字。`;
+【最后一行，给程序读的，不是抄下来的内容】
+抄完之后**另起一行**，原样输出这段内容属于哪个学科：
+[[学科:语文]]
+· 只能从这十个里选一个：数学 / 语文 / 英语 / 物理 / 化学 / 生物 / 政治 / 历史 / 地理 / 其他
+· 看不出是哪一科就写"其他"。
+· 这一行程序会删掉；除了这一行，不要再写任何解释。
+
+直接输出抄下来的文字（以及最后那一行学科标记）。`;
 }
 
 /** 去掉模型很爱包的 ``` 与首尾空白 */
@@ -110,15 +118,32 @@ export async function POST(req: Request) {
                     imageBase64: job.image,
                     timeoutMs: 120000,
                 });
-                return { role: job.role, text: cleanText(raw) };
+                /**
+                 * 【2026-10-19 空空第 2 条】顺手判学科：模型在末尾多写一行 `[[学科:语文]]`，
+                 * 这里取出来、从抄下来的文字里剥掉（不剥就会混进正文）。
+                 */
+                const marked = takeSubjectMark(cleanText(raw));
+                return { role: job.role, text: marked.text, subject: marked.subject };
             }),
         );
 
         const got: Partial<Record<Role, string>> = {};
+        /** 每张图各判了一次学科 —— 合成一个（见下面"取哪个"的说明） */
+        const gotSubject: Partial<Record<Role, string | null>> = {};
         settled.forEach((r, i) => {
-            if (r.status === 'fulfilled') got[jobs[i].role] = r.value.text;
-            else logger.error({ role: jobs[i].role, error: r.reason }, 'Insight OCR job failed');
+            if (r.status === 'fulfilled') {
+                got[jobs[i].role] = r.value.text;
+                gotSubject[jobs[i].role] = r.value.subject;
+            } else logger.error({ role: jobs[i].role, error: r.reason }, 'Insight OCR job failed');
         });
+
+        /**
+         * 学科取哪个：**印刷体优先，其次手写**。
+         * 理由：书上的那一段（印刷体）通常学科特征最明确（"解方程""古诗鉴赏"这种词一看就知道）；
+         * 她手写的那半句往往只是"我明白了"这类，判不出科。
+         * ⚠️ 两个都没判出 ⇒ null（前端只会在学科为空时填，不会乱改）。
+         */
+        const subject = gotSubject.printed ?? gotSubject.handwritten ?? null;
 
         // 双通道：分开返回，正文里"别人的话"和"她的话"才排得开
         if (jobs.some((j) => j.role !== 'whole')) {
@@ -129,12 +154,13 @@ export async function POST(req: Request) {
                 printed: printedText,
                 handwritten: handText,
                 text: [printedText, handText].filter(Boolean).join('\n\n'),
+                subject,
             });
         }
 
         const text = got.whole ?? '';
         if (!text) return internalError("这张图上没读到字，换一张清楚点的试试");
-        return NextResponse.json({ text });
+        return NextResponse.json({ text, subject });
     } catch (error) {
         logger.error({ error }, 'Insight OCR failed');
         return internalError("读图失败，请重试");
