@@ -103,6 +103,18 @@ export default function ScanPage() {
      *    直接拿来 push 就等于开放重定向。
      */
     const [backTo, setBackTo] = useState<string | null>(null);
+    /**
+     * 【2026-10-20 第 3 条】**举一反三模式**（`/scan?practice=1`）
+     *
+     * 他原话："点击了举一反三按钮，就直接进入扫二维码的界面，扫描到深挖纸，
+     *          就是为深挖纸的这一道题进行举一反三……"
+     *
+     * 这个模式下扫到的**裸题号**不进"那道题"的卡，而是**直接进详情页并自动弹出
+     * 举一反三对话框**（详情页读 `?practice=1`）。
+     * 扫到**页二维码**（复练纸/模仿纸）仍然进卷预览 —— 那一支的"加号"要改成举一反三语义，
+     * 还没接（见 HANDOFF 卡点）。
+     */
+    const [practiceMode, setPracticeMode] = useState(false);
     const [linkFromNo, setLinkFromNo] = useState<string>("");
     const [linkFound, setLinkFound] = useState<{
         id: string;
@@ -151,13 +163,24 @@ export default function ScanPage() {
     /** 打开"某道题的错题卡"这一屏 */
     const openCard = useCallback(
         (id: string, source: "main" | "trash", keepVolume = true) => {
+            /**
+             * 【2026-10-20 第 3 条】**举一反三模式**：扫到深挖纸的裸题号，
+             * 不看他那张卡，**直接进详情页并自动弹出举一反三对话框**。
+             * 跳过"看卡"这一步，是因为他从主页点「举一反三」进来，
+             * 目的就是"给这道题出同类题"，不是来翻题的。
+             */
+            if (practiceMode) {
+                stopScan();
+                router.push(`/error-items/${id}?practice=1`);
+                return;
+            }
             stopScan();
             setItemId(id);
             setItemSource(source);
             setView("card");
             syncUrl({ item: id, src: source, vol: keepVolume ? volumeCode : null });
         },
-        [stopScan, syncUrl, volumeCode],
+        [stopScan, syncUrl, volumeCode, practiceMode, router],
     );
 
     /** 打开"复练卷浏览"这一屏 */
@@ -470,6 +493,8 @@ export default function ScanPage() {
         /** 【2026-10-19 第 2 批】`?back=` 只认站内路径（防协议相对 URL 开放重定向） */
         const back = qs.get("back");
         if (back && back.startsWith("/") && !back.startsWith("//")) setBackTo(back);
+        /** 【第 3 条】举一反三模式 */
+        if (qs.get("practice") === "1") setPracticeMode(true);
         /**
          * 【2026-10-19 空空第 2 条】**从错题详情页的「举一反三」直接进关联模式**。
          *

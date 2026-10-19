@@ -465,10 +465,16 @@ function HomeContent() {
                  *   · 右侧 = **扫一扫**（单独一个按钮，不再和设置/退出挤成一小撮）
                  */}
                 <div className="flex flex-wrap items-center gap-2">
+                    {/**
+                     * 【2026-10-20 追加】**用户名不要外面的框**——
+                     * 他原话："把名字放进一个框框里，实在是不好"。
+                     * ⇒ 去掉 `border` 与 `bg-card`，只留一点 hover 反馈（不然看不出可点）。
+                     * 功能不变：点它还是进设置（退出在「关于」里）。
+                     */}
                     <button
                         type="button"
                         onClick={() => setSettingsOpen(true)}
-                        className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-left transition-colors hover:bg-accent/40"
+                        className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/50"
                         title={L("点这里进设置（退出也在里面）", "Settings — logout is inside too")}
                     >
                         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">
@@ -533,26 +539,35 @@ function HomeContent() {
                          * 不再靠 `sm:grid-cols-4` 在窄屏退回两行。
                          * 【第 7 条】「批量上传」不再是页内板块，改为**跳 `/batch` 独立页面**。
                          */}
-                        <div className="grid grid-cols-4 gap-1.5">
-                            {/**
-                             * 【2026-10-19 第 1 条】按钮内**居中**；电脑宽度够 ⇒ 图标在左、文字在右；
-                             * 手机四等分太窄 ⇒ **图标在上、文字在下**（`flex-col` → `sm:flex-row`）。
-                             * 【第 3 条】每个按钮底部加一道**淡色底纹**（`from-*-500/15` 往上渐隐），
-                             * 让它看起来是"一块有颜色的东西"，不是四个白框。
-                             */}
+                        {/**
+                         * ② 四个快捷
+                         *
+                         * 【2026-10-20 第 1 条】**尺寸跟屏幕宽度走**：
+                         *   手机（默认档）—— 他现在满意，一个字不动：`h-12` + 竖排 + `text-[10px]`；
+                         *   `sm`（平板）—— 横排 + 恢复 `text-xs`；
+                         *   `lg`（电脑）—— **再放大一档**：`h-14`，图标 `h-5`，文字 `text-sm`。
+                         *
+                         * 【第 2 条】**换成有设计感的做法**（照他给的参考图）：
+                         *   参考图的语言是"白卡 + 左上标题 + 右下角一个插画/图标"。
+                         *   ⇒ 每个卡：顶部一道彩色细条（区分功能）+ 右下角一个**放大的同款图标水印**
+                         *     （`opacity 10%`、略微旋转、hover 时轻微放大）。
+                         *   比原来那道"从下往上渐隐的色块"干净，也更有"一张小海报"的感觉。
+                         */}
+                        <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
                             <Link href="/batch">
                                 <Button
                                     variant="outline"
-                                    className="relative h-12 w-full flex-col gap-0.5 overflow-hidden px-1 text-[10px] sm:h-10 sm:flex-row sm:gap-1.5 sm:text-xs"
+                                    className="group relative h-14 w-full flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm"
                                 >
-                                    <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-sky-500/15 to-transparent" />
-                                    <Upload className="h-4 w-4 shrink-0" />
+                                    <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-sky-500/60" />
+                                    <Upload aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 h-12 w-12 rotate-12 text-sky-500/10 transition-transform duration-300 group-hover:scale-110 lg:h-16 lg:w-16" />
+                                    <Upload className="h-5 w-5 shrink-0" />
                                     <span className="truncate">{L("批量上传", "Bulk")}</span>
                                 </Button>
                             </Link>
                             <Button
                                 variant="outline"
-                                className="relative h-12 flex-col gap-0.5 overflow-hidden px-1 text-[10px] sm:h-10 sm:flex-row sm:gap-1.5 sm:text-xs"
+                                className="group relative h-14 flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm"
                                 title={
                                     isScreenshotSupported()
                                         ? L("抓取屏幕或某个标签页", "Capture the screen or a tab")
@@ -568,27 +583,30 @@ function HomeContent() {
                                     }
                                 }}
                             >
-                                <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-teal-500/15 to-transparent" />
-                                <Monitor className="h-4 w-4 shrink-0" />
+                                <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-teal-500/60" />
+                                <Monitor aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 h-12 w-12 rotate-12 text-teal-500/10 transition-transform duration-300 group-hover:scale-110 lg:h-16 lg:w-16" />
+                                <Monitor className="h-5 w-5 shrink-0" />
                                 <span className="truncate">{L("屏幕截图", "Shot")}</span>
                             </Button>
                             <Link href="/tags">
                                 <Button
                                     variant="outline"
-                                    className="relative h-12 w-full flex-col gap-0.5 overflow-hidden px-1 text-[10px] sm:h-10 sm:flex-row sm:gap-1.5 sm:text-xs"
+                                    className="group relative h-14 w-full flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm"
                                 >
-                                    <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-violet-500/15 to-transparent" />
-                                    <Tags className="h-4 w-4 shrink-0" />
+                                    <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-violet-500/60" />
+                                    <Tags aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 h-12 w-12 rotate-12 text-violet-500/10 transition-transform duration-300 group-hover:scale-110 lg:h-16 lg:w-16" />
+                                    <Tags className="h-5 w-5 shrink-0" />
                                     <span className="truncate">{L("标签管理", "Tags")}</span>
                                 </Button>
                             </Link>
                             <Link href="/scan">
                                 <Button
                                     variant="outline"
-                                    className="relative h-12 w-full flex-col gap-0.5 overflow-hidden px-1 text-[10px] sm:h-10 sm:flex-row sm:gap-1.5 sm:text-xs"
+                                    className="group relative h-14 w-full flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm"
                                 >
-                                    <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-emerald-500/15 to-transparent" />
-                                    <QrCode className="h-4 w-4 shrink-0" />
+                                    <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-emerald-500/60" />
+                                    <QrCode aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 h-12 w-12 rotate-12 text-emerald-500/10 transition-transform duration-300 group-hover:scale-110 lg:h-16 lg:w-16" />
+                                    <QrCode className="h-5 w-5 shrink-0" />
                                     <span className="truncate">{L("扫二维码", "QR")}</span>
                                 </Button>
                             </Link>
@@ -612,19 +630,21 @@ function HomeContent() {
                             </div>
                             <Link
                                 href="/notebooks"
-                                className="relative flex items-center justify-center gap-2 overflow-hidden rounded-lg border bg-card px-3 py-3 transition-colors hover:bg-accent/40"
+                                className="group relative flex items-center justify-center gap-2 overflow-hidden rounded-lg border bg-card px-3 py-3 transition-colors hover:bg-accent/40 sm:py-4 lg:gap-3 lg:py-5"
                             >
-                                <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-amber-500/12 to-transparent" />
-                                <BookOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                <span className="text-sm font-medium">{L("查看题册", "Notebooks")}</span>
+                                <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-amber-500/60" />
+                                <BookOpen aria-hidden className="pointer-events-none absolute -bottom-4 -right-3 h-16 w-16 rotate-12 text-amber-500/10 transition-transform duration-300 group-hover:scale-110 lg:h-20 lg:w-20" />
+                                <BookOpen className="h-4 w-4 shrink-0 text-muted-foreground lg:h-5 lg:w-5" />
+                                <span className="text-sm font-medium lg:text-base">{L("查看题册", "Notebooks")}</span>
                             </Link>
                             <Link
                                 href="/insights/write"
-                                className="relative flex items-center justify-center gap-2 overflow-hidden rounded-lg border bg-card px-3 py-3 transition-colors hover:bg-accent/40"
+                                className="group relative flex items-center justify-center gap-2 overflow-hidden rounded-lg border bg-card px-3 py-3 transition-colors hover:bg-accent/40 sm:py-4 lg:gap-3 lg:py-5"
                             >
-                                <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-lime-500/12 to-transparent" />
-                                <Sprout className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                <span className="text-sm font-medium">{L("日积月累", "Notes")}</span>
+                                <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-lime-500/60" />
+                                <Sprout aria-hidden className="pointer-events-none absolute -bottom-4 -right-3 h-16 w-16 rotate-12 text-lime-500/10 transition-transform duration-300 group-hover:scale-110 lg:h-20 lg:w-20" />
+                                <Sprout className="h-4 w-4 shrink-0 text-muted-foreground lg:h-5 lg:w-5" />
+                                <span className="text-sm font-medium lg:text-base">{L("日积月累", "Notes")}</span>
                             </Link>
                         </div>
 
@@ -641,7 +661,7 @@ function HomeContent() {
                                 { zh: "积累管理", en: "Notes · manage", Icon: NotebookPen, href: "/insights" },
                                 { zh: "积累打印", en: "Notes · print", Icon: Printer, href: "/insights/print" },
                                 { zh: "回录分析", en: "Recover", Icon: ScanText, href: "/recover" },
-                                { zh: "举一反三", en: "Similar", Icon: Sparkles, href: null },
+                                { zh: "举一反三", en: "Similar", Icon: Sparkles, href: "/scan?practice=1" },
                                 { zh: "当前任务", en: "Tasks", Icon: ListChecks, href: "/tasks" },
                                 { zh: "数据图表", en: "Charts", Icon: BarChart3, href: "/stats" },
                                 { zh: "AI对话", en: "AI chat", Icon: MessageSquare, href: null },
@@ -653,19 +673,19 @@ function HomeContent() {
                                     <Link
                                         key={zh}
                                         href={href}
-                                        className="flex flex-col items-center justify-center gap-1 rounded-md px-1 py-2 text-center transition-colors hover:bg-accent/50 sm:flex-row sm:gap-2"
+                                        className="flex flex-col items-center justify-center gap-1 rounded-md px-1 py-2.5 text-center transition-colors hover:bg-accent/50 sm:flex-row sm:gap-2 lg:gap-3 lg:py-3"
                                     >
-                                        <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                        <span className="text-[10px] leading-tight sm:text-xs">{L(zh, en)}</span>
+                                        <Icon className="h-[18px] w-[18px] shrink-0 text-muted-foreground lg:h-5 lg:w-5" />
+                                        <span className="text-[11px] leading-tight sm:text-xs lg:text-sm">{L(zh, en)}</span>
                                     </Link>
                                 ) : (
                                     <div
                                         key={zh}
-                                        className="flex cursor-not-allowed flex-col items-center justify-center gap-1 rounded-md px-1 py-2 text-center opacity-40 sm:flex-row sm:gap-2"
+                                        className="flex cursor-not-allowed flex-col items-center justify-center gap-1 rounded-md px-1 py-2.5 text-center opacity-40 sm:flex-row sm:gap-2 lg:gap-3 lg:py-3"
                                         title={L("还没做", "Not built yet")}
                                     >
-                                        <Icon className="h-4 w-4 shrink-0" />
-                                        <span className="text-[10px] leading-tight sm:text-xs">{L(zh, en)}</span>
+                                        <Icon className="h-[18px] w-[18px] shrink-0 lg:h-5 lg:w-5" />
+                                        <span className="text-[11px] leading-tight sm:text-xs lg:text-sm">{L(zh, en)}</span>
                                     </div>
                                 ),
                             )}

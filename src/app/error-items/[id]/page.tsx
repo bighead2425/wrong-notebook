@@ -250,6 +250,18 @@ export default function ErrorDetailPage() {
     const [exportState, setExportState] = useState<"idle" | "doing" | "ok" | "err">("idle");
     /** 【2026-10-19 空空第 2 条】右上角「举一反三」现在是一扇门（练习 / 扫码关联 / 拍照新增） */
     const [practiceOpen, setPracticeOpen] = useState(false);
+
+    /**
+     * 【2026-10-20 第 3 条】**从主页「举一反三」扫码进来的**：
+     * `/scan?practice=1` 扫到裸题号会跳到这里并带 `?practice=1` ⇒ 自动弹出对话框。
+     * ⚠️ 只在挂载时读一次 `window.location`（不用 `useSearchParams`，避免把页面拖进
+     *    Suspense 边界 —— 本项目 2026-10-01 正因漏包炸过构建）。
+     * ⚠️ `react-hooks/set-state-in-effect` 是 error：这里必须 setState 一次，显式豁免。
+     */
+    useEffect(() => {
+        const qs = new URLSearchParams(window.location.search);
+        if (qs.get("practice") === "1") setPracticeOpen(true);
+    }, []);
     // 需求六：「AI 重新分析」——用原图重跑 AI，进审核页，确认保存才覆盖
     const [reanalyzeData, setReanalyzeData] = useState<ParsedQuestion | null>(null);
     const [isReanalyzing, setIsReanalyzing] = useState(false);

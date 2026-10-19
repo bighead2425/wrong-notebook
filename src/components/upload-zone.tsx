@@ -224,12 +224,17 @@ export function UploadZone({ onImageSelect, isAnalyzing, onManualInput, compact 
             <div
                 {...getRootProps()}
                 onClick={() => scannerRef.current?.openCamera()}
-                className={`relative flex h-full min-h-[104px] cursor-pointer flex-col items-center justify-center gap-1.5 overflow-hidden rounded-lg border bg-primary/5 px-3 py-6 text-center transition-colors hover:bg-primary/10 ${
-                    isDragActive ? "border-primary bg-primary/10" : "border-border"
+                className={`group relative flex h-full min-h-[104px] cursor-pointer flex-col items-center justify-center gap-1.5 overflow-hidden rounded-lg border border-primary/25 bg-primary/5 px-3 py-6 text-center transition-colors hover:bg-primary/10 ${
+                    isDragActive ? "border-primary bg-primary/10" : ""
                 }`}
             >
-                {/* 【第 3 条】底部一道主色底纹 —— 与上面四个快捷是同一套"有颜色的块" */}
-                <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-primary/15 to-transparent" />
+                {/* 【2026-10-20 第 2 条】与上面四个快捷同一套语言：
+                    顶部主色细条 + 右下角放大的相机水印（原来是"从下往上渐隐"的色块，他说不灵动）。 */}
+                <span aria-hidden className="pointer-events-none absolute inset-x-4 top-0 h-[2px] bg-primary/60" />
+                <Camera
+                    aria-hidden
+                    className="pointer-events-none absolute -bottom-5 -right-4 h-24 w-24 rotate-12 text-primary/10 transition-transform duration-300 group-hover:scale-110 lg:h-28 lg:w-28"
+                />
                 <input {...getInputProps()} />
                 {isAnalyzing ? (
                     <Loader2 className="h-7 w-7 animate-spin text-primary" />
