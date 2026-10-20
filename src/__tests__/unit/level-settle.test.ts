@@ -38,19 +38,19 @@ describe('等级结算 · 间隔表（最近的对错 ⇒ 多少天后再练）'
     it('五档逐个对（空空 2026-10-15 定的那组数）', () => {
         expect(intervalForOutcomes(fresh())).toBe(1); // 没练过
         expect(intervalForOutcomes(wrongs(2))).toBe(1); // 连错 ≥2
-        expect(intervalForOutcomes(wrongs(1))).toBe(4); // 做错 1 次
+        expect(intervalForOutcomes(wrongs(1))).toBe(3); // 做错 1 次
         expect(intervalForOutcomes(rights(1))).toBe(7); // 连对 1
-        expect(intervalForOutcomes(rights(2))).toBe(21); // 连对 2
-        expect(intervalForOutcomes(rights(3))).toBe(49); // 连对 3
+        expect(intervalForOutcomes(rights(2))).toBe(14); // 连对 2
+        expect(intervalForOutcomes(rights(3))).toBe(28); // 连对 3
     });
 
     it('连对 4 次及以上仍按 49 天（表里最长那档）', () => {
-        expect(intervalForOutcomes(rights(4))).toBe(49);
+        expect(intervalForOutcomes(rights(4))).toBe(28);
     });
 
     it('「最近一次错」压过更早的连对 —— 判据只看从最近往前数', () => {
         // 连对 2 次之后又错了一次 ⇒ 是"做错 1 次" ⇒ 4 天
-        expect(intervalForOutcomes(outcomes(['right', 'right', 'wrong'], 'wrong'))).toBe(4);
+        expect(intervalForOutcomes(outcomes(['right', 'right', 'wrong'], 'wrong'))).toBe(3);
     });
 
     it('形状不对/空值 ⇒ 当新题（1 天），不抛异常', () => {
@@ -66,11 +66,13 @@ describe('等级结算 · 阈值表（还剩几天 ⇒ 等级）', () => {
         expect(levelFromCountdown(1, 0)).toBe(5);
         expect(levelFromCountdown(0, 0)).toBe(5);
         expect(levelFromCountdown(2, 0)).toBe(4);
-        expect(levelFromCountdown(4, 0)).toBe(4);
-        expect(levelFromCountdown(5, 0)).toBe(3);
+        /** 【2026-10-21】4 级边界从 4 天收到 **3 天** */
+        expect(levelFromCountdown(3, 0)).toBe(4);
+        expect(levelFromCountdown(4, 0)).toBe(3);
         expect(levelFromCountdown(7, 0)).toBe(3);
+        /** 2 级边界从 21 天收到 **14 天** */
         expect(levelFromCountdown(8, 0)).toBe(2);
-        expect(levelFromCountdown(21, 0)).toBe(2);
+        expect(levelFromCountdown(14, 0)).toBe(2);
     });
 
     it('还剩 49 天（最长间隔）仍是 2 档 —— 不越界、不返回 undefined', () => {
@@ -91,8 +93,8 @@ describe('等级结算 · 阈值表（还剩几天 ⇒ 等级）', () => {
 
 describe('等级结算 · 倒数递减（夹在 0）', () => {
     it('正常递减', () => {
-        expect(advanceCountdown(21, 1)).toBe(20);
-        expect(advanceCountdown(21, 3)).toBe(18);
+        expect(advanceCountdown(14, 1)).toBe(13);
+        expect(advanceCountdown(14, 3)).toBe(11);
     });
 
     it('**夹在 0，不下负数** —— 这是空空 2026-10-15 明确的一条', () => {
@@ -140,7 +142,8 @@ describe('等级结算 · 等级 1 的四个出口', () => {
 
     it('② 练错了 ⇒ 按间隔表回 4 抓紧（重新进入复习流程）', () => {
         const after = planAfterReview(outcomes(['right', 'right', 'right', 'wrong'], 'wrong'));
-        expect(after.levelCountdown).toBe(4);
+        /** 【2026-10-21】4 级的间隔从 4 天改成 **3 天** */
+        expect(after.levelCountdown).toBe(3);
         expect(after.attention).toBe(4);
     });
 
@@ -148,7 +151,7 @@ describe('等级结算 · 等级 1 的四个出口', () => {
         // 连对 3 次：锁 1 档，倒数 49 天
         const start = planAfterReview(rights(3));
         expect(start.attention).toBe(1);
-        expect(start.levelCountdown).toBe(49);
+        expect(start.levelCountdown).toBe(28);
         // 走完 49 天
         const done = advanceCountdown(start.levelCountdown, 49);
         expect(done).toBe(0);
@@ -166,15 +169,15 @@ describe('等级结算 · 记下复习结果时写什么（planAfterReview）', 
     });
 
     it('连对两次 ⇒ 倒数 21、等级 2', () => {
-        expect(planAfterReview(rights(2))).toEqual({ levelCountdown: 21, attention: 2 });
+        expect(planAfterReview(rights(2))).toEqual({ levelCountdown: 14, attention: 2 });
     });
 
     it('连对三次 ⇒ 倒数 49、等级 1（锁）', () => {
-        expect(planAfterReview(rights(3))).toEqual({ levelCountdown: 49, attention: 1 });
+        expect(planAfterReview(rights(3))).toEqual({ levelCountdown: 28, attention: 1 });
     });
 
-    it('做错一次 ⇒ 倒数 4、等级 4', () => {
-        expect(planAfterReview(wrongs(1))).toEqual({ levelCountdown: 4, attention: 4 });
+    it('做错一次 ⇒ 倒数 3、等级 4（2026-10-21：间隔 4 → 3 天）', () => {
+        expect(planAfterReview(wrongs(1))).toEqual({ levelCountdown: 3, attention: 4 });
     });
 
     it('连错两次 ⇒ 倒数 1、等级 5', () => {
@@ -215,8 +218,8 @@ describe('等级结算 · 冻结（三类题不参与结算）', () => {
 });
 
 describe('等级结算 · "已掌握"退回"未掌握"（planAfterUnmaster）', () => {
-    it('回到 **4 抓紧 + 倒数 4 天**（空空 2026-10-15 定的；他先写 7 天后更正为 4）', () => {
-        expect(planAfterUnmaster()).toEqual({ levelCountdown: 4, attention: 4 });
+    it('回到 **4 抓紧 + 倒数 3 天**（2026-10-21 整表改档位后）', () => {
+        expect(planAfterUnmaster()).toEqual({ levelCountdown: 3, attention: 4 });
     });
 
     it('倒数和等级**互相自洽** —— 用刚写下的倒数反算等级，必须等于刚写下的等级', () => {
@@ -235,22 +238,22 @@ describe('等级结算 · planSettlement（幂等 / 只写变了的）', () => {
         id: 'q1',
         reviewOutcomes: rights(2), // 连对 2 ⇒ 间隔 21
         attention: 2,
-        levelCountdown: 21,
+        levelCountdown: 14,
         masteryLevel: 0,
         ...over,
     });
 
-    it('正常推进：倒数 21 走 1 天 ⇒ 20，等级不变（都还在 2 档区间）', () => {
+    it('正常推进：倒数 14 走 1 天 ⇒ 13，等级不变（都还在 2 档区间）', () => {
         const changes = planSettlement([item()], 1);
-        // 21 → 20 变了，所以会写
+        // 14 → 13 变了，所以会写
         expect(changes).toHaveLength(1);
-        expect(changes[0].levelCountdown).toBe(20);
+        expect(changes[0].levelCountdown).toBe(13);
         expect(changes[0].attention).toBe(2);
     });
 
     it('★ **幂等**：漏跑 3 天，一次减 3（不是只减 1）', () => {
-        const changes = planSettlement([item({ levelCountdown: 21 })], 3);
-        expect(changes[0].levelCountdown).toBe(18);
+        const changes = planSettlement([item({ levelCountdown: 14 })], 3);
+        expect(changes[0].levelCountdown).toBe(11);
     });
 
     it('★ 漏跑到过期：倒数 2、漏跑 10 天 ⇒ 夹在 0，等级升到 5', () => {
@@ -259,12 +262,13 @@ describe('等级结算 · planSettlement（幂等 / 只写变了的）', () => {
         expect(changes[0].attention).toBe(5);
     });
 
-    it('跨档时等级会跟着变（倒数 7 → 6 仍是 3 档；走到 4 就进 4 档）', () => {
+    it('跨档时等级会跟着变（倒数 7 → 6 仍是 3 档；走到 3 才进 4 档）', () => {
         const a = planSettlement([item({ levelCountdown: 7, attention: 3 })], 1);
         expect(a[0].attention).toBe(3); // 6 天，还在 ≤7 区间
-        const b = planSettlement([item({ levelCountdown: 7, attention: 3 })], 3);
-        expect(b[0].levelCountdown).toBe(4);
-        expect(b[0].attention).toBe(4); // ≤4 ⇒ 4 档
+        /** 【2026-10-21】4 档的上界从 4 天收到 3 天 ⇒ 要从 7 减 4 天才跨过去 */
+        const b = planSettlement([item({ levelCountdown: 7, attention: 3 })], 4);
+        expect(b[0].levelCountdown).toBe(3);
+        expect(b[0].attention).toBe(4); // ≤3 ⇒ 4 档
     });
 
     it('**没变的题不写库**（省 IO）', () => {
@@ -289,7 +293,7 @@ describe('等级结算 · planSettlement（幂等 / 只写变了的）', () => {
         const changes = planSettlement([item({ levelCountdown: null, attention: 1 })], 5);
         expect(changes).toHaveLength(1);
         expect(changes[0].initialized).toBe(true);
-        expect(changes[0].levelCountdown).toBe(21); // 连对 2 ⇒ 21，不是 21-5
+        expect(changes[0].levelCountdown).toBe(14); // 连对 2 ⇒ 21，不是 21-5
         expect(changes[0].attention).toBe(2);
     });
 
@@ -297,14 +301,14 @@ describe('等级结算 · planSettlement（幂等 / 只写变了的）', () => {
         const changes = planSettlement([item({ levelCountdown: null, attention: 2 })], 1);
         expect(changes).toHaveLength(1);
         expect(changes[0].initialized).toBe(true);
-        expect(changes[0].levelCountdown).toBe(21);
+        expect(changes[0].levelCountdown).toBe(14);
     });
 
     it('★★ 老数据里"等级恰好是 1"的题**也必须能初始化**（不被误判成预掌握）', () => {
         const changes = planSettlement([item({ levelCountdown: null, attention: 1 })], 0);
         expect(changes).toHaveLength(1);
         expect(changes[0].initialized).toBe(true);
-        expect(changes[0].levelCountdown).toBe(21); // 连对 2 ⇒ 21
+        expect(changes[0].levelCountdown).toBe(14); // 连对 2 ⇒ 21
         expect(changes[0].attention).toBe(2); // 按规则重算成 2 档
     });
 

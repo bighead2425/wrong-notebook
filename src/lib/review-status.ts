@@ -82,15 +82,32 @@ export const RETIRE_STREAK = 4;
  * 连对 N 次之后，隔多少天再练一次。
  *
  * 索引 = 连对次数（0 起）：
- *   0 ⇒ 1 天（刚做错 / 还没练过，明天再来）
- *   1 ⇒ 3 天　2 ⇒ 7 天　3 ⇒ 21 天　4 及以上 ⇒ 退休（不再排）
+ *   0 ⇒ 1 天（5 级：新题 / 连错≥2，明天再来）
+ *   1 ⇒ 3 天（4 级：只错过一次）
+ *   2 ⇒ 7 天（3 级：对了一次）
+ *   3 ⇒ 14 天（2 级：连对两次）
+ *   4 ⇒ 28 天（1 级：连对三次 ⇒ 锁定，28 天后再看一眼）
+ *   5 及以上 ⇒ 退休（不再排）
  *
  * ⚠️ 这张表与上面的 `RETIRE_STREAK` 是**同一个设计的两半**：连对到 `RETIRE_STREAK` 就退休
  *    ⇒ 表要覆盖到 `RETIRE_STREAK - 1` 这一档。
- *    【2026-10-14】`RETIRE_STREAK` 从 3 改回 4 ⇒ 本表补上**索引 3 = 21 天**
- *    （正好是文件头注释里原本就写下、但当时用不到的那一档）。改动时两处一起看。
+ *
+ * 【2026-10-21 空空】**整表改过一次，原因是"累加"**：
+ *   旧：1 → 3 → 7 → 21，每次在上一次的基础上再加 ⇒ 一道一路做对的题要排到第 32 天，
+ *       再加上纸上第 4 格 49 天就是第 81 天，"复习"被拖成遥遥无期。
+ *   他的原话："不应该是累加 7 天、21 天、49 天，这个算法有问题。"
+ *   ⇒ 新表是**固定的档位**（1 / 3 / 7 / 14 / 28），每一档独立，不相加：
+ *       5 级 1 天 · 4 级 3 天 · 3 级 7 天 · 2 级 14 天 · 1 级 28 天
+ *   连对 3 次 = 1 级（锁定 28 天）；`RETIRE_STREAK` 随之 4 → 5
+ *   （否则连对三次就直接退休了，那 28 天这一档永远用不上）。
  */
-export const REVIEW_INTERVAL_DAYS: readonly number[] = [1, 3, 7, 21];
+export const LEVEL_INTERVAL_DAYS: Readonly<Record<number, number>> = {
+    5: 1,  // 新题 / 连错 ≥2
+    4: 3,  // 只错过一次（原来 4 天）
+    3: 7,  // 对了一次
+    2: 14, // 连对两次（原来 21 天）
+    1: 28, // 连对三次 ⇒ 锁定（原来 49 天）
+};
 
 export type ReviewState = 'new' | 'due' | 'practicing' | 'retired';
 
@@ -174,15 +191,27 @@ export function reviewStatusOf(outcomes: unknown, today: Date = new Date()): Rev
      *   1 = 退休
      * ⚠️ 单调递减 ⇒ 直接 `ORDER BY urgency DESC` 就是"今天先练哪几道"。
      */
+    /**
+     * 【2026-10-21 空空】**等级改成"五档各管一段"，与间隔表一一对应。**
+     *   5 = 新 / 连错 ≥2      → 1 天
+     *   4 = 只错过一次        → 3 天
+     *   3 = 对了一次          → 7 天
+     *   2 = 连对两次          → 14 天
+     *   1 = 连对三次（锁定）  → 28 天
+     * retired（连对四次）= 已掌握，不排。
+     *
+     * ⚠️ 以前 `practicing` 只分 "≥2 ⇒ 2" 两段，所以"连对三次"和"连对两次"同是 2 级，
+     *    28 天那一档永远走不到。现在把 `rightStreak >= 3` 单独拎出来当 1 级。
+     */
     let urgency: ReviewStatus['urgency'];
     if (state === 'retired') urgency = 1;
-    else if (state === 'practicing') urgency = rightStreak >= 2 ? 2 : 3;
+    else if (state === 'practicing') urgency = rightStreak >= 3 ? 1 : rightStreak === 2 ? 2 : 3;
     else if (state === 'new' || wrongStreak >= 2) urgency = 5;
     else urgency = 4;
 
     /** 建议下次：查上面那张间隔表；退休 = null（不再排） */
-    const offset =
-        state === 'retired' ? null : REVIEW_INTERVAL_DAYS[Math.min(rightStreak, REVIEW_INTERVAL_DAYS.length - 1)];
+    /** 退休 = null（不再排）；其余按**等级**查表（不是按连对次数 —— 5 级和 4 级的连对次数都是 0，区分不开） */
+    const offset = state === 'retired' ? null : LEVEL_INTERVAL_DAYS[urgency] ?? 1;
 
     return {
         state,

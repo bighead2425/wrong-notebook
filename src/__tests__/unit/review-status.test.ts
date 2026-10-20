@@ -34,13 +34,13 @@ describe('reviewStatusOf —— 状态、连对、紧迫度、下次该什么时
         expect(s.evidenceCount).toBe(0);
     });
 
-    it('★ 做错一次 ⇒ 要练 / 紧迫 4 / 明天（连对清零）', () => {
+    it('★ 做错一次 ⇒ 要练 / 紧迫 4 / **3 天**后再练（2026-10-21 改：4 级原 4 天 → 3 天）', () => {
         const s = reviewStatusOf(make([null, null, null], 'wrong'), TODAY);
         expect(s.state).toBe('due');
         expect(s.wrongStreak).toBe(1);
         expect(s.rightStreak).toBe(0);
         expect(s.urgency).toBe(4);
-        expect(s.nextDueKey).toBe('2026-10-14');
+        expect(s.nextDueKey).toBe('2026-10-16');
     });
 
     it('★ 连着错两次以上 ⇒ 紧迫升到 5（不是偶然，要格外注意）', () => {
@@ -61,27 +61,27 @@ describe('reviewStatusOf —— 状态、连对、紧迫度、下次该什么时
         expect(s.urgency).toBe(4);
     });
 
-    it('★ 连对 1 次 ⇒ 复练中 / 紧迫 3 / 3 天后再练', () => {
+    it('★ 连对 1 次 ⇒ 复练中 / 紧迫 3 / **7 天**后再练（3 级）', () => {
         const s = reviewStatusOf(make([null, null, null], 'right'), TODAY);
         expect(s.state).toBe('practicing');
         expect(s.rightStreak).toBe(1);
         expect(s.urgency).toBe(3);
-        expect(s.nextDueKey).toBe('2026-10-16'); // +3
+        expect(s.nextDueKey).toBe('2026-10-20'); // +7
     });
 
-    it('★ 连对 2 次 ⇒ 复练中 / 紧迫 2 / 7 天后再练', () => {
+    it('★ 连对 2 次 ⇒ 复练中 / 紧迫 2 / **14 天**后再练（2 级，原 21 天）', () => {
         const s = reviewStatusOf(make(['right', 'right', null], 'right'), TODAY);
         expect(s.state).toBe('practicing');
         expect(s.rightStreak).toBe(2);
         expect(s.urgency).toBe(2);
-        expect(s.nextDueKey).toBe('2026-10-20'); // +7
+        expect(s.nextDueKey).toBe('2026-10-27'); // +14
     });
 
-    it('★ 连对 3 次 ⇒ 仍在复练中 / 21 天后再练（新补的那一档，2026-10-14）', () => {
+    it('★ 连对 3 次 ⇒ **1 级（锁定）** / **28 天**后再练（2026-10-21 新增这一档，原 49 天）', () => {
         const s = reviewStatusOf(make(['right', 'right', 'right', null], 'right'), TODAY);
         expect(s.state).toBe('practicing');
         expect(s.rightStreak).toBe(3);
-        expect(s.nextDueKey).toBe('2026-11-03'); // +21
+        expect(s.nextDueKey).toBe('2026-11-10'); // +28
     });
 
     it(`★ 连对 ${RETIRE_STREAK} 次（计划内四格全对）⇒ 退休、不再排进复练`, () => {
