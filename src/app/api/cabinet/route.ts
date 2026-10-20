@@ -140,7 +140,7 @@ export async function GET(req: Request) {
                     items: {
                         select: {
                             markState: true,
-                            errorItem: { select: { userId: true } },
+                            errorItem: { select: { userId: true, deletedAt: true, masteryLevel: true } },
                         },
                     },
                 },

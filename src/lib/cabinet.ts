@@ -119,7 +119,16 @@ export interface CabinetVolume {
     emojiMark?: string | null;
     createdAt: Date | string;
     /** 卷内每一行的标记态：null = 还没标（≈ 还没回录这一行） */
-    items: { markState: string | null }[];
+    items: {
+        markState: string | null;
+        /**
+         * 【2026-10-20 空空】那一行对应的题。要它来判断"**这一行还标得了吗**"：
+         *   · `deletedAt` 非空 ⇒ 题已删，**永远标不了**
+         *   · `masteryLevel === 2` ⇒ 已掌握，**不必再标**
+         * 这两种都不该算进"还有 X 行没标"（详见 `pendingRecoverVolumes`）。
+         */
+        errorItem?: { deletedAt?: Date | string | null; masteryLevel?: number | null } | null;
+    }[];
 }
 
 /* ============================ 选项与常量 ============================ */
@@ -384,7 +393,21 @@ export function pendingRecoverVolumes(
         const days = daysBetweenKeys(dayKey(created), today);
         if (days < options.recoverMinDays) continue;
 
-        const unrecoveredCount = v.items.filter((it) => !it.markState).length;
+        /**
+         * 【2026-10-20 空空】"还有 X 行没标"**只数还标得了的行**。
+         *
+         * 他原来的疑问："已掌握的题还用计数吗？已删除的题都没办法标了，还用计数吗？"
+         * 两种都**不该算**：
+         *   · **已删除**：那一行点进去是 404，永远标不掉 ⇒ 这份卷会**永远卡在待回录里**
+         *     （这是真 bug，不是口味问题）。
+         *   · **已掌握**：她不用再练这道题了，标了对错也不会改变什么。
+         *
+         * ⚠️ 判据要跟"卷预览里点得动的那几行"对齐 —— 别一边说"还有 3 行"，另一边只画得出 2 个灰圈。
+         */
+        const canStillMark = (it: CabinetVolume["items"][number]) =>
+            !it.errorItem?.deletedAt && (it.errorItem?.masteryLevel ?? 0) < 2;
+
+        const unrecoveredCount = v.items.filter((it) => !it.markState && canStillMark(it)).length;
         if (unrecoveredCount === 0) continue;
 
         out.push({ volume: v, unrecoveredCount, daysSinceCreated: days });
