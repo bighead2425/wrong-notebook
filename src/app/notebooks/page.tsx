@@ -413,7 +413,7 @@ export default function NotebooksPage() {
 
     return (
         <main className="min-h-screen p-4 md:p-8 bg-background">
-            <div className="max-w-6xl mx-auto space-y-8">
+            <div className="mx-auto max-w-7xl space-y-8">
                 <div className="flex items-center gap-4">
                     <BackButton fallbackUrl="/" />
                     {/* 那句"按科目分类管理你的错题"已按他的要求去掉（2026-09-28）——

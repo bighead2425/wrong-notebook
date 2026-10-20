@@ -466,7 +466,7 @@ export interface CabinetTasks {
         label: string;
         overdueDays: number;
     }>;
-    pendingRecover: CabinetTask<{ id: string; source: string | null; daysSincePrint: number; notebookId?: string | null }>;
+    pendingRecover: CabinetTask<{ id: string; source: string | null; daysSincePrint: number; notebookId?: string | null; emojiMark?: string | null }>;
     pendingRecoverVolumes: CabinetTask<{ id: string; volumeNo: string; emojiMark?: string | null; unrecoveredCount: number; daysSinceCreated: number }> & {
         volumeIds: string[];
     };
@@ -594,6 +594,8 @@ export function buildCabinetTasks(input: {
             items: recover.map((r) => ({
                 id: r.question.id,
                 source: r.question.source,
+                /** 【2026-10-20 如如】深挖纸上印的 emoji —— 回录页靠它找纸（漏了这行就全是 📄） */
+                emojiMark: r.question.emojiMark ?? null,
                 daysSincePrint: r.daysSincePrint,
                 notebookId: r.question.notebookId,
             })),

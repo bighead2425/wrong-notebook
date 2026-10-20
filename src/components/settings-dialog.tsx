@@ -978,7 +978,7 @@ export function SettingsDialog({
                                                     size="sm"
                                                     onClick={addOpenAIInstance}
                                                     disabled={(config.openai?.instances?.length || 0) >= MAX_OPENAI_INSTANCES}
-                                                    className="h-7 px-2 text-xs"
+                                                    className="h-9 px-2 text-xs sm:h-7 sm:px-2"
                                                 >
                                                     <Plus className="h-3 w-3 mr-1" />
                                                     {t.settings?.ai?.addInstance || "Add"}

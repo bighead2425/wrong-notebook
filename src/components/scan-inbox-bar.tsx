@@ -783,31 +783,31 @@ export function ScanInboxBar({
                             </span>
                         )}
                         <div className="ml-auto flex items-center gap-1.5">
-                            <Button variant="outline" size="sm" className="h-7 px-2 text-xs"
+                            <Button variant="outline" size="sm" className="h-9 px-2 text-xs sm:h-7 sm:px-2"
                                 disabled={disabled}
                                 onClick={() => setSelected(new Set(files.map(f => f.name)))}>
                                 {s.selectAll || "全选"}
                             </Button>
-                            <Button variant="outline" size="sm" className="h-7 px-2 text-xs"
+                            <Button variant="outline" size="sm" className="h-9 px-2 text-xs sm:h-7 sm:px-2"
                                 disabled={disabled}
                                 onClick={() => setSelected(new Set(newFiles.map(f => f.name)))}>
                                 {s.selectNew || "只看新的"}
                             </Button>
                             {/* 「只看已导入的」= 清理快捷键：照片越攒越多时，
                                 一键把导过的旧照片全勾上、然后删掉清场 */}
-                            <Button variant="outline" size="sm" className="h-7 px-2 text-xs"
+                            <Button variant="outline" size="sm" className="h-9 px-2 text-xs sm:h-7 sm:px-2"
                                 disabled={disabled}
                                 onClick={() => setSelected(new Set(
                                     files.filter(f => f.imported).map(f => f.name),
                                 ))}>
                                 {s.selectImported || "只看已导入的"}
                             </Button>
-                            <Button variant="outline" size="sm" className="h-7 px-2 text-xs"
+                            <Button variant="outline" size="sm" className="h-9 px-2 text-xs sm:h-7 sm:px-2"
                                 disabled={disabled || selected.size === 0}
                                 onClick={() => setSelected(new Set())}>
                                 {s.selectClear || "清除"}
                             </Button>
-                            <Button variant="outline" size="sm" className="h-7 px-2 text-xs"
+                            <Button variant="outline" size="sm" className="h-9 px-2 text-xs sm:h-7 sm:px-2"
                                 disabled={disabled} onClick={load}>
                                 <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
                             </Button>

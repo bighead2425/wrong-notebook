@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { unauthorized, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { ensureErrorItemEmojiMarks } from "@/lib/emoji-mark-store";
 import { maybeSettleDaily, normalizeTodayKey } from "@/lib/daily-settle";
 import { subjectLabel } from "@/lib/notebook-fields";
 import { normalizeManageType } from "@/lib/manage-type";
@@ -261,6 +262,32 @@ export async function GET(req: Request) {
         for (const it of items) {
             const subj = (it.notebookId && notebookSubject.get(it.notebookId)) || "other";
             subjectCount.set(subj, (subjectCount.get(subj) ?? 0) + 1);
+        }
+
+        /**
+         * 【2026-10-20 如如】**给"待回录的题"补上深挖纸 emoji**（惰性，只补空的）。
+         *
+         * 他的问题："回录页下面所有题号前面的 emoji 都一样"（全是 📄 兜底）。
+         * 真因有两层：
+         *   ① `tasks.pendingRecover.items` 的映射漏了 `emojiMark`（已补）；
+         *   ② 更早就打印过的题，`ErrorItem.emojiMark` 本来可能就是空的 ——
+         *      那个字段是**打印预览页**打开时惰性生成的，不是打印时批量回填的。
+         * ⇒ 在这里兜一次底：谁空就补谁。**只对待回录的这几道**（通常个位数），
+         *   不会给整库跑回填，也不会每次加载都写（补过就有值了）。
+         */
+        const missingEmoji = (tasks?.pendingRecover?.items ?? [])
+            .filter((it) => !it.emojiMark)
+            .map((it) => it.id);
+        if (missingEmoji.length > 0) {
+            try {
+                const marks = await ensureErrorItemEmojiMarks(userId, missingEmoji);
+                for (const it of tasks.pendingRecover.items) {
+                    if (!it.emojiMark && marks[it.id]) it.emojiMark = marks[it.id];
+                }
+            } catch (e) {
+                // 补不上不影响回录流程（前端会退化成 📄），别让整页挂掉
+                logger.warn({ error: e }, "backfill deep-sheet emoji failed (ignored)");
+            }
         }
 
         return NextResponse.json({

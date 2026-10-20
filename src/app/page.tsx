@@ -29,6 +29,7 @@ import {
     Sparkles,
     ListChecks,
     BarChart3,
+    ChevronDown,
     MessageSquare,
     Brain,
     GraduationCap,
@@ -69,6 +70,8 @@ function HomeContent() {
      */
     const { data: session } = useSession();
     const [settingsOpen, setSettingsOpen] = useState(false);
+    /** 【2026-10-20 美化】统计总览默认收起 —— 首页先给"今天该干什么"，图表想看再点开 */
+    const [statsOpen, setStatsOpen] = useState(false);
     /**
      * 【2026-10-19 空空第 1 条】**年级 / 学期合成一个下拉**（他给了下拉截图与选项列表：
      * 一年级上 / 一年级下 / … / 六年级下）。
@@ -561,7 +564,7 @@ function HomeContent() {
                                     className="group relative h-14 w-full flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm bg-sky-50 hover:bg-sky-100 dark:bg-sky-950/40 dark:hover:bg-sky-950/60"
                                 >
                                     <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-sky-500/60" />
-                                    <Upload aria-hidden className="pointer-events-none absolute -bottom-2 -right-2 h-16 w-16 rotate-12 text-sky-500/30 transition-transform duration-300 group-hover:scale-110 lg:h-24 lg:w-24" />
+                                    <Upload aria-hidden className="pointer-events-none absolute right-2 top-1/2 hidden h-9 w-9 -translate-y-1/2 text-sky-500/30 transition-transform duration-300 group-hover:scale-110 sm:block" />
                                     <Upload className="h-5 w-5 shrink-0" />
                                     <span className="truncate">{L("批量上传", "Bulk")}</span>
                                 </Button>
@@ -585,7 +588,7 @@ function HomeContent() {
                                 }}
                             >
                                 <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-teal-500/60" />
-                                <Monitor aria-hidden className="pointer-events-none absolute -bottom-2 -right-2 h-16 w-16 rotate-12 text-teal-500/30 transition-transform duration-300 group-hover:scale-110 lg:h-24 lg:w-24" />
+                                <Monitor aria-hidden className="pointer-events-none absolute right-2 top-1/2 hidden h-9 w-9 -translate-y-1/2 text-teal-500/30 transition-transform duration-300 group-hover:scale-110 sm:block" />
                                 <Monitor className="h-5 w-5 shrink-0" />
                                 <span className="truncate">{L("屏幕截图", "Shot")}</span>
                             </Button>
@@ -595,7 +598,7 @@ function HomeContent() {
                                     className="group relative h-14 w-full flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm bg-violet-50 hover:bg-violet-100 dark:bg-violet-950/40 dark:hover:bg-violet-950/60"
                                 >
                                     <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-violet-500/60" />
-                                    <Tags aria-hidden className="pointer-events-none absolute -bottom-2 -right-2 h-16 w-16 rotate-12 text-violet-500/30 transition-transform duration-300 group-hover:scale-110 lg:h-24 lg:w-24" />
+                                    <Tags aria-hidden className="pointer-events-none absolute right-2 top-1/2 hidden h-9 w-9 -translate-y-1/2 text-violet-500/30 transition-transform duration-300 group-hover:scale-110 sm:block" />
                                     <Tags className="h-5 w-5 shrink-0" />
                                     <span className="truncate">{L("标签管理", "Tags")}</span>
                                 </Button>
@@ -606,7 +609,7 @@ function HomeContent() {
                                     className="group relative h-14 w-full flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-950/60"
                                 >
                                     <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-emerald-500/60" />
-                                    <QrCode aria-hidden className="pointer-events-none absolute -bottom-2 -right-2 h-16 w-16 rotate-12 text-emerald-500/30 transition-transform duration-300 group-hover:scale-110 lg:h-24 lg:w-24" />
+                                    <QrCode aria-hidden className="pointer-events-none absolute right-2 top-1/2 hidden h-9 w-9 -translate-y-1/2 text-emerald-500/30 transition-transform duration-300 group-hover:scale-110 sm:block" />
                                     <QrCode className="h-5 w-5 shrink-0" />
                                     <span className="truncate">{L("扫二维码", "QR")}</span>
                                 </Button>
@@ -634,7 +637,7 @@ function HomeContent() {
                                 className="group relative flex items-center justify-center gap-2 overflow-hidden rounded-lg border px-3 py-3 transition-colors hover:bg-accent/40 sm:py-4 lg:gap-3 lg:py-5 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-950/60"
                             >
                                 <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-amber-500/60" />
-                                <BookOpen aria-hidden className="pointer-events-none absolute -bottom-4 -right-3 h-16 w-16 rotate-12 text-amber-500/20 transition-transform duration-300 group-hover:scale-110 lg:h-20 lg:w-20" />
+                                <BookOpen aria-hidden className="pointer-events-none absolute right-2 top-1/2 hidden h-9 w-9 -translate-y-1/2 text-amber-500/30 transition-transform duration-300 group-hover:scale-110 sm:block" />
                                 <BookOpen className="h-4 w-4 shrink-0 text-muted-foreground lg:h-5 lg:w-5" />
                                 <span className="text-sm font-medium lg:text-base">{L("查看题册", "Notebooks")}</span>
                             </Link>
@@ -643,7 +646,7 @@ function HomeContent() {
                                 className="group relative flex items-center justify-center gap-2 overflow-hidden rounded-lg border px-3 py-3 transition-colors hover:bg-accent/40 sm:py-4 lg:gap-3 lg:py-5 bg-lime-50 hover:bg-lime-100 dark:bg-lime-950/40 dark:hover:bg-lime-950/60"
                             >
                                 <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-lime-500/60" />
-                                <Sprout aria-hidden className="pointer-events-none absolute -bottom-4 -right-3 h-16 w-16 rotate-12 text-lime-500/20 transition-transform duration-300 group-hover:scale-110 lg:h-20 lg:w-20" />
+                                <Sprout aria-hidden className="pointer-events-none absolute right-2 top-1/2 hidden h-9 w-9 -translate-y-1/2 text-lime-500/30 transition-transform duration-300 group-hover:scale-110 sm:block" />
                                 <Sprout className="h-4 w-4 shrink-0 text-muted-foreground lg:h-5 lg:w-5" />
                                 <span className="text-sm font-medium lg:text-base">{L("日积月累", "Notes")}</span>
                             </Link>
@@ -773,7 +776,35 @@ function HomeContent() {
                          */}
                         <div className="order-2 space-y-3 lg:order-none lg:col-start-1 lg:row-start-1">
                             <NotebookOverview />
-                            <WrongAnswerStats />
+                            {/**
+                             * 【2026-10-20 美化】**统计总览默认收起**。
+                             * 首页被这一大块撑得很长，而"今天该干什么 + 我有几本"才是每天要看的。
+                             * 收起来只留一行标题，想看再点开。
+                             */}
+                            <div className="overflow-hidden rounded-lg border bg-card">
+                                <button
+                                    type="button"
+                                    onClick={() => setStatsOpen((v) => !v)}
+                                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-accent/40"
+                                >
+                                    <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                                    <span className="text-sm font-medium">{L("数据图表", "Charts")}</span>
+                                    <span className="hidden text-[11px] text-muted-foreground sm:inline">
+                                        {L("错题量 · 学科分布 · 掌握情况", "Volume · subjects · mastery")}
+                                    </span>
+                                    <span className="flex-1" />
+                                    <ChevronDown
+                                        className={`h-4 w-4 text-muted-foreground transition-transform ${
+                                            statsOpen ? "rotate-180" : ""
+                                        }`}
+                                    />
+                                </button>
+                                {statsOpen && (
+                                    <div className="border-t p-3">
+                                        <WrongAnswerStats />
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
                 )}

@@ -1421,7 +1421,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                                靠 ml-auto 顶在最右边，屏幕一大就看不见这里有按钮了），并各配一个小简笔画。 */
                             <>
                                 <Button
-                                    variant="outline" size="sm" className="h-7 px-2 text-xs"
+                                    variant="outline" size="sm" className="h-9 px-2 text-xs sm:h-7 sm:px-2"
                                     disabled={busy || !processedItems.length}
                                     onClick={selectAllProcessed}
                                 >
@@ -1429,7 +1429,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                                     {t.common.batch?.selectAll || "全选"}
                                 </Button>
                                 <Button
-                                    variant="outline" size="sm" className="h-7 px-2 text-xs"
+                                    variant="outline" size="sm" className="h-9 px-2 text-xs sm:h-7 sm:px-2"
                                     disabled={busy || selectedIds.size === 0}
                                     onClick={clearSelection}
                                 >
@@ -1437,7 +1437,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                                     {t.common.batch?.selectClear || "清除"}
                                 </Button>
                                 <Button
-                                    variant="outline" size="sm" className="h-7 px-2 text-xs"
+                                    variant="outline" size="sm" className="h-9 px-2 text-xs sm:h-7 sm:px-2"
                                     disabled={busy}
                                     onClick={selectUnanalyzed}
                                 >

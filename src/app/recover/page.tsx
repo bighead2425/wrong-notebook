@@ -1305,7 +1305,7 @@ export default function RecoverPage() {
                                             "Process = straighten corners + whiten; or move on as-is",
                                         )}
                                     </span>
-                                    <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={promoteAllShots}>
+                                    <Button size="sm" variant="outline" className="h-9 px-2 text-xs sm:h-7 sm:px-2" onClick={promoteAllShots}>
                                         {L("全部进预处理", "All → Ready")}
                                     </Button>
                                 </div>

@@ -1172,7 +1172,7 @@ export default function InsightsPage() {
                                         type="button"
                                         size="sm"
                                         variant={on ? 'secondary' : 'outline'}
-                                        className={`h-7 px-2 text-xs ${on ? 'bg-zinc-300 text-zinc-900 hover:bg-zinc-300/90' : ''}`}
+                                        className={`h-9 px-2 text-xs sm:h-7 sm:px-2 ${on ? 'bg-zinc-300 text-zinc-900 hover:bg-zinc-300/90' : ''}`}
                                         onClick={() => toggleSubject(s.key)}
                                     >
                                         {s.label}

@@ -322,7 +322,7 @@ export default function DeepSuggestionsPage() {
 
     return (
         <main className="min-h-screen bg-background">
-            <div className="container mx-auto max-w-6xl space-y-4 p-4 pb-20 md:p-8">
+            <div className="container mx-auto max-w-7xl space-y-4 p-4 pb-20 md:p-8">
                 <div className="flex flex-wrap items-center gap-2">
                     <BackButton fallbackUrl="/" className="shrink-0" />
                     <h1 className="flex items-center gap-2 text-base font-semibold sm:text-lg">
@@ -360,8 +360,15 @@ export default function DeepSuggestionsPage() {
                         {L("数据没取到，稍后再试。", "Failed to load. Try again later.")}
                     </div>
                 ) : items.length === 0 && keptItems.length === 0 ? (
-                    <div className="rounded-lg border border-dashed p-12 text-center text-muted-foreground">
-                        {L("没有需要升级的题。", "Nothing to upgrade right now.")}
+                    /**
+                     * 【2026-10-20 美化】空状态加一个**很淡的大图标**（`opacity-15`）。
+                     * 原来只有一行字，空页面看起来像"没加载出来"；
+                     * 有了图标，它读起来是"这里本来就该空着"。
+                     * 和主页按钮右下角的水印是同一套语言（淡、大、不抢字）。
+                     */
+                    <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed p-10 text-center text-muted-foreground">
+                        <TrendingUp aria-hidden className="h-10 w-10 opacity-15" />
+                        <span className="text-sm">{L("没有需要升级的题。", "Nothing to upgrade right now.")}</span>
                     </div>
                 ) : (
                     <>

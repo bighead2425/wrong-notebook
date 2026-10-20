@@ -28,7 +28,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRight, CheckCircle2, Loader2 } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { dayKey } from "@/lib/calendar-grid";
@@ -123,9 +123,13 @@ export function TaskBrief() {
                         );
                     })}
                 {data && TASK_ORDER.every((r) => (data.tasks?.[r.key]?.count ?? 0) === 0) && (
-                    <p className="pt-1 text-center text-[11px] text-muted-foreground">
-                        {L("今天没有待办。想练就练两道。", "Nothing due today.")}
-                    </p>
+                    /* 【2026-10-20 美化】空状态给个很淡的勾 —— 否则那一块读起来像"没加载出来" */
+                    <div className="flex flex-col items-center gap-1.5 pt-2 text-center">
+                        <CheckCircle2 aria-hidden className="h-6 w-6 text-muted-foreground opacity-20" />
+                        <p className="text-[11px] text-muted-foreground">
+                            {L("今天没有待办。想练就练两道。", "Nothing due today.")}
+                        </p>
+                    </div>
                 )}
             </div>
         </div>

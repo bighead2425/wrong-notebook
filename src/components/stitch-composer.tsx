@@ -821,17 +821,17 @@ export function StitchComposer({
                                     {shot.width}×{shot.height}
                                 </span>
                                 <div className="ml-auto flex items-center gap-1">
-                                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => void rotateShot(i)} disabled={busy}>
+                                    <Button size="sm" variant="ghost" className="h-9 px-2 text-xs sm:h-7 sm:px-2" onClick={() => void rotateShot(i)} disabled={busy}>
                                         <RotateCcw className="mr-1 h-3.5 w-3.5" />
                                         {L("旋转", "Rotate")}
                                     </Button>
-                                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => stretchShot(i)} disabled={busy}>
+                                    <Button size="sm" variant="ghost" className="h-9 px-2 text-xs sm:h-7 sm:px-2" onClick={() => stretchShot(i)} disabled={busy}>
                                         {L("拉正 / 漂白", "Straighten")}
                                     </Button>
                                     <Button
                                         size="sm"
                                         variant="ghost"
-                                        className="h-7 px-2 text-xs text-muted-foreground"
+                                        className="h-9 px-2 text-xs sm:h-7 sm:px-2 text-muted-foreground"
                                         onClick={() => removeShot(i)}
                                         disabled={busy}
                                     >

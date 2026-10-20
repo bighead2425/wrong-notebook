@@ -197,13 +197,13 @@ export function PendingTargets({ onShoot, onPickFiles, onOpenInbox }: Props) {
                                 </span>
                             )}
                             <span className="flex-1" />
-                            <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setRecording(v.volumeNo)}>
+                            <Button size="sm" variant="outline" className="h-9 px-2 text-xs sm:h-7 sm:px-2" onClick={() => setRecording(v.volumeNo)}>
                                 {L("录入", "Add photos")}
                             </Button>
                             <Button
                                 size="sm"
                                 variant="ghost"
-                                className="h-7 px-2 text-xs text-muted-foreground"
+                                className="h-9 px-2 text-xs sm:h-7 sm:px-2 text-muted-foreground"
                                 title={L("这一条这次不录了（下次进这一页还会出现）", "Skip for now")}
                                 onClick={() => setHidden((prev) => new Set(prev).add(`v:${v.volumeNo}`))}
                             >
@@ -252,13 +252,13 @@ export function PendingTargets({ onShoot, onPickFiles, onOpenInbox }: Props) {
                                 {L("深挖纸", "Deep sheet")}
                             </span>
                             <span className="flex-1" />
-                            <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setRecording(q.no)}>
+                            <Button size="sm" variant="outline" className="h-9 px-2 text-xs sm:h-7 sm:px-2" onClick={() => setRecording(q.no)}>
                                 {L("录入", "Add photos")}
                             </Button>
                             <Button
                                 size="sm"
                                 variant="ghost"
-                                className="h-7 px-2 text-xs text-muted-foreground"
+                                className="h-9 px-2 text-xs sm:h-7 sm:px-2 text-muted-foreground"
                                 title={L("这一条这次不录了", "Skip for now")}
                                 onClick={() => setHidden((prev) => new Set(prev).add(`q:${q.no}`))}
                             >
