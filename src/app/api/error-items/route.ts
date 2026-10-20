@@ -5,6 +5,7 @@ import { getServerSession } from "next-auth";
 import { calculateGrade } from "@/lib/grade-calculator";
 import { unauthorized, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { pickRandomEmoji } from "@/lib/emoji-mark";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { normalizeMistakeCategory } from "@/lib/mistake-category";
@@ -316,6 +317,17 @@ export async function POST(req: Request) {
                      */
                     attention: NEW_ITEM_ATTENTION,
                     source: finalSource,
+                    /**
+                     * 【2026-10-20 空空第 2 条】**录入时就给 emoji**，与"发一个题号"同一个时刻。
+                     *
+                     * 他原话："不再是在生成深挖纸的时候才给一个 emoji 了，现在调整成只要有题录入，
+                     *          就给一个 emoji，这个逻辑和每道题录入的时候都给一个题号一样。"
+                     *
+                     * 为什么：`emojiMark` 原来是**打开打印预览时惰性生成**的，
+                     * ⇒ 没印过的题永远是空的，回录页/列表里全是 📄 兜底。
+                     * 存量题仍有惰性兜底（`ensureErrorItemEmojiMarks`），新题从这里就有值。
+                     */
+                    emojiMark: pickRandomEmoji(),
                     inputMethod: inputMethod || null,
                     // 【M1】框坐标：undefined（没传/形状不对）时**不写这一列**，
                     // 保持 Prisma 的"未涉及字段不改"语义 —— 详情页改题干重存时不会把原坐标抹掉。
