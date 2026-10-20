@@ -1,34 +1,65 @@
 "use client";
 
 /**
- * 【2026-10-19】当前任务（`/tasks`）—— 从「总理内阁」拆出来的**任务那一半**。
+ * 【2026-10-19 建，2026-10-20 真真按空空第 3 条改】当前任务（`/tasks`）
  *
- * 空空的原话："按照我的设计，总理内阁就被拆分了，不存在了。"
- * ⇒ 主页的「当前任务」指向这里。
+ * ── 空空 2026-10-20 的原话 ───────────────────────────────────────────
+ *   "点击主页下的『当前任务』跳出当前任务界面显示 [一张简单的六行分类清单]，
+ *    事实上我需要这个跳出总理内阁的任务台内容显示 [卡片式任务台]。"
  *
- * ⚠️ **这一版是"简要"，不是"明细"**：
- *    他把「当前任务」定义成"总理内阁中所有任务的明细内容"，那份明细（每类任务下面
- *    逐条列出题号、能一键跳过去做）还长在 `/cabinet` 的任务台里，没搬过来。
- *    ⇒ 这里先给**分类计数 + 跳内阁**，够用；真要看逐条明细，点右上角「内阁」。
- *    **下一棒别把这个当成做完了**——明细还没拆。
+ * ⇒ 这一版不再是"简要计数 + 跳内阁"，而是**直接渲染内阁那块任务台**。
+ *   两处共用同一个组件（`components/cabinet/task-board.tsx`），
+ *   否则"卡片说 12、点进去 9 道"这种不一致迟早出现。
  *
- * 图表的另一半已经拆到 `/stats`（那一页本来就有，直接复用）。
+ * ⚠️ 数据自己取一次 `/api/cabinet`（与内阁页同一个接口、同一个 `today` 参数）。
+ *    内阁页那边是把同一份数据**传**给组件（它还要用 `overview` 画错题本），
+ *    这里只有任务台，自己取更简单，也不会有"传进来的是半份"的风险。
+ *
+ * ⚠️ 不用 `useSearchParams` ⇒ 不需要 `<Suspense>`
+ *    （教训：`next build` 会对漏包的页面直接中断，而 tsc/eslint/单测全绿）。
  */
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { BackButton } from "@/components/ui/back-button";
-import { TaskBrief } from "@/components/home/task-brief";
-import { useLanguage } from "@/contexts/LanguageContext";
 import { Button } from "@/components/ui/button";
-import { LayoutDashboard } from "lucide-react";
+import { TaskBoard, TaskBoardHeading, type CabinetTasks } from "@/components/cabinet/task-board";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { apiClient } from "@/lib/api-client";
+import { dayKey } from "@/lib/calendar-grid";
+import { LayoutDashboard, Loader2 } from "lucide-react";
 
 export default function TasksPage() {
     const { language } = useLanguage();
     const L = (a: string, b: string) => (language === "zh" ? a : b);
 
+    const [tasks, setTasks] = useState<CabinetTasks | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        apiClient
+            /** `today` 由**客户端**算（时区铁律），与内阁页同一个参数 */
+            .get<{ tasks: CabinetTasks }>(`/api/cabinet?today=${encodeURIComponent(dayKey(new Date()))}`)
+            .then((d) => {
+                if (!cancelled) setTasks(d.tasks);
+            })
+            .catch((e) => {
+                console.error("Failed to load tasks:", e);
+                if (!cancelled) setError(true);
+            })
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
     return (
         <main className="min-h-screen bg-background">
-            <div className="container mx-auto max-w-3xl space-y-4 p-4 pb-20">
+            <div className="container mx-auto max-w-6xl space-y-4 p-4 pb-20 md:p-8">
                 <div className="flex items-center gap-2">
                     <BackButton fallbackUrl="/" className="shrink-0" />
                     <h1 className="text-base font-semibold sm:text-lg">{L("当前任务", "Tasks")}</h1>
@@ -39,19 +70,25 @@ export default function TasksPage() {
                     <Link href="/cabinet">
                         <Button variant="outline" size="sm">
                             <LayoutDashboard className="h-4 w-4 sm:mr-1.5" />
-                            <span className="hidden sm:inline">{L("逐条明细", "Details")}</span>
+                            <span className="hidden sm:inline">{L("内阁", "Cabinet")}</span>
                         </Button>
                     </Link>
                 </div>
 
-                <TaskBrief />
+                <TaskBoardHeading />
 
-                <p className="pt-2 text-center text-[11px] text-muted-foreground">
-                    {L(
-                        "这里先给分类与数量；每类下面逐条列题号的「明细」还在内阁页里（拆分中）。",
-                        "Counts first — the per-item detail list is still inside the cabinet page.",
-                    )}
-                </p>
+                {loading ? (
+                    <div className="flex items-center gap-2 p-8 text-muted-foreground">
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                        {L("正在算…", "Calculating…")}
+                    </div>
+                ) : error || !tasks ? (
+                    <div className="rounded-lg border border-dashed p-8 text-center text-muted-foreground">
+                        {L("数据没取到，稍后再试。", "Failed to load. Try again later.")}
+                    </div>
+                ) : (
+                    <TaskBoard tasks={tasks} />
+                )}
             </div>
         </main>
     );

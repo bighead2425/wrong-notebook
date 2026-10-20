@@ -365,6 +365,16 @@ export default function AddErrorPage() {
                 // 【M1】框坐标（已序列化）。null 就不带这个键 —— 后端按"未提供"处理，保持字段原样，
                 // 不会把已有的坐标冲成空（改题重存时尤其重要）。
                 ...(pendingCropRegions ? { cropRegions: pendingCropRegions } : {}),
+                /**
+                 * 【2026-10-20 真真】**关联到主题题**（举一反三 → 题库里没有·拍照新增）。
+                 *
+                 * 空空报："并没有实现与主题的关联。"
+                 * 真因：`linkToId` 只传给了**绿框批量**那条路（`BatchPipeline` 里带了 `parentId`），
+                 * **单题流这里一个字都没带** ⇒ 保存出来的是一道**游离的题**，
+                 * 既没挂到主题题下面，跳转也回了错题本列表。
+                 * ⇒ 与批量那条路用**同一个字段**（`parentId`），后端语义一致。
+                 */
+                ...(linkToId ? { parentId: linkToId } : {}),
             });
 
             // 检查是否是重复提交（后端去重返回）
@@ -381,7 +391,10 @@ export default function AddErrorPage() {
             // 没有整页图（走手动输入，从没拍过）时既回不去也没进度可显示，
             // 若仍走循环分支就会变成"静默保存"——不弹提示、不跳转、页面上毫无反馈。
             // 这种情况回落到下面的正常保存路径。
-            if (loopMode && pageImageUrl) {
+            // ⚠️【2026-10-20 真真】加了 `&& !linkToId`：关联流程（举一反三 → 拍照新增）
+            //    即使她勾了"循环模式"，也**不能**留在原地 —— 她要的是回主题题接着录举一反三，
+            //    留在这一页会让她以为"点了没反应"。
+            if (loopMode && pageImageUrl && !linkToId) {
                 if (pendingCropRect) {
                     setDoneRects((prev) => [
                         ...prev,
@@ -406,7 +419,22 @@ export default function AddErrorPage() {
             }
 
             alert(t.common.messages?.saveSuccess || 'Saved!');
-            router.push(`/notebooks/${notebookId}`);
+            /**
+             * 【2026-10-20 真真】带 `?linkTo=` 进来的（举一反三 → 题库里没有·拍照新增）
+             * ⇒ **回那道主题题的详情页，并自动把举一反三对话框弹出来**。
+             *
+             * 原来这里一律 `router.push('/notebooks/{id}')` —— 那是"录完一批继续录"的落点，
+             * 但"关联"这条路**还没走完**：空空的原话是
+             *   "保存后……我需要保存后将这道题关联到二维码扫描的主题，同时界面返回到
+             *    扫描到这道题的举一反三对话框，这样能够继续录入举一反三的题。"
+             * ⇒ 他要的是**接着往同一道主题题下面继续加**，所以必须回到那道题、
+             *    而且对话框得自己弹出来（`?practice=1` 就是那个开关，与 `/scan?practice=1` 同一条路）。
+             */
+            if (linkToId) {
+                router.push(`/error-items/${linkToId}?practice=1`);
+            } else {
+                router.push(`/notebooks/${notebookId}`);
+            }
         } catch (error) {
             console.error(error);
             alert(t.common.messages?.saveFailed || 'Save failed');

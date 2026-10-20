@@ -38,6 +38,7 @@ import {
 import { SettingsDialog } from "@/components/settings-dialog";
 import { TaskBrief } from "@/components/home/task-brief";
 import { WrongAnswerStats } from "@/components/wrong-answer-stats";
+import { NotebookOverview } from "@/components/home/notebook-overview";
 import { captureScreen, ScreenshotError, isScreenshotSupported } from "@/lib/screenshot";
 /**
  * 【custom-v24】公告通知按钮按用户要求从首页撤下（功能保留，组件文件不动）。
@@ -557,17 +558,17 @@ function HomeContent() {
                             <Link href="/batch">
                                 <Button
                                     variant="outline"
-                                    className="group relative h-14 w-full flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm"
+                                    className="group relative h-14 w-full flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm bg-sky-50 hover:bg-sky-100 dark:bg-sky-950/40 dark:hover:bg-sky-950/60"
                                 >
                                     <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-sky-500/60" />
-                                    <Upload aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 h-12 w-12 rotate-12 text-sky-500/10 transition-transform duration-300 group-hover:scale-110 lg:h-16 lg:w-16" />
+                                    <Upload aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 h-12 w-12 rotate-12 text-sky-500/20 transition-transform duration-300 group-hover:scale-110 lg:h-16 lg:w-16" />
                                     <Upload className="h-5 w-5 shrink-0" />
                                     <span className="truncate">{L("批量上传", "Bulk")}</span>
                                 </Button>
                             </Link>
                             <Button
                                 variant="outline"
-                                className="group relative h-14 flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm"
+                                className="group relative h-14 flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm bg-teal-50 hover:bg-teal-100 dark:bg-teal-950/40 dark:hover:bg-teal-950/60"
                                 title={
                                     isScreenshotSupported()
                                         ? L("抓取屏幕或某个标签页", "Capture the screen or a tab")
@@ -584,17 +585,17 @@ function HomeContent() {
                                 }}
                             >
                                 <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-teal-500/60" />
-                                <Monitor aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 h-12 w-12 rotate-12 text-teal-500/10 transition-transform duration-300 group-hover:scale-110 lg:h-16 lg:w-16" />
+                                <Monitor aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 h-12 w-12 rotate-12 text-teal-500/20 transition-transform duration-300 group-hover:scale-110 lg:h-16 lg:w-16" />
                                 <Monitor className="h-5 w-5 shrink-0" />
                                 <span className="truncate">{L("屏幕截图", "Shot")}</span>
                             </Button>
                             <Link href="/tags">
                                 <Button
                                     variant="outline"
-                                    className="group relative h-14 w-full flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm"
+                                    className="group relative h-14 w-full flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm bg-violet-50 hover:bg-violet-100 dark:bg-violet-950/40 dark:hover:bg-violet-950/60"
                                 >
                                     <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-violet-500/60" />
-                                    <Tags aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 h-12 w-12 rotate-12 text-violet-500/10 transition-transform duration-300 group-hover:scale-110 lg:h-16 lg:w-16" />
+                                    <Tags aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 h-12 w-12 rotate-12 text-violet-500/20 transition-transform duration-300 group-hover:scale-110 lg:h-16 lg:w-16" />
                                     <Tags className="h-5 w-5 shrink-0" />
                                     <span className="truncate">{L("标签管理", "Tags")}</span>
                                 </Button>
@@ -602,10 +603,10 @@ function HomeContent() {
                             <Link href="/scan">
                                 <Button
                                     variant="outline"
-                                    className="group relative h-14 w-full flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm"
+                                    className="group relative h-14 w-full flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-950/60"
                                 >
                                     <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-emerald-500/60" />
-                                    <QrCode aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 h-12 w-12 rotate-12 text-emerald-500/10 transition-transform duration-300 group-hover:scale-110 lg:h-16 lg:w-16" />
+                                    <QrCode aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 h-12 w-12 rotate-12 text-emerald-500/20 transition-transform duration-300 group-hover:scale-110 lg:h-16 lg:w-16" />
                                     <QrCode className="h-5 w-5 shrink-0" />
                                     <span className="truncate">{L("扫二维码", "QR")}</span>
                                 </Button>
@@ -630,19 +631,19 @@ function HomeContent() {
                             </div>
                             <Link
                                 href="/notebooks"
-                                className="group relative flex items-center justify-center gap-2 overflow-hidden rounded-lg border bg-card px-3 py-3 transition-colors hover:bg-accent/40 sm:py-4 lg:gap-3 lg:py-5"
+                                className="group relative flex items-center justify-center gap-2 overflow-hidden rounded-lg border px-3 py-3 transition-colors hover:bg-accent/40 sm:py-4 lg:gap-3 lg:py-5 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-950/60"
                             >
                                 <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-amber-500/60" />
-                                <BookOpen aria-hidden className="pointer-events-none absolute -bottom-4 -right-3 h-16 w-16 rotate-12 text-amber-500/10 transition-transform duration-300 group-hover:scale-110 lg:h-20 lg:w-20" />
+                                <BookOpen aria-hidden className="pointer-events-none absolute -bottom-4 -right-3 h-16 w-16 rotate-12 text-amber-500/20 transition-transform duration-300 group-hover:scale-110 lg:h-20 lg:w-20" />
                                 <BookOpen className="h-4 w-4 shrink-0 text-muted-foreground lg:h-5 lg:w-5" />
                                 <span className="text-sm font-medium lg:text-base">{L("查看题册", "Notebooks")}</span>
                             </Link>
                             <Link
                                 href="/insights/write"
-                                className="group relative flex items-center justify-center gap-2 overflow-hidden rounded-lg border bg-card px-3 py-3 transition-colors hover:bg-accent/40 sm:py-4 lg:gap-3 lg:py-5"
+                                className="group relative flex items-center justify-center gap-2 overflow-hidden rounded-lg border px-3 py-3 transition-colors hover:bg-accent/40 sm:py-4 lg:gap-3 lg:py-5 bg-lime-50 hover:bg-lime-100 dark:bg-lime-950/40 dark:hover:bg-lime-950/60"
                             >
                                 <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-lime-500/60" />
-                                <Sprout aria-hidden className="pointer-events-none absolute -bottom-4 -right-3 h-16 w-16 rotate-12 text-lime-500/10 transition-transform duration-300 group-hover:scale-110 lg:h-20 lg:w-20" />
+                                <Sprout aria-hidden className="pointer-events-none absolute -bottom-4 -right-3 h-16 w-16 rotate-12 text-lime-500/20 transition-transform duration-300 group-hover:scale-110 lg:h-20 lg:w-20" />
                                 <Sprout className="h-4 w-4 shrink-0 text-muted-foreground lg:h-5 lg:w-5" />
                                 <span className="text-sm font-medium lg:text-base">{L("日积月累", "Notes")}</span>
                             </Link>
@@ -758,7 +759,15 @@ function HomeContent() {
                         <div className="order-1 lg:order-none lg:col-start-2 lg:row-start-1">
                             <TaskBrief />
                         </div>
-                        <div className="order-2 lg:order-none lg:col-start-1 lg:row-start-1">
+                        {/**
+                         * 【2026-10-20 空空第 4 条】**先当前错题本、后统计总览**。
+                         * 原来是这一格只有统计总览，他说"我需要显示的是当前错题本板块和
+                         * 统计总览板块，都放上去。注意顺序，先放当前错题本板块"。
+                         * ⚠️ 两块都画学科/等级分布，所以错题本那块取的是**精简版**
+                         *    （四个数字 + 每本一行），完整的构成比例留在内阁页。
+                         */}
+                        <div className="order-2 space-y-3 lg:order-none lg:col-start-1 lg:row-start-1">
+                            <NotebookOverview />
                             <WrongAnswerStats />
                         </div>
                     </div>

@@ -8,10 +8,14 @@
  *   把"该印哪张纸、该回录哪张纸、哪道题该复查"排成一排任务卡：
  *   写清"要做什么 + 有几件 + 一键去做"。
  *
- * ── 三块 ────────────────────────────────────────────────────────────
- *   ① 统计总览：**复用主页统计中心**（`WrongAnswerStats` → `/api/analytics`），不另算一份。
+ * ── 三块（顺序按空空 2026-10-20 第 6 条：**任务台 → 当前错题本 → 错题统计**）──────
+ *   ① 任务台：六类任务的计数 + 清单 + 跳转（**已抽成 `components/cabinet/task-board.tsx`**，
+ *      与 `/tasks` 共用 —— 主页点「当前任务」看到的就是它）。
  *   ② 错题本一览：多少本、每本多少题、构成（学科 / 掌握状态 / 错题等级）—— 数据来自 `/api/cabinet`。
- *   ③ 任务台：六类任务的计数 + 清单 + 跳转。
+ *   ③ 统计总览：**复用主页统计中心**（`WrongAnswerStats` → `/api/analytics`），不另算一份。
+ *
+ * ⚠️ 顺序是**他明确要求的**："先是任务台板块，然后是当前错题本板块，最后是错题统计板块。"
+ *    原来正好倒过来（统计 → 错题本 → 任务台），进来第一眼看到的是数字而不是"该干什么"。
  *
  * ── 跳转（第一版只有"带到正确的页面 + 筛选就位"，不做"一键完成"）──────
  *   · 待打印深挖题 → `/print-preview?mode=deep&ids=…`（预选这批题）
@@ -26,9 +30,10 @@
  *    —— 避开本项目"漏包 Suspense ⇒ next build 中断"那个老坑（见 next-build-conventions.test.ts）。
  */
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { WrongAnswerStats } from "@/components/wrong-answer-stats";
+import { TaskBoard, TaskBoardHeading, type CabinetTasks } from "@/components/cabinet/task-board";
 import { BackButton } from "@/components/ui/back-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,21 +47,13 @@ import {
     MANAGE_TYPE_UNDECIDED_COLOR,
 } from "@/lib/manage-type";
 /** 【2026-10-13】学情底账（覆盖率）—— 判据只在 `lib/overview.ts`，这里只管显示 */
-import { coverageSentence, type Overview } from "@/lib/overview";
+import { coverageSentence } from "@/lib/overview";
 import {
-    ArrowRight,
     BarChart3,
     BookOpen,
-    ClipboardCheck,
-    Dumbbell,
     Landmark,
-    Layers,
     Loader2,
-    Printer,
-    ScanText,
-    Sprout,
     Tags,
-    TrendingUp,
 } from "lucide-react";
 
 /* ============================ 接口返回形状 ============================ */
@@ -70,13 +67,6 @@ interface MasteryCounts {
     fresh: number;
     reviewing: number;
     mastered: number;
-}
-
-interface CabinetTask<T> {
-    count: number;
-    ids: string[];
-    items: T[];
-    volumeIds?: string[];
 }
 
 interface CabinetResponse {
@@ -100,32 +90,8 @@ interface CabinetResponse {
         byManageType: ManageTypeCounts;
         byMastery: MasteryCounts;
     }[];
-    tasks: {
-        pendingDeepPrint: CabinetTask<{ id: string; source: string | null }>;
-        dueReviews: CabinetTask<{ id: string; source: string | null; dueOn: string; label: string; overdueDays: number }>;
-        pendingRecover: CabinetTask<{ id: string; source: string | null; daysSincePrint: number }>;
-        pendingRecoverVolumes: CabinetTask<{ id: string; volumeNo: string; unrecoveredCount: number; daysSinceCreated: number }>;
-        unprintedInsights: CabinetTask<{ id: string; code: string; subject?: string | null }>;
-        upgradeSuggestions: CabinetTask<{ id: string; source: string | null; notebookId?: string | null; wrongCount: number }>;
-        /**
-         * 【2026-10-13 他拍板的设计】"今天先练这几道"（由复练结果算出来的紧迫度，
-         * 规则在 `lib/review-status.ts` + `lib/cabinet.ts` 的 `practiceTodayItems`）。
-         */
-        practiceToday: CabinetTask<{
-            id: string;
-            source: string | null;
-            notebookId?: string | null;
-            urgency: number;
-            reasonZh: string;
-            reasonEn: string;
-        }>;
-        /**
-         * 【2026-10-13】学情底账（覆盖率 / 状态分布）。
-         * ⚠️ 与上面那个 `overview`（错题本一览的 questionCount/byManageType/byMastery）
-         *    **不是一回事**：那个回答"有多少题"，这个回答"**数据有多厚**"。
-         */
-        ledger: Overview;
-    };
+    /** 【2026-10-20 真真】形状搬进 `components/cabinet/task-board.tsx`（与 /tasks 共用） */
+    tasks: CabinetTasks;
 }
 
 /* ============================ 小件 ============================ */
@@ -215,9 +181,6 @@ export default function CabinetPage() {
         };
     }, []);
 
-    const printLink = (mode: "deep" | "review", ids: string[]) =>
-        ids.length > 0 ? `/print-preview?mode=${mode}&ids=${encodeURIComponent(ids.join(","))}` : null;
-
     return (
         <main className="min-h-screen bg-background">
             <div className="container mx-auto max-w-6xl space-y-8 p-4 pb-20 md:p-8">
@@ -258,16 +221,14 @@ export default function CabinetPage() {
                     </Link>
                 </div>
 
-                {/* ===== ① 统计总览（复用主页统计中心）===== */}
+                {/* ===== 任务台（【2026-10-20 真真】抽成组件，与 /tasks 共用）===== */}
                 <section className="space-y-4">
-                    <h2 className="flex items-center gap-2 text-xl font-semibold">
-                        <BarChart3 className="h-5 w-5" />
-                        {L("统计总览", "Overview")}
-                    </h2>
-                    <WrongAnswerStats />
+                    <TaskBoardHeading />
+                    {/* ⚠️ 取数三态照旧留在这里：`data` 为 null 时组件根本不该渲染 */}
+                    {loading ? null : error ? null : data ? <TaskBoard tasks={data.tasks} /> : null}
                 </section>
 
-                {/* ===== ② 错题本一览 ===== */}
+                {/* ===== ② 错题本一览（顺序第 2）===== */}
                 <section className="space-y-4">
                     <h2 className="flex items-center gap-2 text-xl font-semibold">
                         <BookOpen className="h-5 w-5" />
@@ -451,207 +412,19 @@ export default function CabinetPage() {
                     ) : null}
                 </section>
 
-                {/* ===== ③ 任务台 ===== */}
+                {/* ===== ③ 统计总览（复用主页统计中心，顺序最后）===== */}
                 <section className="space-y-4">
                     <h2 className="flex items-center gap-2 text-xl font-semibold">
-                        <ClipboardCheck className="h-5 w-5" />
-                        {L("任务台", "Task board")}
+                        <BarChart3 className="h-5 w-5" />
+                        {L("统计总览", "Overview")}
                     </h2>
-                    <p className="-mt-2 text-sm text-muted-foreground">
-                        {L(
-                            "每张卡就是一件该做的事：有几件、点一下直接去做。",
-                            "Each card is one job: how many, and one click to act.",
-                        )}
-                    </p>
-
-                    {loading ? null : error ? null : data ? (
-                        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                            {/* 【2026-10-13 他拍板的设计 · 放在最前】今天先练这几道 ——
-                                判据 = 由复练结果算出来的**紧迫度**（`lib/review-status.ts`），
-                                与下面「该复查的题」分工明确：那个看纸上的日期格，这个看复练结果。
-                                ⭐ 它专门补「该复查」的窟窿：计划三次做满之后又做错的题，
-                                   原来那一块永远不会再提醒（判据是"第一个空格"），这里捞得回来。 */}
-                            <TaskCard
-                                icon={<Dumbbell className="h-5 w-5" />}
-                                title={L("今天先练这几道", "Practice these today")}
-                                desc={L(
-                                    "按复练结果算的紧迫度排的：没练过的、上次做错的、连错两次以上的（已掌握的、以及上面几块已经在催的，都不重复算）",
-                                    "Sorted by urgency from review results: never practiced / last wrong / wrong twice in a row",
-                                )}
-                                count={data.tasks.practiceToday.count}
-                                unit={L("道", "items")}
-                                samples={data.tasks.practiceToday.items
-                                    .map((i) => `${i.source || i.id}·${zh ? i.reasonZh : i.reasonEn}`)
-                                    .slice(0, 4)}
-                                href={printLink("review", data.tasks.practiceToday.ids)}
-                                cta={L("去组复练卷", "Build a review volume")}
-                            />
-                            {/* 待打印深挖题 */}
-                            <TaskCard
-                                icon={<Printer className="h-5 w-5" />}
-                                title={L("待打印深挖题", "Deep sheets to print")}
-                                desc={L("判为深挖、但深挖纸一次都还没印过", "Deep questions whose sheet was never printed")}
-                                count={data.tasks.pendingDeepPrint.count}
-                                unit={L("道", "items")}
-                                samples={data.tasks.pendingDeepPrint.items.map((i) => i.source || i.id).slice(0, 4)}
-                                href={printLink("deep", data.tasks.pendingDeepPrint.ids)}
-                                cta={L("去打印深挖纸", "Print deep sheets")}
-                            />
-                            {/* 该复查的题 */}
-                            <TaskCard
-                                icon={<TrendingUp className="h-5 w-5" />}
-                                title={L("该复查的题", "Due for review")}
-                                desc={L(
-                                    "印过深挖纸、纸面下一个日期格（+1/+7/+21 天）已到期",
-                                    "Printed; the next planned review date (+1/+7/+21) has come",
-                                )}
-                                count={data.tasks.dueReviews.count}
-                                unit={L("道", "items")}
-                                samples={data.tasks.dueReviews.items
-                                    .map((i) => `${i.source || i.id}·${i.dueOn.slice(5)}`)
-                                    .slice(0, 4)}
-                                href={printLink("review", data.tasks.dueReviews.ids)}
-                                cta={L("去组复练卷", "Build a review volume")}
-                            />
-                            {/* 该回录的深挖纸 */}
-                            <TaskCard
-                                icon={<ScanText className="h-5 w-5" />}
-                                title={L("该回录的深挖纸", "Deep sheets to recover")}
-                                desc={L(
-                                    "印过、过了几天，但还没扫回这道题的日积月累",
-                                    "Printed a while ago, but no takeaway recovered for this question yet",
-                                )}
-                                count={data.tasks.pendingRecover.count}
-                                unit={L("道", "items")}
-                                samples={data.tasks.pendingRecover.items.map((i) => i.source || i.id).slice(0, 4)}
-                                href={data.tasks.pendingRecover.count > 0 ? "/recover" : null}
-                                cta={L("去回录分析", "Go to recover")}
-                            />
-                            {/* 待回录的复练卷 */}
-                            <TaskCard
-                                icon={<Layers className="h-5 w-5" />}
-                                title={L("待回录的复练卷", "Review volumes to recover")}
-                                desc={L(
-                                    "组出来过几天了，卷里还有没标对错的行（建议人工看一眼）",
-                                    "Built days ago and still has unmarked rows (please check by hand)",
-                                )}
-                                count={data.tasks.pendingRecoverVolumes.count}
-                                unit={L("份", "volumes")}
-                                samples={data.tasks.pendingRecoverVolumes.items.map((i) => i.volumeNo).slice(0, 3)}
-                                href={data.tasks.pendingRecoverVolumes.count > 0 ? "/recover" : null}
-                                cta={L("去回录分析", "Go to recover")}
-                            />
-                            {/* 未打印的日积月累 */}
-                            <TaskCard
-                                icon={<Sprout className="h-5 w-5" />}
-                                title={L("未打印的日积月累", "Takeaways not printed")}
-                                desc={L("还没被编进任何一张积累纸", "Not included in any volume yet")}
-                                count={data.tasks.unprintedInsights.count}
-                                unit={L("条", "entries")}
-                                samples={data.tasks.unprintedInsights.items.map((i) => i.code).slice(0, 4)}
-                                href={data.tasks.unprintedInsights.count > 0 ? "/insights" : null}
-                                cta={L("去日积月累", "Open takeaways")}
-                            />
-                            {/* 建议升为深挖 */}
-                            <TaskCard
-                                icon={<BarChart3 className="h-5 w-5" />}
-                                title={L("建议升为深挖", "Suggest upgrading")}
-                                desc={L(
-                                    "计划复习里错了 2 次以上（只建议，不会自动改）",
-                                    "Wrong twice or more in planned reviews (suggestion only)",
-                                )}
-                                count={data.tasks.upgradeSuggestions.count}
-                                unit={L("道", "items")}
-                                samples={data.tasks.upgradeSuggestions.items.map((i) => i.source || i.id).slice(0, 4)}
-                                href={
-                                    data.tasks.upgradeSuggestions.count > 0
-                                        ? data.tasks.upgradeSuggestions.items[0]?.notebookId
-                                            ? `/notebooks/${data.tasks.upgradeSuggestions.items[0].notebookId}`
-                                            : "/notebooks"
-                                        : null
-                                }
-                                cta={L("去该题所在的本", "Open its notebook")}
-                            />
-                        </div>
-                    ) : null}
+                    <WrongAnswerStats />
                 </section>
+
+
+
+
             </div>
         </main>
-    );
-}
-
-/* ============================ 任务卡 ============================ */
-
-function TaskCard({
-    icon,
-    title,
-    desc,
-    count,
-    unit,
-    samples,
-    href,
-    cta,
-}: {
-    icon: ReactNode;
-    title: string;
-    desc: string;
-    count: number;
-    unit: string;
-    samples: string[];
-    href: string | null;
-    cta: string;
-}) {
-    /**
-     * ⚠️ 【2026-10-04 审理补】TaskCard 是**模块级独立组件**，`L` 是主组件里的闭包
-     *    ⇒ 这里**拿不到**，直接写 `L(...)` 会编译报 `Cannot find name 'L'`（CI Build Check 就是这么红的）。
-     *    所以本组件自己读一次语言上下文。其余文案（title/desc/cta）仍由调用方生成后传进来。
-     */
-    const { language } = useLanguage();
-    const L = (a: string, b: string) => (language === "zh" ? a : b);
-    const empty = count === 0;
-    return (
-        <Card className={empty ? "border-dashed opacity-80" : ""}>
-            <CardHeader className="gap-1">
-                <CardTitle className="flex items-center gap-2 text-base">
-                    <span className={empty ? "text-muted-foreground" : "text-primary"}>{icon}</span>
-                    {title}
-                </CardTitle>
-                <p className="text-xs text-muted-foreground">{desc}</p>
-            </CardHeader>
-            <CardContent className="space-y-3">
-                <div className="flex items-baseline gap-1">
-                    <span className="text-4xl font-bold tabular-nums">{count}</span>
-                    <span className="text-sm text-muted-foreground">{unit}</span>
-                </div>
-
-                {samples.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                        {samples.map((s) => (
-                            <span key={s} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">
-                                {s}
-                            </span>
-                        ))}
-                        {count > samples.length && (
-                            <span className="px-1 text-[11px] text-muted-foreground">
-                                +{count - samples.length}
-                            </span>
-                        )}
-                    </div>
-                )}
-
-                {empty || !href ? (
-                    <div className="text-xs text-muted-foreground">
-                        {empty ? L("暂时没有这一项", "Nothing here right now") : ""}
-                    </div>
-                ) : (
-                    <Link href={href}>
-                        <Button size="sm" className="w-full sm:w-auto">
-                            {cta}
-                            <ArrowRight className="ml-1.5 h-4 w-4" />
-                        </Button>
-                    </Link>
-                )}
-            </CardContent>
-        </Card>
     );
 }
