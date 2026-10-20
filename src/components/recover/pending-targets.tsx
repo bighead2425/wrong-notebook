@@ -47,6 +47,10 @@ interface PendingVolume {
 
 interface PendingQuestion {
     no: string;
+    /** 【2026-10-20】内部 id —— 点题号进详情页要用；取不到就是 null（那一行只显示不可点） */
+    id?: string | null;
+    /** 深挖纸上印的 emoji（`ErrorItem.emojiMark`） */
+    emojiMark?: string | null;
 }
 
 interface Props {
@@ -91,9 +95,16 @@ export function PendingTargets({ onShoot, onPickFiles, onOpenInbox }: Props) {
          */
         // eslint-disable-next-line react-hooks/set-state-in-effect -- 见上：挂载后读一次 URL
         setQuestions(nos.map((no) => ({ no })));
-        if (vols.length === 0) return;
+        if (vols.length === 0 && nos.length === 0) return;
 
-        /** 卷的 emoji / 未录行数都在 `/api/cabinet` 里（那边本来就是算这个的） */
+        /**
+         * 卷的 emoji / 未录行数、**题的 emoji 与内部 id**，都在 `/api/cabinet` 里。
+         *
+         * 【2026-10-20 如如】原来这里 `if (vols.length === 0) return;` —— 只有卷才来这里补数据。
+         * 现在「待回录分析」的题号前也要 emoji（深挖纸上印的那个），点题号还要能进详情页，
+         * 所以**题的 id 与 emojiMark 也从这里取**。取不到就退化成"只有题号、不可点"，
+         * 不会整块消失。
+         */
         setLoading(true);
         apiClient
             .get<{ tasks: CabinetTasks }>(`/api/cabinet?today=${encodeURIComponent(dayKey(new Date()))}`)
@@ -110,11 +121,25 @@ export function PendingTargets({ onShoot, onPickFiles, onOpenInbox }: Props) {
                         };
                     }),
                 );
+
+                const qByNo = new Map(
+                    (d.tasks.pendingRecover?.items ?? []).map((i) => [
+                        (i.source || "").trim().toUpperCase(),
+                        i,
+                    ]),
+                );
+                setQuestions(
+                    nos.map((no) => {
+                        const hit = qByNo.get(no);
+                        return { no, id: hit?.id ?? null, emojiMark: hit?.emojiMark ?? null };
+                    }),
+                );
             })
             .catch((e) => {
                 console.error(e);
-                /** 取不到也要把卷号列出来 —— 她至少还能点进去标 */
+                /** 取不到也要把卷号/题号列出来 —— 她至少还能点进去标 */
                 setVolumes(vols.map((no) => ({ volumeNo: no, emojiMark: null, unrecoveredCount: 0 })));
+                setQuestions(nos.map((no) => ({ no, id: null, emojiMark: null })));
             })
             .finally(() => setLoading(false));
     }, []);
@@ -196,9 +221,35 @@ export function PendingTargets({ onShoot, onPickFiles, onOpenInbox }: Props) {
                             key={q.no}
                             className="flex flex-wrap items-center gap-2 rounded-md border bg-background px-3 py-2"
                         >
-                            <span className="font-mono text-sm">{q.no}</span>
+                            {/**
+                             * 【2026-10-20 第 3 条】**emoji + 题号，题号可点进详情页**。
+                             *
+                             * emoji 是深挖纸上印的那个（`ErrorItem.emojiMark`）——
+                             * 她照着它在一叠纸里找那张深挖纸，比看题号快得多。
+                             * 取不到 id（比如这条刚被标完）就退化成纯文字，不可点。
+                             *
+                             * ⚠️ `back` 只带 `/recover`，不带 `?nos=` —— 把带参数的完整 URL
+                             *    编进 query 里会形成双重编码，读端容易漏解一层。
+                             *    回到回录页就可以了（清单会按当时的数据重算）。
+                             */}
+                            {q.id ? (
+                                <Link
+                                    href={`/error-items/${q.id}?back=${encodeURIComponent("/recover")}`}
+                                    className="flex min-w-0 items-center gap-1.5 font-mono text-sm underline decoration-dotted hover:text-primary"
+                                    title={L("打开这道题的详情", "Open this question")}
+                                >
+                                    <span aria-hidden className="text-base leading-none">{q.emojiMark || "📄"}</span>
+                                    <span className="truncate">{q.no}</span>
+                                </Link>
+                            ) : (
+                                <span className="flex min-w-0 items-center gap-1.5 font-mono text-sm">
+                                    <span aria-hidden className="text-base leading-none">{q.emojiMark || "📄"}</span>
+                                    <span className="truncate">{q.no}</span>
+                                </span>
+                            )}
                             <span className="text-xs text-muted-foreground">
-                                {L("深挖纸回录（拍纸上的日积月累）", "Deep sheet: photo its takeaways")}
+                                {/* 【第 3 条】原来写"深挖纸回录（拍纸上的日积月累）"，太长 ⇒ 只留"深挖纸" */}
+                                {L("深挖纸", "Deep sheet")}
                             </span>
                             <span className="flex-1" />
                             <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setRecording(q.no)}>

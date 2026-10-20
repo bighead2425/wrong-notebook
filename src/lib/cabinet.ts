@@ -46,6 +46,11 @@ export interface CabinetQuestion {
     manageType: string | null;
     /** 深挖纸打印次数 */
     printCount: number;
+    /**
+     * 【2026-10-20 如如】深挖纸上印的那个 emoji（`ErrorItem.emojiMark`）。
+     * 「待回录分析」把它显示在题号前面 —— 纸堆里靠 emoji 找人快过看题号。
+     */
+    emojiMark?: string | null;
     /** 最近一次深挖纸打印时间 */
     lastPrintedAt: Date | string | null;
     /** 复习结果（JSON 字符串或对象）—— 规则见 review-outcomes.ts */

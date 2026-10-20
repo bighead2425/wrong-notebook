@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { unauthorized, badRequest, notFound, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
-import { parsePageCode } from "@/lib/volume-code";
+import { parsePageCode, parseVolumeNo } from "@/lib/volume-code";
 import { ensureVolumeEmojiMark } from "@/lib/emoji-mark-store";
 
 const logger = createLogger('api:review-volumes:lookup');
@@ -33,11 +33,28 @@ export async function GET(req: Request) {
         if (!user) return unauthorized("Authentication required");
 
         const code = (new URL(req.url).searchParams.get("code") || "").trim();
-        const parsed = parsePageCode(code);
-        if (!parsed) return badRequest("Bad page code (expects e.g. RE20260930001-02)");
+        /**
+         * 【2026-10-20 如如】**这个接口要同时吃两种写法**（`custom-v109` 那个"没找到这份卷"的根因）：
+         *
+         *   · `RE20260930001-02` —— **页二维码**（纸上印的），能定位到第几页
+         *   · `RE20260930001`    —— **整卷号**（`/recover` 的「这一趟要回录的」里点的就是它）
+         *
+         * 原来只认第一种：`parsePageCode` 解析失败就 `badRequest`
+         * ⇒ 前端 catch 到，统一显示成"没找到这份卷（纸上的卷号在库里查不到）"。
+         * **跟 emoji 无关**（他猜是 emoji 混进了卷号，实际 `Link` 里 emoji 在 span 外面、
+         *  `volumeNo` 本身是干净的）—— 真因是"整卷号没带 `-NN` 就被判成非法"。
+         *
+         * ⇒ 解析失败时再试一次「整卷号」，成功就按**第 1 页**打开。
+         */
+        const asPage = parsePageCode(code);
+        const asVolume = asPage ? null : parseVolumeNo(code);
+        if (!asPage && !asVolume) return badRequest("Bad code (expects RE20260930001 or RE20260930001-02)");
+
+        const volumeNo = asPage?.volumeNo ?? asVolume!.volumeNo;
+        const pageNo = asPage?.pageNo ?? 1;
 
         const volume = await prisma.reviewVolume.findUnique({
-            where: { volumeNo: parsed.volumeNo },
+            where: { volumeNo },
             include: { items: { orderBy: [{ seqInVolume: "asc" }] } },
         });
         if (!volume) return notFound("Review volume not found");
@@ -49,7 +66,7 @@ export async function GET(req: Request) {
         const emojiMark = await ensureVolumeEmojiMark(volume);
 
         // pageNo 直接回给前端用（超出总页数时由前端夹一下，这里不拦 —— 纸可能比库新）
-        return NextResponse.json({ volume: { ...volume, emojiMark }, pageNo: parsed.pageNo });
+        return NextResponse.json({ volume: { ...volume, emojiMark }, pageNo });
     } catch (error) {
         logger.error({ error }, "Failed to look up review volume by page code");
         return internalError();

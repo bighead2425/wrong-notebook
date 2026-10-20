@@ -156,8 +156,8 @@ export async function POST(req: Request) {
             ? [...new Set(body.ids.filter((v): v is string => typeof v === "string" && !!v))].slice(0, 200)
             : [];
         if (ids.length === 0) return badRequest("ids is required");
-        if (action !== "upgrade" && action !== "downgrade" && action !== "keep") {
-            return badRequest("action must be upgrade / downgrade / keep");
+        if (action !== "upgrade" && action !== "downgrade" && action !== "keep" && action !== "unkeep") {
+            return badRequest("action must be upgrade / downgrade / keep / unkeep");
         }
 
         /** 只动**自己的**题（`userId` 进 where，不是先查再判断） */
@@ -204,6 +204,23 @@ export async function POST(req: Request) {
                 }
             }
             return NextResponse.json({ ok: true, changed: changed.length });
+        }
+
+        /**
+         * 【2026-10-20 空空第 1 条】**撤销留级**（`unkeep`）—— 让这道题回到上面"建议中的"那一栏。
+         *
+         * 他原话："如果一道题被留级了，那么他就只有一个去向，只能点击『升级』，
+         *          这样不利于测试软件，也不利于管理……希望给每个留级题目一个向上的符号，
+         *          点击后让它能够返回到上面去。"
+         *
+         * 实现上就是**删掉那条留级记号** —— 上面那栏的判据是"有记号就压着"，
+         * 记号没了它自然重新出现（不需要动 `manageType`，等级一个字没变）。
+         */
+        if (action === "unkeep") {
+            const res = await prisma.upgradeDecision.deleteMany({
+                where: { userId, errorItemId: { in: ids } },
+            });
+            return NextResponse.json({ ok: true, changed: res.count });
         }
 
         /** keep：留级 —— 记下"当时错了几次"，之后只有错得更多才会重新提示 */

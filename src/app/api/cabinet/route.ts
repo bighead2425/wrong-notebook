@@ -94,6 +94,9 @@ export async function GET(req: Request) {
                     notebookId: true,
                     source: true,
                     manageType: true,
+                    /** 【2026-10-20 如如】深挖纸的 emoji —— 「待回录分析」要在题号前显示它，
+                     *  她好照着 emoji 在纸堆里找那张深挖纸（题号太小、纸多了难对）。 */
+                    emojiMark: true,
                     printCount: true,
                     lastPrintedAt: true,
                     reviewOutcomes: true,

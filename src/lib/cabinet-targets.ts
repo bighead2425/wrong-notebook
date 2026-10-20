@@ -32,7 +32,7 @@ export interface CabinetTask<T> {
 export interface CabinetTasks {
     pendingDeepPrint: CabinetTask<{ id: string; source: string | null }>;
     dueReviews: CabinetTask<{ id: string; source: string | null; dueOn: string; label: string; overdueDays: number }>;
-    pendingRecover: CabinetTask<{ id: string; source: string | null; daysSincePrint: number }>;
+    pendingRecover: CabinetTask<{ id: string; source: string | null; daysSincePrint: number; emojiMark?: string | null }>;
     pendingRecoverVolumes: CabinetTask<{ id: string; volumeNo: string; emojiMark?: string | null; unrecoveredCount: number; daysSinceCreated: number }>;
     unprintedInsights: CabinetTask<{ id: string; code: string; subject?: string | null }>;
     upgradeSuggestions: CabinetTask<{ id: string; source: string | null; notebookId?: string | null; wrongCount: number }>;

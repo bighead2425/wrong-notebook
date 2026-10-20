@@ -46,7 +46,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { apiClient } from "@/lib/api-client";
 import { subjectLabel } from "@/lib/notebook-fields";
-import { ArrowUpCircle, Loader2, SkipForward, TrendingUp } from "lucide-react";
+import { ArrowUp, ArrowUpCircle, Loader2, Printer, SkipForward, TrendingUp, X } from "lucide-react";
 
 interface SuggestionItem {
     id: string;
@@ -145,6 +145,28 @@ export default function DeepSuggestionsPage() {
         }
     };
 
+    /**
+     * 【2026-10-20 空空第 1 条】**把留级题放回上面那一栏**（撤销留级）。
+     *
+     * 他的理由很实在："留级了就只能升级，不利于测试软件，也不利于管理。"
+     * ⇒ 留级题上多一个"返回"按钮，点它只删掉留级记号（等级一个字不动），
+     *   卡立刻回到"建议中的"那一栏，还能再留级。
+     */
+    const unkeepOne = async (it: SuggestionItem) => {
+        if (busy) return;
+        setBusy(it.id);
+        try {
+            await apiClient.post("/api/deep-suggestions", { action: "unkeep", ids: [it.id] });
+            setKeptItems((prev) => prev.filter((x) => x.id !== it.id));
+            setItems((prev) => [{ ...it, isDeep: false }, ...prev]);
+        } catch (e) {
+            console.error(e);
+            alert(L("没改成功，再试一次。", "Could not update. Try again."));
+        } finally {
+            setBusy(null);
+        }
+    };
+
     /** 全部升级：只处理**还没升的**（幂等，点两次不会出错） */
     const upgradeAll = async () => {
         const todo = items.filter((x) => !x.isDeep).map((x) => x.id);
@@ -163,9 +185,12 @@ export default function DeepSuggestionsPage() {
     };
 
     const pendingCount = items.filter((x) => !x.isDeep).length;
+    /** 【第 2 条】已升级的单独一栏：它们现在的正事是"印出来" */
+    const suggestedItems = items.filter((x) => !x.isDeep);
+    const upgradedItems = items.filter((x) => x.isDeep);
 
-    /** 一张卡 —— 两栏共用（上面那栏有「留级」，下面那栏没有） */
-    const renderCard = (it: SuggestionItem, from: "suggested" | "kept") => (
+    /** 一张卡 —— 三栏共用（建议中 / 留级 / 已升级，按钮各不同） */
+    const renderCard = (it: SuggestionItem, from: "suggested" | "kept" | "upgraded") => (
         <Card key={it.id} className={it.isDeep ? "border-emerald-300 dark:border-emerald-900" : ""}>
             {/**
              * 卡片主体 = 去详情页（他要求的"点击错题卡进入这道错题的详情页"）。
@@ -199,6 +224,8 @@ export default function DeepSuggestionsPage() {
                 </CardContent>
             </Link>
             <CardContent className="flex gap-2 pt-0">
+                {/* 【第 2 条】已升级那一栏不放"升级/撤回" —— 那里只有打印/清除两个去向 */}
+                {from !== "upgraded" && (
                 <Button
                     size="sm"
                     variant={it.isDeep ? "outline" : "default"}
@@ -218,6 +245,7 @@ export default function DeepSuggestionsPage() {
                     )}
                     {it.isDeep ? L("已升级", "Upgraded") : L("升级", "Upgrade")}
                 </Button>
+                )}
                 {/* 下面那栏已经是"留级"状态了，不再给这个按钮（给了也没意义） */}
                 {from === "suggested" && (
                     <Button
@@ -234,6 +262,59 @@ export default function DeepSuggestionsPage() {
                         <SkipForward className="mr-1.5 h-4 w-4" />
                         {L("留级", "Keep")}
                     </Button>
+                )}
+                {/* 【第 1 条】留级题多一个"回到上面" —— 撤销留级记号，卡回到上面那栏 */}
+                {from === "kept" && (
+                    <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-muted-foreground"
+                        disabled={!!busy}
+                        title={L(
+                            "撤销留级，这张卡回到上面「建议中的」那一栏（等级不变）",
+                            "Undo keep — the card goes back up (level unchanged)",
+                        )}
+                        onClick={() => void unkeepOne(it)}
+                    >
+                        <ArrowUp className="mr-1.5 h-4 w-4" />
+                        {L("回到上面", "Move up")}
+                    </Button>
+                )}
+                {/**
+                 * 【第 2 条】**已升级的题要给"下一步"**：这时候真正要做的是
+                 * "把它用深挖纸印出来"，不是标记完就算了。
+                 *
+                 * · 打印 → `/print-preview?mode=deep&ids=` **新标签**打开。
+                 *   用新标签而不是跳转，是因为 `print-preview` 的返回键写死回 `/notebooks`，
+                 *   从这一页进去会被带到别处；新标签关掉就回到这里，正好符合"返回还回建议深挖"。
+                 * · 清除 → 只从**本地**移走（它的 `manageType` 已经是 deep，
+                 *   服务端下次不会再把它列进来，所以不需要额外落库）。
+                 */}
+                {from === "upgraded" && (
+                    <>
+                        <Button size="sm" variant="default" asChild>
+                            <a
+                                href={`/print-preview?mode=deep&ids=${encodeURIComponent(it.id)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={L("打开这道题的深挖页，调好版面就印", "Open its deep sheet to print")}
+                            >
+                                <Printer className="mr-1.5 h-4 w-4" />
+                                {L("打印", "Print")}
+                            </a>
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-muted-foreground"
+                            disabled={!!busy}
+                            title={L("这次不印了，把它从这一页清出去", "Dismiss without printing")}
+                            onClick={() => setItems((prev) => prev.filter((x) => x.id !== it.id))}
+                        >
+                            <X className="mr-1.5 h-4 w-4" />
+                            {L("清除", "Dismiss")}
+                        </Button>
+                    </>
                 )}
             </CardContent>
         </Card>
@@ -285,9 +366,27 @@ export default function DeepSuggestionsPage() {
                 ) : (
                     <>
                         {/* ===== 上半：建议中的 ===== */}
-                        {items.length > 0 && (
+                        {suggestedItems.length > 0 && (
                             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                                {items.map((it) => renderCard(it, "suggested"))}
+                                {suggestedItems.map((it) => renderCard(it, "suggested"))}
+                            </div>
+                        )}
+
+                        {/* ===== 已升级（【第 2 条】新加的那一栏）===== */}
+                        {upgradedItems.length > 0 && (
+                            <div className="space-y-3 pt-2">
+                                <div className="flex items-center gap-3">
+                                    <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                                        {L(`已升级（${upgradedItems.length}）`, `Upgraded (${upgradedItems.length})`)}
+                                    </span>
+                                    <span className="h-px flex-1 bg-border" />
+                                    <span className="text-xs text-muted-foreground">
+                                        {L("下一步是把它们印出来", "Next: print them")}
+                                    </span>
+                                </div>
+                                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                                    {upgradedItems.map((it) => renderCard(it, "upgraded"))}
+                                </div>
                             </div>
                         )}
 
