@@ -14,6 +14,7 @@ import {
     ATTENTION_LEVELS,
     FILTER_KEYS,
     MASTERED_FILTER_KEY,
+    PRE_MASTERED_FILTER_KEY,
     attentionFullName,
     isFilterUnfiltered,
     toggleFilterKey,
@@ -94,6 +95,24 @@ export function AttentionMultiSelect({
                 >
                     <span className="w-4 shrink-0">{draft.includes(MASTERED_FILTER_KEY) ? '✓' : ''}</span>
                     <span>{zh ? '已掌握' : 'Mastered'}</span>
+                </DropdownMenuItem>
+
+                {/**
+                 * 【2026-10-20 空空】**"预掌握"紧跟在"已掌握"下面**。
+                 * 他原话："在『已掌握』下面还是应该增加一个『预掌握』选项，有了这个预掌握，
+                 *          才更方便实用。"
+                 * ⚠️ 它不是新的一档等级 —— 判据是"等级 1（连对≥3 锁定）+ 倒数走到 0"
+                 *    （`lib/level-settle.ts` 的 `isPreMastered()`），服务端按同一判据筛。
+                 */}
+                <DropdownMenuItem
+                    disabled={draft.includes(PRE_MASTERED_FILTER_KEY) && draft.length <= 1}
+                    onSelect={(e) => {
+                        e.preventDefault();
+                        toggle(PRE_MASTERED_FILTER_KEY);
+                    }}
+                >
+                    <span className="w-4 shrink-0">{draft.includes(PRE_MASTERED_FILTER_KEY) ? '✓' : ''}</span>
+                    <span>{zh ? '预掌握' : 'Almost mastered'}</span>
                 </DropdownMenuItem>
 
                 {/* 剩下五项：按"最不急 → 最急"排（1→5，与 `ATTENTION_LEVELS` 一致） */}

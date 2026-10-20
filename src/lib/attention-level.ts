@@ -157,15 +157,34 @@ export const NEW_ITEM_ATTENTION = 5;
 /** 合并筛选里"已掌握"那一项的键 */
 export const MASTERED_FILTER_KEY = 'mastered';
 
+/**
+ * 【2026-10-20 空空】**"预掌握"单独列一项**（放在"已掌握"下面）。
+ *
+ * 他原话："这个等级下拉菜单中，在『已掌握』下面还是应该增加一个『预掌握』选项，
+ *          有了这个预掌握，才更方便实用。"
+ *
+ * ⚠️ 它**不是新的一档等级**，也不占 `masteryLevel` 的值 ——
+ *    判据就是 `lib/level-settle.ts` 里那个 `isPreMastered()`：
+ *    **等级 1（连对 ≥3 锁定）+ 倒数走到 0**。
+ *    原来只有"显示状态"、筛选时被 🍜D稳了 顺带包含；现在单独给一个键，
+ *    她可以直接把这一批"再确认一次就该掌握"的题挑出来。
+ *
+ * 📌 本文件头那段"为什么没有预掌握"的说明**已作废**（他改主意了），
+ *    保留原文只为记录来龙去脉。
+ */
+export const PRE_MASTERED_FILTER_KEY = 'preMastered';
+
 /** 合并筛选的全部合法键（顺序 = 下拉里的显示顺序） */
 export const FILTER_KEYS: readonly string[] = [
     MASTERED_FILTER_KEY,
+    PRE_MASTERED_FILTER_KEY,
     ...ATTENTION_LEVELS.map((l) => String(l.value)),
 ];
 
 /** 键 ⇒ 等级数字（"已掌握"不是等级，返回 null） */
 export function filterKeyToLevel(key: string): number | null {
-    if (key === MASTERED_FILTER_KEY) return null;
+    /** "已掌握"和"预掌握"都不是某一档等级，走各自的分支 */
+    if (key === MASTERED_FILTER_KEY || key === PRE_MASTERED_FILTER_KEY) return null;
     const n = Number(key);
     return Number.isFinite(n) && n >= 1 && n <= ATTENTION_LEVELS.length ? n : null;
 }

@@ -1019,12 +1019,18 @@ describe('/api/error-items', () => {
                 );
             });
 
-            it('★★ **6 项全选 = 没筛**（一个条件都不加），脏键直接丢掉', async () => {
+            /**
+             * 【2026-10-20 改】**7 项全选 = 没筛** —— 空空加了「预掌握」（`preMastered`）。
+             * ⚠️ 原来这里写死 `mastered,1,2,3,4,5`（6 项），加档位后它不再等于"全选"，
+             *    接口就会真的加一条 OR 条件 ⇒ 这条测试当场红。
+             *    测的是"全选不加条件"这条**规则**，所以键必须跟着 `FILTER_KEYS` 走。
+             */
+            it('★★ **7 项全选 = 没筛**（一个条件都不加），脏键直接丢掉', async () => {
                 mocks.mockPrismaErrorItem.count.mockResolvedValue(0);
                 mocks.mockPrismaErrorItem.findMany.mockResolvedValue([]);
 
                 await GET_LIST(
-                    new Request('http://localhost/api/error-items/list?levelFilter=mastered,1,2,3,4,5'),
+                    new Request('http://localhost/api/error-items/list?levelFilter=mastered,preMastered,1,2,3,4,5'),
                 );
                 expect(JSON.stringify(listWhere().AND ?? [])).not.toContain('masteryLevel');
                 expect(JSON.stringify(listWhere().AND ?? [])).not.toContain('attention');

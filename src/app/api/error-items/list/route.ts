@@ -9,6 +9,7 @@ import { createLogger } from "@/lib/logger";
 // 【2026-10-15】「掌握 / 等级」合并筛选的键（唯一实现在 lib/attention-level.ts）
 import {
     MASTERED_FILTER_KEY,
+    PRE_MASTERED_FILTER_KEY,
     filterKeyToLevel,
     isFilterUnfiltered,
     parseFilterKeys,
@@ -208,6 +209,20 @@ export async function GET(req: Request) {
 
             const branches: Prisma.ErrorItemWhereInput[] = [];
             if (wantsMastered) branches.push({ masteryLevel: { gte: 2 } });
+            /**
+             * 【2026-10-20 空空】**"预掌握"单独一支**（放在"已掌握"下面那个选项）。
+             * 判据与 `lib/level-settle.ts` 的 `isPreMastered()` **完全一致**：
+             *   等级 1（连对 ≥3 锁定）+ 倒数走到 0 + 还没标已掌握。
+             * ⚠️ `levelCountdown: null` 不会命中 `lte: 0`（SQL 里 NULL 比较是 UNKNOWN）——
+             *    这正是 `isPreMastered` 里那个"必须挡住 null"的坑，这里靠 SQL 语义天然避开。
+             */
+            if (levelFilterKeys.includes(PRE_MASTERED_FILTER_KEY)) {
+                branches.push({
+                    masteryLevel: { lt: 2 },
+                    attention: 1,
+                    levelCountdown: { lte: 0 },
+                });
+            }
             if (levels.length > 0) {
                 // ⚠️ `masteryLevel: { lt: 2 }` 就是"已掌握优先于等级"的落点：
                 //    已掌握的题**永远不会**从等级分支里出来。

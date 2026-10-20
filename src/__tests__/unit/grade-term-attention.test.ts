@@ -188,8 +188,12 @@ describe('年级·学期 · 服务端筛选用的写法展开', () => {
  * 键的集合、"至少留一个"、"全选=没筛"、URL 解析，都在 `lib/attention-level.ts`。
  */
 describe('等级 · 合并筛选的键（掌握 + 等级）', () => {
-    it('6 个键、顺序 = 下拉里的显示顺序（已掌握在最前，其后 1→5）', () => {
-        expect(FILTER_KEYS).toEqual(['mastered', '1', '2', '3', '4', '5']);
+    /**
+     * 【2026-10-20 改】**7 个键** —— 空空加了「预掌握」。
+     * 顺序是他明确说的"在『已掌握』**下面**" ⇒ `mastered` 紧跟 `preMastered`，其后仍是 1→5。
+     */
+    it('7 个键、顺序 = 下拉里的显示顺序（已掌握 → 预掌握 → 1→5）', () => {
+        expect(FILTER_KEYS).toEqual(['mastered', 'preMastered', '1', '2', '3', '4', '5']);
     });
 
     it('filterKeyToLevel：等级键 ⇒ 数字；"mastered" ⇒ null（它不是等级）', () => {
@@ -208,9 +212,14 @@ describe('等级 · 合并筛选的键（掌握 + 等级）', () => {
         expect(toggleFilterKey(['5', 'mastered'], '2')).toEqual(['mastered', '2', '5']);
     });
 
-    it('isFilterUnfiltered：6 项全选 = 没筛', () => {
-        expect(isFilterUnfiltered(['mastered', '1', '2', '3', '4', '5'])).toBe(true);
-        expect(isFilterUnfiltered(['mastered', '1', '2', '3', '4'])).toBe(false);
+    /**
+     * ⚠️【2026-10-20 改】**不写死项数** —— 原来写的是 6 项，加「预掌握」后当场红。
+     * 这条测的是"全选 = 没筛"这个**规则**，不是"一共几项"。
+     * 用 `[...FILTER_KEYS]` / `slice(0, -1)` 表达，以后再加档位也不用改它。
+     */
+    it('isFilterUnfiltered：全部选中 = 没筛；少一项就算筛了', () => {
+        expect(isFilterUnfiltered([...FILTER_KEYS])).toBe(true);
+        expect(isFilterUnfiltered(FILTER_KEYS.slice(0, -1))).toBe(false);
         expect(isFilterUnfiltered([])).toBe(false);
     });
 
