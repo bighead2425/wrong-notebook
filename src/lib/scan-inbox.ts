@@ -1241,3 +1241,54 @@ export async function convertInboxPdf(
     logger.info({ name, pages: produced.length }, "PDF 已转为图片");
     return { ok: true, pages: produced };
 }
+
+/**
+ * 【2026-10-21 空空】**删收件箱里的 PDF**。
+ *
+ * 他原话："现在如果我想删除收件箱中的 pdf 文件，还要到 nas 中去操作，这样有点复杂。"
+ *
+ * ⚠️ 为什么不复用 `deleteInboxFiles`：那个函数用 `resolveSafeFilePath` 校验，
+ *    里面只认**图片扩展名**（PDF 会被判成"不是收件箱里的普通图片文件"）。
+ *    共用件改宽会顺带放开别的入口，不如单独一条、只认 `.pdf`。
+ */
+export async function deleteInboxPdfs(
+    names: string[],
+    subPathOverride?: string | null,
+): Promise<DeleteResult> {
+    const result: DeleteResult = { deleted: [], failed: [] };
+    if (!names.length) return result;
+
+    const { dir } = getInboxLocation(subPathOverride ?? null);
+    const dirReal = await fs.realpath(dir).catch(() => null);
+    if (!dirReal) {
+        for (const n of names) result.failed.push({ name: n, error: "目录读不到" });
+        return result;
+    }
+
+    for (const raw of names) {
+        if (!isPdfName(raw)) {
+            result.failed.push({ name: raw, error: "只认 .pdf" });
+            continue;
+        }
+        const full = path.join(dirReal, raw);
+        try {
+            // 双保险：必须是普通文件，且 realpath 仍落在挂载根下（防软链接穿出去）
+            const st = await fs.lstat(full);
+            if (!st.isFile()) {
+                result.failed.push({ name: raw, error: "不是普通文件" });
+                continue;
+            }
+            const real = await fs.realpath(full);
+            if (!real.startsWith(dirReal + path.sep)) {
+                result.failed.push({ name: raw, error: "路径越界" });
+                continue;
+            }
+            await fs.unlink(real);
+            result.deleted.push(raw);
+        } catch (e) {
+            result.failed.push({ name: raw, error: e instanceof Error ? e.message : String(e) });
+        }
+    }
+    if (result.deleted.length) logger.info({ deleted: result.deleted.length }, "PDF 已从收件箱删除");
+    return result;
+}

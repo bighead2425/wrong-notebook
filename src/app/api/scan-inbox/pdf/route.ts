@@ -4,7 +4,7 @@ import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
 import { badRequest, internalError, unauthorized } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
-import { convertInboxPdf, listInboxPdfs } from "@/lib/scan-inbox";
+import { convertInboxPdf, deleteInboxPdfs, listInboxPdfs } from "@/lib/scan-inbox";
 
 const logger = createLogger("api:scan-inbox:pdf");
 
@@ -47,10 +47,27 @@ export async function POST(req: Request) {
     if (!user) return unauthorized("Authentication required");
 
     try {
-        const body = (await req.json().catch(() => ({}))) as { dir?: string; name?: string; dpi?: number };
+        const body = (await req.json().catch(() => ({}))) as {
+            dir?: string;
+            name?: string;
+            dpi?: number;
+            action?: "convert" | "delete";
+        };
         const dir = body.dir || "scan2pdf";
         const name = (body.name || "").trim();
         if (!name) return badRequest("name is required");
+
+        /**
+         * 【2026-10-21 空空】**在收件箱里直接删 PDF** —— 不用再跑去 NAS 上删。
+         * 只认 `.pdf`、只认普通文件，路径校验在 `deleteInboxPdfs` 里。
+         */
+        if (body.action === "delete") {
+            const res = await deleteInboxPdfs([name], dir);
+            if (res.deleted.length === 0) {
+                return NextResponse.json({ ok: false, error: res.failed[0]?.error || "删除失败" });
+            }
+            return NextResponse.json({ ok: true, deleted: res.deleted });
+        }
 
         const dpi = Number.isFinite(body.dpi) && (body.dpi ?? 0) >= 72 && (body.dpi ?? 0) <= 300
             ? Number(body.dpi)

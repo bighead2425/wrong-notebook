@@ -3,7 +3,8 @@ import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
 import { badRequest, notFound, unauthorized } from "@/lib/api-errors";
-import { readInboxFile, readInboxThumb } from "@/lib/scan-inbox";
+import { readInboxFile, readInboxThumb, resolveSafeFilePath } from "@/lib/scan-inbox";
+import fs from "fs/promises";
 
 /**
  * GET /api/scan-inbox/file?name=xxx.jpg&dir=scan2recover&v=1728451234567[&thumb=1]
@@ -44,6 +45,28 @@ export async function GET(req: Request) {
      *    不是错误 —— 所以不加任何日志噪音。
      */
     const wantThumb = params.get("thumb") === "1";
+
+    /**
+     * 【2026-10-21 空空】**PDF 预览** —— 收件箱里点开就能看，不用去 NAS。
+     *
+     * 为什么单独一条：`readInboxFile` 走的是**图片**那套闸（`ALLOWED_EXT`），
+     * PDF 会被判成"不是支持的图片"。而这里只需要原样吐字节 + `inline`，
+     * 让浏览器自带的 PDF 阅读器接管。
+     * 安全沿用它：`resolveSafeFilePath`（只认普通文件 + realpath 必须在挂载根下）。
+     */
+    if (!wantThumb && name.toLowerCase().endsWith(".pdf")) {
+        const full = await resolveSafeFilePath(name, dir ?? undefined);
+        if (!full) return notFound("PDF not found");
+        const buf = await fs.readFile(full);
+        return new NextResponse(new Uint8Array(buf), {
+            headers: {
+                "Content-Type": "application/pdf",
+                // inline：在浏览器里直接看，不弹下载框
+                "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(name)}`,
+                "Cache-Control": "private, max-age=60",
+            },
+        });
+    }
 
     const found = wantThumb
         ? await readInboxThumb(name, dir)

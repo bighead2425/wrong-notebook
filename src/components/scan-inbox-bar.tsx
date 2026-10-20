@@ -187,6 +187,8 @@ export function ScanInboxBar({
     const [pdfs, setPdfs] = useState<{ name: string; size: number }[]>([]);
     /** 正在转哪一个（防连点，也做按钮上的转圈） */
     const [converting, setConverting] = useState<string | null>(null);
+    /** 【2026-10-21】正在预览哪个 PDF（弹框里用浏览器自带阅读器） */
+    const [previewPdf, setPreviewPdf] = useState<string | null>(null);
     const [open, setOpen] = useState(false);
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [loading, setLoading] = useState(false);
@@ -315,9 +317,15 @@ export function ScanInboxBar({
         }
     }, [subPath]);
 
-    /** 把一个 PDF 转成图片（后端 pdftoppm）—— 成功后重读目录，新图会出现在下面的网格里 */
+    /**
+     * 【2026-10-21 空空】把一个 PDF 拆成图片（后端 pdftoppm）。
+     *
+     * 两条去向（他要的就是这两条）：
+     *   · `thenImport = true`  ⇒ 拆完**直接送进待处理**（少一次勾选）
+     *   · `thenImport = false` ⇒ 只拆到收件箱，图片出现在下面的网格里，自己勾选
+     */
     const convertPdf = useCallback(
-        async (name: string) => {
+        async (name: string, thenImport = false) => {
             if (converting) return;
             setConverting(name);
             try {
@@ -331,13 +339,38 @@ export function ScanInboxBar({
                 }
                 await loadPdfs();
                 await load();
+                if (thenImport && r.pages?.length) {
+                    await doImport(r.pages);
+                }
             } catch (e) {
                 alert(e instanceof Error ? e.message : "转图失败");
             } finally {
                 setConverting(null);
             }
         },
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- doImport 每次渲染重建，别放进来（会把整个回调也重建）
         [converting, loadPdfs, load],
+    );
+
+    /** 【2026-10-21】删收件箱里的 PDF —— 不用再去 NAS 上操作 */
+    const removePdf = useCallback(
+        async (name: string) => {
+            if (!confirm(`删掉「${name}」？删了就不能再拆了（原文件一起删）。`)) return;
+            try {
+                const r = await apiClient.post<{ ok: boolean; error?: string }>(
+                    "/api/scan-inbox/pdf",
+                    { dir: "scan2pdf", name, action: "delete" },
+                );
+                if (!r?.ok) {
+                    alert(r?.error || "删除失败");
+                    return;
+                }
+                await loadPdfs();
+            } catch (e) {
+                alert(e instanceof Error ? e.message : "删除失败");
+            }
+        },
+        [loadPdfs],
     );
 
     useEffect(() => { void loadPdfs(); }, [loadPdfs, refreshToken]);
@@ -730,22 +763,50 @@ export function ScanInboxBar({
                             这个文件夹里还有 {pdfs.length} 个 PDF。点「转成图片」后，它会按页拆开，
                             出现在下面的列表里，再勾选导入。
                         </p>
-                        <ul className="space-y-1">
+                        <ul className="space-y-1.5">
                             {pdfs.map((pf) => (
-                                <li key={pf.name} className="flex items-center gap-2 text-xs">
-                                    <FileText className="h-3.5 w-3.5 shrink-0 text-sky-600" />
-                                    <span className="min-w-0 flex-1 truncate font-mono">{pf.name}</span>
+                                <li key={pf.name} className="flex flex-wrap items-center gap-1.5 text-xs">
+                                    {/* 点名字 = 预览（新标签交给浏览器自带的 PDF 阅读器） */}
+                                    <button
+                                        type="button"
+                                        onClick={() => window.open(fileUrl(pf.name), "_blank", "noopener")}
+                                        className="flex min-w-0 flex-1 items-center gap-1.5 text-left hover:text-sky-700"
+                                        title="点开预览"
+                                    >
+                                        <FileText className="h-3.5 w-3.5 shrink-0 text-sky-600" />
+                                        <span className="truncate font-mono underline decoration-dotted">{pf.name}</span>
+                                    </button>
+                                    <Button
+                                        size="sm"
+                                        className="h-9 px-2 text-xs sm:h-7 sm:px-2"
+                                        disabled={!!converting}
+                                        title="拆成图片并直接送进待处理"
+                                        onClick={() => void convertPdf(pf.name, true)}
+                                    >
+                                        {converting === pf.name ? (
+                                            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                                        ) : null}
+                                        拆开送待处理
+                                    </Button>
                                     <Button
                                         size="sm"
                                         variant="outline"
                                         className="h-9 px-2 text-xs sm:h-7 sm:px-2"
                                         disabled={!!converting}
-                                        onClick={() => void convertPdf(pf.name)}
+                                        title="只拆到收件箱，图片出现在下面，自己勾选"
+                                        onClick={() => void convertPdf(pf.name, false)}
                                     >
-                                        {converting === pf.name ? (
-                                            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                                        ) : null}
-                                        转成图片
+                                        拆到收件箱
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-9 w-9 px-0 text-muted-foreground sm:h-7 sm:w-7"
+                                        disabled={!!converting}
+                                        title="删掉这个 PDF（原文件一起删）"
+                                        onClick={() => void removePdf(pf.name)}
+                                    >
+                                        <Trash2 className="h-3.5 w-3.5" />
                                     </Button>
                                 </li>
                             ))}
