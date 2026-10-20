@@ -195,7 +195,28 @@ export async function GET(req: Request) {
             }
         }
 
-        return NextResponse.json({ insights: page, questions, nextCursor, headwordCounts });
+        /**
+         * 【2026-10-21 空空】每条积累**印过没有** —— 管理页要在没印的编号后面点一个红点。
+         *
+         * 判据与内阁的"未打印的日积月累"**同源**：这条没被任何一张积累卷收录
+         * （`ReviewVolumeItem.insightId` 指向它）。这样"任务卡说有 5 条"和
+         * "管理页里点了 5 个红点"永远是同一批。
+         *
+         * ⚠️ 只问**这一页**的 id（列表是游标翻页的，别为了一个红点扫全库）。
+         */
+        const pageIds = page.map((r) => r.id);
+        const printedIds = new Set<string>();
+        if (pageIds.length > 0) {
+            const used = await prisma.reviewVolumeItem.findMany({
+                where: { insightId: { in: pageIds } },
+                select: { insightId: true },
+                distinct: ['insightId'],
+            });
+            for (const u of used) if (u.insightId) printedIds.add(u.insightId);
+        }
+        const insights = page.map((r) => ({ ...r, printed: printedIds.has(r.id) }));
+
+        return NextResponse.json({ insights, questions, nextCursor, headwordCounts });
     } catch (error) {
         logger.error({ error }, 'Error listing insights');
         return internalError("Failed to list insights");

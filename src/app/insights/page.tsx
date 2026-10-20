@@ -111,6 +111,12 @@ interface InsightRow {
      */
     status?: string | null;
     /**
+     * 【2026-10-21】这条**有没有被印过**（是否被任何积累卷收录）。
+     * 由 `/api/insights` 算好带回来 —— 判据与内阁"未打印的日积月累"同源。
+     * 管理页在 `false` 的编号后面点一个红点。
+     */
+    printed?: boolean;
+    /**
      * 【2026-10-19 如如】**词头** —— 正文第一行 `#### ` 的归一化值。
      * 有它 ⇒ 这条属于某个"词"（主附积累按词头成组）；
      * 空 ⇒ 摘抄 / 一段感受 / 一封信，**本来就没有"词"**，不参与分组。
@@ -968,6 +974,19 @@ export default function InsightsPage() {
                 >
                     <div className="flex flex-wrap items-center gap-2">
                         <span className="font-mono text-xs font-semibold">{r.code}</span>
+                        {/**
+                         * 【2026-10-21 空空】**没印过的，编号后面点一个红点。**
+                         * 他原话："就在没有打印的积累条目号后面显示一个红色的圆点。"
+                         * 判据来自 `/api/insights` 的 `printed`（是否被任何积累卷收录），
+                         * 与内阁任务卡同一个来源。
+                         */}
+                        {r.printed === false && (
+                            <span
+                                aria-label={L('还没印过', 'Not printed yet')}
+                                title={L('还没印过', 'Not printed yet')}
+                                className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-red-500"
+                            />
+                        )}
                         {/* 【2026-10-13】暂存条一眼认出来 ——
                             他："在管理页中用标识标出等待后续整理（或删除）" */}
                         {r.status === 'draft' && (

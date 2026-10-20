@@ -286,9 +286,26 @@ export function practiceTodayItems(
     excludeIds: ReadonlySet<string> = new Set(),
 ): PracticeTodayItem[] {
     const out: PracticeTodayItem[] = [];
+    const today = dayKey(now);
     for (const q of questions) {
         if (excludeIds.has(q.id)) continue;
         if ((Number(q.masteryLevel) || 0) >= 2) continue;
+        /**
+         * 【2026-10-21 空空】**今天已经印过纸的题，从「今天该练」撤出。**
+         *
+         * 他的定位说得很清楚："今天该练" ≈ **打印提示**：
+         *   "如果组卷打印了，无论是深挖纸、复练纸、模仿纸，只要打印了，
+         *    那么这个题就从今天该练中撤出来。……对于这道题复习的结果，
+         *    本来就有待回录分析和待回录的卷兜底，不用再以题的形式兜底了。"
+         *
+         * ⇒ 判据只看**今天有没有印**（`lastPrintedAt` 落在今天）。
+         *   今天印了 ⇒ 今天不再提醒；明天要是还没做，它自然会重新出现
+         *   （那时 `lastPrintedAt` 已经不是今天），再往后还有「待回录」接手。
+         */
+        if (q.lastPrintedAt) {
+            const printed = toDate(q.lastPrintedAt);
+            if (printed && dayKey(printed) === today) continue;
+        }
         const status = reviewStatusOf(q.reviewOutcomes, now);
         if (status.urgency < 4) continue;
 

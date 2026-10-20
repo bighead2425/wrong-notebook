@@ -42,7 +42,7 @@ import { apiClient, ApiError } from "@/lib/api-client";
 import { reconcileSelection } from "@/lib/inbox-selection";
 import { inboxFileUrl } from "@/lib/scan-inbox-url";
 import { stampYmd } from "@/lib/volume-code";
-import { Check, Download, FolderOpen, ImageUp, Layers, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { Check, Download, FileText, FolderOpen, ImageUp, Layers, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { InboxImageViewer } from "@/components/inbox-image-viewer";
 import { StitchComposer } from "@/components/stitch-composer";
 
@@ -179,6 +179,14 @@ export function ScanInboxBar({
     const dirQ = subPath ? `dir=${encodeURIComponent(subPath)}` : "";
 
     const [listing, setListing] = useState<InboxListing | null>(null);
+    /**
+     * 【2026-10-21 如如】**PDF 中转目录**（`subPath === 'scan2pdf'`）里还没转的 PDF。
+     * 举一反三那条路：试卷宝只能导 PDF ⇒ 先按页转成 PNG 落回同一目录，
+     * 转完调 `load()` 刷新，生成的图就跟普通收件箱图片一样可以被勾选导入。
+     */
+    const [pdfs, setPdfs] = useState<{ name: string; size: number }[]>([]);
+    /** 正在转哪一个（防连点，也做按钮上的转圈） */
+    const [converting, setConverting] = useState<string | null>(null);
     const [open, setOpen] = useState(false);
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [loading, setLoading] = useState(false);
@@ -287,6 +295,52 @@ export function ScanInboxBar({
             setLoading(false);
         }
     }, [dirQ]);
+
+    /**
+     * 【2026-10-21】只在 PDF 目录里列 PDF。别的目录（scan2wrong / scan2recover）直接清空，
+     * 不白跑一次请求。
+     */
+    const loadPdfs = useCallback(async () => {
+        if (subPath !== "scan2pdf") {
+            setPdfs([]);
+            return;
+        }
+        try {
+            const r = await apiClient.get<{ files: { name: string; size: number }[] }>(
+                "/api/scan-inbox/pdf?dir=scan2pdf",
+            );
+            setPdfs(r.files || []);
+        } catch {
+            setPdfs([]);
+        }
+    }, [subPath]);
+
+    /** 把一个 PDF 转成图片（后端 pdftoppm）—— 成功后重读目录，新图会出现在下面的网格里 */
+    const convertPdf = useCallback(
+        async (name: string) => {
+            if (converting) return;
+            setConverting(name);
+            try {
+                const r = await apiClient.post<{ ok: boolean; pages: string[]; error?: string }>(
+                    "/api/scan-inbox/pdf",
+                    { dir: "scan2pdf", name },
+                );
+                if (!r?.ok) {
+                    alert(r?.error || "转图失败");
+                    return;
+                }
+                await loadPdfs();
+                await load();
+            } catch (e) {
+                alert(e instanceof Error ? e.message : "转图失败");
+            } finally {
+                setConverting(null);
+            }
+        },
+        [converting, loadPdfs, load],
+    );
+
+    useEffect(() => { void loadPdfs(); }, [loadPdfs, refreshToken]);
 
     useEffect(() => { load(); }, [load, refreshToken]);
 
@@ -669,6 +723,35 @@ export function ScanInboxBar({
     return (
         <>
             <div className="space-y-2">
+                {/* 【2026-10-21】PDF 中转区 —— 只在 scan2pdf 目录出现 */}
+                {subPath === "scan2pdf" && pdfs.length > 0 && (
+                    <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-2 dark:border-sky-900 dark:bg-sky-950/20">
+                        <p className="mb-1.5 text-xs font-medium text-sky-900 dark:text-sky-200">
+                            这个文件夹里还有 {pdfs.length} 个 PDF。点「转成图片」后，它会按页拆开，
+                            出现在下面的列表里，再勾选导入。
+                        </p>
+                        <ul className="space-y-1">
+                            {pdfs.map((pf) => (
+                                <li key={pf.name} className="flex items-center gap-2 text-xs">
+                                    <FileText className="h-3.5 w-3.5 shrink-0 text-sky-600" />
+                                    <span className="min-w-0 flex-1 truncate font-mono">{pf.name}</span>
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-9 px-2 text-xs sm:h-7 sm:px-2"
+                                        disabled={!!converting}
+                                        onClick={() => void convertPdf(pf.name)}
+                                    >
+                                        {converting === pf.name ? (
+                                            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                                        ) : null}
+                                        转成图片
+                                    </Button>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
                 {/* 【custom-v32】这两个按钮按首页那四个（批量上传 / 查看题册 / 标签管理 / 统计中心）
                     的尺寸来：h-11 + text-sm + 16px 简笔画。原先又大一圈、还同时挂了 emoji 和简笔画
                     （emoji 已从文案里去掉，只留简笔画）。

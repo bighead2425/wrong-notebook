@@ -25,7 +25,7 @@
  */
 
 import { useRouter } from "next/navigation";
-import { Camera, Plus, RefreshCw } from "lucide-react";
+import { Camera, FileUp, Plus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -150,8 +150,30 @@ export function PracticeLinkDialog({
                             )}
                         </p>
                     )}
+                    {/* ④【2026-10-21 空空】从收件箱拉取 PDF ——
+                        试卷宝只能导出 PDF，所以这条链路是：PDF → 逐页转图 → 走原来的录入。
+                        导入的题会以 `parentId = itemId` 挂到这道题下面（附题）。 */}
+                    <Button
+                        variant="outline"
+                        className="h-auto w-full justify-start gap-3 py-3"
+                        onClick={() => {
+                            onOpenChange(false);
+                            const qs = new URLSearchParams({ dir: "scan2pdf", parent: itemId });
+                            router.push(`/batch?${qs.toString()}`);
+                        }}
+                    >
+                        <FileUp className="h-4 w-4 shrink-0" />
+                        <span className="flex flex-col items-start text-left">
+                            <span>{L("从收件箱拉取（PDF）", "Pull from inbox (PDF)")}</span>
+                            <span className="text-xs font-normal opacity-70">
+                                {L(
+                                    "试卷宝导出的 PDF：按页转成图片，逐道挂到这道题下面",
+                                    "PDF from the exam app: pages become images, attached here",
+                                )}
+                            </span>
+                        </span>
+                    </Button>
                 </div>
-
                 <DialogFooter>
                     <Button variant="outline" onClick={() => onOpenChange(false)}>
                         {L("关闭", "Close")}

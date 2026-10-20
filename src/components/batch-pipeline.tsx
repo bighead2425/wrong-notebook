@@ -108,6 +108,12 @@ interface BatchPipelineProps {
      */
     linkToId?: string;
     /**
+     * 【2026-10-21 空空】**这个批量页读哪个收件箱**。
+     *   · 不传 ⇒ 默认 `scan2wrong`（录错题）
+     *   · `scan2pdf` ⇒ 举一反三从收件箱拉取 PDF 那条路（/batch?dir=scan2pdf&parent=<题id>）
+     */
+    inboxSubPath?: string;
+    /**
      * 【M1】与 `initialFiles` **同序**的框坐标（已序列化；无框的项为 null）。
      *
      * 为什么必须与 initialFiles 成对传：那两个回调在同一次点击里一起回，
@@ -158,7 +164,7 @@ function looksThrottled(err: unknown): boolean {
     return /429|rate.?limit|too many|限流|限速/.test(s);
 }
 
-export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, initialFiles, initialCropRegions, linkToId }: BatchPipelineProps) {
+export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, initialFiles, initialCropRegions, linkToId, inboxSubPath }: BatchPipelineProps) {
     const { t } = useLanguage();
 
     const [items, setItems] = useState<BatchItem[]>([]);
@@ -1309,6 +1315,8 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                 busy={busy}
                 onAvailability={setInboxReady}
                 refreshToken={inboxToken}
+                /* 【2026-10-21】举一反三那条路传 scan2pdf；不传就是默认的 scan2wrong */
+                subPath={inboxSubPath}
             />
 
             {/* 【custom-v31】连拍转存的两个提示：进行中 / 已收工。
