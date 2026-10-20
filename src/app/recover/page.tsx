@@ -72,6 +72,7 @@ import {
     Check,
     Crop,
     Layers,
+    Download,
 } from "lucide-react";
 
 /**
@@ -849,6 +850,28 @@ export default function RecoverPage() {
     );
 
     /** 从「待处理」或「预处理」里丢掉一张（记得把 objectURL 还回去，否则内存一直涨） */
+    /**
+     * 【2026-10-20 空空第 2 条】**把这张预处理图存到本地**（回录页这一份）。
+     *
+     * 与批量上传页同一个需求、同一套做法：直接拿 `s.url`（它本来就是
+     * `URL.createObjectURL(s.file)`，指向**原始 File**）当下载地址，
+     * **不从 canvas 或 `<img>` 重新导出** —— 那才会掉分辨率。
+     * 格子里的 `h-24 object-cover` 只是 CSS 裁着显示，跟文件本身无关。
+     */
+    const saveShotToLocal = (s: QueuedShot) => {
+        try {
+            const a = document.createElement("a");
+            a.href = s.url;
+            a.download = s.file.name || `scan-${Date.now()}.jpg`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        } catch (e) {
+            console.error("save shot failed:", e);
+            alert(language === "zh" ? "保存失败，换个浏览器再试。" : "Could not save. Try another browser.");
+        }
+    };
+
     const dropShot = useCallback((id: string, from: "pending" | "ready") => {
         const list = from === "pending" ? pendingShotsRef.current : readyShotsRef.current;
         const target = list.find((s) => s.id === id);
@@ -1367,6 +1390,15 @@ export default function RecoverPage() {
                                             aria-label={L("移除", "Remove")}
                                         >
                                             <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                        {/* 【2026-10-20 空空第 2 条】左下角「保存到本地」（原尺寸） */}
+                                        <button
+                                            type="button"
+                                            onClick={() => saveShotToLocal(s)}
+                                            className="absolute bottom-1 left-1 rounded bg-black/60 p-1 text-white hover:bg-black/80"
+                                            title={L("保存到本地（原尺寸）", "Save to device (full size)")}
+                                        >
+                                            <Download className="h-3.5 w-3.5" />
                                         </button>
                                     </div>
                                 ))}

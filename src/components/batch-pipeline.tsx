@@ -46,7 +46,7 @@ import {
 import { countWillBeLost } from "@/lib/batch-queue";
 import {
     Upload, X, Check, Sparkles, ArrowLeft, Trash2, Layers, PenLine, Camera,
-    Loader2, Inbox, SquareCheck, Eraser, ScanSearch,
+    Loader2, Inbox, SquareCheck, Eraser, ScanSearch, Download,
 } from "lucide-react";
 
 /** 一张图在流水线里的状态 */
@@ -584,6 +584,37 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             else next.add(id);
             return next;
         });
+    };
+
+    /**
+     * 【2026-10-20 空空第 2 条】**把这张预处理图存到本地**。
+     *
+     * 他的原话："在左下角增加一个保存功能，这样就可以将预处理的图片保存到本地了，
+     *            注意我有一个要求，保存的图片应该是预处理后的图片，不是小小的预览的图片，
+     *            我估计现在预处理的图片应该就是原大小的图片不是再压缩过的，但需要进一步测试。"
+     *
+     * ── 他的估计**是对的**（这一棒实测确认）────────────────────────────
+     * `previewUrl` 是 `URL.createObjectURL(item.file)` —— 它指向的是**原始 File 本身**，
+     * 浏览器只是拿它当 `<img>` 的地址，**没有任何重采样**（那个 `aspect-[3/4] object-cover`
+     * 只是 CSS 把它裁着显示）。
+     * ⇒ 这里下载 `item.file`，得到的就是**原图**（加工过的则是裁剪/烘焙后的全分辨率图）。
+     * ⚠️ 所以**千万别**从 `<img>` 或 canvas 重新导出 —— 那才会掉分辨率。
+     */
+    const handleSaveImage = (it: BatchItem) => {
+        try {
+            const url = URL.createObjectURL(it.file);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = it.file.name || `scan-${Date.now()}.jpg`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            /** 给浏览器一点时间把下载接过去，再回收 blob URL */
+            setTimeout(() => URL.revokeObjectURL(url), 2000);
+        } catch (e) {
+            console.error("save image failed:", e);
+            alert(language === "zh" ? "保存失败，换个浏览器再试。" : "Could not save. Try another browser.");
+        }
     };
 
     const removeItem = (id: string) => {
@@ -1381,6 +1412,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                         actionIcon={<PenLine className="h-3.5 w-3.5" />}
                         busy={busy}
                         selectable
+                        onSave={handleSaveImage}
                         selectedIds={selectedIds}
                         onToggleSelect={toggleSelect}
                         runningId={runningId}
@@ -1503,6 +1535,7 @@ function FolderGrid({
     runningId,
     headerExtra,
     onStitch,
+    onSave,
 }: {
     title: string;
     hint: string;
@@ -1530,6 +1563,12 @@ function FolderGrid({
     runningId?: string | null;
     /** 标题行右侧的附加内容（预处理区的「全选 / 清除 / 未分析」三个按钮） */
     headerExtra?: React.ReactNode;
+    /**
+     * 【2026-10-20 空空第 2 条】把这张**预处理后的图存到本地**。
+     * 只有预处理区传（`selectable`），待处理区不给 —— 她要的是"加工好的成品"。
+     * ⚠️ 存的是 `item.file`（**原始 File**），不是 `previewUrl` 那个 96px 缩略图。
+     */
+    onSave?: (it: BatchItem) => void;
 }) {
     if (!items.length) return null;
     return (
@@ -1573,6 +1612,18 @@ function FolderGrid({
                                 【2026-10-09 第 2 条】**已处理（变灰）的图上也要保留这个按钮** ——
                                 原先它加了 `!dimmed` 条件，于是"加工过一次"的图就再也不能拼了；
                                 他明确要求留着（已处理的脸上仍然可能要接一段）。 */}
+                            {/* 【2026-10-20 空空第 2 条】左下角「保存到本地」—— 只有预处理区有。
+                                位置与待处理区的「拼接」同一个角，但两者互斥（拼接只给 pending）。 */}
+                            {onSave && (
+                                <button
+                                    className="absolute bottom-1 left-1 bg-black/60 text-white rounded p-1 hover:bg-black/80 transition-colors"
+                                    onClick={(e) => { e.stopPropagation(); if (!busy) onSave(it); }}
+                                    title="保存这张图到本地（原尺寸，不是缩略图）"
+                                >
+                                    <Download className="h-3 w-3" />
+                                </button>
+                            )}
+
                             {onStitch && it.status === "pending" && (
                                 <button
                                     className="absolute bottom-1 left-1 bg-black/60 text-white rounded p-1 hover:bg-black/80 transition-colors"
@@ -1621,7 +1672,7 @@ function FolderGrid({
                                 </span>
                             )}
                             {it.status === "error" && (
-                                <span className="absolute bottom-1 left-1 bg-destructive text-white text-[10px] rounded px-1">
+                                <span className={`absolute bottom-1 ${onSave ? "left-8" : "left-1"} bg-destructive text-white text-[10px] rounded px-1`}>
                                     AI 失败
                                 </span>
                             )}

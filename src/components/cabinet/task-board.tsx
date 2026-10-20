@@ -22,7 +22,7 @@ import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLanguage } from "@/contexts/LanguageContext";
-import type { Overview } from "@/lib/overview";
+import { taskHref, type CabinetTasks } from "@/lib/cabinet-targets";
 import {
     ArrowRight,
     BarChart3,
@@ -35,52 +35,12 @@ import {
     TrendingUp,
 } from "lucide-react";
 
-/* ============================ 接口返回形状 ============================ */
-
-export interface CabinetTask<T> {
-    count: number;
-    ids: string[];
-    items: T[];
-    volumeIds?: string[];
-}
-
-/** `/api/cabinet` 里 `tasks` 那一半（`overview` 不在这里） */
-export interface CabinetTasks {
-    pendingDeepPrint: CabinetTask<{ id: string; source: string | null }>;
-    dueReviews: CabinetTask<{ id: string; source: string | null; dueOn: string; label: string; overdueDays: number }>;
-    pendingRecover: CabinetTask<{ id: string; source: string | null; daysSincePrint: number }>;
-    pendingRecoverVolumes: CabinetTask<{ id: string; volumeNo: string; unrecoveredCount: number; daysSinceCreated: number }>;
-    unprintedInsights: CabinetTask<{ id: string; code: string; subject?: string | null }>;
-    upgradeSuggestions: CabinetTask<{ id: string; source: string | null; notebookId?: string | null; wrongCount: number }>;
-    /**
-     * 【2026-10-13 他拍板的设计】"今天先练这几道"（由复练结果算出来的紧迫度，
-     * 规则在 `lib/review-status.ts` + `lib/cabinet.ts` 的 `practiceTodayItems`）。
-     */
-    practiceToday: CabinetTask<{
-        id: string;
-        source: string | null;
-        notebookId?: string | null;
-        urgency: number;
-        reasonZh: string;
-        reasonEn: string;
-    }>;
-    /**
-     * 【2026-10-13】学情底账（覆盖率 / 状态分布）。
-     * ⚠️ 与 `overview`（questionCount/byManageType/byMastery）**不是一回事**：
-     *    那个回答"有多少题"，这个回答"**数据有多厚**"。
-     */
-    ledger: Overview;
-}
-
 /* ============================ 组件 ============================ */
 
 export function TaskBoard({ tasks }: { tasks: CabinetTasks }) {
     const { language } = useLanguage();
     const L = (a: string, b: string) => (language === "zh" ? a : b);
     const zh = language === "zh";
-
-    const printLink = (mode: "deep" | "review", ids: string[]) =>
-        ids.length > 0 ? `/print-preview?mode=${mode}&ids=${encodeURIComponent(ids.join(","))}` : null;
 
     return (
         <div className="space-y-4">
@@ -109,7 +69,7 @@ export function TaskBoard({ tasks }: { tasks: CabinetTasks }) {
                     samples={tasks.practiceToday.items
                         .map((i) => `${i.source || i.id}·${zh ? i.reasonZh : i.reasonEn}`)
                         .slice(0, 4)}
-                    href={printLink("review", tasks.practiceToday.ids)}
+                    href={taskHref("practiceToday", tasks)}
                     cta={L("去组复练卷", "Build a review volume")}
                 />
                 {/* 待打印深挖题 */}
@@ -120,7 +80,7 @@ export function TaskBoard({ tasks }: { tasks: CabinetTasks }) {
                     count={tasks.pendingDeepPrint.count}
                     unit={L("道", "items")}
                     samples={tasks.pendingDeepPrint.items.map((i) => i.source || i.id).slice(0, 4)}
-                    href={printLink("deep", tasks.pendingDeepPrint.ids)}
+                    href={taskHref("pendingDeepPrint", tasks)}
                     cta={L("去打印深挖纸", "Print deep sheets")}
                 />
                 {/* 该复查的题 */}
@@ -134,7 +94,7 @@ export function TaskBoard({ tasks }: { tasks: CabinetTasks }) {
                     count={tasks.dueReviews.count}
                     unit={L("道", "items")}
                     samples={tasks.dueReviews.items.map((i) => `${i.source || i.id}·${i.dueOn.slice(5)}`).slice(0, 4)}
-                    href={printLink("review", tasks.dueReviews.ids)}
+                    href={taskHref("dueReviews", tasks)}
                     cta={L("去组复练卷", "Build a review volume")}
                 />
                 {/* 该回录的深挖纸 */}
@@ -148,7 +108,7 @@ export function TaskBoard({ tasks }: { tasks: CabinetTasks }) {
                     count={tasks.pendingRecover.count}
                     unit={L("道", "items")}
                     samples={tasks.pendingRecover.items.map((i) => i.source || i.id).slice(0, 4)}
-                    href={tasks.pendingRecover.count > 0 ? "/recover" : null}
+                    href={taskHref("pendingRecover", tasks)}
                     cta={L("去回录分析", "Go to recover")}
                 />
                 {/* 待回录的复练卷 */}
@@ -162,7 +122,7 @@ export function TaskBoard({ tasks }: { tasks: CabinetTasks }) {
                     count={tasks.pendingRecoverVolumes.count}
                     unit={L("份", "volumes")}
                     samples={tasks.pendingRecoverVolumes.items.map((i) => i.volumeNo).slice(0, 3)}
-                    href={tasks.pendingRecoverVolumes.count > 0 ? "/recover" : null}
+                    href={taskHref("pendingRecoverVolumes", tasks)}
                     cta={L("去回录分析", "Go to recover")}
                 />
                 {/* 未打印的日积月累 */}
@@ -173,7 +133,7 @@ export function TaskBoard({ tasks }: { tasks: CabinetTasks }) {
                     count={tasks.unprintedInsights.count}
                     unit={L("条", "entries")}
                     samples={tasks.unprintedInsights.items.map((i) => i.code).slice(0, 4)}
-                    href={tasks.unprintedInsights.count > 0 ? "/insights" : null}
+                    href={taskHref("unprintedInsights", tasks)}
                     cta={L("去日积月累", "Open takeaways")}
                 />
                 {/* 建议升为深挖 */}
@@ -187,13 +147,7 @@ export function TaskBoard({ tasks }: { tasks: CabinetTasks }) {
                     count={tasks.upgradeSuggestions.count}
                     unit={L("道", "items")}
                     samples={tasks.upgradeSuggestions.items.map((i) => i.source || i.id).slice(0, 4)}
-                    href={
-                        tasks.upgradeSuggestions.count > 0
-                            ? tasks.upgradeSuggestions.items[0]?.notebookId
-                                ? `/notebooks/${tasks.upgradeSuggestions.items[0].notebookId}`
-                                : "/notebooks"
-                            : null
-                    }
+                    href={taskHref("upgradeSuggestions", tasks)}
                     cta={L("去该题所在的本", "Open its notebook")}
                 />
             </div>

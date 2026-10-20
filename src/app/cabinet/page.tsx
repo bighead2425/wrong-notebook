@@ -33,7 +33,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { WrongAnswerStats } from "@/components/wrong-answer-stats";
-import { TaskBoard, TaskBoardHeading, type CabinetTasks } from "@/components/cabinet/task-board";
+import { TaskBoard, TaskBoardHeading } from "@/components/cabinet/task-board";
+import type { CabinetTasks } from "@/lib/cabinet-targets";
 import { BackButton } from "@/components/ui/back-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";

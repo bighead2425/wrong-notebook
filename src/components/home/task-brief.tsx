@@ -1,20 +1,29 @@
 "use client";
 
 /**
- * 【2026-10-19 空空第 6 条】主页上的「当前任务简要」
+ * 【2026-10-19 空空第 6 条建，2026-10-20 真真按第 3、4 条改】主页上的「当前任务简要」
  *
- * 他的原话："下面内容，手机端接在下面，电脑端接在右侧，当前任务的简要情况。"
+ * ══════════════════════════════════════════════════════════════════════
+ * 空空 2026-10-20 的两条：
+ *   · 第 3 条："目前有 6 项任务，但点进去任务台有 7 个卡片，为什么对不上"
+ *   · 第 4 条："每一行后面的向右箭头，和卡片上『去XXX』按钮去向要一致起来。
+ *              目前点箭头都会进入总理内阁，完全谈不上快速操作"
  *
- * ── 三条设计判断 ────────────────────────────────────────────────────
- *  ① **只显示"真有事"的行**：没有任务的类目直接不出现。首页不该有一排
- *     "0 道 / 0 张"——那会让人以为软件坏了，也让真任务被稀释。
- *  ② **一行一件事，点整行进内阁**：这里不做"点一下就去做"的深链
- *     （不同任务的落点差得远：有的进卷、有的进错题详情），
- *     统一跳 `/cabinet` 让他在那边选，比在这里猜更稳。
- *  ③ **数字来自 `/api/cabinet`**，与内阁同一份 —— 不在这里另算一遍，
- *     否则两边会"首页说 5 道、点进去 3 道"。
+ * ── 第 3 条的真因 ──────────────────────────────────────────────────
+ * 这里原来有一句 `ROWS.filter(count > 0)` —— **计数为 0 的类目直接不出现**，
+ * 而任务台的卡片**0 也照样显示**（只是虚线 + 半透明）。
+ * 那天"该复查"正好是 0 道 ⇒ 主页 6 行、任务台 7 张卡。不是数据错，是**两边口径不同**。
+ * ⇒ 现在**都显示**（0 的行置灰），数量永远对得上。
  *
+ * ── 第 4 条的真因 ──────────────────────────────────────────────────
+ * 原来每一行都是 `href="/cabinet"` —— 点了只是"到内阁自己再找一遍"。
+ * ⇒ 现在用 `taskHref()`，**与卡片上那个「去XXX」按钮同一个答案**（判据在 `lib/cabinet-targets.ts`）。
+ *   两处不再各自维护一份，也就不会再脱节。
+ *
+ * ⚠️ `TASK_ORDER` 是任务的**唯一清单**（顺序、名称都在那儿）——
+ *    要加/减一类任务，只改 `lib/cabinet-targets.ts` 一处。
  * ⚠️ 传 `today` 是给服务端的**每日等级结算**用的（容器跑 UTC，日子只能客户端算）。
+ * ══════════════════════════════════════════════════════════════════════
  */
 
 import { useEffect, useState } from "react";
@@ -23,26 +32,11 @@ import { ArrowRight, Loader2 } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { dayKey } from "@/lib/calendar-grid";
-
-interface Task {
-    count: number;
-    ids: string[];
-}
+import { TASK_ORDER, taskHref, type CabinetTasks } from "@/lib/cabinet-targets";
 
 interface CabinetLite {
-    tasks: Record<string, Task | undefined>;
+    tasks: CabinetTasks;
 }
-
-/** 显示顺序 = 她该做的顺序（"今天先练"永远第一） */
-const ROWS: { key: string; zh: string; en: string; strong?: boolean }[] = [
-    { key: "practiceToday", zh: "今天该练", en: "Practice today", strong: true },
-    { key: "dueReviews", zh: "该复查", en: "Due for review" },
-    { key: "pendingRecover", zh: "待回录分析", en: "Waiting to be recovered" },
-    { key: "pendingRecoverVolumes", zh: "待回录的卷", en: "Volumes to recover" },
-    { key: "pendingDeepPrint", zh: "待打印深挖纸", en: "Deep-dive sheets to print" },
-    { key: "unprintedInsights", zh: "待打印积累", en: "Notes to print" },
-    { key: "upgradeSuggestions", zh: "建议升深挖", en: "Suggested upgrades" },
-];
 
 export function TaskBrief() {
     const { language } = useLanguage();
@@ -69,13 +63,15 @@ export function TaskBrief() {
         };
     }, []);
 
-    const rows = data ? ROWS.filter((r) => (data.tasks?.[r.key]?.count ?? 0) > 0) : [];
-
     return (
         <div className="rounded-lg border bg-card">
             <div className="flex items-baseline gap-2 border-b px-3 py-2">
                 <span className="text-sm font-medium">{L("当前任务", "Today")}</span>
-                {data && <span className="text-[11px] text-muted-foreground">{rows.length} 类</span>}
+                {/**
+                 * 【2026-10-20 第 3 条】这里显示的是**全部类目数**（= 任务台的卡片数），
+                 * 不再是"有事的类目数" —— 两个数字必须是同一个，否则他会再问一次。
+                 */}
+                {data && <span className="text-[11px] text-muted-foreground">{TASK_ORDER.length} 类</span>}
                 <span className="flex-1" />
                 <Link href="/cabinet" className="text-[11px] text-muted-foreground hover:text-foreground">
                     {L("内阁", "Cabinet")} ›
@@ -93,28 +89,44 @@ export function TaskBrief() {
                         {L("任务读不出来（点内阁看）", "Could not load tasks")}
                     </p>
                 )}
-                {data && rows.length === 0 && (
-                    <p className="py-4 text-center text-xs text-muted-foreground">
+                {data &&
+                    TASK_ORDER.map((r) => {
+                        const n = data.tasks?.[r.key]?.count ?? 0;
+                        const href = data.tasks ? taskHref(r.key, data.tasks) : null;
+                        const empty = n === 0;
+                        const inner = (
+                            <>
+                                <span className={`${r.strong && !empty ? "font-medium" : ""} ${empty ? "text-muted-foreground" : ""}`}>
+                                    {L(r.zh, r.en)}
+                                </span>
+                                <span
+                                    className={`text-xs ${
+                                        empty ? "text-muted-foreground/60" : r.strong ? "font-medium" : "text-muted-foreground"
+                                    }`}
+                                >
+                                    {n}
+                                </span>
+                                <span className="flex-1" />
+                                {/* 没地方可去时不给箭头 —— 给了却不能点，比不给更差 */}
+                                {href && <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />}
+                            </>
+                        );
+                        const cls = "flex items-center gap-2 rounded px-1 py-2 text-sm transition-colors";
+                        return href ? (
+                            <Link key={r.key} href={href} className={`${cls} hover:bg-accent/40`}>
+                                {inner}
+                            </Link>
+                        ) : (
+                            <div key={r.key} className={`${cls} opacity-60`} title={L("这一项现在没有要做的事", "Nothing to do here")}>
+                                {inner}
+                            </div>
+                        );
+                    })}
+                {data && TASK_ORDER.every((r) => (data.tasks?.[r.key]?.count ?? 0) === 0) && (
+                    <p className="pt-1 text-center text-[11px] text-muted-foreground">
                         {L("今天没有待办。想练就练两道。", "Nothing due today.")}
                     </p>
                 )}
-                {rows.map((r) => {
-                    const n = data?.tasks?.[r.key]?.count ?? 0;
-                    return (
-                        <Link
-                            key={r.key}
-                            href="/cabinet"
-                            className="flex items-center gap-2 rounded px-1 py-2 text-sm transition-colors hover:bg-accent/40"
-                        >
-                            <span className={r.strong ? "font-medium" : ""}>{L(r.zh, r.en)}</span>
-                            <span className={`text-xs ${r.strong ? "font-medium" : "text-muted-foreground"}`}>
-                                {n}
-                            </span>
-                            <span className="flex-1" />
-                            <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
-                        </Link>
-                    );
-                })}
             </div>
         </div>
     );
