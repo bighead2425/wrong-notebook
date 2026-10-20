@@ -221,9 +221,9 @@ export function UploadZone({ onImageSelect, isAnalyzing, onManualInput, compact 
      */
     if (compact) {
         return (
+            <>
             <div
-                {...getRootProps()}
-                onClick={() => scannerRef.current?.openCamera()}
+                {...getRootProps({ onClick: (e) => { e.stopPropagation(); scannerRef.current?.openCamera(); } })}
                 className={`group relative flex h-full min-h-[104px] cursor-pointer flex-col items-center justify-center gap-1.5 overflow-hidden rounded-lg border border-primary/25 bg-primary/5 px-3 py-6 text-center transition-colors hover:bg-primary/10 ${
                     isDragActive ? "border-primary bg-primary/10" : ""
                 }`}
@@ -247,7 +247,24 @@ export function UploadZone({ onImageSelect, isAnalyzing, onManualInput, compact 
                 <span className="text-[11px] text-muted-foreground">
                     {language === "zh" ? "点击拍照 · 电脑上可以拖一张进来" : "Tap to shoot · or drop a photo"}
                 </span>
-                {/* 相机浮层：点击方块时由它接管（自动找纸边、拉正、漂白） */}
+            </div>
+            {/**
+             * 【2026-10-20 真真】**相机浮层必须在这个方块「外面」**（空空报的那个大 bug）。
+             *
+             * 原来它写在上面的 `<div>` 里面，而那个 div 整体有
+             * `onClick={() => scannerRef.current?.openCamera()}`。`DocScanner` 是全屏 `fixed` 浮层，
+             * 但**它仍然是那个 div 的 DOM 子节点** ⇒ 点浮层里任何按钮，事件都会**冒泡**到 div 上
+             * ⇒ 又调一次 `openCamera()`。表现就是空空看到的：
+             *   · 点右上角「关闭」⇒ 变成重拍（关了又被打开）
+             *   · 点「原色 / 黑白 / 用原图」⇒ 全部变成重拍
+             *   · 连续多次 `openCamera()` 抢摄像头流 ⇒ **预览黑屏**
+             *   · 图是黑的 ⇒ 四角识别自然"非常差"
+             * 批量上传页没有这个外层 onClick，所以那边一直正常 —— 这正是他观察到的对比。
+             *
+             * ⚠️ 两道保险都留着：**移出容器**（结构上不冒泡）+ 外面再包一层
+             *    `stopPropagation`（万一以后又被人挪回去）。
+             */}
+            <div onClick={(e) => e.stopPropagation()}>
                 <DocScanner
                     ref={scannerRef}
                     onScanComplete={(blob: Blob) => {
@@ -259,6 +276,7 @@ export function UploadZone({ onImageSelect, isAnalyzing, onManualInput, compact 
                     onClose={() => { }}
                 />
             </div>
+            </>
         );
     }
 
@@ -351,17 +369,24 @@ export function UploadZone({ onImageSelect, isAnalyzing, onManualInput, compact 
                     </p>
                 </div>
             )}
-            {/* 拍照扫描浮层：OpenCV 按需加载，不影响首屏 */}
-            <DocScanner
-                ref={scannerRef}
-                onScanComplete={(blob: Blob) => {
-                    const file = new File([blob], `scan-${Date.now()}.jpg`, {
-                        type: 'image/jpeg'
-                    });
-                    onImageSelect(file);
-                }}
-                onClose={() => { }}
-            />
+            {/**
+             * 拍照扫描浮层：OpenCV 按需加载，不影响首屏。
+             * ⚠️【2026-10-20 真真】包一层 `stopPropagation` —— 理由同 `compact` 分支那段长注释：
+             *    全屏浮层里的按钮一旦冒泡到任何带 onClick 的祖先，就会变成"又开一次相机"。
+             *    这一支现在没有这种祖先，但它是**共用组件**，将来被谁套进可点区域都说不准。
+             */}
+            <div onClick={(e) => e.stopPropagation()}>
+                <DocScanner
+                    ref={scannerRef}
+                    onScanComplete={(blob: Blob) => {
+                        const file = new File([blob], `scan-${Date.now()}.jpg`, {
+                            type: 'image/jpeg'
+                        });
+                        onImageSelect(file);
+                    }}
+                    onClose={() => { }}
+                />
+            </div>
         </div>
     );
 }
