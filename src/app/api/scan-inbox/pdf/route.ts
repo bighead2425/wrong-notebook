@@ -1,0 +1,70 @@
+import { NextResponse } from "next/server";
+import { authOptions } from "@/lib/auth";
+import { getServerSession } from "next-auth";
+import { prisma } from "@/lib/prisma";
+import { badRequest, internalError, unauthorized } from "@/lib/api-errors";
+import { createLogger } from "@/lib/logger";
+import { convertInboxPdf, listInboxPdfs } from "@/lib/scan-inbox";
+
+const logger = createLogger("api:scan-inbox:pdf");
+
+/**
+ * 【2026-10-21 如如】PDF 转图片（举一反三从收件箱拉取）
+ *
+ * 背景：小白试卷宝**只能导出 PDF**，而举一反三整条链路吃图片 ⇒ 在中间加一层转图。
+ *
+ *   GET  ?dir=scan2pdf          → 列出这个子目录里的 PDF
+ *   POST { dir, name, dpi? }    → 把这个 PDF 逐页转成 PNG（落在同一目录，`<名>-pNN.png`）
+ *
+ * ⚠️ 目录靠 `subPath` 传，与图片那套一致（`scan2wrong` / `scan2recover` / `scan2pdf`）。
+ *    这里**不做白名单**：`getInboxLocation` 已经把路径钉死在挂载根以下，
+ *    真正要防的是**文件名**（只认 basename + `.pdf`，见 `convertInboxPdf`）。
+ * ⚠️ 转图依赖镜像里的 `pdftoppm`（Dockerfile 装 poppler-utils）。
+ *    本地 Windows 没有 ⇒ 返回人话错误，不抛 ENOENT。
+ */
+async function currentUser() {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.email) return null;
+    return prisma.user.findUnique({ where: { email: session.user.email } });
+}
+
+export async function GET(req: Request) {
+    const user = await currentUser();
+    if (!user) return unauthorized("Authentication required");
+
+    try {
+        const dir = new URL(req.url).searchParams.get("dir") || "scan2pdf";
+        const res = await listInboxPdfs(dir);
+        return NextResponse.json({ ok: true, ...res });
+    } catch (error) {
+        logger.error({ error }, "list pdf inbox failed");
+        return internalError("Failed to list PDFs");
+    }
+}
+
+export async function POST(req: Request) {
+    const user = await currentUser();
+    if (!user) return unauthorized("Authentication required");
+
+    try {
+        const body = (await req.json().catch(() => ({}))) as { dir?: string; name?: string; dpi?: number };
+        const dir = body.dir || "scan2pdf";
+        const name = (body.name || "").trim();
+        if (!name) return badRequest("name is required");
+
+        const dpi = Number.isFinite(body.dpi) && (body.dpi ?? 0) >= 72 && (body.dpi ?? 0) <= 300
+            ? Number(body.dpi)
+            : 150;
+
+        const res = await convertInboxPdf(name, dir, dpi);
+        if (!res.ok) {
+            // 失败也回 200：前端要拿 `error` 原文提示（"没有 pdftoppm"这种话必须透出来）
+            return NextResponse.json({ ok: false, error: res.error, pages: [] });
+        }
+        logger.info({ user: user.id, dir, name, pages: res.pages.length }, "pdf converted to images");
+        return NextResponse.json({ ok: true, pages: res.pages });
+    } catch (error) {
+        logger.error({ error }, "convert pdf failed");
+        return internalError("Failed to convert PDF");
+    }
+}

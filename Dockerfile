@@ -47,6 +47,18 @@ ENV NODE_ENV=production
 # Uncomment the following line in case you want to disable telemetry during runtime.
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# ============================================
+# 【2026-10-21 如如】**PDF 转图片**（举一反三从收件箱拉取 PDF 用）
+#
+# 小白试卷宝只能导出 PDF，而"举一反三"整条链路吃的是图片。
+# `pdftoppm` 来自 poppler-utils：
+#   · 比纯 JS 方案（pdfjs-dist + canvas 原生模块）稳，也不用在 Node 里吃内存；
+#   · Alpine 上约 15MB，只在 runner 层装，不影响构建缓存。
+# ⚠️ 本地 Windows 没有这个命令 ⇒ 转图接口要给出**明确的**报错（"这个功能只能在 NAS 上用"），
+#    而不是抛 ENOENT。
+# ============================================
+RUN apk add --no-cache poppler-utils
+
 # 部署版本号（= 发版时填的镜像 tag，如 custom-v40）。
 # 发版 workflow（.github/workflows/build-docker.yml）用 --build-arg 传进来，
 # 经 /api/version 暴露给「设置 → 关于」——

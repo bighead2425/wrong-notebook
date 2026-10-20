@@ -1102,3 +1102,142 @@ export async function saveInboxImage(
     logger.info({ name, bytes: data.length }, "连续拍摄转存到收件箱");
     return { ok: true, name };
 }
+
+/* ================================================================== */
+/* PDF → 图片（2026-10-21 · 举一反三从收件箱拉 PDF）                     */
+/* ================================================================== */
+
+/**
+ * 【背景】
+ *   小白试卷宝**只能导出 PDF**，而"举一反三"整条链路（裁切 → AI 分析 → 入题库）
+ *   吃的是图片。所以在中间加一层"PDF 按页转图片"。
+ *
+ * 【目录】
+ *   `/vol2/1000/scan-inbox/scan2pdf`（宿主）→ `/app/inbox/scan2pdf`（容器）。
+ *   与 `scan2wrong` / `scan2recover` 平级，靠 `subPath` 区分，不需要任何白名单。
+ *
+ * 【为什么用 pdftoppm】
+ *   · Alpine 装 `poppler-utils` 约 15MB，比 pdfjs-dist + canvas 原生模块省心；
+ *   · 不用在 Node 进程里跑渲染（那玩意吃内存，本机只有几百 MB 余量）。
+ *   ⚠️ 本地 Windows 没有这个命令 —— 调用要转成**人话**报错，不能抛 ENOENT。
+ */
+export interface InboxPdfFile {
+    name: string;
+    size: number;
+    /** 毫秒时间戳（前端拼 cache-busting 用，与图片那套一致） */
+    mtime: number;
+}
+
+/** 只认 `.pdf`，并且**只认普通文件**（外部可写目录，别信目录项） */
+function isPdfName(name: string): boolean {
+    return !!name && path.basename(name) === name && name.toLowerCase().endsWith(".pdf");
+}
+
+/** 列出某个收件箱子目录里的 PDF（不递归） */
+export async function listInboxPdfs(
+    subPath?: string | null,
+): Promise<{ dir: string; subPath: string; files: InboxPdfFile[] }> {
+    const loc = getInboxLocation(subPath ?? null);
+    let entries: string[] = [];
+    try {
+        entries = await fs.readdir(loc.dir);
+    } catch {
+        return { dir: loc.dir, subPath: loc.subPath, files: [] };
+    }
+
+    const files: InboxPdfFile[] = [];
+    for (const name of entries) {
+        if (!isPdfName(name)) continue;
+        try {
+            const st = await fs.lstat(path.join(loc.dir, name));
+            if (!st.isFile()) continue; // 软链接/目录/设备一律不认
+            files.push({ name, size: st.size, mtime: Math.round(st.mtimeMs) });
+        } catch {
+            /* 单个文件读不到就跳过，不要让整页挂掉 */
+        }
+    }
+    files.sort((a, b) => b.mtime - a.mtime);
+    return { dir: loc.dir, subPath: loc.subPath, files };
+}
+
+export interface ConvertPdfResult {
+    ok: boolean;
+    /** 生成的文件名（按页序） */
+    pages: string[];
+    /** 失败时的人话 */
+    error?: string;
+}
+
+/**
+ * 把一个 PDF 逐页转成 PNG，**落在同一个目录**，命名 `<原文件名>-p01.png`。
+ *
+ * ⚠️ 为什么放同一个目录而不是子目录：收件箱列表是**平铺**的，
+ *    子目录里的图片列不出来（`listInboxFiles` 不递归）。前缀足以辨认来源。
+ * ⚠️ `-r` 默认 150 DPI：A4 出来约 1240×1754，够 AI 读题，又不至于太大。
+ */
+export async function convertInboxPdf(
+    name: string,
+    subPath?: string | null,
+    dpi = 150,
+): Promise<ConvertPdfResult> {
+    if (!isPdfName(name)) return { ok: false, pages: [], error: "只认 .pdf 文件" };
+
+    const loc = getInboxLocation(subPath ?? null);
+    const src = path.join(loc.dir, name);
+    try {
+        const st = await fs.lstat(src);
+        if (!st.isFile()) return { ok: false, pages: [], error: "不是普通文件" };
+        // 大小上限：50MB（一页扫描件约 200KB，这个量级足够几百页）
+        if (st.size > 50 * 1024 * 1024) return { ok: false, pages: [], error: "PDF 太大了（上限 50MB）" };
+    } catch {
+        return { ok: false, pages: [], error: "文件不存在" };
+    }
+
+    const base = name.replace(/\.pdf$/i, "");
+    // pdftoppm 会自己拼 `-1`、`-2`…，所以给它的前缀不能带扩展名
+    const prefix = path.join(loc.dir, `${base}-p`);
+
+    const { execFile } = await import("child_process");
+    try {
+        await new Promise<void>((resolve, reject) => {
+            execFile(
+                "pdftoppm",
+                ["-png", "-r", String(dpi), src, prefix],
+                { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 },
+                (err) => (err ? reject(err) : resolve()),
+            );
+        });
+    } catch (e) {
+        const code = (e as NodeJS.ErrnoException)?.code;
+        if (code === "ENOENT") {
+            return {
+                ok: false,
+                pages: [],
+                error: "这台机器上没有 pdftoppm（PDF 转图只能在 NAS 镜像里用）",
+            };
+        }
+        const msg = e instanceof Error ? e.message : String(e);
+        logger.warn({ name, msg }, "pdftoppm failed");
+        return { ok: false, pages: [], error: `转图失败：${msg.slice(0, 200)}` };
+    }
+
+    // 收集产物：pdftoppm 的页号补零宽度不定（-1 还是 -01 取决于总页数），所以按文件名排序
+    let produced: string[] = [];
+    try {
+        produced = (await fs.readdir(loc.dir))
+            .filter((f) => f.startsWith(`${base}-p`) && f.toLowerCase().endsWith(".png"))
+            .sort((a, b) => {
+                const na = Number(/(\d+)\.png$/i.exec(a)?.[1] ?? 0);
+                const nb = Number(/(\d+)\.png$/i.exec(b)?.[1] ?? 0);
+                return na - nb;
+            });
+    } catch {
+        /* 读不到目录就当没产物 */
+    }
+
+    if (produced.length === 0) {
+        return { ok: false, pages: [], error: "转出来 0 页（PDF 可能是空的或加密的）" };
+    }
+    logger.info({ name, pages: produced.length }, "PDF 已转为图片");
+    return { ok: true, pages: produced };
+}
