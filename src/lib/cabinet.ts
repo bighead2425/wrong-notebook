@@ -394,18 +394,29 @@ export function pendingRecoverVolumes(
         if (days < options.recoverMinDays) continue;
 
         /**
-         * 【2026-10-20 空空】"还有 X 行没标"**只数还标得了的行**。
+         * 【2026-10-20 如如】**只有"题还在、还没掌握、还没标"的行才算没标**。
          *
-         * 他原来的疑问："已掌握的题还用计数吗？已删除的题都没办法标了，还用计数吗？"
-         * 两种都**不该算**：
-         *   · **已删除**：那一行点进去是 404，永远标不掉 ⇒ 这份卷会**永远卡在待回录里**
-         *     （这是真 bug，不是口味问题）。
-         *   · **已掌握**：她不用再练这道题了，标了对错也不会改变什么。
-         *
-         * ⚠️ 判据要跟"卷预览里点得动的那几行"对齐 —— 别一边说"还有 3 行"，另一边只画得出 2 个灰圈。
+         * 空空的疑问："已掌握的还用计数吗？已删除的根本标不了，还用计数吗？"
+         * 三种都**不该算**（NAS 上查过真实数据，两种都遇到过）：
+         *   · **题被物理删除**（`errorItem` 为 null）—— RE20260928005 里就有两行是这种：
+         *     卷行还在，但指向的题已经没了。⚠️ 这一种最容易漏：它的 `deletedAt` 读不到，
+         *     只能靠"**关联不上题**"本身来判（第一版就漏了，导致那份卷永远显示"还有 2 行"）。
+         *   · **软删除**（`deletedAt` 非空）—— 同理，点进去是 404。
+         *   · **已掌握**（`masteryLevel === 2`）—— 冻结了就不用再练，标了也不改变什么。
+         *     RE20261003002 里 4 行有 3 行是已掌握 ⇒ 现在只报 1 行。
          */
-        const canStillMark = (it: CabinetVolume["items"][number]) =>
-            !it.errorItem?.deletedAt && (it.errorItem?.masteryLevel ?? 0) < 2;
+        const canStillMark = (it: CabinetVolume["items"][number]) => {
+            /**
+             * ⚠️ 三种状态要分开：
+             *   · **字段不存在**（`undefined`）—— 调用方没给这份数据（老测试、别的入口）。
+             *     **放行**：不拿"缺数据"当成"题没了"，否则会静默漏掉整批。
+             *   · **null** —— 明确表示"这一行关联不到题"（题被物理删了）⇒ 标不了。
+             *   · **对象** —— 再看软删与掌握度。
+             */
+            if (it.errorItem === undefined) return true;
+            const q = it.errorItem;
+            return !!q && !q.deletedAt && (q.masteryLevel ?? 0) < 2;
+        };
 
         const unrecoveredCount = v.items.filter((it) => !it.markState && canStillMark(it)).length;
         if (unrecoveredCount === 0) continue;

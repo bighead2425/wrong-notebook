@@ -192,6 +192,38 @@ describe('④ 待回录的复练卷', () => {
     it('刚组出来（不足天数）⇒ 不算', () => {
         expect(pendingRecoverVolumes([vol({ id: '1', createdAt: new Date(2026, 9, 3) })], NOW)).toEqual([]);
     });
+
+    /**
+     * 【2026-10-20 如如】看门测试 —— NAS 上查到的两种真事：
+     *   · RE20261003002：4 行没标，其中 3 行的题**已掌握** ⇒ 只该报 1 行
+     *   · RE20260928005：5 行里 2 行**关联不到题**（题被物理删了）⇒ 那 2 行标不了，不该算
+     */
+    it('已掌握的行不算「没标」（不必再练，标了也不改变什么）', () => {
+        const v = vol({
+            id: '1',
+            items: [
+                { markState: null, errorItem: { deletedAt: null, masteryLevel: 0 } },
+                { markState: null, errorItem: { deletedAt: null, masteryLevel: 2 } },
+                { markState: null, errorItem: { deletedAt: null, masteryLevel: 2 } },
+            ],
+        });
+        const res = pendingRecoverVolumes([v], NOW);
+        expect(res).toHaveLength(1);
+        expect(res[0].unrecoveredCount).toBe(1);
+    });
+
+    it('关联不到题的行（题已物理删除）不算「没标」—— 否则这份卷永远清不掉', () => {
+        const v = vol({
+            id: '1',
+            items: [
+                { markState: 'wrong', errorItem: { deletedAt: null, masteryLevel: 0 } },
+                { markState: null, errorItem: null },
+                { markState: null, errorItem: null },
+            ],
+        });
+        // 两行都标不了 ⇒ 这份卷应当彻底不再提醒
+        expect(pendingRecoverVolumes([v], NOW)).toEqual([]);
+    });
 });
 
 describe('⑤ 未打印的日积月累', () => {
