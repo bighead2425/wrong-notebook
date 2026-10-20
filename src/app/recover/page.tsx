@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { BackButton } from "@/components/ui/back-button";
 import { ScanInboxBar } from "@/components/scan-inbox-bar";
+import { PendingTargets } from "@/components/recover/pending-targets";
 import { DocScanner, type DocScannerHandle } from "@/components/doc-scanner";
 import { ImageCropper } from "@/components/image-cropper";
 import { ImageLightbox, type LightboxItem } from "@/components/image-lightbox";
@@ -1266,6 +1267,7 @@ export default function RecoverPage() {
                         （`scan2recover`），与"录错题"默认用的 `scan2wrong` **分开管理**。
                         NAS 上的实际路径 = 挂载根 + 子目录 = `/vol2/1000/scan-inbox/scan2recover`。
                         目录没挂载时它自己整条不渲染 —— 电脑上不会多出点了没反应的按钮。 */}
+                    <div id="recover-inbox" />
                     <ScanInboxBar
                         subPath="scan2recover"
                         existingNames={[...pendingShots, ...readyShots].map((s) => s.file.name)}
@@ -1756,6 +1758,21 @@ export default function RecoverPage() {
                         ))}
                     </div>
                 )}
+                {/* 【2026-10-20 第 5 条 + 当天追加】从任务卡带过来的"这一趟要回录的"。
+                    ⚠️ 放在**最后**（他要求"列在回录分析页的最后面"）——
+                       先把上面的采集/分析做完，再回头核对"这一趟清单齐了没有"。 */}
+                <PendingTargets
+                    onShoot={() => {
+                        setShotNotice(null);
+                        cameraScannerRef.current?.openCamera();
+                    }}
+                    onPickFiles={() => fileInputRef.current?.click()}
+                    onOpenInbox={() => {
+                        document
+                            .getElementById("recover-inbox")
+                            ?.scrollIntoView({ behavior: "smooth", block: "center" });
+                    }}
+                />
             </div>
 
             {/* ===== 页内相机（连拍）：拍完直接进「待处理」，不绕收件箱 ===== */}

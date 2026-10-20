@@ -33,7 +33,7 @@ export interface CabinetTasks {
     pendingDeepPrint: CabinetTask<{ id: string; source: string | null }>;
     dueReviews: CabinetTask<{ id: string; source: string | null; dueOn: string; label: string; overdueDays: number }>;
     pendingRecover: CabinetTask<{ id: string; source: string | null; daysSincePrint: number }>;
-    pendingRecoverVolumes: CabinetTask<{ id: string; volumeNo: string; unrecoveredCount: number; daysSinceCreated: number }>;
+    pendingRecoverVolumes: CabinetTask<{ id: string; volumeNo: string; emojiMark?: string | null; unrecoveredCount: number; daysSinceCreated: number }>;
     unprintedInsights: CabinetTask<{ id: string; code: string; subject?: string | null }>;
     upgradeSuggestions: CabinetTask<{ id: string; source: string | null; notebookId?: string | null; wrongCount: number }>;
     /**
@@ -117,16 +117,8 @@ export function taskHref(key: TaskKey, tasks: CabinetTasks): string | null {
         case "unprintedInsights":
             return tasks.unprintedInsights.count > 0 ? "/insights" : null;
         case "upgradeSuggestions":
-            /**
-             * 【2026-10-20 需求 6】**新页面「建议深挖」**正在做 —— 落点是 `/deep-suggestions`。
-             * ⚠️ 那个页面还没建好之前先指回"该题所在的本"，**不能留一个 404 的链接**。
-             * 页面一上线就把这行换成 `/deep-suggestions`（`taskHref` 是唯一来源，改这一处两处都变）。
-             */
-            return tasks.upgradeSuggestions.count > 0
-                ? tasks.upgradeSuggestions.items[0]?.notebookId
-                    ? `/notebooks/${tasks.upgradeSuggestions.items[0].notebookId}`
-                    : "/notebooks"
-                : null;
+            // 【2026-10-20 需求 6】新页面「建议深挖」已建好 ⇒ 从这里直达，不再绕"该题所在的本"
+            return tasks.upgradeSuggestions.count > 0 ? "/deep-suggestions" : null;
         default:
             return null;
     }

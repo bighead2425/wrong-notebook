@@ -11,6 +11,7 @@ import {
     practiceTodayItems,
     unprintedInsights,
     upgradeSuggestions,
+    CABINET_DEFAULT_OPTIONS,
     type CabinetInsight,
     type CabinetQuestion,
     type CabinetVolume,
@@ -225,6 +226,44 @@ describe('⑥ 建议升为深挖', () => {
      * 裁决：保留行为（按 L0「未定读作复练」，对它的"建议升深挖"同样有用；且只是建议不强改），
      * 所以补这条测试当文档 —— 若哪天决定"未定一律不提示"，改实现时这条也要一起改。
      */
+    /**
+     * ★【2026-10-20 真真】「留级」（`keptWrongCounts`）—— 空空第 6 条。
+     *
+     * 规则：**错得不比当时多**才继续压着；错得更多了就重新冒出来。
+     * 为什么不是"永久压制"：判据是"错 ≥2 次"，她留级之后又错到第 3 次，
+     * 情况已经变了，还拿老决定挡着就是**替她做了一个过时的决定**。
+     */
+    it('★ 留级后（错 2 次时留的级、现在还是 2 次）⇒ 不再建议', () => {
+        const kept = new Map([['1', 2]]);
+        const res = upgradeSuggestions([withOutcomes('1', 'review', ['wrong', 'wrong', null])], {
+            ...CABINET_DEFAULT_OPTIONS,
+            keptWrongCounts: kept,
+        });
+        expect(res).toEqual([]);
+    });
+
+    it('★ 留级后又错到第 3 次 ⇒ 重新建议（情况变了，值得再看一眼）', () => {
+        const kept = new Map([['1', 2]]);
+        const res = upgradeSuggestions([withOutcomes('1', 'review', ['wrong', 'wrong', 'wrong'])], {
+            ...CABINET_DEFAULT_OPTIONS,
+            keptWrongCounts: kept,
+        });
+        expect(res).toHaveLength(1);
+        expect(res[0].wrongCount).toBe(3);
+    });
+
+    it('留级只压住它自己那一条，别的题照常建议', () => {
+        const kept = new Map([['1', 2]]);
+        const res = upgradeSuggestions(
+            [
+                withOutcomes('1', 'review', ['wrong', 'wrong', null]),
+                withOutcomes('2', 'review', ['wrong', 'wrong', null]),
+            ],
+            { ...CABINET_DEFAULT_OPTIONS, keptWrongCounts: kept },
+        );
+        expect(res.map((r) => r.question.id)).toEqual(['2']);
+    });
+
     it('★ 未定（manageType=null 的老数据）也参与建议 —— 按 L0 它读作复练', () => {
         const res = upgradeSuggestions([withOutcomes('1', null, ['wrong', 'wrong', null])]);
         expect(res).toHaveLength(1);

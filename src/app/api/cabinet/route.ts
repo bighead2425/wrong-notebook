@@ -130,6 +130,8 @@ export async function GET(req: Request) {
                     id: true,
                     volumeNo: true,
                     kind: true,
+                    /** 【2026-10-20】组卷时的 emoji —— 回录页靠它认卷 */
+                    emojiMark: true,
                     createdAt: true,
                     items: {
                         select: {
@@ -176,16 +178,32 @@ export async function GET(req: Request) {
                 id: v.id,
                 volumeNo: v.volumeNo,
                 kind: v.kind,
+                emojiMark: v.emojiMark ?? null,
                 createdAt: v.createdAt,
                 items: v.items.map((it) => ({ markState: it.markState })),
             }));
+
+        /**
+         * 【2026-10-20 空空第 6 条】她点过「留级」的题 —— 判据要能把它们压下去。
+         *
+         * 只取 `decision='kept'`：
+         * "从这里升过级"那种不用读 —— 升级已经改在 `ErrorItem.manageType` 上了，
+         * 界面看那一列就知道"已升级"，不必再存第二份"我记得升过"。
+         */
+        const keptRows = userId
+            ? await prisma.upgradeDecision.findMany({
+                  where: { userId, decision: "kept" },
+                  select: { errorItemId: true, wrongCountAtDecision: true },
+              })
+            : [];
+        const keptWrongCounts = new Map(keptRows.map((r) => [r.errorItemId, r.wrongCountAtDecision]));
 
         const tasks = buildCabinetTasks({
             questions,
             insights: cabinetInsights,
             volumes,
             now: new Date(),
-            options: CABINET_DEFAULT_OPTIONS,
+            options: { ...CABINET_DEFAULT_OPTIONS, keptWrongCounts },
         });
 
         // ===== 错题本一览（按本聚合 + 全局构成）=====

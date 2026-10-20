@@ -654,7 +654,12 @@ function HomeContent() {
                          * 里面只有很轻的 hover 底色，没有各自的边框。
                          * 排列：电脑宽度够 ⇒ **图标在左、文字在右**；手机 ⇒ **图标在上、文字在下**。
                          */}
-                        <div className="rounded-xl border border-dashed p-2">
+                        {/**
+                         * 【2026-10-20 空空】虚线框原来用默认灰（`border-dashed` 没指定颜色），
+                         * 他说"不够醒目突出，想调整为天蓝色" ⇒ `sky-400`，
+                         * 暗色主题配 `sky-600`（不然浅蓝在深底上发白发飘）。
+                         */}
+                        <div className="rounded-xl border border-dashed border-sky-400 p-2 dark:border-sky-600">
                         <div className="grid grid-cols-4 gap-0.5">
                             {[
                                 { zh: "复练纸", en: "Review sheet", Icon: Layers, href: "/review-volumes?kind=review" },

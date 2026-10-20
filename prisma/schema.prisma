@@ -2,7 +2,7 @@
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
@@ -23,38 +23,39 @@ model User {
   educationStage String? // primary, junior_high, senior_high, university
   enrollmentYear Int?
 
-  role      String   @default("user") // "admin" or "user"
-  isActive  Boolean  @default(true)   // 用户是否启用
+  role     String  @default("user") // "admin" or "user"
+  isActive Boolean @default(true) // 用户是否启用
 
-  errorItems ErrorItem[]
-  notebooks  Notebook[]
+  errorItems      ErrorItem[]
+  notebooks       Notebook[]
   practiceRecords PracticeRecord[]
-  customTags KnowledgeTag[] // User's custom tags
-  printBatches PrintBatch[] // 打印批次（一次交付 = 一批）
-  insights   Insight[]      // 【2026-10-01】日积月累条目
-  reviewEvents ReviewEvent[] // 【2026-10-14】复习事件流水（带时间戳）
-  dailySettle  DailySettle?  // 【2026-10-15】每日等级结算的"上次结算日"（一个用户一行）
+  customTags      KnowledgeTag[] // User's custom tags
+  printBatches    PrintBatch[] // 打印批次（一次交付 = 一批）
+  insights        Insight[] // 【2026-10-01】日积月累条目
+  reviewEvents    ReviewEvent[] // 【2026-10-14】复习事件流水（带时间戳）
+  dailySettle     DailySettle? // 【2026-10-15】每日等级结算的"上次结算日"（一个用户一行）
+  UpgradeDecision UpgradeDecision[]
 }
 
 // 统一知识点标签表 (支持无限层级)
 model KnowledgeTag {
-  id        String   @id @default(cuid())
-  name      String   // 标签名，如 "勾股定理"
-  subject   String   // 学科，如 "math", "english"
+  id      String @id @default(cuid())
+  name    String // 标签名，如 "勾股定理"
+  subject String // 学科，如 "math", "english"
 
   // 层级控制 (邻接表模式)
-  parentId  String?
-  parent    KnowledgeTag?  @relation("TagHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
-  children  KnowledgeTag[] @relation("TagHierarchy")
+  parentId String?
+  parent   KnowledgeTag?  @relation("TagHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children KnowledgeTag[] @relation("TagHierarchy")
 
   // 排序与编码
-  order     Int      @default(0) // 用于保持教材顺序
-  code      String?              // 如 "1.2.1"
+  order Int     @default(0) // 用于保持教材顺序
+  code  String? // 如 "1.2.1"
 
   // 区分系统预设 vs 用户自定义
-  isSystem  Boolean  @default(false)
-  userId    String?  // 如果是用户自定义标签，绑定 userId
-  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isSystem Boolean @default(false)
+  userId   String? // 如果是用户自定义标签，绑定 userId
+  user     User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // 与错题的多对多关系
   errorItems ErrorItem[]
@@ -73,16 +74,16 @@ model KnowledgeTag {
 /// 学科 / 学期 / 年级 / 学段四结构化字段在此承载，ErrorItem 不再重复存。
 /// 注意：SQLite 不支持 Prisma enum，以下枚举类字段一律用 String 存，取值见注释。
 model Notebook {
-  id          String @id @default(cuid())
+  id String @id @default(cuid())
 
   // 四结构化字段（Q1）
-  gradeStage  String @default("primary") // 学段: primary(小学) / junior(初中) / senior(高中)
-  grade       String @default("")        // 年级: 如 "五年级"
-  semester    String @default("上")      // 学期: 上 / 下
-  subject     String @default("math")    // 学科 subjectKey: math/chinese/english/physics/chemistry/biology/politics/history/geography/other
-                                          // ⚠️ 题号生成直接读此字段，不再从显示名反推（5.5）
+  gradeStage String @default("primary") // 学段: primary(小学) / junior(初中) / senior(高中)
+  grade      String @default("") // 年级: 如 "五年级"
+  semester   String @default("上") // 学期: 上 / 下
+  subject    String @default("math") // 学科 subjectKey: math/chinese/english/physics/chemistry/biology/politics/history/geography/other
+  // ⚠️ 题号生成直接读此字段，不再从显示名反推（5.5）
 
-  displayName String                     // 自由显示名，如 "小五上数学"（B14）
+  displayName String // 自由显示名，如 "小五上数学"（B14）
 
   // 归档状态（H2 四分法 · 归档是本级操作，5.3：题不自持归档标记）
   archiveStatus String @default("active") // active(在用) / archived(已归档)
@@ -90,7 +91,7 @@ model Notebook {
   /// 【2026-10-12 需求第 6/12 条】卡片**手工排序位**（拖动排序用）。
   /// 排序键 = `sortOrder ASC, createdAt DESC` —— 默认 0（"没手工排过"）时退回今天的行为。
   /// 只在"同一用户 + 同一归档状态 + 同一年级组"内比大小（跨组/跨归档不许换位）。
-  sortOrder   Int    @default(0)
+  sortOrder Int @default(0)
 
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -109,39 +110,39 @@ model Notebook {
 }
 
 model ErrorItem {
-  id             String   @id @default(cuid())
-  userId         String
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  notebookId     String?
-  notebook       Notebook? @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notebookId String?
+  notebook   Notebook? @relation(fields: [notebookId], references: [id], onDelete: Cascade)
 
   originalImageUrl String
   ocrText          String?
-  
+
   // AI Analysis
-  questionText     String? // Parsed question
-  answerText       String? // AI provided answer
-  analysis         String? // AI analysis/explanation
-  wrongAnswerText  String? // [Q4/G6 已弃用·保留列停止写入] 错答直接从原图看，T11 拍板保留列不删
-  mistakeAnalysis  String? // Analysis of why the wrong answer happened
-  mistakeStatus    String? // not_attempted, wrong_attempt, unknown
-  knowledgePoints  String? // [DEPRECATED] JSON string - kept for migration only
-  
+  questionText    String? // Parsed question
+  answerText      String? // AI provided answer
+  analysis        String? // AI analysis/explanation
+  wrongAnswerText String? // [Q4/G6 已弃用·保留列停止写入] 错答直接从原图看，T11 拍板保留列不删
+  mistakeAnalysis String? // Analysis of why the wrong answer happened
+  mistakeStatus   String? // not_attempted, wrong_attempt, unknown
+  knowledgePoints String? // [DEPRECATED] JSON string - kept for migration only
+
   // New: many-to-many relation with KnowledgeTag
-  tags             KnowledgeTag[]
-  
+  tags KnowledgeTag[]
+
   // User Metadata
-  source           String? // e.g. "Midterm Exam"
-  errorType        String? // e.g. "Calculation", "Concept"
-  userNotes        String?
+  source    String? // e.g. "Midterm Exam"
+  errorType String? // e.g. "Calculation", "Concept"
+  userNotes String?
 
   /// 【M0 新增】AI 统一打标的错因分类（P16：她自由书写，AI 归类）。
   /// ⚠️ 刻意与 errorType 分开：那个是**外部导入透传**的英文自由文本（api/import、
   /// openclaw/batch-upload 会写），语义不受控；本列只装**受控枚举**，取值见
   /// src/lib/mistake-category.ts。一个字段只担一种语义，避免"不报错只静默错"。
-  mistakeCategory  String?
-  
-  masteryLevel     Int     @default(0) // 0: New, 1: Reviewing, 2: Mastered（5.3：=2 即四分法「已掌握」）
+  mistakeCategory String?
+
+  masteryLevel Int @default(0) // 0: New, 1: Reviewing, 2: Mastered（5.3：=2 即四分法「已掌握」）
 
   /// 【2026-10-15 新增】**等级倒数天数**（0~49）—— 等级的驱动量。
   ///
@@ -157,10 +158,10 @@ model ErrorItem {
   ///    且详情页显示的天数用真实倒数，两者对不上时问题会自己暴露。
   ///
   /// ⚠️ `NULL` = **还没初始化**（老数据）。首次结算时按"最近的对错"补上（见 `lib/level-settle.ts`）。
-  levelCountdown   Int?
+  levelCountdown Int?
 
-  gradeSemester    String? // [遗留·不再写入] 年级学期由 Notebook 承载，保留列仅为兼容旧数据
-  paperLevel       String? // e.g. "A", "B", "Other"（[2026-09-28 起界面不再用：被 manageType 取代] 保留列以免动老数据）
+  gradeSemester String? // [遗留·不再写入] 年级学期由 Notebook 承载，保留列仅为兼容旧数据
+  paperLevel    String? // e.g. "A", "B", "Other"（[2026-09-28 起界面不再用：被 manageType 取代] 保留列以免动老数据）
 
   /// 【2026-09-28 新增】**错题等级** =「这道题怎么处置」：deep（深挖）/ review（复练）。
   ///
@@ -169,7 +170,7 @@ model ErrorItem {
   /// 标记为"必改"的死结）。
   ///
   /// NULL = **未定**（老数据与"还没定过的题"）。界面显示为"未定"，不猜、不默认写死。
-  manageType       String? // deep | review
+  manageType String? // deep | review
 
   /// 这个等级是**怎么来的**：default（录入默认）/ derived（按错因派生）/ ai（采纳 AI 建议）/
   /// manual（人手动定的）/ upgrade（行为自动升）。
@@ -186,21 +187,20 @@ model ErrorItem {
   /// 取值只能来自 `src/lib/emoji-print-library.json`（等概率随机，见 `lib/emoji-mark.ts`）。
   emojiMark String?
 
-
   // ===== 状态字段（5.3 单一事实来源，禁止再造冗余态）=====
-  printCount       Int       @default(0)  // 打印次数（深挖纸），只显不改（#10 / T4）
+  printCount         Int       @default(0) // 打印次数（深挖纸），只显不改（#10 / T4）
   /// 【2026-09-30】复练纸印刷次数。与 `printCount` **分开记**：
   /// 两种纸用途不同（深挖=反思、复练=熟练），混成一个数就看不出这题是深挖过还是复练过。
   /// 记法：印一次复练卷 ⇒ 卷内所有题各 +1（见 mark-printed 的 kind=review）。
-  reviewPrintCount Int       @default(0)
-  attention        Int       @default(1)  // 关注档 1-5，语义=难度档（G8 / T5）
+  reviewPrintCount   Int       @default(0)
+  attention          Int       @default(1) // 关注档 1-5，语义=难度档（G8 / T5）
   /// 【2026-09-30】**复习结果**（错题卡底部那四个圆圈的原材料）。
   /// 形状（JSON）：`{"planned":["right",null,null],"last":"wrong"}`
   ///   · `planned[0..2]` = 第 1 / 7 / 21 天三次**计划**复习的结果，null = 还没结果
   ///   · `last`          = **最近一次**复习的结果（计划内、计划外都算）
   /// 规则只在一处实现：`src/lib/review-outcomes.ts`（计划内做完 ⇒ last 同步成同一结果；
   /// 计划外只动 last，前三个不动）。本轮只显示，录入入口等深挖纸回录链路。
-  reviewOutcomes   String?
+  reviewOutcomes     String?
   /// 【2026-10-03】**等级账本**（等级 × 复习结果联动的内存）。
   ///
   /// 形状（JSON）：`{"slot":"p2","delta":1}` —— **只记最新一笔、且只记计划三格**。
@@ -209,18 +209,18 @@ model ErrorItem {
   ///   · "最近一次复习"那一格**不进账本**（它按"一次输入"记，见 `lib/level-linkage.ts`）。
   ///
   /// ⚠️ 规则只在一处实现：`src/lib/level-linkage.ts`。别在别处算等级加减。
-  levelLedger      String?
+  levelLedger        String?
   /// 【2026-10-01】「深挖了还没印」提醒**手动按掉**的标记。
   /// 条件（类型=deep 且 printCount=0）成立且本列为 false 时：卡片左下打印机图标上色、
   /// 详情页计数黄底。印过一次（printCount>0）自动解除；详情页双击计数置 true。
   /// ⚠️ **类型被改动时复位**（新一轮就别再沿用上次的"我知道了"）。
-  deepNudgeDismissed Boolean @default(false)
-  redoCount        Int       @default(0)  // 复做计次，扫码复做 +1（H1 不闭环 / T7）
-  mergeSource      String?               // 合并来源原题号组（#14 / T6）
-  deletedAt        DateTime?             // 软删标记，非空=在回收箱（H2 / T2）
-  lastPrintedAt    DateTime?             // 最近打印时间（#10）
-  inputMethod      String?               // 录入方式: photo(拍照) / album(相册) / manual(手动)（H4）
-                                          // ⚠️ 与上面 source(试卷来源) 不是一回事，勿混用
+  deepNudgeDismissed Boolean   @default(false)
+  redoCount          Int       @default(0) // 复做计次，扫码复做 +1（H1 不闭环 / T7）
+  mergeSource        String? // 合并来源原题号组（#14 / T6）
+  deletedAt          DateTime? // 软删标记，非空=在回收箱（H2 / T2）
+  lastPrintedAt      DateTime? // 最近打印时间（#10）
+  inputMethod        String? // 录入方式: photo(拍照) / album(相册) / manual(手动)（H4）
+  // ⚠️ 与上面 source(试卷来源) 不是一回事，勿混用
 
   /// 【M0 增补 → M3 落地】框坐标落库（P7「存坐标、不烧像素」）。
   /// 形状：
@@ -236,18 +236,19 @@ model ErrorItem {
   /// 存坐标而不是把框烧进像素的收益：一张原图 + 一份坐标可派生
   /// **正面图 / 净版 / 题图 / OCR 输入** 四种视图，且原图永远干净。
   /// 反面印的「净版」= 按 handwriting / figure 的坐标涂白（M2 主路，确定性操作）。
-  cropRegions      String?
+  cropRegions String?
 
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  reviewSchedules ReviewSchedule[]
-  printJobs       PrintJob[]        // 该题的每一次打印（同一题会重印多次，见 PrintJob）
-  stateChangeLogs StateChangeLog[]  // 状态变更日志（R15）
+  reviewSchedules  ReviewSchedule[]
+  printJobs        PrintJob[] // 该题的每一次打印（同一题会重印多次，见 PrintJob）
+  stateChangeLogs  StateChangeLog[] // 状态变更日志（R15）
+  upgradeDecisions UpgradeDecision[] // 【2026-10-20】「建议深挖」里她确认"不升"的记录
   /// 【2026-10-14】**复习事件流水**（带时间戳）—— 规则见 lib/review-events.ts，方案见 docs\09
-  reviewEvents    ReviewEvent[]
+  reviewEvents     ReviewEvent[]
   /// 【T2/T3 2026-09-28】这道题被编进过哪些卷（可空关系：题删了卷里那一行仍在，只是断了链）
-  volumeItems     ReviewVolumeItem[]
+  volumeItems      ReviewVolumeItem[]
   /// 【2026-10-01 改】日积月累与题的关联**不再走外键**，改存**题号**（`Insight.errorItemNo`）：
   /// 好处是"题被彻底删掉，积累条目还挂着题号"（去回收箱都能找回、导出 Obsidian 双链也认它），
   /// 坏处是没有级联 —— 但这正是要的效果（题没了话还在）。
@@ -277,10 +278,10 @@ model ErrorItem {
   ///    外键约束（本项目迁移惯例是不重建表）。所以"硬删主题"时不会自动置空 —— 但硬删
   ///    本来就极罕见（界面上的删除都走回收箱），且规则里会用应用层逻辑兜住。
   /// ══════════════════════════════════════════════════════════════════
-  parentId         String?
-  parent           ErrorItem?  @relation("ItemLink", fields: [parentId], references: [id], onDelete: SetNull)
+  parentId String?
+  parent   ErrorItem?  @relation("ItemLink", fields: [parentId], references: [id], onDelete: SetNull)
   /// 反查：挂在这道题下面的附题。⚠️ 查询时要**过滤软删的**（`deletedAt: null`）
-  children         ErrorItem[] @relation("ItemLink")
+  children ErrorItem[] @relation("ItemLink")
 
   @@index([notebookId])
   @@index([deletedAt])
@@ -298,7 +299,7 @@ model ReviewSchedule {
   /// 其去重口径是「同一 errorItem + 相同 scheduledFor」（import/route.ts:341 用 findFirst 而非 upset 去重），
   /// 说明库里可能存在同题多条记录。加唯一约束会让 SQLite 重建整表，风险大于收益。
   /// 唯一性改由 M7 的写入侧保证。
-  round       Int       @default(1)
+  round Int @default(1)
 
   scheduledFor DateTime
   completedAt  DateTime?
@@ -308,21 +309,21 @@ model ReviewSchedule {
   printJobId   String?
   scanReturnId String?
 
-  createdAt    DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([errorItemId, round])
   @@index([scheduledFor])
 }
 
 model PracticeRecord {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  subject   String?  // e.g. "Math", "Physics"
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  subject    String? // e.g. "Math", "Physics"
   difficulty String? // "easy", "medium", "hard", "harder"
-  isCorrect Boolean?
-  
+  isCorrect  Boolean?
+
   createdAt DateTime @default(now())
 }
 
@@ -340,28 +341,28 @@ model PracticeRecord {
 
 /// 打印批次：一次交付即一批（P23 / R4：hill 的动作永远可分批）。
 model PrintBatch {
-  id          String @id @default(cuid())
+  id String @id @default(cuid())
 
-  userId      String
-  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   /// 本批是否含 T5 回信页（回信随下一批卡交付，R7）
   hasReplyPage Boolean @default(false)
 
   /// 本批题数（冗余列，供列表直显；以 printJobs 关系为权威）
-  itemCount   Int      @default(0)
+  itemCount Int @default(0)
 
-  printedAt   DateTime @default(now())
-  createdAt   DateTime @default(now())
+  printedAt DateTime @default(now())
+  createdAt DateTime @default(now())
 
-  printJobs   PrintJob[]
+  printJobs PrintJob[]
 
   @@index([userId, printedAt])
 }
 
 /// 打印实例：一道题每被打印一次，产生一条。
 model PrintJob {
-  id          String    @id @default(cuid())
+  id String @id @default(cuid())
 
   errorItemId String
   errorItem   ErrorItem @relation(fields: [errorItemId], references: [id], onDelete: Cascade)
@@ -369,33 +370,33 @@ model PrintJob {
   /// 题号快照（= ErrorItem.source，如 SX20260916001）。二维码里印的就是它。
   /// 存快照的理由：合并错题会改 source（api/error-items/merge），
   /// 日后核对"当年那张纸上印的是什么"只能靠快照。
-  questionNo  String
+  questionNo String
 
   /// 该题第几次打印：R1 / R2 / R3 …
   /// ⚠️ 与 ErrorItem.printCount 的关系：printCount 是"计数缓存"，本列是权威。
   /// 建实例时两者在**同一事务内**同步递增，避免漂移。
-  instanceNo  Int
+  instanceNo Int
 
   /// 纸型（T1–T5）：本轮只实现 T1 深挖纸；T0 极简重做卡（第 7/21 天）预留
-  paperType   String @default("T1")
+  paperType String @default("T1")
 
   /// 这一张纸的用途：initial(第 0 天首次深挖) / day7 / day21
   /// ⚠️ 与 paperType 分开：T0 既能用于 day7 也能用于 day21，两者不是一回事
-  stage       String @default("initial")
+  stage String @default("initial")
 
-  batchId     String?
-  batch       PrintBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  batchId String?
+  batch   PrintBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
 
-  printedAt   DateTime @default(now())
+  printedAt DateTime @default(now())
 
   /// 回收状态。软件**只记它确实知道的两件事**：
   ///   printed  = 已打印（纸进了待做匣。她做没做，软件不猜 —— R16 不监控）
   ///   returned = 已回收（hill 扫回来了。R18：没她痕迹的纸不扫，也就不会有这条流转）
   /// 中间的"她正在做"刻意不存在。
-  status      String @default("printed")
+  status String @default("printed")
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   scanReturns ScanReturn[]
 
@@ -407,26 +408,26 @@ model PrintJob {
 
 /// 回收件：扫描回来的**一面**纸（P25：两面各印一个码，故按面分别入库）。
 model ScanReturn {
-  id         String   @id @default(cuid())
+  id String @id @default(cuid())
 
   printJobId String
   printJob   PrintJob @relation(fields: [printJobId], references: [id], onDelete: Cascade)
 
   /// 哪一面：F = 正面（反思面）/ B = 背面（重做面）
-  side       String
+  side String
 
   /// 扫描件地址。**原件优先**（R17：AI 优先看扫描图，OCR 只是省力副本）
-  imageUrl   String
-  ocrText    String?
+  imageUrl String
+  ocrText  String?
 
-  scannedAt  DateTime @default(now())
+  scannedAt DateTime @default(now())
 
   /// AI 判定结果（波 3 才写入，M0 只建位）
-  aiVerdict  String?  // 已掌握 / 仍有错 / 无法判定
-  aiPayload  String?  // 结构化原始结果（JSON 字符串）
+  aiVerdict String? // 已掌握 / 仍有错 / 无法判定
+  aiPayload String? // 结构化原始结果（JSON 字符串）
 
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   /// 同一实例的同一面只应有一条。
   /// 重复扫到同一面时**撞唯一约束报错**，而不是静默覆盖 ——
@@ -439,29 +440,75 @@ model ScanReturn {
 /// 状态变更日志（R15）：哪道题、什么时候、被谁、标成了什么。
 /// 原则：记**状态变更**，不记学习行为；按需查，不做全量监控（R16）。
 model StateChangeLog {
-  id           String    @id @default(cuid())
+  id String @id @default(cuid())
 
-  errorItemId  String
-  errorItem    ErrorItem @relation(fields: [errorItemId], references: [id], onDelete: Cascade)
+  errorItemId String
+  errorItem   ErrorItem @relation(fields: [errorItemId], references: [id], onDelete: Cascade)
 
   /// 变更的字段：masteryLevel / deletedAt / mistakeCategory …
-  field        String
-  fromValue    String?
-  toValue      String?
+  field     String
+  fromValue String?
+  toValue   String?
 
   /// 谁改的：user / ai / scan / system
-  actor        String
-  actorUserId  String?
+  actor       String
+  actorUserId String?
 
   /// 追到是哪张纸触发的（可空：在电脑上手动勾选就没有纸）
   printJobId   String?
   scanReturnId String?
 
-  note         String?
-  createdAt    DateTime @default(now())
+  note      String?
+  createdAt DateTime @default(now())
 
   @@index([errorItemId, createdAt])
   @@index([actor, createdAt])
+}
+
+// ===========================================================================
+// 【2026-10-20】「建议深挖」的决定记录 —— UpgradeDecision
+//
+// 空空第 6 条要的是：一堆"建议升为深挖"的题，他能一道道决定"升"还是"不升"，
+// 决定过的**别再天天来烦他**。
+//
+// ── 为什么"升级"不需要这张表 ──────────────────────────────────────────
+// 升级 = 把 `ErrorItem.manageType` 改成 `deep`。那件事**本来就会留痕**
+// （`StateChangeLog` 的 `field='manageType'`），而且详情页改属性、卡片上点按钮
+// 走的是**同一列** ⇒ 界面只要读 `manageType` 就知道"已升级"没有，
+// 不必再存一份"我记得升过"（存两份必然有一天对不上）。
+//
+// ⇒ 这张表**只记"不升"**（以及顺手记下"当时错了几次"）。
+//
+// ── 为什么"留级"不能永久生效 ──────────────────────────────────────────
+// 判据是"计划复习里错了 ≥2 次"。如果她留级之后又错第三次、第四次，
+// 情况已经变了，还拿老决定挡着就是**帮她做了一个过时的决定**。
+// ⇒ 存 `wrongCountAtDecision`：只有"错得**不比当时多**"才继续压着。
+//
+// ── 为什么 errorItemId 不建外键 ────────────────────────────────────────
+// 删掉那道题之后，这里留一条没人引用的记录**无害**（判据按 id 查，查不到就不出现）。
+// 建了外键就得在删题时级联清理一张"决定表"，为一条废记录付这份复杂度不划算。
+// ===========================================================================
+model UpgradeDecision {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// 指向 `ErrorItem.id`（故意不建外键，见上面的说明）
+  errorItemId String
+
+  /// "kept" = 她确认**不升级**（不再提示）
+  decision String @default("kept")
+
+  /// 下这个决定时"计划复习里错了几次" —— 后来又错更多了，就重新提示
+  wrongCountAtDecision Int @default(0)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  ErrorItem ErrorItem @relation(fields: [errorItemId], references: [id])
+
+  @@unique([userId, errorItemId])
+  @@index([userId, decision])
 }
 
 // ===========================================================================
@@ -483,19 +530,19 @@ model StateChangeLog {
 /// ⚠️ `occurredOn` 用 `YYYY-MM-DD` 字符串**而不是 DateTime** —— 遵守项目"时区铁律"：
 ///    容器跑 UTC，"哪一天"必须只在**客户端**算好再传进来。
 model ReviewEvent {
-  id          String @id @default(cuid())
+  id String @id @default(cuid())
 
-  userId      String
-  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   errorItemId String
   errorItem   ErrorItem @relation(fields: [errorItemId], references: [id], onDelete: Cascade)
 
   /// 这一天的"日键"（`YYYY-MM-DD`，本地时区，客户端算好）
-  occurredOn  String
+  occurredOn String
 
   /// "right" | "wrong"
-  outcome     String
+  outcome String
 
   /// 计划内第几次（0 / 1 / 2 / 3）；**null = 计划外**的额外复习。
   /// ⚠️ 这正是老数据认不出来的那件事 —— 写入侧必须**显式声明**，不许靠差分猜。
@@ -503,16 +550,16 @@ model ReviewEvent {
 
   /// 从哪张卷标回来的（可空：电脑上手动勾的就没有卷）
   /// ⚠️【2026-10-16 起】它同时承担"来源 = 复练纸/模仿纸 + 卷号"里的卷号那一半
-  volumeId    String?
+  volumeId String?
 
   /// 【2026-10-16 新增】这次结果**从哪来的** —— 取值见 `src/lib/review-event-source.ts`：
   ///   review_paper（复练纸）| imitate_paper（模仿纸）| single_scan（单题扫描录入，**含深挖纸**）
   ///   | detail_page（本页录入）| legacy（老数据一次性补的流水，**界面不显示它的日期**）
   /// ⚠️ 可空是为了**老数据**与将来新入口 —— 读侧认不出就当 `legacy` 处理，别崩。
-  source      String?
+  source String?
 
   /// 入库时刻（审计用；判断"哪天"一律看 `occurredOn`，别看它）
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 
   /// ⚠️ 刻意**不加** (errorItemId, occurredOn) 唯一约束：同一天可能补录多条，
   ///    宁可多记一笔流水，也不要因为撞约束而丢数据。
@@ -565,33 +612,33 @@ model DailySettle {
 
 /// 一张卷。
 model ReviewVolume {
-  id            String   @id @default(cuid())
+  id String @id @default(cuid())
 
   /// 卷号：`RE20260926001` / `BU20260926001`。
   /// 拼法与解析**只允许**在 `src/lib/volume-code.ts` 一处实现。
-  volumeNo      String   @unique
+  volumeNo String @unique
 
   /// review（复练）| build（积累）
-  kind          String
+  kind String
 
   /// 学期标签（如 `2026-秋`）—— 他要"按学期翻卷"。
   /// ⚠️ 是**标签**，不是分表依据：一个字段就够，不需要真按学期建多张表。
-  semester      String
+  semester String
 
   /// 页眉上那句"年级·学期"（整卷一个值；组卷时的快照）
   gradeSemester String?
 
   /// 总页数（组卷时按分页算法算出来的快照）——印在页眉"第X/Y页"的那个 Y
-  pageCount     Int      @default(0)
+  pageCount Int @default(0)
 
   /// 组这份卷时的默认留白行数（复练 5 / 积累 1）
-  defaultBlankLines Int  @default(5)
+  defaultBlankLines Int @default(5)
 
   /// 【2026-09-30】卷的**名字**（自取，如"第五单元 复练"）。
   /// 只存在库里、**不上纸** —— 纸面的身份是卷号（页眉 + 页二维码都是它），
   /// 页眉那一行已经排满（阳文框 / 卷号 / 年级学期 / 页码 / 印于 / 二维码），
   /// 再塞一个名字只会变挤。名字的用途是"他在管理页里找卷、认卷"。
-  title         String?
+  title String?
 
   /// 【2026-10-03 需求第 10 条】**这份卷的随机 emoji 标识**（印在页眉"印于"左边）。
   ///
@@ -599,12 +646,12 @@ model ReviewVolume {
   /// ⇒ 存在**卷**上（而不是每页各一个）。NULL 时惰性生成一次并写回；
   /// 已有值就直接用 —— 这就是"同一份纸的符号相对不变"。
   /// 取值只能来自 `src/lib/emoji-print-library.json`（等概率随机，见 `lib/emoji-mark.ts`）。
-  emojiMark     String?
+  emojiMark String?
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  items         ReviewVolumeItem[]
+  items ReviewVolumeItem[]
 
   @@index([kind, createdAt])
   @@index([semester])
@@ -619,29 +666,29 @@ model ReviewVolume {
 ///    所以：`errorItemId` 只是"还能点回去看看"的软链接，
 ///    真正用来渲染的是 `itemNo / questionText / figureUrls / blankLines` 这几个快照。
 model ReviewVolumeItem {
-  id           String       @id @default(cuid())
+  id String @id @default(cuid())
 
-  volumeId     String
-  volume       ReviewVolume @relation(fields: [volumeId], references: [id], onDelete: Cascade)
+  volumeId String
+  volume   ReviewVolume @relation(fields: [volumeId], references: [id], onDelete: Cascade)
 
   /// 这份卷里的流水号（1 起）—— 只是这份卷对题的排序号，不是题号
-  seqInVolume  Int
+  seqInVolume Int
   /// 排在第几页（1 起）
-  pageIndex    Int
+  pageIndex   Int
   /// 第几栏（0 起；复练纸恒为 0）
-  columnIndex  Int          @default(0)
+  columnIndex Int @default(0)
   /// 栏内第几块（1 起）
-  seqInColumn  Int          @default(1)
+  seqInColumn Int @default(1)
 
   /// 原题（可空：题被删 ⇒ 置空，但**卷照常能打开**）
-  errorItemId  String?
-  errorItem    ErrorItem?   @relation(fields: [errorItemId], references: [id], onDelete: SetNull)
+  errorItemId String?
+  errorItem   ErrorItem? @relation(fields: [errorItemId], references: [id], onDelete: SetNull)
 
   /// 【2026-10-01 第三轮：积累纸】这条是**哪条日积月累**（软链接，用来跳回原条目）。
   /// 与 errorItemId **互斥**：复练卷的行挂题，积累卷的行挂积累条目。
   /// ⚠️ 只是软链接 —— **纸面的一切都走下面的快照**（定盘星：印出去的凭证存快照）。
-  insightId    String?
-  insight      Insight?     @relation(fields: [insightId], references: [id], onDelete: SetNull)
+  insightId String?
+  insight   Insight? @relation(fields: [insightId], references: [id], onDelete: SetNull)
 
   /// 【复练卷】题号快照（= ErrorItem.source，如 SX20260916001）
   /// 【积累卷】**JL 编号快照**（如 JL20261001001）—— 同一个槽位，装的是这条内容的"编号"。
@@ -657,12 +704,12 @@ model ReviewVolumeItem {
   manageType   String?
 
   /// 这道题的留白行数（可逐题调；整体调整的规则见 `applyGlobalBlankLines`）
-  blankLines   Int          @default(5)
+  blankLines Int @default(5)
 
   /// 这道题的**题图缩放百分比**（100 = 版面默认）。2026-09-29 加。
   /// ⚠️ 必须进快照：他在预览里拖过把手就把大小改了，「更新组卷」要能把它一起存回来，
   ///    否则下次打开又变回默认（"我调过的图又跑回去了"）。
-  figureScale  Int          @default(100)
+  figureScale Int @default(100)
 
   /// 【2026-10-02】**这份卷上**这道题的标记（扫码页那颗三态圆的持久态）：
   ///   `null` = 还没标 / 已撤销　`'right'` = 对　`'wrong'` = 错
@@ -673,9 +720,9 @@ model ReviewVolumeItem {
   ///    不该跟着题跑到别的卷里去。
   ///    （题目的 `reviewOutcomes` 照旧同步写 —— 那是**复习历史**，跨卷的属性，两者不冲突：
   ///      一个回答"这张纸上我标了什么"，一个回答"这道题复习过几次、结果如何"。）
-  markState    String?
+  markState String?
 
-  createdAt    DateTime     @default(now())
+  createdAt DateTime @default(now())
 
   @@index([volumeId])
   @@index([errorItemId])
@@ -722,7 +769,7 @@ model Insight {
   ///
   /// ⚠️ 与 `InsightLink`（扫码点的"参见"）**是两回事**：
   ///    这里是**确定性**的（标题一样就是一组，不需要人操作），那里是**她亲手点的**。
-  headword      String?
+  headword String?
 
   /// 【2026-10-01 起，这是**正钥匙**】相关错题的**题号**（如 SX20260930001），不是内部 id。
   /// 存题号的两个理由：① 扫码/回录链路里手里只有题号，"按题号反查"才能做到
@@ -809,13 +856,13 @@ model InsightPhoto {
   data      String
   createdAt DateTime @default(now())
 
-  @@unique([insightId])
-
   /// 【2026-10-13 第 6 条】"入版"开关：**组成积累纸时这张图跟不跟着进去**。
   /// 他原话："点中入版，则表示在组成积累纸的时候，这个图片是跟随进入的，
   ///          如果这个按钮开关是关着的……在排版积累纸的时候，这个图片是不跟随进入的。"
   /// ⇒ 默认 **true**（插了图就是要用），关掉=这条只留文字。
   includedInPrint Boolean @default(true)
+
+  @@unique([insightId])
 }
 
 // 【2026-10-19 空空第 4 条】**积累之间的"参见"链接**（扫码建的那条线）。

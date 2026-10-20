@@ -106,6 +106,12 @@ export interface CabinetVolume {
     id: string;
     volumeNo: string;
     kind: string;
+    /**
+     * 【2026-10-20 空空】**组卷时随机给的 emoji 标识**（`ReviewVolume.emojiMark`）。
+     * 卷号长得像，靠这个符号一眼认出"就是那一份" —— 回录页要显示它。
+     * 可空：老卷可能还没生成过。
+     */
+    emojiMark?: string | null;
     createdAt: Date | string;
     /** 卷内每一行的标记态：null = 还没标（≈ 还没回录这一行） */
     items: { markState: string | null }[];
@@ -118,6 +124,15 @@ export interface CabinetOptions {
     recoverMinDays: number;
     /** 计划复习里错到几次就"建议升深挖"（默认 2 次） */
     suggestUpgradeMinWrong: number;
+    /**
+     * 【2026-10-20 空空第 6 条】**她已经确认"不升级"的那些题** —— 题 id → 当时错了几次。
+     *
+     * 判据：`当前错误次数 <= 当时次数` 才压着不提示。
+     * 为什么不是"永久不再提示"：她又错了第三次、第四次，情况已经变了，
+     * 还拿老决定挡着就是**替她做了一个过时的决定**。
+     * 不传 = 没有留级记录（默认行为不变，老单测照旧通过）。
+     */
+    keptWrongCounts?: Map<string, number>;
 }
 
 export const CABINET_DEFAULT_OPTIONS: CabinetOptions = {
@@ -412,6 +427,13 @@ export function upgradeSuggestions(
         const planned = normalizeReviewOutcomes(q.reviewOutcomes).planned;
         const wrongCount = planned.filter((v) => v === 'wrong').length;
         if (wrongCount < options.suggestUpgradeMinWrong) continue;
+        /**
+         * 【2026-10-20 第 6 条】她点过「留级」的，只要**错得不比当时多**就不再提示。
+         * 注意是 `<=`：当时错 2 次、现在还是 2 次 ⇒ 继续压着；
+         * 现在错 3 次 ⇒ 重新冒出来（情况变了，值得再看一眼）。
+         */
+        const keptAt = options.keptWrongCounts?.get(q.id);
+        if (keptAt !== undefined && wrongCount <= keptAt) continue;
         out.push({ question: q, wrongCount });
     }
     return out;
@@ -440,7 +462,7 @@ export interface CabinetTasks {
         overdueDays: number;
     }>;
     pendingRecover: CabinetTask<{ id: string; source: string | null; daysSincePrint: number; notebookId?: string | null }>;
-    pendingRecoverVolumes: CabinetTask<{ id: string; volumeNo: string; unrecoveredCount: number; daysSinceCreated: number }> & {
+    pendingRecoverVolumes: CabinetTask<{ id: string; volumeNo: string; emojiMark?: string | null; unrecoveredCount: number; daysSinceCreated: number }> & {
         volumeIds: string[];
     };
     unprintedInsights: CabinetTask<{ id: string; code: string; subject?: string | null }>;
@@ -578,6 +600,8 @@ export function buildCabinetTasks(input: {
             items: recoveredVolumes.map((v) => ({
                 id: v.volume.id,
                 volumeNo: v.volume.volumeNo,
+                /** 【2026-10-20】组卷时那个 emoji —— 回录页靠它认卷 */
+                emojiMark: v.volume.emojiMark ?? null,
                 unrecoveredCount: v.unrecoveredCount,
                 daysSinceCreated: v.daysSinceCreated,
             })),
