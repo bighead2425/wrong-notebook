@@ -652,7 +652,8 @@ describe('/api/error-items', () => {
              * ⚠️ 与旧机制的区别：旧的记在 `levelLedger` 账本上、靠"这次变化了几笔"推；
              *    新的**直接由事实推出**（间隔表 + 阈值表），不落任何中间账。
              */
-            expect(arg.data.levelCountdown).toBe(4);
+            /** 【2026-10-21】4 级间隔 4 → 3 天 */
+            expect(arg.data.levelCountdown).toBe(3);
             expect(arg.data.attention).toBe(4);
             // ★ 派生缓存也写回去了（这就是"错题卡上那 4 个圈"的数据源）
             expect(JSON.parse(String(arg.data.reviewOutcomes)).recent).toEqual(['right', 'wrong']);

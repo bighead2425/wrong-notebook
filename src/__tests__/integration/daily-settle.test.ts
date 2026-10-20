@@ -118,9 +118,9 @@ describe('每日结算 · 什么时候跑 / 什么时候不跑', () => {
         expect(r.ran).toBe(true);
         expect(r.initialized).toBe(1);
         expect(r.advanced).toBe(0);
-        // 老数据被补上：连对 2 ⇒ 倒数 21、等级 2
+        // 老数据被补上：连对 2 ⇒ 倒数 14（2026-10-21：原 21）、等级 2
         const arg = mocks.mockPrismaErrorItem.update.mock.calls[0][0] as { data: Record<string, unknown> };
-        expect(arg.data.levelCountdown).toBe(21);
+        expect(arg.data.levelCountdown).toBe(14);
         expect(arg.data.attention).toBe(2);
     });
 
