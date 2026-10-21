@@ -66,6 +66,11 @@ RUN apk add --no-cache poppler-utils
 ARG APP_VERSION=dev
 ENV APP_VERSION=$APP_VERSION
 
+# 【2026-10-22】代码提交号 —— 审计时"审的是哪一版"要能自证。
+# tag（custom-v114）会被人为填写，commit 不会撒谎；两个一起看才够。
+ARG APP_COMMIT=dev
+ENV APP_COMMIT=$APP_COMMIT
+
 # Install dependencies and create user
 RUN apk add --no-cache su-exec openssl \
     && addgroup --system --gid 1001 nodejs \

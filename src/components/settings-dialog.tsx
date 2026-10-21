@@ -79,6 +79,8 @@ export function SettingsDialog({
     const [saving, setSaving] = useState(false);
     const [loading, setLoading] = useState(false);
     const [version, setVersion] = useState<string>("");
+    /** 【2026-10-22】代码提交号（短）—— 与 tag 一起显示，审计时判得出"跑的是哪一版" */
+    const [commit, setCommit] = useState<string>("");
     const [showApiKey, setShowApiKey] = useState(false);
     const [config, setConfig] = useState<AppConfig>({ aiProvider: 'gemini' });
     // OpenAI 多实例状态
@@ -125,7 +127,10 @@ export function SettingsDialog({
         // 获取版本号
         fetch("/api/version")
             .then((res) => res.json())
-            .then((data) => setVersion(data.version))
+            .then((data) => {
+                setVersion(data.version);
+                if (typeof data.commit === "string") setCommit(data.commit.slice(0, 7));
+            })
             .catch(() => {});
     }, [open]);
 
@@ -137,11 +142,13 @@ export function SettingsDialog({
      * 这个值的意义是"**NAS 上现在跑的是哪一版**，打开关于就能看到"——
      * 他明确要的就是这一点（换版后不用再猜、不会再乱）。
      */
-    const versionLabel = !version
+    const baseLabel = !version
         ? "unknown"
         : /^(v|custom-)/.test(version)
             ? version
             : `v${version}`;
+    /** tag + 提交号：tag 是人填的、commit 不是；两个一起才判得出"审的是哪一版" */
+    const versionLabel = commit && baseLabel !== "unknown" ? `${baseLabel} · ${commit}` : baseLabel;
 
     const fetchSettings = async () => {
         setLoading(true);

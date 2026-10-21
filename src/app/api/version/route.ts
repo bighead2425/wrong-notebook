@@ -15,16 +15,25 @@ import { join } from 'path';
  *    （原实现就是这样，于是 About 里常显示 unknown），而环境变量一定在。
  */
 export async function GET() {
+  /**
+   * 【2026-10-22 如如】**带上提交号**。
+   *
+   * 起因：一次三方审计对着桌面上的旧片吵了一晚上，所有结论都过期 ——
+   * 因为报告里只有 `version: 1.9.0`，而两份代码的 version 都是它。
+   * tag（custom-v114）是人填的，commit 不是；两个一起看才判得出"审的是哪一版"。
+   */
+  const commit = (process.env.APP_COMMIT || '').trim() || null;
+
   const fromEnv = process.env.APP_VERSION;
   if (fromEnv && fromEnv.trim()) {
-    return NextResponse.json({ version: fromEnv.trim(), source: 'env' });
+    return NextResponse.json({ version: fromEnv.trim(), commit, source: 'env' });
   }
 
   try {
     const packageJsonPath = join(process.cwd(), 'package.json');
     const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
-    return NextResponse.json({ version: packageJson.version || 'unknown', source: 'package' });
+    return NextResponse.json({ version: packageJson.version || 'unknown', commit, source: 'package' });
   } catch {
-    return NextResponse.json({ version: 'unknown', source: 'none' });
+    return NextResponse.json({ version: 'unknown', commit, source: 'none' });
   }
 }

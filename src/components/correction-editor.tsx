@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { ParsedQuestion } from "@/lib/ai";
 import { calculateGrade } from "@/lib/grade-calculator";
 import { Input } from "@/components/ui/input";
@@ -55,6 +55,21 @@ type ReanswerErrorMessages = {
 };
 
 export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, initialSubjectId, aiTimeout }: CorrectionEditorProps) {
+    /**
+     * 【2026-10-22 如如】**未保存保护**（第三方审出来的真 bug）。
+     *
+     * 原来这个编辑器**一个字都不提示**：改了一半、误点「取消」或按了浏览器返回，
+     * 改的全没了。它跟排版页那个 `beforeunload` 不是一回事 —— 那个是"拦离开"，
+     * 这个连"有没有改过"都无从判断。
+     *
+     * 做法：
+     *   ① 监听 `data` 变化（**跳过首次渲染**）⇒ 之后任何改动都记 dirty；
+     *   ② dirty 时挂 `beforeunload`（刷新 / 关标签，浏览器会问一句）；
+     *   ③ 点「取消」时若 dirty，先问"确定放弃？"；
+     *   ④ 保存成功后清 dirty（存完还弹窗就成骚扰了）。
+     */
+    const [dirty, setDirty] = useState(false);
+    const firstRun = useRef(true);
     const [data, setData] = useState<ParsedQuestionWithSubject>({
         ...initialData,
         wrongAnswerText: initialData.wrongAnswerText || "",
@@ -75,6 +90,34 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
     const { t, language } = useLanguage();
     /** 本页新文案的双语助手（与列表页 / 详情页同一写法，不再往 translations 里塞碎键） */
     const L = (zh: string, en: string) => (language === "zh" ? zh : en);
+    /** ① 任何改动都记 dirty（跳过首次渲染，否则一挂载就算"改过"） */
+    useEffect(() => {
+        if (firstRun.current) {
+            firstRun.current = false;
+            return;
+        }
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- 这是"数据变了 ⇒ 标记脏"的派生状态，没有别的写法
+        setDirty(true);
+    }, [data]);
+
+    /** ② 脏了就拦浏览器刷新 / 关标签（只在这一层，父组件的进入离开拦截另算） */
+    useEffect(() => {
+        if (!dirty) return;
+        const onBeforeUnload = (e: BeforeUnloadEvent) => {
+            e.preventDefault();
+            // 老浏览器要 returnValue 才弹
+            e.returnValue = "";
+        };
+        window.addEventListener("beforeunload", onBeforeUnload);
+        return () => window.removeEventListener("beforeunload", onBeforeUnload);
+    }, [dirty]);
+
+    /** ③ 「取消」：有改动先问一句再走 */
+    const handleCancel = useCallback(() => {
+        if (dirty && !confirm("改动还没保存，确定放弃？")) return;
+        onCancel();
+    }, [dirty, onCancel]);
+
     const [isReanswering, setIsReanswering] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     /**
@@ -209,7 +252,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
             <div className="flex items-center justify-between">
                 <h2 className="text-2xl font-bold">{t.editor.title}</h2>
                 <div className="flex gap-2">
-                    <Button variant="outline" onClick={onCancel}>
+                    <Button variant="outline" onClick={handleCancel}>
                         {t.editor.cancel}
                     </Button>
                     <Button
@@ -238,6 +281,9 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                                     delete payload.manageType;
                                 }
                                 await onSave(payload);
+                                /** 【2026-10-22】存成功了就别再算"脏" —— 否则离开时还会弹"没保存" */
+                                setDirty(false);
+                                firstRun.current = true;
                             } finally {
                                 setIsSaving(false);
                             }

@@ -123,5 +123,6 @@ jobs:
           # ⚠️ 用清洗后的值，不然「关于」里会显示成 "custom-v108 "（带空格）
           build-args: |
             APP_VERSION=${{ steps.norm.outputs.tag }}
+            APP_COMMIT=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
