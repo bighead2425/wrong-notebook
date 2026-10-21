@@ -1317,6 +1317,8 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                 refreshToken={inboxToken}
                 /* 【2026-10-21】举一反三那条路传 scan2pdf；不传就是默认的 scan2wrong */
                 subPath={inboxSubPath}
+                /* 批量页也要能直接拉 PDF（试卷宝只出 PDF），不止举一反三那条路 */
+                allowPdf
             />
 
             {/* 【custom-v31】连拍转存的两个提示：进行中 / 已收工。

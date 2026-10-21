@@ -114,6 +114,14 @@ interface ScanInboxBarProps {
      *（相机都爱叫 `IMG_0001.jpg`）放在两个目录里也不会互相把对方误标成"已导入"。
      */
     subPath?: string;
+    /**
+     * 【2026-10-21 空空】**这个收件箱要不要显示 PDF 块**。
+     *   · `/batch`（批量上传）和 `/recover`（回录分析）都开 —— 试卷宝只能导 PDF
+     *   · 不开就完全看不到 PDF 相关的东西（老行为）
+     * ⚠️ 目录用 `subPath`（不传 = `scan2wrong`），不再写死 `scan2pdf`。
+     */
+    allowPdf?: boolean;
+
 }
 
 /** 2582314 → "2.5 MB" */
@@ -168,6 +176,7 @@ export function ScanInboxBar({
     onAvailability,
     refreshToken = 0,
     subPath,
+    allowPdf = false,
 }: ScanInboxBarProps) {
     const { t } = useLanguage();
     const s = t.common.batch?.inbox || {};
@@ -303,19 +312,20 @@ export function ScanInboxBar({
      * 不白跑一次请求。
      */
     const loadPdfs = useCallback(async () => {
-        if (subPath !== "scan2pdf") {
+        if (!allowPdf) {
             setPdfs([]);
             return;
         }
         try {
+            /** 目录跟这个收件箱走（不传 = scan2wrong），不再写死 scan2pdf */
             const r = await apiClient.get<{ files: { name: string; size: number }[] }>(
-                "/api/scan-inbox/pdf?dir=scan2pdf",
+                `/api/scan-inbox/pdf${dirQ ? `?${dirQ}` : ""}`,
             );
             setPdfs(r.files || []);
         } catch {
             setPdfs([]);
         }
-    }, [subPath]);
+    }, [allowPdf, dirQ]);
 
     /**
      * 【2026-10-21 空空】把一个 PDF 拆成图片（后端 pdftoppm）。
@@ -331,7 +341,7 @@ export function ScanInboxBar({
             try {
                 const r = await apiClient.post<{ ok: boolean; pages: string[]; error?: string }>(
                     "/api/scan-inbox/pdf",
-                    { dir: "scan2pdf", name },
+                    { dir: subPath, name },
                 );
                 if (!r?.ok) {
                     alert(r?.error || "转图失败");
@@ -349,7 +359,7 @@ export function ScanInboxBar({
             }
         },
         // eslint-disable-next-line react-hooks/exhaustive-deps -- doImport 每次渲染重建，别放进来（会把整个回调也重建）
-        [converting, loadPdfs, load],
+        [converting, loadPdfs, load, subPath],
     );
 
     /** 【2026-10-21】删收件箱里的 PDF —— 不用再去 NAS 上操作 */
@@ -359,7 +369,7 @@ export function ScanInboxBar({
             try {
                 const r = await apiClient.post<{ ok: boolean; error?: string }>(
                     "/api/scan-inbox/pdf",
-                    { dir: "scan2pdf", name, action: "delete" },
+                    { dir: subPath, name, action: "delete" },
                 );
                 if (!r?.ok) {
                     alert(r?.error || "删除失败");
@@ -370,7 +380,7 @@ export function ScanInboxBar({
                 alert(e instanceof Error ? e.message : "删除失败");
             }
         },
-        [loadPdfs],
+        [loadPdfs, subPath],
     );
 
     useEffect(() => { void loadPdfs(); }, [loadPdfs, refreshToken]);
@@ -757,7 +767,7 @@ export function ScanInboxBar({
         <>
             <div className="space-y-2">
                 {/* 【2026-10-21】PDF 中转区 —— 只在 scan2pdf 目录出现 */}
-                {subPath === "scan2pdf" && pdfs.length > 0 && (
+                {allowPdf && pdfs.length > 0 && (
                     <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-2 dark:border-sky-900 dark:bg-sky-950/20">
                         <p className="mb-1.5 text-xs font-medium text-sky-900 dark:text-sky-200">
                             这个文件夹里还有 {pdfs.length} 个 PDF。点「转成图片」后，它会按页拆开，

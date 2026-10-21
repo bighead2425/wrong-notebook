@@ -1270,6 +1270,8 @@ export default function RecoverPage() {
                     <div id="recover-inbox" />
                     <ScanInboxBar
                         subPath="scan2recover"
+                        /* 【2026-10-21】回录也要能用 PDF（试卷宝只出 PDF） */
+                        allowPdf
                         existingNames={[...pendingShots, ...readyShots].map((s) => s.file.name)}
                         onImport={handleInboxImport}
                         busy={

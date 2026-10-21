@@ -33,7 +33,8 @@ export async function GET(req: Request) {
     if (!user) return unauthorized("Authentication required");
 
     try {
-        const dir = new URL(req.url).searchParams.get("dir") || "scan2pdf";
+        /** 不传 dir ⇒ 与图片列表同一个默认目录（scan2wrong）；举一反三那条路会显式传 scan2pdf */
+        const dir = new URL(req.url).searchParams.get("dir") || "scan2wrong";
         const res = await listInboxPdfs(dir);
         return NextResponse.json({ ok: true, ...res });
     } catch (error) {
@@ -53,7 +54,7 @@ export async function POST(req: Request) {
             dpi?: number;
             action?: "convert" | "delete";
         };
-        const dir = body.dir || "scan2pdf";
+        const dir = body.dir || "scan2wrong";
         const name = (body.name || "").trim();
         if (!name) return badRequest("name is required");
 
