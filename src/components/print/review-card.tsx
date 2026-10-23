@@ -328,7 +328,7 @@ export function VolumeHeader({
                 {/* 【2026-10-03 需求第 10 条】随机 emoji 标识：整卷共用一个，
                     画在「印于 …」**左边**、与那行同字号（8pt）。不传就没有。 */}
                 {emojiMark ? (
-                    <span style={{ fontSize: '8pt', lineHeight: 1, whiteSpace: 'nowrap' }}>{emojiMark}</span>
+                    <span style={{ fontSize: '15pt', lineHeight: 1, whiteSpace: 'nowrap' }}>{emojiMark}</span>
                 ) : null}
                 <span style={{ fontSize: '8pt', color: '#555', whiteSpace: 'nowrap' }}>
                     {L('印于', 'printed')} {stampReadable(printDate)}

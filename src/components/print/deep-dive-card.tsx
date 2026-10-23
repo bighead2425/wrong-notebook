@@ -208,7 +208,7 @@ export function DeepDiveCard({
                 display: 'flex',
                 alignItems: 'center',
                 gap: '2mm',
-                borderBottom: '0.3mm solid #c8c8c8',
+                borderBottom: '0.3mm solid #cfc9bd',
                 flex: '0 0 auto',
             }}
         >
@@ -222,7 +222,7 @@ export function DeepDiveCard({
             {/* 【2026-10-03 需求第 10 条】随机 emoji 标识：画在「印于 …」**左边**、
                 与那行同字号（8pt）。深挖纸只有正面有印刷时间 ⇒ 只给一个。不传就没有。 */}
             {emojiMark ? (
-                <span style={{ fontSize: '8pt', lineHeight: 1, whiteSpace: 'nowrap' }}>{emojiMark}</span>
+                <span style={{ fontSize: '15pt', lineHeight: 1, whiteSpace: 'nowrap' }}>{emojiMark}</span>
             ) : null}
             <span style={{ fontSize: '8pt', color: '#666', whiteSpace: 'nowrap' }}>
                 {L('印于', 'Printed')} {formatIsoDate(printDate)}
@@ -365,7 +365,7 @@ export function DeepDiveCard({
                         minHeight: `${DEEP_CROSSHAIR_FLOOR_MM}mm`,
                         position: 'relative',
                         marginTop: '1.5mm',
-                        border: '0.3mm solid #d8d8d8',
+                        border: '0.3mm solid #ded8ca',
                     }}
                 >
                     {/* 十字象限：只是"参考位置"，不赋四格语义（P6）。
