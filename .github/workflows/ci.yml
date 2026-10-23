@@ -136,7 +136,10 @@ jobs:
     # ⇒ 这一提交里同时修好了那三处；E2E 恢复自动跑，并**不再需要等 build-check**（并行）。
     #
     # ⚠️ 若这次仍红：**必须继续修到绿**，不许再"关掉当解决"。
-    timeout-minutes: 60
+    #
+    # 【2026-10-24】60 → 30 分钟。正常全程 9 分钟（Playwright 自己跑 7 分钟），
+    # 30 已经留了 3 倍余量；原来的 60 只会让"卡住"变成"卡一小时"。
+    timeout-minutes: 30
     env:
       DATABASE_URL: "file:./e2e.db"
       NEXTAUTH_SECRET: "ci-secret-value-123456"
@@ -154,8 +157,30 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # 【2026-10-24】浏览器缓存 —— 这是整个 CI 里**唯一**可能卡死的一步。
+      #
+      # bcd53ac 那次卡了 40 分钟没动：`npx playwright install --with-deps`
+      # 去微软 CDN 下载浏览器，网络一抖就一直等（历史上这步只要 40 秒）。
+      # 命中缓存后这步接近秒过；没命中也不会更慢。
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      # 【2026-10-24】只装 chromium。
+      #
+      # `playwright install` 不带浏览器名会装 chromium + firefox + webkit，
+      # 但 `playwright.config.ts` 里只有一个 project（chromium）——
+      # 另外两个从头到尾没被用过，纯粹白下载两份（下载量约 2/3 浪费）。
+      #
+      # timeout-minutes：卡住时**当场死**，不要拖到 job 级的 60 分钟。
+      # 命中缓存时这步 3 秒，没命中约 40 秒；给到 10 分钟已经是 15 倍余量。
       - name: Install Playwright Browsers
-        run: npx playwright install --with-deps
+        run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
 
       - name: Setup Database
         run: |
