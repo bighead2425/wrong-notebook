@@ -1349,6 +1349,33 @@ export function SettingsDialog({
                                     {t.settings?.dataManagement || "Data Management"}
                                 </h4>
 
+                                {/* 【2026-10-24 空空】**完整备份**（整库快照）—— 灾备专用
+                                    与下面那个「导出数据」不是一回事：
+                                      · 下面的 JSON 是白名单，只导 5 张表，缺日积月累/卷/打印记录；
+                                      · 这个是整个 .db 搬走，自动全表，以后加表也不用改代码。
+                                    用 <a download> 而不是 fetch：23MB 让浏览器自己去流式接收，
+                                    不用先塞进 JS 内存（手机上尤其重要）。 */}
+                                {(session?.user as { role?: string } | undefined)?.role === 'admin' && (
+                                    <div className="mb-4 rounded-lg border border-emerald-300 bg-emerald-50 p-3">
+                                        <div className="mb-1 flex items-center justify-between gap-2">
+                                            <span className="text-sm font-medium text-emerald-900">
+                                                {t.settings?.fullBackup || "Full Backup"}
+                                            </span>
+                                            <a
+                                                href="/api/export/snapshot"
+                                                download
+                                                className="inline-flex h-8 items-center justify-center rounded-md border border-emerald-300 bg-emerald-100 px-3 text-xs font-medium text-emerald-900 hover:bg-emerald-200"
+                                            >
+                                                <Download className="mr-2 h-4 w-4" />
+                                                {t.settings?.fullBackupButton || "Download Full Backup"}
+                                            </a>
+                                        </div>
+                                        <p className="text-xs text-emerald-800">
+                                            {t.settings?.fullBackupDesc || "Whole-database snapshot plus app config, packed as .tar.gz."}
+                                        </p>
+                                    </div>
+                                )}
+
                                 {/* Export */}
                                 <div className="mb-4">
                                     <div className="flex items-center justify-between mb-2">
