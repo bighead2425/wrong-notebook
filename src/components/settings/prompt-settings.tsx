@@ -1,16 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AppConfig } from "@/types/api";
 import { DEFAULT_ANALYZE_TEMPLATE, DEFAULT_SIMILAR_TEMPLATE, DEFAULT_INSIGHTS_TEMPLATE } from "@/lib/ai/prompts";
 import { RotateCcw, AlertTriangle, Info } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 
 type PromptKind = 'analyze' | 'similar' | 'insights';
+
+const KINDS: readonly PromptKind[] = ['analyze', 'similar', 'insights'] as const;
 
 interface PromptSettingsProps {
     config: AppConfig;
@@ -36,224 +37,168 @@ function VariableInfo({ name, description }: VariableInfoProps) {
     );
 }
 
-export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
-    const { language, t } = useLanguage();
-    const [analyzeTemplate, setAnalyzeTemplate] = useState("");
-    const [similarTemplate, setSimilarTemplate] = useState("");
-    const [insightsTemplate, setInsightsTemplate] = useState("");
-
-    useEffect(() => {
-        setAnalyzeTemplate(config.prompts?.analyze || DEFAULT_ANALYZE_TEMPLATE);
-        setSimilarTemplate(config.prompts?.similar || DEFAULT_SIMILAR_TEMPLATE);
-        setInsightsTemplate(config.prompts?.insights || DEFAULT_INSIGHTS_TEMPLATE);
-    }, [config.prompts]);
-
-    const handleReset = (type: PromptKind) => {
-        if (!confirm(t.settings?.prompts?.resetConfirm || "Are you sure you want to reset to default?")) return;
-
-        const defaultValue =
-            type === 'analyze'
-                ? DEFAULT_ANALYZE_TEMPLATE
-                : type === 'similar'
-                  ? DEFAULT_SIMILAR_TEMPLATE
-                  : DEFAULT_INSIGHTS_TEMPLATE;
-        if (type === 'analyze') {
-            setAnalyzeTemplate(defaultValue);
-        } else if (type === 'similar') {
-            setSimilarTemplate(defaultValue);
-        } else {
-            setInsightsTemplate(defaultValue);
-        }
-        onUpdate(type, defaultValue);
-    };
-
-    const handleChange = (type: PromptKind, value: string) => {
-        if (type === 'analyze') {
-            setAnalyzeTemplate(value);
-        } else if (type === 'similar') {
-            setSimilarTemplate(value);
-        } else {
-            setInsightsTemplate(value);
-        }
-        onUpdate(type, value);
-    };
-
-    const WarningBox = () => (
+/**
+ * 修改提示词前的警告框。
+ *
+ * ⚠️ 定义在**模块级**，不能挪进 `PromptSettings` 里 —— 在组件内部定义组件，
+ *    每次渲染都会造出一个新的组件类型，React 会当成"换了个组件"而把它内部
+ *    的 state 全清掉（eslint 的 `react-hooks/static-components` 就是拦这个的）。
+ */
+function WarningBox({ caution, warning }: { caution: string; warning: string }) {
+    return (
         <div className="bg-amber-50 border border-amber-200 rounded-md p-3 flex items-start gap-3 text-amber-900 text-sm mb-4">
             <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
             <div className="space-y-1">
-                <p className="font-medium">
-                    {t.settings?.prompts?.caution || "Modify with Caution"}
-                </p>
-                <p className="text-amber-800/90 text-xs">
-                    {t.settings?.prompts?.warning || "Variables in {{brackets}} are used to inject dynamic content. Please preserve these variables, otherwise the AI providing may fail to get question context or return invalid formats."}
-                </p>
+                <p className="font-medium">{caution}</p>
+                <p className="text-amber-800/90 text-xs">{warning}</p>
             </div>
         </div>
     );
+}
+
+export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
+    const { t } = useLanguage();
+
+    /**
+     * 【2026-10-24 空空】三个子页 ⇒ 一个下拉。
+     *
+     * 原来那三个横向标签在手机上会挤成一团、字压字（"题目分析提示词"七个字
+     * 塞进三分之一屏宽）。改成下拉之后，屏幕上永远只出现"当前在编的那一份"，
+     * 地方只占一块，也不用再横着划。
+     */
+    const [kind, setKind] = useState<PromptKind>('analyze');
+
+    const defaultValueOf = (type: PromptKind): string =>
+        type === 'analyze'
+            ? DEFAULT_ANALYZE_TEMPLATE
+            : type === 'similar'
+              ? DEFAULT_SIMILAR_TEMPLATE
+              : DEFAULT_INSIGHTS_TEMPLATE;
+
+    /**
+     * 文本框里显示什么 —— **直接读 config，不留本地副本**。
+     *
+     * `onUpdate` 是即时回写 config 的，所以这里不用 state，也就不需要一个
+     * effect 去"把 config 同步进 state"。那种写法每次输入都会先落盘再同步回来，
+     * 既多一轮渲染，又会在清空时把默认值又填回去（见下）。
+     *
+     * ⚠️ 用 `??` 而不是 `||`：配置里存 `''` 的意思是"这份用默认模板"，
+     *    它是个**合法的、用户可以选择的值**；用 `||` 会把 `''` 也吞掉，
+     *    于是用户根本没法把框清空。
+     */
+    const templateOf = (type: PromptKind): string =>
+        config.prompts?.[type] ?? defaultValueOf(type);
+
+    const titleOf = (type: PromptKind): string =>
+        type === 'analyze'
+            ? (t.settings?.prompts?.customAnalysis || "Custom Analysis Template")
+            : type === 'similar'
+              ? (t.settings?.prompts?.customSimilar || "Custom Similar Question Template")
+              : (t.settings?.prompts?.customInsights || "日积月累 · 整理提示词");
+
+    const labelOf = (type: PromptKind): string =>
+        type === 'analyze'
+            ? (t.settings?.prompts?.analysisTab || "Analysis Prompt")
+            : type === 'similar'
+              ? (t.settings?.prompts?.similarTab || "Similar Question Prompt")
+              : (t.settings?.prompts?.insightsTab || "日积月累提示词");
+
+    const handleReset = (type: PromptKind) => {
+        if (!confirm(t.settings?.prompts?.resetConfirm || "Are you sure you want to reset to default?")) return;
+        onUpdate(type, defaultValueOf(type));
+    };
+
+    /** 每份提示词能用的变量不一样 —— 跟着选中的那份走 */
+    const varsOf = (type: PromptKind) => {
+        const v = t.settings?.prompts?.vars;
+        if (type === 'analyze') {
+            return [
+                { name: 'language_instruction', description: v?.languageInstruction || "Injects instructions based on target language (e.g., keep English questions in English but analysis in Chinese)." },
+                { name: 'knowledge_points_list', description: v?.knowledgePointsList || "Injects the standard list of knowledge point tags for the specific subject." },
+                { name: 'provider_hints', description: v?.providerHints || "System-injected hints (e.g., enforcing JSON format)." },
+            ];
+        }
+        if (type === 'similar') {
+            return [
+                { name: 'difficulty_level', description: v?.difficultyLevel || "Target difficulty level." },
+                { name: 'difficulty_instruction', description: v?.difficultyInstruction || "Specific writing instructions for the target difficulty." },
+                { name: 'original_question', description: v?.originalQuestion || "The full text of the original question." },
+                { name: 'knowledge_points', description: v?.knowledgePoints || "List of knowledge points to test." },
+                { name: 'language_instruction', description: v?.languageInstructionShort || "Language formatting instructions." },
+            ];
+        }
+        return [
+            { name: 'raw_content', description: "她写/记录的内容（原文，最多取 4000 字）" },
+            { name: 'question_text', description: "关联的题干（没关联时是占位文字）" },
+            { name: 'mistake_reason', description: "错因（8 种之一，没打错因时是占位文字）" },
+            { name: 'mistake_analysis', description: "错因分析（可空）" },
+            { name: 'subject', description: "学科（当前未传，恒为占位）" },
+            { name: 'language_instruction', description: "按目标语言注入的指令" },
+        ];
+    };
 
     return (
         <div className="space-y-4 border rounded-lg p-4 bg-muted/30">
-            <Tabs defaultValue="analyze" className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
-                    <TabsTrigger value="analyze">
-                        {t.settings?.prompts?.analysisTab || "Analysis Prompt"}
-                    </TabsTrigger>
-                    <TabsTrigger value="similar">
-                        {t.settings?.prompts?.similarTab || "Similar Question Prompt"}
-                    </TabsTrigger>
-                    <TabsTrigger value="insights">
-                        {t.settings?.prompts?.insightsTab || "日积月累提示词"}
-                    </TabsTrigger>
-                </TabsList>
+            {/* 下拉选哪一份，下面永远只显示一份 —— 手机上不会再把三个标签挤成一团 */}
+            <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">
+                    {t.settings?.prompts?.selectLabel || "选择要编辑的提示词"}
+                </Label>
+                <select
+                    value={kind}
+                    onChange={(e) => setKind(e.target.value as PromptKind)}
+                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                    {KINDS.map((k) => (
+                        <option key={k} value={k}>{labelOf(k)}</option>
+                    ))}
+                </select>
+            </div>
 
-                <TabsContent value="analyze" className="space-y-4 py-4">
-                    <div className="space-y-4">
-                        <div className="flex justify-between items-center">
-                            <Label className="text-base font-semibold">
-                                {t.settings?.prompts?.customAnalysis || "Custom Analysis Template"}
-                            </Label>
-                            <Button variant="outline" size="sm" onClick={() => handleReset('analyze')}>
-                                <RotateCcw className="w-4 h-4 mr-2" />
-                                {t.settings?.prompts?.reset || "Reset Default"}
-                            </Button>
-                        </div>
+            <div className="space-y-4">
+                <div className="flex justify-between items-center gap-2">
+                    <Label className="text-base font-semibold">{titleOf(kind)}</Label>
+                    <Button variant="outline" size="sm" onClick={() => handleReset(kind)}>
+                        <RotateCcw className="w-4 h-4 mr-2" />
+                        {t.settings?.prompts?.reset || "Reset Default"}
+                    </Button>
+                </div>
 
-                        <WarningBox />
+                <WarningBox
+                    caution={t.settings?.prompts?.caution || "Modify with Caution"}
+                    warning={t.settings?.prompts?.warning || "Variables in {{brackets}} are used to inject dynamic content. Please preserve these variables, otherwise the AI providing may fail to get question context or return invalid formats."}
+                />
 
-                        <div className="space-y-2 border rounded-md p-3 bg-background">
-                            <h4 className="text-xs font-medium flex items-center gap-1.5 mb-2">
-                                <Info className="h-3.5 w-3.5" />
-                                {t.settings?.prompts?.variables || "Available Variables"}
-                            </h4>
-                            <div className="space-y-1.5">
-                                <VariableInfo
-                                    name="language_instruction"
-                                    description={t.settings?.prompts?.vars?.languageInstruction || "Injects instructions based on target language (e.g., keep English questions in English but analysis in Chinese)."}
-                                />
-                                <VariableInfo
-                                    name="knowledge_points_list"
-                                    description={t.settings?.prompts?.vars?.knowledgePointsList || "Injects the standard list of knowledge point tags for the specific subject."}
-                                />
-                                <VariableInfo
-                                    name="provider_hints"
-                                    description={t.settings?.prompts?.vars?.providerHints || "System-injected hints (e.g., enforcing JSON format)."}
-                                />
-                            </div>
-                        </div>
-
-                        <Textarea
-                            value={analyzeTemplate}
-                            onChange={(e) => handleChange('analyze', e.target.value)}
-                            className="font-mono text-xs min-h-[400px]"
-                            placeholder={DEFAULT_ANALYZE_TEMPLATE}
-                        />
+                {/* 只有日积月累这份有"纸面格式"的硬要求 —— 它会真的印到纸上 */}
+                {kind === 'insights' && (
+                    <div className="rounded-md border bg-background p-3 text-xs text-muted-foreground leading-relaxed">
+                        输出必须符合纸面格式：第一行 #### + emoji + 不超过 12 个汉字的概括；正文不超过 120 字；
+                        AI 的补充写成 &gt; *AI: …*（没有就不写）。
+                        <br />
+                        ⚠️ 结构由程序再兜一次（写错标题级别、写成 **AI:** 都会被自动纠正）；
+                        但内容好不好只能靠这份提示词。
                     </div>
-                </TabsContent>
+                )}
 
-                <TabsContent value="similar" className="space-y-4 py-4">
-                    <div className="space-y-4">
-                        <div className="flex justify-between items-center">
-                            <Label className="text-base font-semibold">
-                                {t.settings?.prompts?.customSimilar || "Custom Similar Question Template"}
-                            </Label>
-                            <Button variant="outline" size="sm" onClick={() => handleReset('similar')}>
-                                <RotateCcw className="w-4 h-4 mr-2" />
-                                {t.settings?.prompts?.reset || "Reset Default"}
-                            </Button>
-                        </div>
-
-                        <WarningBox />
-
-                        <div className="space-y-2 border rounded-md p-3 bg-background">
-                            <h4 className="text-xs font-medium flex items-center gap-1.5 mb-2">
-                                <Info className="h-3.5 w-3.5" />
-                                {t.settings?.prompts?.variables || "Available Variables"}
-                            </h4>
-                            <div className="space-y-1.5">
-                                <VariableInfo
-                                    name="difficulty_level"
-                                    description={t.settings?.prompts?.vars?.difficultyLevel || "Target difficulty level."}
-                                />
-                                <VariableInfo
-                                    name="difficulty_instruction"
-                                    description={t.settings?.prompts?.vars?.difficultyInstruction || "Specific writing instructions for the target difficulty."}
-                                />
-                                <VariableInfo
-                                    name="original_question"
-                                    description={t.settings?.prompts?.vars?.originalQuestion || "The full text of the original question."}
-                                />
-                                <VariableInfo
-                                    name="knowledge_points"
-                                    description={t.settings?.prompts?.vars?.knowledgePoints || "List of knowledge points to test."}
-                                />
-                                <VariableInfo
-                                    name="language_instruction"
-                                    description={t.settings?.prompts?.vars?.languageInstructionShort || "Language formatting instructions."}
-                                />
-                            </div>
-                        </div>
-
-                        <Textarea
-                            value={similarTemplate}
-                            onChange={(e) => handleChange('similar', e.target.value)}
-                            className="font-mono text-xs min-h-[400px]"
-                            placeholder={DEFAULT_SIMILAR_TEMPLATE}
-                        />
+                <div className="space-y-2 border rounded-md p-3 bg-background">
+                    <h4 className="text-xs font-medium flex items-center gap-1.5 mb-2">
+                        <Info className="h-3.5 w-3.5" />
+                        {t.settings?.prompts?.variables || "Available Variables"}
+                    </h4>
+                    <div className="space-y-1.5">
+                        {varsOf(kind).map((v) => (
+                            <VariableInfo key={v.name} name={v.name} description={v.description} />
+                        ))}
                     </div>
-                </TabsContent>
+                </div>
 
-                {/* ═══ 【2026-10-18】日积月累 · 整理提示词 ═══
-                    与上面两份的差别要说清：那两份是"固定靶"（输入题干 ⇒ 输出固定结构的标签），
-                    这一份是"开放场景"（输入她的碎片 ⇒ 输出一张给人读的小卡片）。
-                    ⇒ 规则更多是"风格与边界"（保留她的话 / 错了不要偷偷改 / AI 只补充不复述），
-                      而且**一定会反复调**，所以必须能在这里改。 */}
-                <TabsContent value="insights" className="space-y-4 py-4">
-                    <div className="space-y-4">
-                        <div className="flex justify-between items-center">
-                            <Label className="text-base font-semibold">
-                                {t.settings?.prompts?.customInsights || "日积月累 · 整理提示词"}
-                            </Label>
-                            <Button variant="outline" size="sm" onClick={() => handleReset('insights')}>
-                                <RotateCcw className="w-4 h-4 mr-2" />
-                                {t.settings?.prompts?.reset || "Reset Default"}
-                            </Button>
-                        </div>
-
-                        <WarningBox />
-
-                        <div className="rounded-md border bg-background p-3 text-xs text-muted-foreground leading-relaxed">
-                            输出必须符合纸面格式：第一行 #### + emoji + 不超过 12 个汉字的概括；正文不超过 120 字；
-                            AI 的补充写成 &gt; *AI: …*（没有就不写）。
-                            <br />
-                            ⚠️ 结构由程序再兜一次（写错标题级别、写成 **AI:** 都会被自动纠正）；
-                            但内容好不好只能靠这份提示词。
-                        </div>
-
-                        <div className="space-y-2 border rounded-md p-3 bg-background">
-                            <h4 className="text-xs font-medium flex items-center gap-1.5 mb-2">
-                                <Info className="h-3.5 w-3.5" />
-                                {t.settings?.prompts?.variables || "Available Variables"}
-                            </h4>
-                            <div className="space-y-1.5">
-                                <VariableInfo name="raw_content" description="她写/记录的内容（原文，最多取 4000 字）" />
-                                <VariableInfo name="question_text" description="关联的题干（没关联时是占位文字）" />
-                                <VariableInfo name="mistake_reason" description="错因（8 种之一，没打错因时是占位文字）" />
-                                <VariableInfo name="mistake_analysis" description="错因分析（可空）" />
-                                <VariableInfo name="subject" description="学科（当前未传，恒为占位）" />
-                                <VariableInfo name="language_instruction" description="按目标语言注入的指令" />
-                            </div>
-                        </div>
-
-                        <Textarea
-                            value={insightsTemplate}
-                            onChange={(e) => handleChange('insights', e.target.value)}
-                            className="font-mono text-xs min-h-[400px]"
-                            placeholder={DEFAULT_INSIGHTS_TEMPLATE}
-                        />
-                    </div>
-                </TabsContent>
-            </Tabs>
+                <Textarea
+                    value={templateOf(kind)}
+                    onChange={(e) => onUpdate(kind, e.target.value)}
+                    className="font-mono text-xs min-h-[400px]"
+                    placeholder={defaultValueOf(kind)}
+                />
+            </div>
         </div>
     );
 }

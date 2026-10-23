@@ -73,7 +73,7 @@ export function BroadcastNotification() {
                                 {t.broadcast?.tagMigrationReminder || "If the standard tag library fails to load, please use an admin account to reset it."}
                             </p>
                             <p className="text-xs text-muted-foreground">
-                                {t.broadcast?.settingsPath2 || "Settings -> Danger -> Tag System Migration"}
+                                {t.broadcast?.settingsPath2 || "Settings -> Backup -> Tag System Migration"}
                             </p>
                         </div>
                     </div>

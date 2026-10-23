@@ -556,9 +556,11 @@ export const translations = {
                 timeoutDesc: "Increase this value if you experience frequent timeouts during AI analysis.",
                 scanInbox: {
                     title: "Inbox Folder",
-                    desc: "Photos shared from your phone (Quark Scan, Feiniu, etc.) land in this folder on the NAS. The app pulls them into the batch queue from here.",
+                    desc: "Photos shared from your phone (Quark Scan, Feiniu, etc.) land on the NAS. The app reads three folders there, one per purpose — keep them apart so the three pipelines do not see each other's photos.",
                     rootLabel: "Mount root (set by Docker, read-only)",
-                    subLabel: "Sub-folder",
+                    dirWrong: "Enter questions",
+                    dirRecover: "Scan-back analysis",
+                    dirPdf: "PDF staging",
                     subPlaceholder: "scan2wrong",
                     existing: "Existing folders:",
                     actualPath: "Reading from",
@@ -573,7 +575,7 @@ export const translations = {
                     loadError: "The inbox could not be loaded: {reason}",
                     loadErrorHint: "Usually an expired sign-in or a network hiccup — refresh the page and try again. You do NOT need to create any folder on the NAS.",
                     legacy: "This container uses the old single-folder mount, so the path cannot be changed here. Switch docker-compose.yml to mounting a root folder to enable it.",
-                    hint: "Changes take effect immediately — no container rebuild needed. The folder itself must already exist on the NAS.",
+                    hint: "Changes take effect immediately — no container rebuild needed. Each folder must already exist on the NAS, and the three should point at different folders.",
                 },
             },
             tabs: {
@@ -582,7 +584,14 @@ export const translations = {
                 ai: "AI Provider",
                 prompts: "Prompts",
                 admin: "User Management",
-                danger: "Danger",
+                /**
+                 * 【2026-10-24 空空】原「危险」改名为「备份」。
+                 *
+                 * 这一页干的事是**导出 / 导入 / 留后路**，不是删库。
+                 * 叫「危险」会让人不敢点 —— 而它恰恰是最该常点的那一页。
+                 * 名字要说明"这里是什么"，不是"这里有多吓人"。
+                 */
+                backup: "Backup",
                 about: "About",
             },
             about: {
@@ -648,6 +657,12 @@ export const translations = {
             },
             prompts: {
                 save: "Save Prompt Settings",
+                /**
+                 * 【2026-10-24 空空】下拉的标题。
+                 * 原来是三个横向的子页标签，手机上挤成一团、字压字；
+                 * 改成下拉后，选哪个就在下面编辑哪个，地方永远只占一块。
+                 */
+                selectLabel: "Prompt to edit",
                 analysisTab: "Analysis Prompt",
                 similarTab: "Similar Question Prompt",
                 insightsTab: "Insights Prompt",
@@ -868,7 +883,7 @@ export const translations = {
             profileReminder: "Please make sure to correctly fill in your education stage and enrollment year to ensure tags are associated correctly.",
             settingsPath: "Setting path: Settings → Account",
             tagMigrationReminder: "If the standard tag library fails to load, please use an admin account to reset it.",
-            settingsPath2: "Setting path: Settings → Danger → Tag System Migration",
+            settingsPath2: "Setting path: Settings → Backup → Tag System Migration",
         }
     },
     zh: {
@@ -1419,9 +1434,11 @@ export const translations = {
                 timeoutDesc: "如果 AI 分析频繁超时，请增加此值。",
                 scanInbox: {
                     title: "转存文件夹",
-                    desc: "手机 App（夸克扫描、飞牛等）分享过来的照片会存在 NAS 的这个文件夹里，错题本从它读取。",
+                    desc: "手机 App（夸克扫描、飞牛等）分享过来的照片存在 NAS 上，错题本按用途从三个目录分别读取 —— 建议三个目录各不相同，免得三条流水线互相看见对方的照片。",
                     rootLabel: "挂载根目录（由 Docker 决定，不可改）",
-                    subLabel: "子文件夹",
+                    dirWrong: "录错题",
+                    dirRecover: "回录分析",
+                    dirPdf: "PDF 中转",
                     subPlaceholder: "scan2wrong",
                     existing: "已有文件夹：",
                     actualPath: "实际读取",
@@ -1436,7 +1453,7 @@ export const translations = {
                     loadError: "收件箱没能读出来：{reason}",
                     loadErrorHint: "多半是登录过期或网络一时不通 —— 刷新页面重试一次；不用去 NAS 上建文件夹。",
                     legacy: "当前容器是按老方式挂载的（只挂了一个固定目录），这个路径没法在这里改。想改的话，把 docker-compose.yml 换成「挂根目录」的方式。",
-                    hint: "改完保存即刻生效，不用重建容器。文件夹本身要先在 NAS 上建好。",
+                    hint: "改完保存即刻生效，不用重建容器。三个目录都要各自先在 NAS 上建好，且建议指向不同目录。",
                 },
             },
             tabs: {
@@ -1445,7 +1462,7 @@ export const translations = {
                 ai: "AI 提供商",
                 prompts: "提示词",
                 admin: "用户管理",
-                danger: "危险",
+                backup: "备份",
                 about: "关于",
             },
             about: {
@@ -1510,6 +1527,7 @@ export const translations = {
             },
             prompts: {
                 save: "保存提示词设置",
+                selectLabel: "选择要编辑的提示词",
                 analysisTab: "题目分析提示词",
                 similarTab: "举一反三提示词",
                 insightsTab: "日积月累提示词",
@@ -1730,7 +1748,7 @@ export const translations = {
             profileReminder: "请务必正确填写用户教育阶段和入学年份，保障标签正确关联。",
             settingsPath: "设置路径：设置 → 账户",
             tagMigrationReminder: "如果标准标签库加载异常，请使用管理员账号重置标准标签库。",
-            settingsPath2: "设置路径：设置 → 危险 → 标签系统迁移",
+            settingsPath2: "设置路径：设置 → 备份 → 标签系统迁移",
         }
     }
 };

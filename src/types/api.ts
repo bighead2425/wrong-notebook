@@ -213,9 +213,21 @@ export interface AppConfig {
     timeouts?: {
         analyze?: number; // 毫秒
     };
-    /** 【custom-v30】扫描收件箱：根目录由 Docker 挂载决定，这里只存根下的相对子路径 */
+    /**
+     * 【custom-v30】扫描收件箱：根目录由 Docker 挂载决定，这里只存根下的相对子路径
+     *
+     * 【2026-10-24 空空】三种用途各一个目录：录错题 / 回录分析 / PDF 中转。
+     * 混在一个目录里，三条流水线会互相看见对方的照片。
+     * `subPath` 是老字段，只归「录错题」这一槽，读取时兼容、不必迁移。
+     */
     scanInbox?: {
         subPath?: string;
+        /** 录错题 */
+        wrong?: string;
+        /** 回录分析 */
+        recover?: string;
+        /** PDF 中转 */
+        pdf?: string;
     };
 }
 

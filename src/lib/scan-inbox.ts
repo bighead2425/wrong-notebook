@@ -44,6 +44,65 @@ const LEGACY_PATH_ENV = process.env.SCAN_INBOX_PATH;
 const DEFAULT_ROOT = "/app/inbox";
 /** 默认子文件夹名（沿用既有约定，老用户升级后不用做任何事） */
 export const DEFAULT_INBOX_SUBPATH = "scan2wrong";
+
+/* ------------------------------------------------------------------ */
+/* 三种用途 · 各一个目录（2026-10-24 空空）                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 收件箱的三种用途。
+ *
+ * ── 为什么要分开 ──────────────────────────────────────────────────────
+ * 三件事走的是同一套"根目录 + 子路径"机制，但**不该共用一个目录**：
+ *   · 录错题：手机扫完的卷子，等着被拆成一道道题；
+ *   · 回录分析：做过的纸扫回来认领，等着被记账；
+ *   · PDF 中转：试卷宝只能导 PDF，等着被拆页成图。
+ * 混在一个目录里，三条流水线会互相看见对方的照片，
+ * 界面上就会出现"我扫的卷子怎么跑到回录里去了"。
+ *
+ * ── 为什么不建白名单 ──────────────────────────────────────────────────
+ * 和 subPath 一视同仁：值只是"根下的相对路径"，
+ * 安全靠 `normalizeSubPath` + `realpath` 两道闸，不靠枚举。
+ * 所以你想把"录错题"指向 `数学` 也完全可以。
+ */
+export type InboxKind = "wrong" | "recover" | "pdf";
+
+/** 三个槽位的遍历顺序（设置页按它排布） */
+export const INBOX_KINDS: readonly InboxKind[] = ["wrong", "recover", "pdf"] as const;
+
+/** 三个槽位的出厂默认名 */
+export const DEFAULT_INBOX_SUBPATHS: Record<InboxKind, string> = {
+    wrong: "scan2wrong",
+    recover: "scan2recover",
+    pdf: "scan2pdf",
+};
+
+/**
+ * 「出厂默认名 → 槽位」反查表。
+ *
+ * 为什么需要它：老调用方（`/recover` 页、`/batch?dir=scan2pdf`）是**按名字**传的
+ * （`subPath="scan2recover"`），不认识"槽位"这个概念。有了这张表，
+ * 它们一行都不用改 —— 传 `scan2recover` 就自动落到 recover 槽的**当前值**上，
+ * 于是"在设置页里改目录"对老代码也立刻生效。
+ */
+const KIND_BY_LEGACY_NAME: Record<string, InboxKind> = {
+    scan2wrong: "wrong",
+    scan2recover: "recover",
+    scan2pdf: "pdf",
+};
+
+/**
+ * 取某个槽位**当前生效**的子路径。
+ *
+ * 优先级：槽位自己的值 → （仅 wrong 槽）老的 `subPath` 字段 → 出厂默认名。
+ * 老配置只有 `subPath`，升级后它自然变成"录错题"这一槽，另外两个回落默认，
+ * **不需要任何迁移动作**。
+ */
+export function getInboxSubPath(kind: InboxKind = "wrong"): string {
+    const cfg = getAppConfig().scanInbox as Record<string, unknown> | undefined;
+    const raw = cfg?.[kind] ?? (kind === "wrong" ? cfg?.subPath : undefined);
+    return normalizeSubPath(raw) ?? DEFAULT_INBOX_SUBPATHS[kind];
+}
 /** 子路径最大长度，防止有人塞一个超长字符串进来刷日志 */
 const MAX_SUBPATH_LENGTH = 200;
 
@@ -172,10 +231,16 @@ export function normalizeSubPath(input: unknown): string | null {
  * 每次调用都重新读配置（配置就是一个小 JSON），所以**在设置页改完保存即刻生效**，
  * 不需要重启容器 —— 这是整个设计的关键点。
  *
- * @param overrideSubPath 试连接用：临时用这个子路径替代已保存的配置。
+ * @param overrideSubPath 临时用这个子路径替代已保存的配置（**原样使用，不做槽位映射**）。
  *                        传 null / undefined 表示"用配置里的"。
+ *                        ⚠️ 设置页的「试连接」靠这条保证"用户填什么就测什么" ——
+ *                           万一用户填的正是某个出厂名，也不该被引到槽位的旧值上去。
+ * @param kind 直接指定用途槽位。传了它，`overrideSubPath` 就被忽略。
  */
-export function getInboxLocation(overrideSubPath?: string | null): InboxLocation {
+export function getInboxLocation(
+    overrideSubPath?: string | null,
+    kind?: InboxKind,
+): InboxLocation {
     // 老式：只有一个写死的挂载点，父目录不一定是挂进来的，不给改
     if (!ROOT_ENV && LEGACY_PATH_ENV) {
         return {
@@ -187,11 +252,48 @@ export function getInboxLocation(overrideSubPath?: string | null): InboxLocation
     }
 
     const root = path.resolve(ROOT_ENV || DEFAULT_ROOT);
-    const subPath =
-        normalizeSubPath(overrideSubPath) ||
-        normalizeSubPath(getAppConfig().scanInbox?.subPath) ||
-        DEFAULT_INBOX_SUBPATH;
+    const at = (subPath: string): InboxLocation => ({
+        root,
+        subPath,
+        dir: path.join(root, ...subPath.split("/")),
+        configurable: true,
+    });
 
+    // ① 显式槽位：查它当前的值
+    if (kind) return at(getInboxSubPath(kind));
+
+    const override = normalizeSubPath(overrideSubPath);
+    // ② 没传（或填了不合法的）⇒ 回落"录错题"槽
+    if (override === null) return at(getInboxSubPath("wrong"));
+
+    /**
+     * ③ 传了合法名字：先认它是不是某个槽位的**出厂名**。
+     *    是 ⇒ 去取那个槽位的**当前值**（老代码写死的名字也跟着设置走）；
+     *    不是 ⇒ 就是用户自定义的目录，原样用。
+     */
+    const hit = KIND_BY_LEGACY_NAME[override];
+    return at(hit ? getInboxSubPath(hit) : override);
+}
+
+/**
+ * 【2026-10-24】按**原样**解析子路径 —— 不走"出厂名 → 槽位"映射。
+ *
+ * 只给设置页的「试连接」用：**用户框里填什么，就得测什么**。
+ * 否则他会撞上一个很冤的假象：在「回录分析」框里填回出厂名 `scan2recover`
+ * ⇒ 被映射回该槽位**当前**的值（比如 `回录`）⇒ 界面告诉他"`回录` 可以访问"，
+ * 而他明明填的是另一个名字，等于测了个寂寞。
+ */
+export function getInboxLocationRaw(input?: string | null): InboxLocation {
+    if (!ROOT_ENV && LEGACY_PATH_ENV) {
+        return {
+            root: path.dirname(LEGACY_PATH_ENV),
+            subPath: path.basename(LEGACY_PATH_ENV),
+            dir: LEGACY_PATH_ENV,
+            configurable: false,
+        };
+    }
+    const root = path.resolve(ROOT_ENV || DEFAULT_ROOT);
+    const subPath = normalizeSubPath(input) ?? getInboxSubPath("wrong");
     return {
         root,
         subPath,
@@ -484,7 +586,10 @@ export async function listInboxFiles(opts: ListOptions = {}): Promise<ScanInboxL
     const probing = opts.probeSubPath !== undefined;
 
     // probe 优先（无副作用）→ 否则用调用方指定的子目录 → 都没有就用配置里的默认值
-    const loc = getInboxLocation(probing ? opts.probeSubPath : (opts.subPath ?? null));
+    const loc = probing
+        // 试连接：用户填什么就测什么（不映射），否则会测到槽位的旧值上去
+        ? getInboxLocationRaw(opts.probeSubPath)
+        : getInboxLocation(opts.subPath ?? null);
     const base = {
         path: loc.dir,
         dir: loc.dir,
@@ -549,7 +654,7 @@ export async function listInboxFiles(opts: ListOptions = {}): Promise<ScanInboxL
     const files: ScanInboxFile[] = [];
     let ignored = 0;
 
-    const thumbsDir = thumbsDirOf(loc.subPath);
+    const thumbsDir = thumbsDirOfDir(loc.dir);
     for (const entry of entries) {
         if (!entry.isFile()) continue;
         const ext = path.extname(entry.name).toLowerCase();
@@ -602,7 +707,7 @@ export async function listInboxFiles(opts: ListOptions = {}): Promise<ScanInboxL
          * 他可能直接在飞牛的文件管理里删照片（绕过软件），那样缩略图就没人管了。
          * 放在这里而不是删照片时，是因为"外面删的"这种情况只能在读的时候发现。
          */
-        await pruneOrphanThumbs(loc.subPath, new Set(files.map((f) => f.name)));
+        await pruneOrphanThumbs(loc.dir, new Set(files.map((f) => f.name)));
     }
 
     return { ...base, available: true, status: "ok", folders, files, ignored };
@@ -787,9 +892,17 @@ export function thumbNameOf(originalName: string): string {
     return `${originalName}.thumb.jpg`;
 }
 
-/** 缩略图目录的**路径**（纯拼串，不建目录、不查磁盘） */
-function thumbsDirOf(subPath?: string | null): string {
-    return path.join(getInboxLocation(subPath ?? null).dir, THUMB_DIR_NAME);
+/**
+ * 缩略图目录的**路径**（纯拼串，不建目录、不查磁盘）。
+ *
+ * ⚠️ 收的是**已解析过**的收件箱绝对路径，不是 subPath ——
+ *    "出厂名 → 槽位"的映射只能在入口做一次（见 `getInboxLocation`）。
+ *    这里要是再拿 subPath 映射一遍，遇到"某个槽位的值恰好是别人的出厂名"
+ *    （例如把「回录分析」指向 `scan2wrong`）就会二次跳到 wrong 槽，
+ *    缩略图目录直接跑到隔壁去。
+ */
+function thumbsDirOfDir(dir: string): string {
+    return path.join(dir, THUMB_DIR_NAME);
 }
 
 /**
@@ -802,7 +915,8 @@ export async function readInboxThumb(
     name: string,
     subPathOverride?: string | null,
 ): Promise<{ data: Buffer; mime: string } | null> {
-    const full = await resolveSafeFilePath(thumbNameOf(name), thumbsDirOf(subPathOverride));
+    const thumbsDir = thumbsDirOfDir(getInboxLocation(subPathOverride ?? null).dir);
+    const full = await resolveSafeFilePath(thumbNameOf(name), thumbsDir);
     if (!full) return null;
     try {
         const data = await fs.readFile(full);
@@ -910,11 +1024,11 @@ export async function saveInboxThumb(
  * ⚠️ 只删**长得像缩略图的**（以 `.thumb.jpg` 结尾）且**原图已不在**的；
  *    其它任何东西一律不碰 —— 这个目录里原则上只有缩略图，但"原则上"不是"假定"。
  */
-async function pruneOrphanThumbs(subPath: string, alive: Set<string>): Promise<void> {
-    const dir = thumbsDirOf(subPath);
+async function pruneOrphanThumbs(baseDir: string, alive: Set<string>): Promise<void> {
+    const thumbs = thumbsDirOfDir(baseDir);
     let entries: string[];
     try {
-        entries = await fs.readdir(dir);
+        entries = await fs.readdir(thumbs);
     } catch {
         return; // 目录还不存在（没人生成过）⇒ 无事可做
     }
@@ -922,7 +1036,7 @@ async function pruneOrphanThumbs(subPath: string, alive: Set<string>): Promise<v
         if (!entry.endsWith(".thumb.jpg")) continue;
         const original = entry.slice(0, -".thumb.jpg".length);
         if (alive.has(original)) continue;
-        await fs.unlink(path.join(dir, entry)).catch(() => undefined);
+        await fs.unlink(path.join(thumbs, entry)).catch(() => undefined);
     }
 }
 

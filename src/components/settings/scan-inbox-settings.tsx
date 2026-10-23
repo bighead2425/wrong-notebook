@@ -15,6 +15,10 @@ import { apiClient } from "@/lib/api-client";
  * 而 Docker 的挂载必须在启动时定死。所以这里**不**让用户去改挂载点，
  * 只让他改"根目录下的哪个子文件夹" —— 根目录只需在 compose 里挂一次，
  * 之后换目录就在这个框里改，存盘即生效、不用重建容器。
+ *
+ * 【2026-10-24 空空】从一个目录改成**三个**：录错题 / 回录分析 / PDF 中转。
+ * 三件事走的是同一套机制，但不该共用目录 —— 否则三条流水线会互相看见
+ * 对方的照片，界面上就会出现"我扫的卷子怎么跑到回录里去了"。
  */
 interface InboxProbe {
     available: boolean;
@@ -29,45 +33,68 @@ interface InboxProbe {
     reason?: string;
 }
 
+/** 三种用途（与 `lib/scan-inbox.ts` 的 InboxKind 同义，这里只取名字和默认值） */
+type InboxKind = "wrong" | "recover" | "pdf";
+
+const KINDS: readonly InboxKind[] = ["wrong", "recover", "pdf"] as const;
+
+/** 出厂默认名（沿用既有约定：老用户升级后不用做任何事） */
+const DEFAULT_NAMES: Record<InboxKind, string> = {
+    wrong: "scan2wrong",
+    recover: "scan2recover",
+    pdf: "scan2pdf",
+};
+
 interface ScanInboxSettingsProps {
-    /** 当前配置里的子路径（保存前的临时值也在用） */
-    subPath: string;
-    onSubPathChange: (value: string) => void;
+    /** 三个槽位当前的值（保存前的临时值也在用） */
+    dirs: Record<InboxKind, string>;
+    onDirChange: (kind: InboxKind, value: string) => void;
 }
 
-export function ScanInboxSettings({ subPath, onSubPathChange }: ScanInboxSettingsProps) {
+export function ScanInboxSettings({ dirs, onDirChange }: ScanInboxSettingsProps) {
     const { t } = useLanguage();
     const s = t.settings?.general?.scanInbox || {};
 
-    const [probing, setProbing] = useState(false);
-    const [probe, setProbe] = useState<InboxProbe | null>(null);
-    const [probeError, setProbeError] = useState<string | null>(null);
+    const [probing, setProbing] = useState<Record<InboxKind, boolean>>({
+        wrong: false, recover: false, pdf: false,
+    });
+    const [probes, setProbes] = useState<Record<InboxKind, InboxProbe | null>>({
+        wrong: null, recover: null, pdf: null,
+    });
+    const [probeErrors, setProbeErrors] = useState<Record<InboxKind, string | null>>({
+        wrong: null, recover: null, pdf: null,
+    });
+    /** 底部"已有文件夹"点一下填到哪个框 —— 跟"最后碰过的那个"走 */
+    const [active, setActive] = useState<InboxKind>("wrong");
 
     /**
      * 探测：带 subPath 参数是"试连接" —— 后端只读不落盘，
      * 所以用户改了输入框还没保存，也能先知道这个名字对不对、能不能读到。
      */
-    const check = useCallback(async (value: string) => {
-        setProbing(true);
-        setProbeError(null);
+    const check = useCallback(async (kind: InboxKind, value: string) => {
+        setProbing((p) => ({ ...p, [kind]: true }));
+        setProbeErrors((e) => ({ ...e, [kind]: null }));
         try {
             const q = value.trim();
             const data = await apiClient.get<InboxProbe>(
                 `/api/scan-inbox${q ? `?subPath=${encodeURIComponent(q)}` : ""}`,
             );
-            setProbe(data);
+            setProbes((p) => ({ ...p, [kind]: data }));
         } catch (err) {
-            setProbe(null);
-            setProbeError(err instanceof Error ? err.message : String(err));
+            setProbes((p) => ({ ...p, [kind]: null }));
+            setProbeErrors((e) => ({
+                ...e,
+                [kind]: err instanceof Error ? err.message : String(err),
+            }));
         } finally {
-            setProbing(false);
+            setProbing((p) => ({ ...p, [kind]: false }));
         }
     }, []);
 
-    // 打开设置对话框就先看一眼当前状态，用户不用点也知道现在通不通。
-    // 只在挂载时跑一次：跟着 subPath 走会变成"每敲一个字发一次请求"。
+    // 打开设置对话框就先看一眼三个目录的状态，用户不用点也知道现在通不通。
+    // 只在挂载时跑一次：跟着 dirs 走会变成"每敲一个字发一次请求"。
     useEffect(() => {
-        void check(subPath);
+        for (const k of KINDS) void check(k, dirs[k]);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -77,9 +104,27 @@ export function ScanInboxSettings({ subPath, onSubPathChange }: ScanInboxSetting
         return out;
     };
 
-    const renderStatus = () => {
-        if (probing) return <span className="text-muted-foreground">{s.checking || "检查中..."}</span>;
-        if (probeError) return <span className="text-red-600">✗ {probeError}</span>;
+    const labelOf = (kind: InboxKind): string => {
+        if (kind === "wrong") return s.dirWrong || "录错题";
+        if (kind === "recover") return s.dirRecover || "回录分析";
+        return s.dirPdf || "PDF 中转";
+    };
+
+    /**
+     * 根目录是同一个，所以三个探测结果里的 folders 一模一样 ——
+     * 取第一个拿到的就行，不必为了省一次请求去改后端。
+     */
+    const folders =
+        KINDS.map((k) => probes[k]?.folders).find((f) => f && f.length > 0) || [];
+
+    const renderStatus = (kind: InboxKind) => {
+        if (probing[kind]) {
+            return <span className="text-muted-foreground">{s.checking || "检查中..."}</span>;
+        }
+        if (probeErrors[kind]) {
+            return <span className="text-red-600">✗ {probeErrors[kind]}</span>;
+        }
+        const probe = probes[kind];
         if (!probe) return <span className="text-muted-foreground">—</span>;
 
         switch (probe.status) {
@@ -133,59 +178,63 @@ export function ScanInboxSettings({ subPath, onSubPathChange }: ScanInboxSetting
             <div className="space-y-1">
                 <div className="text-xs text-muted-foreground">{s.rootLabel || "挂载根目录（由 Docker 决定，不可改）"}</div>
                 <code className="block rounded bg-muted px-2 py-1 text-xs break-all">
-                    {probe?.root || "—"}
+                    {KINDS.map((k) => probes[k]?.root).find(Boolean) || "—"}
                 </code>
             </div>
 
-            {probe && !probe.configurable ? (
+            {KINDS.map((k) => probes[k]).some((p) => p && !p.configurable) ? (
                 <p className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800">
                     {s.legacy || "当前容器是按老方式挂载的，这个路径没法在这里改。"}
                 </p>
             ) : (
-                <div className="space-y-1">
-                    <Label className="text-xs">{s.subLabel || "子文件夹"}</Label>
-                    <Input
-                        value={subPath}
-                        placeholder={s.subPlaceholder || "scan2wrong"}
-                        onChange={(e) => onSubPathChange(e.target.value)}
-                    />
-                    {probe && probe.folders.length > 0 && (
-                        <div className="flex flex-wrap items-center gap-1 pt-1">
-                            <span className="text-xs text-muted-foreground">{s.existing || "已有文件夹："}</span>
-                            {probe.folders.map((f) => (
-                                <button
-                                    key={f}
-                                    type="button"
-                                    onClick={() => onSubPathChange(f)}
-                                    className={`rounded border px-2 py-0.5 text-xs hover:bg-muted ${
-                                        f === subPath ? "border-primary font-medium" : ""
-                                    }`}
-                                >
-                                    {f}
-                                </button>
-                            ))}
+                <div className="space-y-3">
+                    {KINDS.map((kind) => (
+                        <div key={kind} className="space-y-1">
+                            <Label className="text-xs">{labelOf(kind)}</Label>
+                            <Input
+                                value={dirs[kind] ?? ""}
+                                placeholder={DEFAULT_NAMES[kind]}
+                                onFocus={() => setActive(kind)}
+                                onChange={(e) => onDirChange(kind, e.target.value)}
+                            />
+                            <div className="text-xs">{renderStatus(kind)}</div>
                         </div>
-                    )}
+                    ))}
                 </div>
             )}
 
-            <div className="space-y-1 rounded border bg-background p-2">
-                <div className="text-xs break-all">
-                    <span className="text-muted-foreground">{s.actualPath || "实际读取"}：</span>
-                    <code>{probe?.dir || "—"}</code>
+            {folders.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1">
+                    <span className="text-xs text-muted-foreground">{s.existing || "已有文件夹："}</span>
+                    {folders.map((f) => (
+                        <button
+                            key={f}
+                            type="button"
+                            onClick={() => onDirChange(active, f)}
+                            className={`rounded border px-2 py-0.5 text-xs hover:bg-muted ${
+                                f === dirs[active] ? "border-primary font-medium" : ""
+                            }`}
+                        >
+                            {f}
+                        </button>
+                    ))}
+                    <span className="text-[11px] text-muted-foreground">
+                        （填给「{labelOf(active)}」）
+                    </span>
                 </div>
-                <div className="text-xs">{renderStatus()}</div>
-            </div>
+            )}
 
             <div className="flex flex-wrap items-center gap-2">
                 <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={probing}
-                    onClick={() => void check(subPath)}
+                    disabled={KINDS.some((k) => probing[k])}
+                    onClick={() => {
+                        for (const k of KINDS) void check(k, dirs[k]);
+                    }}
                 >
-                    {probing
+                    {KINDS.some((k) => probing[k])
                         ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
                         : <RefreshCw className="mr-1 h-3.5 w-3.5" />}
                     {s.check || "检查连接"}

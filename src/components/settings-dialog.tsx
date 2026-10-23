@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import {
     Dialog,
     DialogContent,
-    DialogDescription,
     DialogHeader,
     DialogTitle,
     DialogTrigger,
@@ -20,7 +19,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, Trash2, Loader2, AlertTriangle, Save, Eye, EyeOff, Languages, User, Bot, Shield, RefreshCw, Plus, Zap, CheckCircle2, XCircle, Download, Upload, BarChart3, LogOut } from "lucide-react";
+import { Settings, Trash2, Loader2, AlertTriangle, Eye, EyeOff, Languages, User, Bot, Shield, RefreshCw, Plus, Zap, CheckCircle2, XCircle, Download, Upload, BarChart3, LogOut } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
@@ -703,15 +702,20 @@ export function SettingsDialog({
                 </Button>
             </DialogTrigger>
             )}
-            <DialogContent ref={dialogContentRef} className="w-[calc(100vw-2rem)] sm:max-w-[900px] max-h-[85vh] overflow-y-auto">
+            {/* 【2026-10-24 空空】**高度固定**——以前是"内容多高就多高"，
+                点一个子页窗口就跳一次大小。现在：
+                  · 手机：几乎撑满屏（`100dvh` 减去一点点边，`dvh` 会跟着浏览器地址栏收放变，比 `vh` 准）
+                  · 桌面：固定 85vh，`sm:max-w-[900px]` 不变
+                ⚠️ 滚动仍在整块 DialogContent 上（头会跟着滚）。"头固定"是另一件事，
+                   要改 Tabs 内部结构，下一项再做 —— 先把高度定死，消除跳动。 */}
+            <DialogContent ref={dialogContentRef} className="flex h-[calc(100dvh-1rem)] w-[calc(100vw-2rem)] flex-col overflow-hidden sm:h-[85vh] sm:max-w-[900px]">
                 <DialogHeader>
                     <DialogTitle>{t.settings?.title || "Settings"}</DialogTitle>
-                    <DialogDescription>
-                        {t.settings?.desc || 'Manage your preferences and data.'}
-                    </DialogDescription>
+                    {/* 【2026-10-24 空空】删掉"管理您的应用偏好和数据"这句副标题 ——
+                        "设置就是干这个的，不用解释。" */}
                 </DialogHeader>
 
-                <Tabs defaultValue="general" className="w-full">
+                <Tabs defaultValue="general" className="flex min-h-0 w-full flex-1 flex-col">
                     <TabsList className={`grid w-full grid-cols-4 ${(session?.user as any)?.role === 'admin' ? 'sm:grid-cols-7' : 'sm:grid-cols-4'} gap-1 h-auto`}>
                         <TabsTrigger value="general" className="px-2 sm:px-3">
                             <Languages className="h-4 w-4 sm:mr-2" />
@@ -739,13 +743,15 @@ export function SettingsDialog({
                         )}
                         <TabsTrigger value="danger" className="px-2 sm:px-3">
                             <AlertTriangle className="h-4 w-4 sm:mr-2" />
-                            <span className="hidden sm:inline">{t.settings?.tabs?.danger || "Danger"}</span>
+                            <span className="hidden sm:inline">{t.settings?.tabs?.backup || "备份"}</span>
                         </TabsTrigger>
                         <TabsTrigger value="about" className="px-2 sm:px-3">
                             <Info className="h-4 w-4 sm:mr-2" />
                             <span className="hidden sm:inline">{t.settings?.tabs?.about || "About"}</span>
                         </TabsTrigger>
                     </TabsList>
+                    {/* 【2026-10-24】标题和子页固定，只有这里滚 */}
+                    <div className="min-h-0 flex-1 overflow-y-auto">
 
                     {/* General Tab */}
                     <TabsContent value="general" className="space-y-4 py-4">
@@ -812,10 +818,15 @@ export function SettingsDialog({
                                 普通用户看到这一块只会困惑，直接不渲染。 */}
                             {(session?.user as any)?.role === 'admin' && (
                                 <ScanInboxSettings
-                                    subPath={config.scanInbox?.subPath ?? ''}
-                                    onSubPathChange={(v) => setConfig(prev => ({
+                                    dirs={{
+                                        // 老配置只有 subPath ⇒ 它归"录错题"这一槽
+                                        wrong: config.scanInbox?.wrong ?? config.scanInbox?.subPath ?? 'scan2wrong',
+                                        recover: config.scanInbox?.recover ?? 'scan2recover',
+                                        pdf: config.scanInbox?.pdf ?? 'scan2pdf',
+                                    }}
+                                    onDirChange={(kind, v) => setConfig(prev => ({
                                         ...prev,
-                                        scanInbox: { ...prev.scanInbox, subPath: v },
+                                        scanInbox: { ...prev.scanInbox, [kind]: v },
                                     }))}
                                 />
                             )}
@@ -1308,7 +1319,7 @@ export function SettingsDialog({
                         )
                     }
 
-                    {/* Danger Zone Tab */}
+                    {/* 【2026-10-24】「备份」子页（原「危险」）：导出 / 导入 / 留后路 */}
                     <TabsContent value="danger" className="space-y-4 py-4">
                         <div className="space-y-3">
                             {/* Data Management Section - Available to all users */}
@@ -1608,6 +1619,7 @@ export function SettingsDialog({
                             </p>
                         </div>
                     </TabsContent>
+                    </div>{/* 滚动容器结束 */}
                 </Tabs>
             </DialogContent>
         </Dialog>

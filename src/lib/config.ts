@@ -54,8 +54,26 @@ export interface AppConfig {
      * 容器能看到哪个根目录由 docker-compose 的 volumes 决定，改不了；
      * 但这个子路径随时可改，改完立即生效、不用重建容器（"开一次门，门后随便挑"）。
      */
+    /**
+     * 【2026-10-24 空空】三个收件箱**槽位**。
+     *
+     * 收件箱从"一个目录"变成"三种用途各一个目录"：
+     *   wrong   = 录错题（默认那个，老配置里的 subPath 归它）
+     *   recover = 回录分析（扫回来的纸，认领并记账）
+     *   pdf     = PDF 中转（举一反三从收件箱拉 PDF）
+     *
+     * 只存**根目录下的相对子路径**，绝对路径不在这里 —— 容器能看到哪个根目录
+     * 由 docker-compose 的 volumes 决定，改不了；但子路径随时可改、立即生效。
+     */
     scanInbox?: {
+        /** 老字段，只归"录错题"这一槽；新配置请写 wrong。读取时兼容，不必迁移 */
         subPath?: string;
+        /** 录错题 */
+        wrong?: string;
+        /** 回录分析 */
+        recover?: string;
+        /** PDF 中转 */
+        pdf?: string;
     };
 }
 
