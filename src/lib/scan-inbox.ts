@@ -100,8 +100,24 @@ const KIND_BY_LEGACY_NAME: Record<string, InboxKind> = {
  */
 export function getInboxSubPath(kind: InboxKind = "wrong"): string {
     const cfg = getAppConfig().scanInbox as Record<string, unknown> | undefined;
-    const raw = cfg?.[kind] ?? (kind === "wrong" ? cfg?.subPath : undefined);
-    return normalizeSubPath(raw) ?? DEFAULT_INBOX_SUBPATHS[kind];
+    /**
+     * 三级回落，逐级用 `normalizeSubPath` 判 —— 不能只靠 `??`。
+     *
+     * 差别在**空串**：用户在设置页把这个框清空 ⇒ 存下来是 `""`，
+     * `??` 只认 `null / undefined`，空串会一路穿过去，把老配置里的
+     * `subPath`（比如他以前自定义的 `数学`）直接跳过、掉到出厂默认。
+     * 而"清空"的本意是"别再管我这一项了，回到你原来的规则"，
+     * 那就该先回落到老字段，再回落到默认。
+     */
+    const mine = normalizeSubPath(cfg?.[kind]);
+    if (mine) return mine;
+
+    if (kind === "wrong") {
+        const legacy = normalizeSubPath(cfg?.subPath);
+        if (legacy) return legacy;
+    }
+
+    return DEFAULT_INBOX_SUBPATHS[kind];
 }
 /** 子路径最大长度，防止有人塞一个超长字符串进来刷日志 */
 const MAX_SUBPATH_LENGTH = 200;
@@ -231,10 +247,12 @@ export function normalizeSubPath(input: unknown): string | null {
  * 每次调用都重新读配置（配置就是一个小 JSON），所以**在设置页改完保存即刻生效**，
  * 不需要重启容器 —— 这是整个设计的关键点。
  *
- * @param overrideSubPath 临时用这个子路径替代已保存的配置（**原样使用，不做槽位映射**）。
- *                        传 null / undefined 表示"用配置里的"。
- *                        ⚠️ 设置页的「试连接」靠这条保证"用户填什么就测什么" ——
- *                           万一用户填的正是某个出厂名，也不该被引到槽位的旧值上去。
+ * @param overrideSubPath 临时指定一个子路径。三种走法：
+ *                          · 不传 / 不合法 ⇒ 用"录错题"槽；
+ *                          · 传的是某个**出厂名**（scan2wrong / scan2recover / scan2pdf）
+ *                            ⇒ **换成那个槽位当前的值**（老调用方写死名字也能跟着设置走）；
+ *                          · 传的是别的名字 ⇒ 原样用（自定义目录）。
+ *                        ⚠️ 想让"用户填什么就测什么"，用 `getInboxLocationRaw`，别用这个。
  * @param kind 直接指定用途槽位。传了它，`overrideSubPath` 就被忽略。
  */
 export function getInboxLocation(

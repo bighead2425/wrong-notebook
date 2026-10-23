@@ -103,9 +103,16 @@ export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
               ? (t.settings?.prompts?.similarTab || "Similar Question Prompt")
               : (t.settings?.prompts?.insightsTab || "日积月累提示词");
 
+    /**
+     * 【2026-10-24】「重置」= 把这份存成**空**，而不是把默认模板抄一份进去。
+     *
+     * 差别在以后：下游读模板时是 `customTemplate || DEFAULT_XXX`
+     * （见 `lib/ai/prompts.ts`），空串就等于"用默认"。存空 ⇒ 以后默认模板
+     * 升级了，他这份会跟着长；存全文 ⇒ 被钉死在今天这一版，再也不会更新。
+     */
     const handleReset = (type: PromptKind) => {
         if (!confirm(t.settings?.prompts?.resetConfirm || "Are you sure you want to reset to default?")) return;
-        onUpdate(type, defaultValueOf(type));
+        onUpdate(type, '');
     };
 
     /** 每份提示词能用的变量不一样 —— 跟着选中的那份走 */
@@ -192,11 +199,21 @@ export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
                     </div>
                 </div>
 
+                {/*
+                  ⚠️ placeholder 只放一句短话，**不能放默认模板全文** ——
+                     默认模板是几百行，一旦框被清空，满屏都是灰色占位字，
+                     看起来像内容还在，实际一个字都没存。
+                */}
+                {templateOf(kind) === '' && (
+                    <p className="text-xs text-muted-foreground">
+                        框里空着 ⇒ 用默认模板（会跟着软件升级走）。直接写就会覆盖它。
+                    </p>
+                )}
                 <Textarea
                     value={templateOf(kind)}
                     onChange={(e) => onUpdate(kind, e.target.value)}
                     className="font-mono text-xs min-h-[400px]"
-                    placeholder={defaultValueOf(kind)}
+                    placeholder="留空 = 使用默认模板"
                 />
             </div>
         </div>

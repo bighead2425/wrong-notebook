@@ -94,7 +94,10 @@ export function ScanInboxSettings({ dirs, onDirChange }: ScanInboxSettingsProps)
     // 打开设置对话框就先看一眼三个目录的状态，用户不用点也知道现在通不通。
     // 只在挂载时跑一次：跟着 dirs 走会变成"每敲一个字发一次请求"。
     useEffect(() => {
-        for (const k of KINDS) void check(k, dirs[k]);
+        // 空框跳过（见 renderStatus 里的说明：不带 subPath 的请求会落到录错题槽）
+        for (const k of KINDS) {
+            if (dirs[k]?.trim()) void check(k, dirs[k]);
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -118,6 +121,21 @@ export function ScanInboxSettings({ dirs, onDirChange }: ScanInboxSettingsProps)
         KINDS.map((k) => probes[k]?.folders).find((f) => f && f.length > 0) || [];
 
     const renderStatus = (kind: InboxKind) => {
+        /**
+         * 【2026-10-24】空框**不发请求**，也不显示探测结果。
+         *
+         * 两个原因：
+         *   ① 请求不带 `subPath` 时后端按"不传 ⇒ 录错题槽"处理，对「回录分析」
+         *      和「PDF 中转」这两个框来说，探的根本不是它们自己的默认目录；
+         *   ② 空目录名不是合法值，探测结果只会是误导。
+         */
+        if (!dirs[kind]?.trim()) {
+            return (
+                <span className="text-muted-foreground">
+                    留空 = 用默认「{DEFAULT_NAMES[kind]}」
+                </span>
+            );
+        }
         if (probing[kind]) {
             return <span className="text-muted-foreground">{s.checking || "检查中..."}</span>;
         }
@@ -231,7 +249,9 @@ export function ScanInboxSettings({ dirs, onDirChange }: ScanInboxSettingsProps)
                     size="sm"
                     disabled={KINDS.some((k) => probing[k])}
                     onClick={() => {
-                        for (const k of KINDS) void check(k, dirs[k]);
+                        for (const k of KINDS) {
+                            if (dirs[k]?.trim()) void check(k, dirs[k]);
+                        }
                     }}
                 >
                     {KINDS.some((k) => probing[k])

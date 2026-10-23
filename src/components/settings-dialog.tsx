@@ -82,6 +82,18 @@ export function SettingsDialog({
     const [commit, setCommit] = useState<string>("");
     const [showApiKey, setShowApiKey] = useState(false);
     const [config, setConfig] = useState<AppConfig>({ aiProvider: 'gemini' });
+    /**
+     * 【2026-10-24】配置是否已经从服务端拉回来。
+     *
+     * 为什么需要它：`config` 的初值只有 `aiProvider`，`fetchSettings()` 是异步的。
+     * 而「转存文件夹」那一块**一挂载就会按当时的 dirs 去探测三个目录** ——
+     * 挂载那一刻 config 还是空的，dirs 只能是默认名 ⇒ 探的是 `scan2recover`，
+     * 等配置回来输入框里却显示着 `回录`：**框里写的和底下报告的对不上**。
+     *
+     * 所以那一块要等配置到位再挂载（见下方渲染处）。它自己的 useEffect 只跑一次，
+     * 挂载之后再变 dirs 也不会重探 —— 那正是"输入时不狂发请求"的代价。
+     */
+    const [configLoaded, setConfigLoaded] = useState(false);
     // OpenAI 多实例状态
     const [selectedInstanceId, setSelectedInstanceId] = useState<string | undefined>(undefined);
 
@@ -120,6 +132,12 @@ export function SettingsDialog({
 
     useEffect(() => {
         if (open) {
+            /**
+             * 【2026-10-24】每次打开都要把"配置已就绪"打回 false。
+             * 否则第二次打开时 configLoaded 还是 true、config 还是上次那份，
+             * 收件箱那块会立刻挂载并拿**旧值**去探测，探完新配置才到 —— 白探一遍。
+             */
+            setConfigLoaded(false);
             fetchSettings();
             fetchProfile();
         }
@@ -154,6 +172,7 @@ export function SettingsDialog({
         try {
             const data = await apiClient.get<AppConfig>("/api/settings");
             setConfig(data);
+            setConfigLoaded(true);
         } catch (error) {
             frontendLogger.error('[SettingsDialog]', 'Failed to fetch settings', { error: error instanceof Error ? error.message : String(error) });
         } finally {
@@ -816,7 +835,9 @@ export function SettingsDialog({
                             {/* 【custom-v30】转存文件夹。
                                 系统级设置（决定容器读 NAS 上哪个目录），只给管理员改；
                                 普通用户看到这一块只会困惑，直接不渲染。 */}
-                            {(session?.user as any)?.role === 'admin' && (
+                            {/* `configLoaded` 不能省：初次渲染时 config 只有 aiProvider，
+                                dirs 只能是默认名；这时候探测出来的状态会和加载后的输入框对不上 */}
+                            {(session?.user as any)?.role === 'admin' && configLoaded && (
                                 <ScanInboxSettings
                                     dirs={{
                                         // 老配置只有 subPath ⇒ 它归"录错题"这一槽
