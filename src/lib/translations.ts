@@ -576,6 +576,8 @@ export const translations = {
                     loadErrorHint: "Usually an expired sign-in or a network hiccup — refresh the page and try again. You do NOT need to create any folder on the NAS.",
                     legacy: "This container uses the old single-folder mount, so the path cannot be changed here. Switch docker-compose.yml to mounting a root folder to enable it.",
                     hint: "Changes take effect immediately — no container rebuild needed. Each folder must already exist on the NAS, and the three should point at different folders.",
+                    warnSameDir: "\"{kinds}\" point to the same folder \"{path}\" — the pipelines will read each other's photos, and scans may land in the wrong place.",
+                    warnBorrowed: "\"{kind}\" is set to \"{name}\", which is the default folder for \"{owner}\". It works, but will be easy to mix up later.",
                 },
             },
             tabs: {
@@ -1454,6 +1456,8 @@ export const translations = {
                     loadErrorHint: "多半是登录过期或网络一时不通 —— 刷新页面重试一次；不用去 NAS 上建文件夹。",
                     legacy: "当前容器是按老方式挂载的（只挂了一个固定目录），这个路径没法在这里改。想改的话，把 docker-compose.yml 换成「挂根目录」的方式。",
                     hint: "改完保存即刻生效，不用重建容器。三个目录都要各自先在 NAS 上建好，且建议指向不同目录。",
+                    warnSameDir: "「{kinds}」指向同一个文件夹「{path}」—— 几条流水线会互相读到对方的照片，扫进去的卷子可能跑错地方。",
+                    warnBorrowed: "「{kind}」填的是「{owner}」的默认文件夹名「{name}」。能正常跑，但以后看着容易混。",
                 },
             },
             tabs: {

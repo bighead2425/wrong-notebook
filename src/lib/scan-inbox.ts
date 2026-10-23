@@ -5,6 +5,12 @@ import { randomBytes } from "crypto";
 import { getAppConfig } from "./config";
 import { createLogger } from "./logger";
 import { normalizeRotation } from "./image-rotation";
+import {
+    DEFAULT_INBOX_SUBPATHS,
+    KIND_BY_LEGACY_NAME,
+    normalizeSubPath,
+    type InboxKind,
+} from "./inbox-kinds";
 
 /**
  * 【custom-v29/v30 · 蓝图：外部扫描件投递隧道】「扫描收件箱」
@@ -42,15 +48,13 @@ const ROOT_ENV = process.env.SCAN_INBOX_ROOT;
 const LEGACY_PATH_ENV = process.env.SCAN_INBOX_PATH;
 /** 新式默认根目录 */
 const DEFAULT_ROOT = "/app/inbox";
-/** 默认子文件夹名（沿用既有约定，老用户升级后不用做任何事） */
-export const DEFAULT_INBOX_SUBPATH = "scan2wrong";
 
 /* ------------------------------------------------------------------ */
 /* 三种用途 · 各一个目录（2026-10-24 空空）                              */
 /* ------------------------------------------------------------------ */
 
 /**
- * 收件箱的三种用途。
+ * 收件箱的三种用途：录错题 / 回录分析 / PDF 中转。
  *
  * ── 为什么要分开 ──────────────────────────────────────────────────────
  * 三件事走的是同一套"根目录 + 子路径"机制，但**不该共用一个目录**：
@@ -64,32 +68,18 @@ export const DEFAULT_INBOX_SUBPATH = "scan2wrong";
  * 和 subPath 一视同仁：值只是"根下的相对路径"，
  * 安全靠 `normalizeSubPath` + `realpath` 两道闸，不靠枚举。
  * 所以你想把"录错题"指向 `数学` 也完全可以。
- */
-export type InboxKind = "wrong" | "recover" | "pdf";
-
-/** 三个槽位的遍历顺序（设置页按它排布） */
-export const INBOX_KINDS: readonly InboxKind[] = ["wrong", "recover", "pdf"] as const;
-
-/** 三个槽位的出厂默认名 */
-export const DEFAULT_INBOX_SUBPATHS: Record<InboxKind, string> = {
-    wrong: "scan2wrong",
-    recover: "scan2recover",
-    pdf: "scan2pdf",
-};
-
-/**
- * 「出厂默认名 → 槽位」反查表。
  *
- * 为什么需要它：老调用方（`/recover` 页、`/batch?dir=scan2pdf`）是**按名字**传的
- * （`subPath="scan2recover"`），不认识"槽位"这个概念。有了这张表，
- * 它们一行都不用改 —— 传 `scan2recover` 就自动落到 recover 槽的**当前值**上，
- * 于是"在设置页里改目录"对老代码也立刻生效。
+ * ⭐ 定义本身在 `lib/inbox-kinds.ts`（那个文件**不带任何 Node 依赖**，
+ *    所以设置页那种浏览器组件也能直接 import）。这里只做转发，
+ *    保证老的 `from "./scan-inbox"` 写法继续能用。
  */
-const KIND_BY_LEGACY_NAME: Record<string, InboxKind> = {
-    scan2wrong: "wrong",
-    scan2recover: "recover",
-    scan2pdf: "pdf",
-};
+export type { InboxKind } from "./inbox-kinds";
+export {
+    INBOX_KINDS,
+    DEFAULT_INBOX_SUBPATHS,
+    DEFAULT_INBOX_SUBPATH,
+    normalizeSubPath,
+} from "./inbox-kinds";
 
 /**
  * 取某个槽位**当前生效**的子路径。
@@ -119,8 +109,6 @@ export function getInboxSubPath(kind: InboxKind = "wrong"): string {
 
     return DEFAULT_INBOX_SUBPATHS[kind];
 }
-/** 子路径最大长度，防止有人塞一个超长字符串进来刷日志 */
-const MAX_SUBPATH_LENGTH = 200;
 
 /** 已导入台账：和 AI 配置同在一个持久化卷里（./config:/app/config） */
 const STATE_FILE = path.join(process.cwd(), "config", "scan-inbox-state.json");
@@ -217,29 +205,9 @@ export interface InboxLocation {
 /* 路径解析                                                            */
 /* ------------------------------------------------------------------ */
 
-/**
- * 把用户填的子路径收敛成一个**安全的相对路径**；不合法返回 null。
- *
- * 这一层挡的是"用户手滑或被人诱导填了奇怪的东西"：
- *   `/etc`、`../../config`、`~`、`a//b`、`.hidden`、超长串…
- * 归一化后统一用 `/` 分隔、不留空段。
- */
-export function normalizeSubPath(input: unknown): string | null {
-    if (typeof input !== "string") return null;
-    const raw = input.trim().replace(/\\/g, "/");
-    if (!raw) return null;
-    if (raw.length > MAX_SUBPATH_LENGTH) return null;
-    if (raw.startsWith("/") || raw.startsWith("~")) return null; // 绝对路径 / home → 拒
-    if (raw.includes("\0")) return null;
+/* `normalizeSubPath` 已移到 `lib/inbox-kinds.ts`（见该文件顶部说明），
+   本文件从那里 import，并原样再导出，老的调用方不用改。 */
 
-    const segs = raw.split("/").filter((s) => s.length > 0);
-    if (!segs.length) return null;
-    for (const s of segs) {
-        if (s === "." || s === "..") return null; // 越权写法 → 拒
-        if (s.startsWith(".")) return null;       // 隐藏目录不收（不是给人用的）
-    }
-    return segs.join("/");
-}
 
 /**
  * 解析当前生效的收件箱位置。

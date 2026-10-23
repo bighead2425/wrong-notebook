@@ -4,9 +4,15 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { FolderOpen, Loader2, RefreshCw } from "lucide-react";
+import { FolderOpen, Loader2, RefreshCw, AlertTriangle } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { apiClient } from "@/lib/api-client";
+import {
+    INBOX_KINDS,
+    DEFAULT_INBOX_SUBPATHS,
+    analyzeInboxDirs,
+    type InboxKind,
+} from "@/lib/inbox-kinds";
 
 /**
  * 【custom-v30】设置 → 通用 → 转存文件夹
@@ -16,9 +22,12 @@ import { apiClient } from "@/lib/api-client";
  * 只让他改"根目录下的哪个子文件夹" —— 根目录只需在 compose 里挂一次，
  * 之后换目录就在这个框里改，存盘即生效、不用重建容器。
  *
- * 【2026-10-24 空空】从一个目录改成**三个**：录错题 / 回录分析 / PDF 中转。
+ * 【2026-10-24 空空】从"一个目录"改成"三个"：录错题 / 回录分析 / PDF 中转。
  * 三件事走的是同一套机制，但不该共用目录 —— 否则三条流水线会互相看见
  * 对方的照片，界面上就会出现"我扫的卷子怎么跑到回录里去了"。
+ *
+ * ⭐ 槽位名字与出厂默认名**不在这里定义**，统一从 `@/lib/inbox-kinds` 取：
+ *    那些常量服务端也要用，以前是两头各抄一份，加第四种用途时必然漏改一处。
  */
 interface InboxProbe {
     available: boolean;
@@ -32,18 +41,6 @@ interface InboxProbe {
     ignored: number;
     reason?: string;
 }
-
-/** 三种用途（与 `lib/scan-inbox.ts` 的 InboxKind 同义，这里只取名字和默认值） */
-type InboxKind = "wrong" | "recover" | "pdf";
-
-const KINDS: readonly InboxKind[] = ["wrong", "recover", "pdf"] as const;
-
-/** 出厂默认名（沿用既有约定：老用户升级后不用做任何事） */
-const DEFAULT_NAMES: Record<InboxKind, string> = {
-    wrong: "scan2wrong",
-    recover: "scan2recover",
-    pdf: "scan2pdf",
-};
 
 interface ScanInboxSettingsProps {
     /** 三个槽位当前的值（保存前的临时值也在用） */
@@ -95,7 +92,7 @@ export function ScanInboxSettings({ dirs, onDirChange }: ScanInboxSettingsProps)
     // 只在挂载时跑一次：跟着 dirs 走会变成"每敲一个字发一次请求"。
     useEffect(() => {
         // 空框跳过（见 renderStatus 里的说明：不带 subPath 的请求会落到录错题槽）
-        for (const k of KINDS) {
+        for (const k of INBOX_KINDS) {
             if (dirs[k]?.trim()) void check(k, dirs[k]);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -118,7 +115,7 @@ export function ScanInboxSettings({ dirs, onDirChange }: ScanInboxSettingsProps)
      * 取第一个拿到的就行，不必为了省一次请求去改后端。
      */
     const folders =
-        KINDS.map((k) => probes[k]?.folders).find((f) => f && f.length > 0) || [];
+        INBOX_KINDS.map((k) => probes[k]?.folders).find((f) => f && f.length > 0) || [];
 
     const renderStatus = (kind: InboxKind) => {
         /**
@@ -132,7 +129,7 @@ export function ScanInboxSettings({ dirs, onDirChange }: ScanInboxSettingsProps)
         if (!dirs[kind]?.trim()) {
             return (
                 <span className="text-muted-foreground">
-                    留空 = 用默认「{DEFAULT_NAMES[kind]}」
+                    留空 = 用默认「{DEFAULT_INBOX_SUBPATHS[kind]}」
                 </span>
             );
         }
@@ -183,6 +180,17 @@ export function ScanInboxSettings({ dirs, onDirChange }: ScanInboxSettingsProps)
         }
     };
 
+    /**
+     * 三个框自己会不会"撞一起"。
+     *
+     * 为什么要在界面上算：这类错**不会报错**。两个槽指向同一个文件夹时，
+     * 程序照样跑，只是录错题的界面里会冒出回录的卷子、两边互相把对方的
+     * 文件标成"已导入"。等发现不对劲，已经丢过一轮照片了。
+     *
+     * 纯函数、每次输入都重算 —— 不等到保存，也不发请求。
+     */
+    const warnings = analyzeInboxDirs(dirs);
+
     return (
         <div className="space-y-3 pt-4 border-t">
             <div className="flex items-center gap-2">
@@ -196,27 +204,62 @@ export function ScanInboxSettings({ dirs, onDirChange }: ScanInboxSettingsProps)
             <div className="space-y-1">
                 <div className="text-xs text-muted-foreground">{s.rootLabel || "挂载根目录（由 Docker 决定，不可改）"}</div>
                 <code className="block rounded bg-muted px-2 py-1 text-xs break-all">
-                    {KINDS.map((k) => probes[k]?.root).find(Boolean) || "—"}
+                    {INBOX_KINDS.map((k) => probes[k]?.root).find(Boolean) || "—"}
                 </code>
             </div>
 
-            {KINDS.map((k) => probes[k]).some((p) => p && !p.configurable) ? (
+            {INBOX_KINDS.map((k) => probes[k]).some((p) => p && !p.configurable) ? (
                 <p className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800">
                     {s.legacy || "当前容器是按老方式挂载的，这个路径没法在这里改。"}
                 </p>
             ) : (
                 <div className="space-y-3">
-                    {KINDS.map((kind) => (
+                    {INBOX_KINDS.map((kind) => (
                         <div key={kind} className="space-y-1">
                             <Label className="text-xs">{labelOf(kind)}</Label>
                             <Input
                                 value={dirs[kind] ?? ""}
-                                placeholder={DEFAULT_NAMES[kind]}
+                                placeholder={DEFAULT_INBOX_SUBPATHS[kind]}
                                 onFocus={() => setActive(kind)}
                                 onChange={(e) => onDirChange(kind, e.target.value)}
                             />
                             <div className="text-xs">{renderStatus(kind)}</div>
                         </div>
+                    ))}
+                </div>
+            )}
+
+            {/* 【2026-10-24】填出"两个用途共用一个文件夹"时当场说一句 ——
+                这种错不报错、只会悄悄串数据，等发现已经丢过照片了。 */}
+            {warnings.length > 0 && (
+                <div className="space-y-1">
+                    {warnings.map((w, i) => (
+                        <p
+                            key={`${w.type}-${i}`}
+                            className="flex items-start gap-1.5 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800"
+                        >
+                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            <span>
+                                {w.type === "same-dir"
+                                    ? fill(
+                                          s.warnSameDir,
+                                          "「{kinds}」指向同一个文件夹「{path}」—— 几条流水线会互相读到对方的照片，扫进去的卷子可能跑错地方。",
+                                          {
+                                              kinds: w.kinds.map(labelOf).join("、"),
+                                              path: w.path,
+                                          },
+                                      )
+                                    : fill(
+                                          s.warnBorrowed,
+                                          "「{kind}」填的是「{owner}」的默认文件夹名「{name}」。能正常跑，但以后看着容易混。",
+                                          {
+                                              kind: labelOf(w.kind),
+                                              owner: labelOf(w.owner),
+                                              name: w.name,
+                                          },
+                                      )}
+                            </span>
+                        </p>
                     ))}
                 </div>
             )}
@@ -247,14 +290,14 @@ export function ScanInboxSettings({ dirs, onDirChange }: ScanInboxSettingsProps)
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={KINDS.some((k) => probing[k])}
+                    disabled={INBOX_KINDS.some((k) => probing[k])}
                     onClick={() => {
-                        for (const k of KINDS) {
+                        for (const k of INBOX_KINDS) {
                             if (dirs[k]?.trim()) void check(k, dirs[k]);
                         }
                     }}
                 >
-                    {KINDS.some((k) => probing[k])
+                    {INBOX_KINDS.some((k) => probing[k])
                         ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
                         : <RefreshCw className="mr-1 h-3.5 w-3.5" />}
                     {s.check || "检查连接"}
