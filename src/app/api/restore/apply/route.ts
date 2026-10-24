@@ -6,7 +6,7 @@ import { authOptions } from "@/lib/auth";
 import { requireAdmin } from "@/lib/auth-utils";
 import { badRequest, forbidden, internalError, unauthorized } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
-import { incomingDir, stageForRestore, type RestorePlan } from "@/lib/restore";
+import { incomingDir, RestoreInputError, stageForRestore, type RestorePlan } from "@/lib/restore";
 
 const logger = createLogger("api:restore:apply");
 
@@ -64,6 +64,8 @@ export async function POST(req: NextRequest) {
         await stageForRestore({ token, withConfig, plan });
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        // 用户选了同时恢复设置但包里没有 ⇒ 是他的操作问题，不是服务器坏了
+        if (err instanceof RestoreInputError) return badRequest(msg);
         logger.error({ err, token }, "Restore staging failed");
         return internalError(`暂存失败：${msg}`);
     }

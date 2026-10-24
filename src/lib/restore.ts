@@ -225,7 +225,7 @@ function quoteIdent(name: string): string {
  */
 export async function probeDb(dbPath: string): Promise<DbProbe> {
     const st = await fsp.stat(dbPath);
-    if (st.size === 0) throw new Error("包里的库文件是空的（0 字节）");
+    if (st.size === 0) throw new RestoreInputError("包里的库文件是空的（0 字节）");
 
     const probe = new PrismaClient({
         datasources: { db: { url: `file:${dbPath}` } },
@@ -236,9 +236,15 @@ export async function probeDb(dbPath: string): Promise<DbProbe> {
         const ic = (await probe.$queryRawUnsafe("PRAGMA integrity_check")) as Array<
             Record<string, unknown>
         >;
-        const integrity = String(ic?.[0]?.integrity_check ?? "");
+        // 不写死列名：正常返回的是 `integrity_check` 这一列，但驱动版本变了
+        // 列名就可能不同。取第一个值更稳 —— 这是"能不能恢复"的第一道门，
+        // 不能因为一个列名对不上就把所有包都判成坏的。
+        const firstRow = ic?.[0];
+        const integrity = firstRow ? String(Object.values(firstRow)[0] ?? "") : "";
         if (integrity !== "ok") {
-            throw new Error(`库文件自检没通过（${integrity || "无返回"}），这个包不能用`);
+            throw new RestoreInputError(
+                `库文件自检没通过（${integrity || "无返回"}），这个包不能用`,
+            );
         }
 
         const raw = (await probe.$queryRawUnsafe(
@@ -254,7 +260,7 @@ export async function probeDb(dbPath: string): Promise<DbProbe> {
             tables.push({ name, rows: toNumber(c?.[0]?.n) });
         }
 
-        if (tables.length === 0) throw new Error("包里的库一张表都没有，不像本软件的备份");
+        if (tables.length === 0) throw new RestoreInputError("包里的库一张表都没有，不像本软件的备份");
 
         return { size: st.size, integrity, tables };
     } finally {
@@ -443,7 +449,7 @@ export async function stageForRestore(opts: {
             await fsp.copyFile(srcCfg, pendingConfigPath());
         } catch {
             // 用户勾了"恢复配置"但包里没有 ⇒ 不静默，交给上层报错
-            throw new Error("你选了同时恢复设置，但这个包里没有 app-config.json");
+            throw new RestoreInputError("你选了同时恢复设置，但这个包里没有 app-config.json");
         }
     } else {
         await fsp.rm(pendingConfigPath(), { force: true });
