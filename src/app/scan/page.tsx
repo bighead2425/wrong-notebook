@@ -28,7 +28,7 @@
  * 这样三层是三个真实的 URL，**刷新、浏览器后退、换设备都不会串**。
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import jsQR from "jsqr";
 import { Button } from "@/components/ui/button";
@@ -160,6 +160,17 @@ export default function ScanPage() {
         [volumeCode, itemId, itemSource],
     );
 
+    /** 当前这一屏的 URL（给详情页的 `?back=` 用） */
+    const currentUrl = useMemo(() => {
+        const qs = new URLSearchParams();
+        if (volumeCode) qs.set("vol", volumeCode);
+        if (itemId) {
+            qs.set("item", itemId);
+            qs.set("src", itemSource);
+        }
+        return `/scan${qs.toString() ? `?${qs.toString()}` : ""}`;
+    }, [volumeCode, itemId, itemSource]);
+
     /** 打开"某道题的错题卡"这一屏 */
     const openCard = useCallback(
         (id: string, source: "main" | "trash", keepVolume = true) => {
@@ -171,7 +182,7 @@ export default function ScanPage() {
              */
             if (practiceMode) {
                 stopScan();
-                router.push(`/error-items/${id}?practice=1`);
+                router.push(`/error-items/${id}?practice=1&back=${encodeURIComponent(currentUrl)}`);
                 return;
             }
             stopScan();
@@ -180,7 +191,7 @@ export default function ScanPage() {
             setView("card");
             syncUrl({ item: id, src: source, vol: keepVolume ? volumeCode : null });
         },
-        [stopScan, syncUrl, volumeCode, practiceMode, router],
+        [stopScan, syncUrl, volumeCode, practiceMode, router, currentUrl],
     );
 
     /** 打开"复练卷浏览"这一屏 */
@@ -531,16 +542,6 @@ export default function ScanPage() {
             ? L("回到模仿卷", "Back to the imitate volume")
             : L("回到复练卷", "Back to the volume");
 
-    /** 当前这一屏的 URL（给详情页的 `?back=` 用） */
-    const currentUrl = (() => {
-        const qs = new URLSearchParams();
-        if (volumeCode) qs.set("vol", volumeCode);
-        if (itemId) {
-            qs.set("item", itemId);
-            qs.set("src", itemSource);
-        }
-        return `/scan${qs.toString() ? `?${qs.toString()}` : ""}`;
-    })();
 
     // ===================== 层二 / 层三 =====================
 
