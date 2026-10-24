@@ -1,4 +1,5 @@
 import { ParsedQuestion } from "@/lib/ai/types";
+import type { PaperConfig } from "@/lib/paper";
 
 // 通用分页响应类型
 export interface PaginatedResponse<T> {
@@ -229,6 +230,8 @@ export interface AppConfig {
         /** PDF 中转 */
         pdf?: string;
     };
+    /** 【2026-10-24 幅面】四种纸各用多大；缺项一律按 B5 */
+    paper?: PaperConfig;
 }
 
 

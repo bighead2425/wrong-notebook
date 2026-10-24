@@ -31,6 +31,7 @@ import { ModelSelector } from "@/components/ui/model-selector";
 import { PromptSettings } from "@/components/settings/prompt-settings";
 import { RestoreSettings } from "@/components/settings/restore-settings";
 import { ScanInboxSettings } from "@/components/settings/scan-inbox-settings";
+import { DEFAULT_PAPER_CONFIG, DEFAULT_PAPER_ID, type PaperId } from "@/lib/paper";
 
 import { MessageSquareText, Info, ExternalLink, Github, ScrollText } from "lucide-react";
 const MAX_OPENAI_INSTANCES = 10;
@@ -68,6 +69,8 @@ export function SettingsDialog({
 } = {}) {
     const { data: session } = useSession();
     const { t, language, setLanguage } = useLanguage();
+    /** 中文判断（幅面那块用它做文案，省得嵌套三元） */
+    const zh = language === "zh";
     const [innerOpen, setInnerOpen] = useState(false);
     const open = controlledOpen ?? innerOpen;
     const setOpen = onOpenChange ?? setInnerOpen;
@@ -851,6 +854,86 @@ export function SettingsDialog({
                                         scanInbox: { ...prev.scanInbox, [kind]: v },
                                     }))}
                                 />
+                            )}
+
+                            {/* 【2026-10-24 幅面】四种纸各用多大。缺省全 B5（= 加这个功能之前的行为）。
+                                ⚠️ 幅面是**渲染规则**，不是卷的属性：同一份卷切到 A4 就用 A4 渲染，
+                                   页内题数按原记录，不重排。这里改的只影响"之后新生成的纸"。 */}
+                            {configLoaded && (
+                                <div className="space-y-3 border-t pt-4">
+                                    <div className="flex flex-wrap items-start justify-between gap-2">
+                                        <div>
+                                            <Label>{zh ? "纸张幅面" : "Paper size"}</Label>
+                                            <p className="mt-1 text-xs text-muted-foreground">
+                                                {zh
+                                                    ? "只影响之后新生成的纸；已印出去的不受影响。同一份卷可以用任意幅面预览打印，每页几道题按原记录。"
+                                                    : "Affects newly generated sheets only. Any volume can be previewed/printed on either size; items per page stay as recorded."}
+                                            </p>
+                                        </div>
+                                        <div className="flex shrink-0 gap-2">
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={() =>
+                                                    setConfig(prev => ({
+                                                        ...prev,
+                                                        paper: { ...DEFAULT_PAPER_CONFIG },
+                                                    }))
+                                                }
+                                            >
+                                                {zh ? "全 B5" : "All B5"}
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={() =>
+                                                    setConfig(prev => ({
+                                                        ...prev,
+                                                        paper: { deepDive: "A4", review: "A4", imitate: "A4", build: "A4" },
+                                                    }))
+                                                }
+                                            >
+                                                {zh ? "全 A4" : "All A4"}
+                                            </Button>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {([
+                                            ["deepDive", zh ? "深挖纸" : "Deep dive"],
+                                            ["review", zh ? "复练纸" : "Review"],
+                                            ["imitate", zh ? "模仿纸" : "Imitate"],
+                                            ["build", zh ? "积累纸" : "Build"],
+                                        ] as const).map(([key, label]) => (
+                                            <div key={key} className="space-y-1">
+                                                <Label className="text-xs text-muted-foreground">{label}</Label>
+                                                <Select
+                                                    value={config.paper?.[key] ?? DEFAULT_PAPER_ID}
+                                                    onValueChange={(v) =>
+                                                        setConfig(prev => ({
+                                                            ...prev,
+                                                            paper: {
+                                                                ...DEFAULT_PAPER_CONFIG,
+                                                                ...prev.paper,
+                                                                [key]: v as PaperId,
+                                                            },
+                                                        }))
+                                                    }
+                                                >
+                                                    <SelectTrigger>
+                                                        <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="B5">B5（182×257）</SelectItem>
+                                                        <SelectItem value="A4">A4（210×297）</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
                             )}
                         </div>
                         <Button onClick={handleSaveSettings} disabled={saving} className="w-full">

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { createLogger } from './logger';
+import { DEFAULT_PAPER_CONFIG, type PaperConfig } from './paper';
 
 const logger = createLogger('config');
 
@@ -75,6 +76,16 @@ export interface AppConfig {
         /** PDF 中转 */
         pdf?: string;
     };
+    /**
+     * 【2026-10-24 幅面】四种纸各用多大。
+     *
+     * ⚠️ **缺省（或任何一项缺失）= B5** —— 与加这个字段之前完全一致。
+     * 读的时候一律走 `paperFor(kind, config.paper)`，它对 undefined 退回 B5，
+     * 所以这里**不需要**深合并，老配置文件原样能用。
+     *
+     * 与"卷"无关：幅面是**渲染规则**，同一份卷切到 A4 就用 A4 渲染（页内题数照旧）。
+     */
+    paper?: PaperConfig;
 }
 
 // 旧版 OpenAI 配置格式（用于迁移检测）
@@ -158,6 +169,8 @@ const DEFAULT_CONFIG: AppConfig = {
         // 沿用既有约定：老用户升级后不用做任何设置就是这个名字
         subPath: 'scan2wrong',
     },
+    // 【2026-10-24】四种纸默认全是 B5 —— 新部署/老配置都走这一套
+    paper: { ...DEFAULT_PAPER_CONFIG },
 };
 
 export function getAppConfig(): AppConfig {
