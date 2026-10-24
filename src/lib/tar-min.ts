@@ -109,6 +109,21 @@ export class TarError extends Error {
     }
 }
 
+/**
+ * 包结构没问题，但**一个文件都没收进来**。
+ *
+ * 单拎出来是因为它和"包损坏"是两码事：
+ *   · TarError      ⇒ 这个 tar 本身坏了；
+ *   · TarEmptyError ⇒ tar 好的，但里面没有我们要的东西（传错包了）。
+ * 给用户看的话完全不同，所以类型要分开。
+ */
+export class TarEmptyError extends TarError {
+    constructor(message = "包里没有找到可用的文件") {
+        super(message);
+        this.name = "TarEmptyError";
+    }
+}
+
 export interface ExtractedEntry {
     /** 包内文件名 */
     name: string;
@@ -301,7 +316,7 @@ export async function extractTarStream(
         throw new TarError("包不完整：最后一个文件的数据没读完（上传可能中断了）");
     }
     if (out.length === 0) {
-        throw new TarError("包里没有找到可用的文件");
+        throw new TarEmptyError();
     }
     return out;
 }

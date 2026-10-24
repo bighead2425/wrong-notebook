@@ -4,7 +4,7 @@ import zlib from "zlib";
 import { Readable } from "stream";
 import { PrismaClient } from "@prisma/client";
 import { resolveDbFilePath } from "./db-snapshot";
-import { extractTarStream, TarError } from "./tar-min";
+import { extractTarStream, TarEmptyError, TarError } from "./tar-min";
 import { SUMMARY_TABLES, pickMainDb, type ContentSummary, type RestorePlan, type TableCount } from "./restore-types";
 import { createLogger } from "./logger";
 
@@ -150,11 +150,23 @@ export async function extractArchive(input: Readable, dir: string): Promise<Extr
     input.on("error", (e) => gz.destroy(e));
     input.pipe(gz);
 
-    await extractTarStream(gz as unknown as AsyncIterable<Buffer>, {
-        destFor,
-        maxFileSize: MAX_FILE_BYTES,
-        maxTotalSize: MAX_TOTAL_BYTES,
-    });
+    try {
+        await extractTarStream(gz as unknown as AsyncIterable<Buffer>, {
+            destFor,
+            maxFileSize: MAX_FILE_BYTES,
+            maxTotalSize: MAX_TOTAL_BYTES,
+        });
+    } catch (err) {
+        // 包是好的 tar，但里面一个能收的文件都没有 ⇒ 传错包了，不是包坏了。
+        // 这两句话给用户的指引完全不同（"重新传一个" vs "这个包坏了"）。
+        if (err instanceof TarEmptyError) {
+            throw new RestoreInputError(
+                "这个包里没有能用的东西 —— 看起来不是本软件的备份包。" +
+                    "请确认传的是「下载完整备份」得到的那个 .tar.gz 原包，不是解开后的文件。",
+            );
+        }
+        throw err;
+    }
 
     // 两种包的库文件名不同：应用内导出是 wn-日期.db，宿主机每周备份是 dev.db
     const mainName = pickMainDb(dbCandidates.map((c) => c.name));
@@ -168,7 +180,21 @@ export async function extractArchive(input: Readable, dir: string): Promise<Extr
         );
     }
 
-    return { dbPath: pick.path, dbName: pick.name, hasConfig: configNames.length > 0, configFiles: configNames };
+    // 【2026-10-24 修】解包时为了避免"多个 .db 互相覆盖"，每个候选都写成 cand-N.db；
+    // 挑完之后必须**统一改名成 restore.db** —— `stageForRestore` 认的就是这个名字。
+    // 早先漏了这一步，现象是点「开始恢复」报
+    //   ENOENT: ... incoming/<token>/restore.db
+    const finalPath = path.join(dir, "restore.db");
+    if (pick.path !== finalPath) {
+        await fsp.rename(pick.path, finalPath);
+    }
+
+    return {
+        dbPath: finalPath,
+        dbName: pick.name,
+        hasConfig: configNames.length > 0,
+        configFiles: configNames,
+    };
 }
 
 /* ------------------------------------------------------------------ */
