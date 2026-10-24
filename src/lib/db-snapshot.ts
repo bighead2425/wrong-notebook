@@ -58,7 +58,7 @@ export interface SnapshotHandle {
 }
 
 /** 从 DATABASE_URL 解析出 SQLite 文件的绝对路径；不是 file: 协议返回 null */
-function sqliteFilePath(): string | null {
+export function resolveDbFilePath(): string | null {
     const url = process.env.DATABASE_URL || "";
     if (!url.startsWith("file:")) return null;
     const raw = url.slice("file:".length).split("?")[0];
@@ -99,7 +99,7 @@ export async function createDbSnapshot(): Promise<SnapshotHandle> {
         logger.warn({ err }, "VACUUM INTO failed, falling back to checkpoint + copy");
         used = "copy";
 
-        const src = sqliteFilePath();
+        const src = resolveDbFilePath();
         if (!src) throw err; // 连库文件都定位不到 ⇒ 兜底也无从谈起，把原错误抛上去
 
         // 把 WAL 里的提交合并回主库，之后复制才是完整的。

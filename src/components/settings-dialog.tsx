@@ -29,6 +29,7 @@ import { frontendLogger } from "@/lib/frontend-logger";
 import { AppConfig, UserProfile, UpdateUserProfileRequest, OpenAIInstance } from "@/types/api";
 import { ModelSelector } from "@/components/ui/model-selector";
 import { PromptSettings } from "@/components/settings/prompt-settings";
+import { RestoreSettings } from "@/components/settings/restore-settings";
 import { ScanInboxSettings } from "@/components/settings/scan-inbox-settings";
 
 import { MessageSquareText, Info, ExternalLink, Github, ScrollText } from "lucide-react";
@@ -1488,6 +1489,14 @@ export function SettingsDialog({
                                     </p>
                                 </div>
                             </div>
+
+                            {/* 【2026-10-24 空空】整库恢复：紧挨着"导入数据"，但单独一块。
+                                语义完全不同 —— 上面那些是"往现有库里补数据"，
+                                这个是把整个库换成备份那一刻的样子。放在一起是为了
+                                他找"把备份弄回来"的时候不用跑两个子页。 */}
+                            {(session?.user as { role?: string } | undefined)?.role === 'admin' && (
+                                <RestoreSettings />
+                            )}
 
                             {/* Migrate Tags (Admin Only) */}
                             {(session?.user as any)?.role === 'admin' && (

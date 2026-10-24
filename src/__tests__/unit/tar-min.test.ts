@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
-import { buildTarHeader, tarStream } from "@/lib/tar-min";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { buildTarHeader, tarStream, extractTarStream, TarError } from "@/lib/tar-min";
+import { Readable } from "stream";
+import fsp from "fs/promises";
+import fs from "fs";
+import os from "os";
+import path from "path";
 
 /**
  * 手写 tar 最容易错的三件事：字段长度、八进制写法、校验和。
@@ -96,5 +101,137 @@ describe("tar-min · 打包", () => {
         const out = await collect(tarStream([]));
         expect(out.length).toBe(1024);
         expect(out.every((b) => b === 0)).toBe(true);
+    });
+});
+
+/* ================================================================== */
+/* 解包（恢复链路吃的是用户上传的字节，每一条拒绝分支都要钉死）        */
+/* ================================================================== */
+
+/** 把 buffer 切成固定大小的小块，逼出"数据跨块"的拼接逻辑 */
+function chunked(buf: Buffer, size: number): Readable {
+    const parts: Buffer[] = [];
+    for (let i = 0; i < buf.length; i += size) parts.push(buf.subarray(i, i + size));
+    return Readable.from(parts);
+}
+
+async function tarOf(entries: { name: string; data: Buffer }[]): Promise<Buffer> {
+    return collect(tarStream(entries));
+}
+
+describe("tar-min · 解包", () => {
+    let dir: string;
+
+    beforeAll(async () => {
+        dir = await fsp.mkdtemp(path.join(os.tmpdir(), "wn-untar-"));
+    });
+
+    afterAll(async () => {
+        await fsp.rm(dir, { recursive: true, force: true });
+    });
+
+    /** 只收 .db 和 .json，其余一律跳过 */
+    const acceptDbAndJson = (name: string): string | null => {
+        if (!/\.(db|json)$/.test(name)) return null;
+        // 包内名字不可信：只取最后一段，杜绝 ../ 
+        return path.join(dir, path.basename(name));
+    };
+
+    it("打包再解回来，内容逐字节一致", async () => {
+        const payload = Buffer.from("hello restore");
+        const tar = await tarOf([{ name: "a.db", data: payload }]);
+
+        const got = await extractTarStream(chunked(tar, 7), { destFor: acceptDbAndJson });
+
+        expect(got).toHaveLength(1);
+        expect(got[0].name).toBe("a.db");
+        expect(got[0].size).toBe(payload.length);
+        expect(await fsp.readFile(got[0].path)).toEqual(payload);
+    });
+
+    it("512 / 513 / 1 字节三种边界都不多不少", async () => {
+        const cases = [
+            { name: "n512.db", data: Buffer.alloc(512, 0x41) },
+            { name: "n513.db", data: Buffer.alloc(513, 0x42) },
+            { name: "n1.db", data: Buffer.alloc(1, 0x43) },
+            { name: "n0.db", data: Buffer.alloc(0) },
+        ];
+        const tar = await tarOf(cases);
+        const got = await extractTarStream(chunked(tar, 100), { destFor: acceptDbAndJson });
+
+        expect(got).toHaveLength(4);
+        for (const c of cases) {
+            const hit = got.find((g) => g.name === c.name)!;
+            expect(hit.size, c.name).toBe(c.data.length);
+            expect((await fsp.readFile(hit.path)).length, c.name).toBe(c.data.length);
+        }
+    });
+
+    it("白名单外的文件整段跳过，不影响后面的文件", async () => {
+        const tar = await tarOf([
+            { name: "README-restore.txt", data: Buffer.from("说明") },
+            { name: "wn.db", data: Buffer.from("DBDATA") },
+            { name: "evil.sh", data: Buffer.from("rm -rf /") },
+        ]);
+
+        const got = await extractTarStream(chunked(tar, 64), { destFor: acceptDbAndJson });
+
+        expect(got.map((g) => g.name)).toEqual(["wn.db"]);
+        expect(await fsp.readFile(got[0].path, "utf8")).toBe("DBDATA");
+        // 被拒绝的文件绝不能落到磁盘上
+        expect(fs.existsSync(path.join(dir, "evil.sh"))).toBe(false);
+        expect(fs.existsSync(path.join(dir, "README-restore.txt"))).toBe(false);
+    });
+
+    it("带路径穿越的文件名也只会落到目标目录里", async () => {
+        const tar = await tarOf([{ name: "../../escape.db", data: Buffer.from("x") }]);
+        const got = await extractTarStream(chunked(tar, 64), { destFor: acceptDbAndJson });
+
+        expect(got).toHaveLength(1);
+        expect(path.dirname(got[0].path)).toBe(dir);
+    });
+
+    it("头校验和被改过 ⇒ 拒绝", async () => {
+        const tar = await tarOf([{ name: "a.db", data: Buffer.from("abc") }]);
+        // 改文件名区的一个字节，校验和立刻对不上
+        tar[0] = 0x5a;
+
+        await expect(
+            extractTarStream(chunked(tar, 64), { destFor: acceptDbAndJson }),
+        ).rejects.toBeInstanceOf(TarError);
+    });
+
+    it("数据被截断 ⇒ 拒绝（上传中断就是这种）", async () => {
+        const tar = await tarOf([{ name: "a.db", data: Buffer.alloc(4096, 0x41) }]);
+        const cut = tar.subarray(0, 512 + 100); // 头完整，数据只到 100 字节
+
+        await expect(
+            extractTarStream(chunked(cut, 32), { destFor: acceptDbAndJson }),
+        ).rejects.toThrow(/不完整/);
+    });
+
+    it("单个文件超上限 ⇒ 拒绝", async () => {
+        const tar = await tarOf([{ name: "big.db", data: Buffer.alloc(4096, 0x41) }]);
+
+        await expect(
+            extractTarStream(chunked(tar, 64), { destFor: acceptDbAndJson, maxFileSize: 1000 }),
+        ).rejects.toThrow(/过大/);
+    });
+
+    it("解压总量超上限 ⇒ 拒绝（防炸包）", async () => {
+        const tar = await tarOf([
+            { name: "a.db", data: Buffer.alloc(600, 0x41) },
+            { name: "b.db", data: Buffer.alloc(600, 0x42) },
+        ]);
+
+        await expect(
+            extractTarStream(chunked(tar, 64), { destFor: acceptDbAndJson, maxTotalSize: 1000 }),
+        ).rejects.toThrow(/总大小/);
+    });
+
+    it("只有结束块的空包 ⇒ 明确报错，而不是静默成功", async () => {
+        await expect(
+            extractTarStream(chunked(Buffer.alloc(1024), 64), { destFor: acceptDbAndJson }),
+        ).rejects.toThrow(/没有找到可用的文件/);
     });
 });

@@ -1,5 +1,7 @@
 import fs from "fs";
 import fsp from "fs/promises";
+import type { FileHandle } from "fs/promises";
+import path from "path";
 import { Readable } from "stream";
 
 /**
@@ -93,4 +95,213 @@ export async function* tarStream(entries: TarEntry[]): AsyncGenerator<Buffer> {
 /** 打包成 Node 可读流（边读边压，不把几十 MB 整个塞进内存） */
 export function tarToNodeStream(entries: TarEntry[]): Readable {
     return Readable.from(tarStream(entries));
+}
+
+/* ================================================================== */
+/* 解包（恢复用）                                                      */
+/* ================================================================== */
+
+/** 解包时遇到的格式问题。路由层要能分辨"包坏了"和"程序出错了" */
+export class TarError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "TarError";
+    }
+}
+
+export interface ExtractedEntry {
+    /** 包内文件名 */
+    name: string;
+    /** 原始大小（字节） */
+    size: number;
+    /** 落盘后的绝对路径 */
+    path: string;
+}
+
+export interface ExtractOptions {
+    /**
+     * 决定这个文件要不要解、解到哪。
+     *
+     * 返回 `null` = 不要（比如目录条目、README 之类的附带文件）。
+     * ⚠️ **白名单必须在这里做**：包是用户上传的，名字不可信。
+     *    绝不能拿 name 直接拼路径 —— `../../etc/passwd` 这种就是这个口子。
+     */
+    destFor: (name: string) => string | null;
+    /** 单个文件上限，默认 512MB */
+    maxFileSize?: number;
+    /** 解压总量上限，默认 1GB */
+    maxTotalSize?: number;
+}
+
+/** 读 tar 头里的 name（NUL 截断，按 utf8 解） */
+function readName(header: Buffer): string {
+    const slice = header.subarray(0, 100);
+    const nul = slice.indexOf(0);
+    return slice.subarray(0, nul === -1 ? 100 : nul).toString("utf8");
+}
+
+/** 八进制字段；空字段按 0 处理（tar 允许全 NUL 表示未设置） */
+function readOctal(buf: Buffer, offset: number, length: number): number {
+    const str = buf
+        .subarray(offset, offset + length)
+        .toString("ascii")
+        .replace(/\0.*$/, "")
+        .trim();
+    if (str === "") return 0;
+    if (!/^[0-7]+$/.test(str)) {
+        // base-256 编码（首字节 0x80）之类：我们只认八进制
+        throw new TarError(`tar 头里的数字字段不是八进制："${str.slice(0, 12)}"`);
+    }
+    return parseInt(str, 8);
+}
+
+function isZeroBlock(block: Buffer): boolean {
+    for (let i = 0; i < block.length; i++) if (block[i] !== 0) return false;
+    return true;
+}
+
+/** 校验和：chksum 那 8 个字节按空格参与求和 */
+function checksumOk(header: Buffer): boolean {
+    let stored: number;
+    try {
+        stored = readOctal(header, 148, 8);
+    } catch {
+        return false;
+    }
+    let sum = 0;
+    for (let i = 0; i < BLOCK; i++) {
+        sum += i >= 148 && i < 156 ? 0x20 : header[i];
+    }
+    return sum === stored;
+}
+
+/**
+ * 从 tar 字节流里解出**白名单内**的文件，边读边写盘。
+ *
+ * ── 为什么是流式 ──────────────────────────────────────────────────────
+ * 备份包解开是 35MB 上下。`NAS` 空闲内存只有 200MB 左右，
+ * 一次 `Buffer.concat` 到底很容易把进程顶死 —— 那台机器上"OOM 崩掉"
+ * 不是慢，是整个容器重启。所以这里只保留一个 512 字节的头部窗口，
+ * 数据边到边写。
+ *
+ * ── 它会拒绝什么 ──────────────────────────────────────────────────────
+ *   · 头校验和不匹配（包坏了 / 被改过）
+ *   · 单个文件或总量超上限（防炸包）
+ *   · 数据被截断（包没传完）
+ * 目录、扩展头、以及 `destFor` 返回 null 的文件，**整段跳过但不报错**。
+ */
+export async function extractTarStream(
+    input: AsyncIterable<Buffer>,
+    opts: ExtractOptions,
+): Promise<ExtractedEntry[]> {
+    const maxFileSize = opts.maxFileSize ?? 512 * 1024 * 1024;
+    const maxTotalSize = opts.maxTotalSize ?? 1024 * 1024 * 1024;
+
+    const out: ExtractedEntry[] = [];
+    let total = 0;
+    // 显式标成 `Buffer`（= Buffer<ArrayBufferLike>）：`Buffer.concat` 的返回类型
+    // 是 ArrayBufferLike，而 `Buffer.alloc` 推断出来是 ArrayBuffer，两者赋不到一起。
+    let carry: Buffer = Buffer.alloc(0);
+    let ended = false;
+
+    /** 当前正在处理的条目（可能收、也可能只是跳过） */
+    let cur: {
+        name: string;
+        size: number;
+        /** 还要吃掉多少字节：文件内容 + 512 对齐填充 */
+        left: number;
+        /** 已经写入的字节数 */
+        written: number;
+        dest: string | null;
+        handle: FileHandle | null;
+    } | null = null;
+
+    for await (const raw of input) {
+        if (ended) break;
+        const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+        carry = carry.length ? Buffer.concat([carry, chunk]) : chunk;
+
+        while (true) {
+            if (cur) {
+                if (carry.length === 0) break;
+                const take = Math.min(carry.length, cur.left);
+
+                if (cur.handle) {
+                    // 只写"数据段"，末尾的对齐填充不写进文件
+                    const dataPart = Math.min(take, cur.size - cur.written);
+                    if (dataPart > 0) {
+                        await cur.handle.write(carry.subarray(0, dataPart));
+                        cur.written += dataPart;
+                    }
+                }
+
+                carry = carry.subarray(take);
+                cur.left -= take;
+
+                if (cur.left === 0) {
+                    if (cur.handle) {
+                        await cur.handle.close();
+                        out.push({ name: cur.name, size: cur.size, path: cur.dest! });
+                    }
+                    cur = null;
+                }
+                continue;
+            }
+
+            if (carry.length < BLOCK) break;
+
+            const header = carry.subarray(0, BLOCK);
+            carry = carry.subarray(BLOCK);
+
+            // 结束标志（一般是两个全零块）
+            if (isZeroBlock(header)) {
+                ended = true;
+                break;
+            }
+
+            if (!checksumOk(header)) {
+                throw new TarError("包内文件头校验和对不上，包可能已损坏或被截断");
+            }
+
+            const name = readName(header);
+            const size = readOctal(header, 124, 12);
+            const typeflag = header[156];
+            // '0' 或 NUL = 普通文件；'5' = 目录；'x'/'g' = 扩展头
+            const isPlainFile = typeflag === 0x30 || typeflag === 0x00;
+
+            if (size > maxFileSize) {
+                throw new TarError(`包内文件过大：${name}（${size} 字节）`);
+            }
+
+            const pad = paddingFor(size);
+            const dest = isPlainFile ? opts.destFor(name) : null;
+
+            if (dest) {
+                total += size;
+                if (total > maxTotalSize) {
+                    throw new TarError("解压后的总大小超过上限，已中止");
+                }
+                await fsp.mkdir(path.dirname(dest), { recursive: true });
+                cur = {
+                    name,
+                    size,
+                    left: size + pad,
+                    written: 0,
+                    dest,
+                    handle: await fsp.open(dest, "w"),
+                };
+            } else {
+                cur = { name, size, left: size + pad, written: 0, dest: null, handle: null };
+            }
+        }
+    }
+
+    if (cur) {
+        if (cur.handle) await cur.handle.close();
+        throw new TarError("包不完整：最后一个文件的数据没读完（上传可能中断了）");
+    }
+    if (out.length === 0) {
+        throw new TarError("包里没有找到可用的文件");
+    }
+    return out;
 }

@@ -102,6 +102,9 @@ RUN mkdir -p /app/data && chown -R nextjs:nodejs /app/data
 
 # Copy entrypoint script
 COPY --chown=nextjs:nodejs --chmod=755 docker-entrypoint.sh ./
+# 恢复换库逻辑单独一个文件（entrypoint 里 source 它）——
+# 它在启动时动库文件，抽出来才能拿临时目录单独验证。
+COPY --chown=nextjs:nodejs --chmod=755 docker-restore.sh ./
 COPY --chown=nextjs:nodejs https-server.js ./
 
 EXPOSE 3000

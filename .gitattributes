@@ -1,0 +1,12 @@
+# 换行符：这几个文件必须是 LF
+#
+# 为什么：`core.autocrlf=true` 的 Windows 机器 checkout 出来是 CRLF。
+# 如果拿着 CRLF 的 `docker-entrypoint.sh` 在本地 `docker build`，
+# 镜像里第一行就成了 `#!/bin/sh\r` —— 容器启动直接报
+#   /bin/sh^M: bad interpreter: No such file or directory
+# 容器起不来，而这错误看起来像"镜像坏了"，很难第一时间想到换行符。
+#
+# CI 是在 Linux 上 checkout 的，所以一直是 LF，线上没出过事。
+# 这几行是为了让**本地构建**也安全。
+*.sh      text eol=lf
+Dockerfile text eol=lf

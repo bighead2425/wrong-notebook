@@ -17,6 +17,20 @@ CURRENT_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || ech
 # Fix permissions for data and config directories
 chown -R nextjs:nodejs /app/data /app/config
 
+# ─────────────────────────────────────────────────────────────────────
+# 恢复：换库（2026-10-24 空空）
+#
+# 应用自己换不掉自己的库 —— Prisma 正开着 dev.db。所以流程是：
+# 应用校验完包、写到 pending.db、自己退出；容器被 restart:always 拉起，
+# **这里在进程起来之前**把文件换好。
+#
+# 具体逻辑放在 docker-restore.sh 里，单独一个文件才测得了
+# （这段 shell 不在 tsc / 单测的覆盖范围内，所以尽量少写、写清）。
+# 调用完 RESTORED_THIS_BOOT=1 表示这次换过库，下面的 migrate 失败要回滚。
+# ─────────────────────────────────────────────────────────────────────
+. /app/docker-restore.sh
+restore_if_pending
+
 # Check if the persistent database exists
 if [ ! -s "$TARGET_DB" ]; then
     echo "[Entrypoint] Initializing database..."
@@ -44,9 +58,27 @@ fi
 
 # Run migrations to ensure DB schema is available and up to date.
 echo "[Entrypoint] Running database migrations to sync schema..."
-cd /app && $PRISMA_BIN migrate deploy --schema=./prisma/schema.prisma && {
+cd /app
+if $PRISMA_BIN migrate deploy --schema=./prisma/schema.prisma; then
     echo "[Entrypoint] Migrations completed successfully."
-} || echo "[Entrypoint] Migration failed or no pending migrations."
+elif [ "$RESTORED_THIS_BOOT" = "1" ]; then
+    # 刚换上的库迁移失败 ⇒ 它跟当前这个版本合不来（比如备份太旧）。
+    # 带着一个不兼容的库启动，后面每个页面都是 500，比不恢复还糟。
+    # 所以：先把坏库挪开，把恢复前的库换回去，然后按正常流程再走一遍。
+    echo "[Entrypoint] !! 恢复后的库迁移失败，回滚到恢复前的库"
+    mv "$TARGET_DB" "$RESTORE_DIR/failed-restore.db" 2>/dev/null || true
+    rm -f "$TARGET_DB-wal" "$TARGET_DB-shm"
+    if [ -f "$RESTORE_DIR/before-restore.db" ]; then
+        mv "$RESTORE_DIR/before-restore.db" "$TARGET_DB" 2>/dev/null || true
+        chown nextjs:nodejs "$TARGET_DB" 2>/dev/null || true
+        echo "[Entrypoint] 已回滚为恢复前的库"
+    fi
+    echo '{"failed":true,"reason":"migration failed after restore"}' > "$RESTORE_DIR/last-restore.json"
+    $PRISMA_BIN migrate deploy --schema=./prisma/schema.prisma \
+        || echo "[Entrypoint] Migration failed or no pending migrations."
+else
+    echo "[Entrypoint] Migration failed or no pending migrations."
+fi
 
 # Always run seed after migrations to ensure admin user has correct role/isActive
 # (migration may have reset role to default 'user' for existing installs)
