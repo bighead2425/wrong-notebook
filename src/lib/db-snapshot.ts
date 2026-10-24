@@ -31,9 +31,17 @@ const logger = createLogger("db-snapshot");
  *   而且没有"图片太大撑爆 50MB"那回事（base64 就躺在库里，不用再序列化一遍）。
  *
  * ── 为什么必须 VACUUM INTO，不能直接 cp ────────────────────────────────
- * 库跑在 WAL 模式下，直接拷主文件会漏掉还在 `-wal` 里没合并进主库的提交，
- * 拷出来的是一份"少了最近改动"的库 —— 灾备最怕这种静默残缺。
+ * **不能假设主文件就是全部数据**。SQLite 有 WAL / rollback 两种日志模式，
+ * 在 WAL 模式下，最近的提交还躺在 `-wal` 里没并回主库 ——
+ * 只拷 `dev.db` 会漏掉它们，拷出一份"少了最后几笔"的库。
+ * 灾备最怕这种**静默残缺**：文件能打开、看着正常、就是少了东西。
+ *
  * `VACUUM INTO` 由 SQLite 自己保证快照一致，顺带压掉碎片（34MB → 23MB）。
+ * 它产出的是一个**自包含**的库文件，没有外挂日志，恢复时最省心。
+ *
+ * ⚠️ 2026-10-24 实测补充：快照出来的库 `journal_mode = delete`
+ *    （VACUUM INTO 新建文件不继承源库的 WAL 设置）。数据是完整的，
+ *    但**恢复时必须把旧的 `-wal` / `-shm` 一起挪走** —— 详见 restoreReadme。
  */
 
 /** 临时快照文件（用完必须删，否则 NAS 上会攒一堆） */
@@ -127,22 +135,55 @@ export function restoreReadme(meta: { stamp: string; dbSize: number; itemCount: 
         `花生错题本 · 完整备份（${meta.stamp}）`,
         "",
         `数据库快照：wn-${meta.stamp}.db（${mb} MB，${meta.itemCount} 道错题）`,
-        "应用配置：app-config.json（AI 密钥、三个转存目录、提示词等）",
+        "应用配置：app-config.json（AI 密钥、提示词、转存目录）",
         "",
-        "── 怎么恢复 ──────────────────────────────────────────────",
-        "这是**整库替换**，不是挑着补。恢复后，备份时间点之后的改动都会没有。",
+        "── 这是整库替换，不是挑着补 ──────────────────────────────",
+        "恢复后，备份时间点之后的改动都会没有。这是灾备，不是撤销键。",
         "",
-        "1. 停掉容器；",
-        "2. 把 wn-<日期>.db 改名为 dev.db，覆盖 /app/data/dev.db",
-        "   （NAS 上对应的宿主机路径见 docker-compose 里 data 目录的挂载）；",
-        "3. 把 app-config.json 覆盖 /app/config/app-config.json；",
-        "4. 起容器。",
+        "── 怎么恢复（在 NAS 上做）────────────────────────────────",
+        "下面用 <apps> 代表你 docker-compose.yml 所在的目录",
+        "（这台机器上是 /vol2/1000/dockerssd）。",
+        "容器里的 /app/data 就是 <apps>/data，/app/config 就是 <apps>/config。",
         "",
-        "⚠️ 覆盖前先把现有的 dev.db 改名留一份，别直接删。",
+        "1) 停容器",
+        "   cd <apps> && docker compose down",
+        "",
+        "2) 先把现在的库整体挪走（别删，留着后悔药）",
+        "   cd <apps>/data",
+        "   mv dev.db     dev.db.before-restore",
+        "   mv dev.db-wal dev.db-wal.before-restore 2>/dev/null",
+        "   mv dev.db-shm dev.db-shm.before-restore 2>/dev/null",
+        "",
+        "   ⚠️⚠️ -wal / -shm 这两个文件必须一起挪走，不能只换 dev.db。",
+        "        只换主文件、把旧日志留着，SQLite 起手会把旧日志重放到新库上，",
+        "        轻则数据错乱，重则库直接打不开。",
+        "        这两个文件不存在是好事（说明没开 WAL），所以命令后面带 2>/dev/null。",
+        "",
+        "3) 放入快照，改回原名",
+        "   cp <你下载到的位置>/wn-" + meta.stamp + ".db  ./dev.db",
+        "   cp <你下载到的位置>/app-config.json  ../config/app-config.json",
+        "",
+        "4) 改属主（容器里跑的是 uid 1001，宿主机上一般不是）",
+        "   chown 1001:1001 dev.db ../config/app-config.json",
+        "   chmod 644 dev.db",
+        "",
+        "5) 起容器",
+        "   cd <apps> && docker compose up -d",
+        "",
+        "6) 打开网页看一眼：错题数量、日积月累条目、随便点开一张卷。",
+        "",
+        "── 起不来怎么办 ──────────────────────────────────────────",
+        "如果是 database is locked / disk I/O error：",
+        "停容器，删掉 dev.db-wal、dev.db-shm（这次是真删），再起一次。",
+        "如果还是不行：把 dev.db.before-restore 改回 dev.db，先回到恢复前。",
         "",
         "── 这份包里为什么没有单独的图片文件 ──────────────────────",
         "题图、日积月累的图片都是**以 data URL 存在数据库里**的（不是外挂文件），",
         "所以跟着 .db 一起搬，不用单独打包。",
+        "",
+        "── 这个包不能随便发给别人 ────────────────────────────────",
+        "app-config.json 里有 AI 接口密钥的**明文**。要发给别人或交给 AI 看时，",
+        "先把 app-config.json 删掉，只发 .db。",
         "",
     ].join("\n");
     return Buffer.from(text, "utf8");
