@@ -119,7 +119,7 @@ function PrintPreviewContent() {
      * 练习卷/讲解卷是偶尔才用的另一种排版，默认值应当给常用的那个。
      * 下面那段读 URL 的 effect 仍会覆盖它（三级打印入口带 ?mode=xxx 时以入口为准）。
      */
-    const [mode, setMode] = useState<PrintMode>("card");
+    const [mode, setMode] = useState<PrintMode>("deep");
     const [showQuestionText, setShowQuestionText] = useState(true);
     const [showImage, setShowImage] = useState(true);
     const [showAnswers, setShowAnswers] = useState(true);
@@ -239,7 +239,9 @@ function PrintPreviewContent() {
     const modePinnedRef = useRef(false);
     useEffect(() => {
         const m = new URLSearchParams(window.location.search).get("mode");
-        if (m === "deep" || m === "review" || m === "build" || m === "imitate" || m === "card" || m === "practice" || m === "explain") {
+        // 【2026-10-24】card / practice / explain 三个签已摘掉，URL 不再接受 ——
+        // 否则会出现"进入了错题卡模式、但界面上没有对应按钮"的死状态。
+        if (m === "deep" || m === "review" || m === "build" || m === "imitate") {
             modePinnedRef.current = true;
             setMode(m);
         }
@@ -1553,13 +1555,17 @@ function PrintPreviewContent() {
                                           · **加上「模仿纸」** —— 只有当前这一道是主题/附题时才点得动
                                             （孤题、或选中多道 ⇒ 没有"主题"可用，禁用并说明原因）。
                                     */}
+                                    {/*
+                                        【2026-10-24 空空】**「错题卡 / 练习卷 / 讲解卷」三个签先摘掉。**
+                                        原话："既然已经开发了就开发了，但暂时不用在这个页面上继续显示了。"
+                                        ⇒ 只摘入口，`PrintMode` 的取值、下面的渲染分支、
+                                          `components/print/question-bodies.tsx` 全部保留 ——
+                                          要恢复只需把这三行加回来。
+                                    */}
                                     {([
                                         ["deep", L("深挖纸 ★", "Deep dive ★")],
                                         ["review", L("复练纸 T2", "Review T2")],
                                         ["imitate", L("模仿纸", "Imitate")],
-                                        ["card", L("错题卡", "Error card")],
-                                        ["practice", L("练习卷", "Practice")],
-                                        ["explain", L("讲解卷", "Study")],
                                     ] as [PrintMode, string][]).map(([key, label]) => {
                                         const disabled = key === "imitate" && !imitateAvailable;
                                         return (

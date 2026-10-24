@@ -462,7 +462,7 @@ export default function NotebooksPage() {
                     <Button
                         variant="secondary"
                         size="sm"
-                        onClick={() => router.push("/print-preview?unprinted=1&mode=card")}
+                        onClick={() => router.push("/print-preview?unprinted=1")}
                     >
                         <Printer className="mr-2 h-4 w-4" />
                         {t.notebooks?.printAllUnprinted || "打印所有未打印"}

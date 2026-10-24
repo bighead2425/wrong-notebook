@@ -206,7 +206,7 @@ export default function NotebookDetailPage() {
                             variant="secondary"
                             size="sm"
                             className="hidden sm:flex"
-                            onClick={() => router.push(`/print-preview?notebookId=${notebook.id}&unprinted=1&mode=card`)}
+                            onClick={() => router.push(`/print-preview?notebookId=${notebook.id}&unprinted=1`)}
                         >
                             <Printer className="mr-2 h-4 w-4" />
                             {t.notebooks?.printThisUnprinted || "打印本册未打印"}
@@ -216,7 +216,7 @@ export default function NotebookDetailPage() {
                             size="icon"
                             className="sm:hidden"
                             title={t.notebooks?.printThisUnprinted || "打印本册未打印"}
-                            onClick={() => router.push(`/print-preview?notebookId=${notebook.id}&unprinted=1&mode=card`)}
+                            onClick={() => router.push(`/print-preview?notebookId=${notebook.id}&unprinted=1`)}
                         >
                             <Printer className="h-4 w-4" />
                         </Button>
