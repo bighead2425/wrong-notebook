@@ -47,6 +47,12 @@ _drop() {
     command rm -f "$1" 2>/dev/null || true
 }
 
+# 删一个目录（只在真存在时才动手，理由同 _drop）
+_drop_dir() {
+    [ -d "$1" ] || return 0
+    command rm -rf "$1" 2>/dev/null || true
+}
+
 # 能挪就挪走（留作后悔药），挪不动就删掉。源不存在时什么都不做。
 _move_or_drop() {
     [ -f "$1" ] || return 0
@@ -75,8 +81,8 @@ restore_if_pending() {
             # 挪不走就别继续：下一步的 mv 会把旧库直接覆盖掉，
             # 那是唯一的一份数据。宁可这次不恢复。
             mv "$_pending" "$RESTORE_DIR/pending.rejected.db" 2>/dev/null || true
-            mv "$RESTORE_DIR/pending-app-config.json" \
-               "$RESTORE_DIR/pending-app-config.rejected.json" 2>/dev/null || true
+            mv "$RESTORE_DIR/pending-config" \
+               "$RESTORE_DIR/pending-config.rejected" 2>/dev/null || true
             _fail "cannot move current db, restore aborted"
             _log "============================================"
             return 0
@@ -106,15 +112,29 @@ restore_if_pending() {
     fi
 
     # ── 3. 配置（可选）─────────────────────────────────────────────
-    if [ -f "$RESTORE_DIR/pending-app-config.json" ]; then
+    # config 下不止一个文件：app-config.json（密钥/提示词/转存目录）
+    # 和 scan-inbox-state.json（收件箱台账，少了它照片会重复导入）。
+    # 所以是**整个目录**一起放回去，不是只放一个。
+    if [ -d "$RESTORE_DIR/pending-config" ]; then
         mkdir -p "$CONFIG_DIR" 2>/dev/null || true
-        if cp "$RESTORE_DIR/pending-app-config.json" "$CONFIG_FILE"; then
-            _own "$CONFIG_FILE"
-            _log "设置文件已一并恢复"
+        _cfg_ok=0
+        _cfg_bad=0
+        for _f in "$RESTORE_DIR/pending-config/"*.json; do
+            [ -f "$_f" ] || continue
+            _base=$(basename "$_f")
+            if cp "$_f" "$CONFIG_DIR/$_base"; then
+                _own "$CONFIG_DIR/$_base"
+                _cfg_ok=$((_cfg_ok + 1))
+            else
+                _cfg_bad=$((_cfg_bad + 1))
+            fi
+        done
+        if [ "$_cfg_bad" -gt 0 ]; then
+            _log "!! 设置文件恢复：成功 $_cfg_ok 个，失败 $_cfg_bad 个（数据不受影响）"
         else
-            _log "!! 设置文件恢复失败（数据不受影响）"
+            _log "设置文件已一并恢复（$_cfg_ok 个）"
         fi
-        _drop "$RESTORE_DIR/pending-app-config.json"
+        _drop_dir "$RESTORE_DIR/pending-config"
     fi
 
     # ── 4. 留痕 ────────────────────────────────────────────────────

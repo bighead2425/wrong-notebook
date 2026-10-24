@@ -71,10 +71,6 @@ export function pendingDbPath(): string {
     return path.join(restoreRoot(), "pending.db");
 }
 
-export function pendingConfigPath(): string {
-    return path.join(restoreRoot(), "pending-app-config.json");
-}
-
 export function pendingMetaPath(): string {
     return path.join(restoreRoot(), "pending.meta.json");
 }
@@ -101,8 +97,14 @@ export interface ExtractedArchive {
     dbPath: string;
     /** 包内的库文件名，用来取日期 */
     dbName: string;
+    /** 有没有带配置文件 */
     hasConfig: boolean;
+    /** 包内带的配置文件名（`app-config.json`、`scan-inbox-state.json` …） */
+    configFiles: string[];
 }
+
+/** 配置文件的个数上限：正常就两三个，多了说明不是我们的包 */
+const MAX_CONFIG_FILES = 20;
 
 /**
  * 把一个 `.tar.gz` 解出「主库 + 配置」。
@@ -117,25 +119,30 @@ export async function extractArchive(input: Readable, dir: string): Promise<Extr
     await fsp.mkdir(dir, { recursive: true });
 
     const dbCandidates: { name: string; path: string }[] = [];
+    const configNames: string[] = [];
+    const configDir = path.join(dir, "config");
     let dbCount = 0;
-    let cfgCount = 0;
 
     const destFor = (rawName: string): string | null => {
         // 包内名字不可信：先取最后一段，杜绝 ../ 和绝对路径
         const name = path.basename(rawName);
+
         if (name.endsWith(".db")) {
             dbCount += 1;
             const p = path.join(dir, `cand-${dbCount}.db`);
             dbCandidates.push({ name, path: p });
             return p;
         }
-        if (name === "app-config.json") {
-            // backup.sh 的包里配置带目录（config/app-config.json），
-            // basename 之后会撞名。只收第一份。
-            cfgCount += 1;
-            if (cfgCount > 1) return null;
-            return path.join(dir, "app-config.json");
+
+        // 【2026-10-24 补】不只是 app-config.json：config 目录下所有 .json 都要
+        // （scan-inbox-state.json 是收件箱台账，漏了会导致恢复后照片重复导入）
+        if (name.endsWith(".json") && /^[A-Za-z0-9._-]+\.json$/.test(name)) {
+            if (configNames.includes(name)) return null; // 同名只留第一份
+            if (configNames.length >= MAX_CONFIG_FILES) return null;
+            configNames.push(name);
+            return path.join(configDir, name);
         }
+
         return null;
     };
 
@@ -161,7 +168,7 @@ export async function extractArchive(input: Readable, dir: string): Promise<Extr
         );
     }
 
-    return { dbPath: pick.path, dbName: pick.name, hasConfig: cfgCount > 0 };
+    return { dbPath: pick.path, dbName: pick.name, hasConfig: configNames.length > 0, configFiles: configNames };
 }
 
 /* ------------------------------------------------------------------ */
@@ -442,17 +449,25 @@ export async function stageForRestore(opts: {
 
     // ⚠️ 顺序不能反：**先把配置挪出来，再 rename 库，最后才清目录**。
     //    早先写成 rename → prune → 拷配置，prune 会把还没拷的 config 一起删掉。
+    const pendingCfgDir = path.join(restoreRoot(), "pending-config");
+    await fsp.rm(pendingCfgDir, { recursive: true, force: true });
+
     if (opts.withConfig) {
-        const srcCfg = path.join(dir, "app-config.json");
-        try {
-            await fsp.stat(srcCfg);
-            await fsp.copyFile(srcCfg, pendingConfigPath());
-        } catch {
-            // 用户勾了"恢复配置"但包里没有 ⇒ 不静默，交给上层报错
-            throw new RestoreInputError("你选了同时恢复设置，但这个包里没有 app-config.json");
+        const srcCfgDir = path.join(dir, "config");
+        const names = await fsp
+            .readdir(srcCfgDir)
+            .then((ns) => ns.filter((n) => n.endsWith(".json")))
+            .catch(() => [] as string[]);
+
+        if (names.length === 0) {
+            // 用户勾了"恢复设置"但包里没有 ⇒ 不静默，交给上层报错
+            throw new RestoreInputError("你选了同时恢复设置，但这个包里没有配置文件");
         }
-    } else {
-        await fsp.rm(pendingConfigPath(), { force: true });
+
+        await fsp.mkdir(pendingCfgDir, { recursive: true });
+        for (const n of names) {
+            await fsp.copyFile(path.join(srcCfgDir, n), path.join(pendingCfgDir, n));
+        }
     }
 
     // 同盘 mv：这一步是原子的，不会出现"半个 pending.db"

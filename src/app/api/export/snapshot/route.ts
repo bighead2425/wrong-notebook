@@ -10,8 +10,8 @@ import { createDbSnapshot, buildBackupArchive, restoreReadme, type TarEntry } fr
 
 const logger = createLogger("api:export:snapshot");
 
-/** 配置文件名（AI 密钥 / 三个转存目录 / 提示词都在这里，不走数据库） */
-const CONFIG_FILE_PATH = path.join(process.cwd(), "config", "app-config.json");
+/** 配置目录（AI 密钥 / 提示词 / 转存目录 / 收件箱台账都在这里，不走数据库） */
+const CONFIG_DIR = path.join(process.cwd(), "config");
 
 /**
  * 【2026-10-24 空空】**下载完整备份**（整库快照 + 配置）
@@ -53,12 +53,29 @@ export async function GET() {
             { name: snapshot.downloadName, path: snapshot.filePath },
         ];
 
-        // 配置文件可能不存在（刚部署、还没改过任何设置）—— 不存在就不放，不是错误
-        try {
-            await fsp.access(CONFIG_FILE_PATH);
-            entries.push({ name: "app-config.json", path: CONFIG_FILE_PATH });
-        } catch {
-            logger.warn({ CONFIG_FILE_PATH }, "app-config.json not found, skipped");
+        // 【2026-10-24 补】config 目录下**所有** .json 都要带上。
+        // 一开始只打了 app-config.json，漏了 scan-inbox-state.json ——
+        // 那份是"扫描收件箱台账"（哪张照片已经导入过、旋转方向）。
+        // 漏了它的后果：恢复之后所有照片都变回"新照片"，一按就重复导入。
+        // 改成扫目录，将来再加新的配置文件也不会漏。
+        const configNames = await fsp
+            .readdir(CONFIG_DIR)
+            .then((names) => names.filter((n) => n.endsWith(".json")).sort())
+            .catch(() => [] as string[]);
+
+        for (const name of configNames) {
+            const full = path.join(CONFIG_DIR, name);
+            try {
+                const st = await fsp.stat(full);
+                if (!st.isFile() || st.size === 0) continue;
+                entries.push({ name, path: full });
+            } catch {
+                logger.warn({ full }, "config file unreadable, skipped");
+            }
+        }
+
+        if (configNames.length === 0) {
+            logger.warn({ CONFIG_DIR }, "no config json found, backup without settings");
         }
 
         const gz = buildBackupArchive(entries);
