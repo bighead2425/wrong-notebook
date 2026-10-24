@@ -1,4 +1,6 @@
 'use client';
+import { usePaperConfig, usePrintPageSize } from '@/lib/use-paper';
+import { paperFor } from '@/lib/paper';
 
 /**
  * 积累纸 · **打印页**（2026-10-01 按他的职责划分重写）
@@ -707,6 +709,11 @@ function VolumePaper({
     const router = useRouter();
     const { language } = useLanguage();
     const zh = language === 'zh';
+
+    /** 【2026-10-24 幅面】积累纸打印：页高与打印纸型都按设置里的 build 纸型 */
+    const paperCfg = usePaperConfig();
+    const buildPaper = paperFor("build", paperCfg);
+    usePrintPageSize(buildPaper);
     const L = (a: string, b: string) => (zh ? a : b);
 
     const [detail, setDetail] = useState<VolumeDetail | null>(null);
@@ -1165,6 +1172,7 @@ function VolumePaper({
                             {layout.pages.map((page, i) => (
                                 <InsightSheet
                                     key={i}
+                                    paper={buildPaper}
                                     page={page}
                                     pageNo={i + 1}
                                     pageCount={pageCount}

@@ -39,6 +39,7 @@
  * 每格她自判**空 / 对 / 错** —— 原设计只记"做没做"，记不下"过没过"。
  */
 
+import { DEFAULT_PAPER_ID, PAPERS, type PaperSpec } from '@/lib/paper';
 import { useMemo } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { SubjectChip } from '@/components/subject-chip';
@@ -49,7 +50,6 @@ import { getNotebookPrintInfo, getTags } from '@/lib/print-preview';
 import {
     DEEP_CROSSHAIR_FLOOR_MM,
     DEEP_FIGURE_BASE_MM,
-    SIDE_HEIGHT_MM,
     SLOT_COLORS,
     SLOT_SIZE_MM,
     STAMP_BOX_MM,
@@ -131,6 +131,11 @@ function punchVarsOf(pad: { left: number; right: number }): CSSProperties {
 }
 
 export interface DeepDiveCardProps {
+    /**
+     * 用哪张纸（不传 = B5）。只管**面高**和身份条下边框的**颜色**
+     * （A4 用蓝 —— 拍一张照就能看出这张纸是什么幅面）。
+     */
+    paper?: PaperSpec;
     item: ErrorItem;
     index: number;
     qrMap: Record<string, string>;
@@ -170,6 +175,7 @@ export function DeepDiveCard({
     photoScaleOf,
     onPhotoScaleStart,
     L,
+    paper = PAPERS[DEFAULT_PAPER_ID],
 }: DeepDiveCardProps) {
     const figures = useFigureImages(item);
     const { gradeText, subjectKey } = getNotebookPrintInfo(item, L('未分本', 'Unfiled'));
@@ -208,7 +214,7 @@ export function DeepDiveCard({
                 display: 'flex',
                 alignItems: 'center',
                 gap: '2mm',
-                borderBottom: '0.3mm solid #cfc9bd',
+                borderBottom: `0.3mm solid ${paper.id === 'A4' ? '#1c7ed6' : '#cfc9bd'}`,
                 flex: '0 0 auto',
             }}
         >
@@ -236,7 +242,7 @@ export function DeepDiveCard({
             <div
                 className="print-deep-side print-deep-front"
                 style={{
-                    height: `${SIDE_HEIGHT_MM}mm`,
+                    height: `${paper.content.h - 2}mm`,
                     display: 'flex',
                     flexDirection: 'column',
                     // ⚠️ 打孔位走 CSS 变量（理由同复练纸：屏幕上的"纸边"要叠在它外面）
@@ -389,7 +395,7 @@ export function DeepDiveCard({
             <div
                 className="print-deep-side print-deep-back"
                 style={{
-                    height: `${SIDE_HEIGHT_MM}mm`,
+                    height: `${paper.content.h - 2}mm`,
                     display: 'flex',
                     flexDirection: 'column',
                     ...punchVarsOf(backPad),

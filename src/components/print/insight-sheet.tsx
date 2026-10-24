@@ -1,3 +1,4 @@
+import { DEFAULT_PAPER_ID, PAPERS, type PaperSpec } from '@/lib/paper';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { Fragment } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
@@ -6,7 +7,6 @@ import {
     COLUMN_GAP_MM,
     REVIEW_FIGURE_BOX_RATIO,
     REVIEW_LAYOUT_MM,
-    REVIEW_PAGE_HEIGHT_MM,
     REVIEW_PUNCH_GUTTER_MM,
     type MeasuredPageLayout,
 } from '@/lib/review-card';
@@ -318,7 +318,10 @@ export function InsightSheet({
     onItemPlusClick,
     linkedOf,
     L,
+    paper = PAPERS[DEFAULT_PAPER_ID],
 }: {
+    /** 【2026-10-24 幅面】用哪张纸（不传 = B5）：只管页高 */
+    paper?: PaperSpec;
     page: MeasuredPageLayout;
     /** 页码（1 起） */
     pageNo: number;
@@ -378,7 +381,7 @@ export function InsightSheet({
         <div
             className="print-card print-review-sheet"
             style={{
-                height: `${REVIEW_PAGE_HEIGHT_MM}mm`,
+                height: `${paper.content.h - 2}mm`,
                 display: 'flex',
                 flexDirection: 'column',
                 position: 'relative',

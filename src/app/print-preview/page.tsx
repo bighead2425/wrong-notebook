@@ -1,4 +1,6 @@
 "use client";
+import { usePaperConfig, usePrintPageSize } from "@/lib/use-paper";
+import { paperFor } from "@/lib/paper";
 
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import type { CSSProperties } from "react";
@@ -100,6 +102,8 @@ type LeaveChoice = "save" | "discard" | "cancel";
 function PrintPreviewContent() {
     const searchParams = useSearchParams();
     const { t, language } = useLanguage();
+    /** 【2026-10-24 幅面】打印预览按当前纸型取纸（不传 = B5） */
+    const paperCfg = usePaperConfig();
     const zh = language === "zh";
     const L = (a: string, b: string) => (zh ? a : b);
     /**
@@ -120,6 +124,18 @@ function PrintPreviewContent() {
      * 下面那段读 URL 的 effect 仍会覆盖它（三级打印入口带 ?mode=xxx 时以入口为准）。
      */
     const [mode, setMode] = useState<PrintMode>("deep");
+
+    /**
+     * 【2026-10-24 幅面】按当前纸型让浏览器用对的纸打印。
+     * CSS 的 @page 规则不能按元素切换，一个文档只有一种
+     * ⇒ 必须动态注入（见 lib/use-paper.ts 的 usePrintPageSize）。
+     */
+    usePrintPageSize(
+        paperFor(
+            mode === "deep" ? "deepDive" : mode === "imitate" ? "imitate" : mode === "build" ? "build" : "review",
+            paperCfg,
+        ),
+    );
     const [showQuestionText, setShowQuestionText] = useState(true);
     const [showImage, setShowImage] = useState(true);
     const [showAnswers, setShowAnswers] = useState(true);
@@ -1947,6 +1963,7 @@ function PrintPreviewContent() {
                             {selectedItems.map((item, index) => (
                                 <DeepDiveCard
                                     key={item.id}
+                                    paper={paperFor("deepDive", paperCfg)}
                                     item={item}
                                     index={index}
                                     qrMap={qrMap}
@@ -2013,6 +2030,7 @@ function PrintPreviewContent() {
                             {reviewLayout?.pages.map((page, i) => (
                                 <ReviewSheet
                                     key={i}
+                                    paper={paperFor(mode === "build" ? "build" : "review", paperCfg)}
                                     page={page}
                                     pageNo={i + 1}
                                     pageCount={reviewLayout.pages.length}

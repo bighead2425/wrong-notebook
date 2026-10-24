@@ -1,4 +1,6 @@
 "use client";
+import { usePaperConfig, usePrintPageSize } from "@/lib/use-paper";
+import { paperFor } from "@/lib/paper";
 
 /**
  * 【2026-09-29 新增 / 2026-09-30 大改】**复练卷页**（复练卷管理页）。
@@ -167,6 +169,8 @@ type LeaveChoice = "save" | "discard" | "cancel";
 
 export default function ReviewVolumesPage() {
     const { language } = useLanguage();
+    /** 【2026-10-24 幅面】卷页按设置里的纸渲染（不传 = B5） */
+    const paperCfg = usePaperConfig();
     const zh = language === "zh";
     const L = useCallback((a: string, b: string) => (zh ? a : b), [zh]);
     /**
@@ -298,6 +302,9 @@ export default function ReviewVolumesPage() {
     }, []);
 
     const kind: VolumeKind = detail?.kind && VOLUME_KINDS.includes(detail.kind) ? detail.kind : "review";
+
+    /** 【2026-10-24 幅面】这一页也能打印（补印），所以页型要跟着当前卷走 */
+    usePrintPageSize(paperFor(kind === "build" ? "build" : "review", paperCfg));
 
     const blankValueOf = useCallback(
         (id: string) => blankOverrides?.[id] ?? blankDefault,
@@ -1891,6 +1898,7 @@ export default function ReviewVolumesPage() {
                                     : layout?.pages.map((page, i) => (
                                     <ReviewSheet
                                         key={i}
+                                        paper={paperFor(kind === "build" ? "build" : "review", paperCfg)}
                                         page={page}
                                         pageNo={i + 1}
                                         pageCount={layout.pages.length}

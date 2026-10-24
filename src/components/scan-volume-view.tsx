@@ -27,6 +27,8 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { usePaperConfig } from "@/lib/use-paper";
+import { paperFor } from "@/lib/paper";
 import type { ErrorItem, PaginatedResponse } from "@/types/api";
 import {
     ReviewSheet,
@@ -164,6 +166,8 @@ export function ScanVolumeView({
     highlightItemId?: string | null;
 }) {
     const { language } = useLanguage();
+    /** 【2026-10-24 幅面】卷按自己的 kind 取纸：积累 2 栏 / 复练 1 栏都用它算页高 */
+    const paperCfg = usePaperConfig();
     // 稳定引用：下面几个录入回调把它放进依赖，若每次渲染都换新函数会让回调反复重建
     const L = useCallback(
         (zh: string, en: string) => (language === "zh" ? zh : en),
@@ -1305,6 +1309,8 @@ export function ScanVolumeView({
                                 pageCount={layout.pages.length}
                                 volumeNo={volume.volumeNo}
                                 kind={kind}
+                                /* 【2026-10-24 幅面】按设置里的纸渲染；不传 = B5 */
+                                paper={paperFor(kind === "build" ? "build" : "review", paperCfg)}
                                 printDate={new Date()}
                                 /* 【2026-10-03 他要求】扫码预览页也显示 emoji 标识 —— 它是"查对"用的：
                                    手里这张纸和屏幕上这份卷，emoji 相同即同一份（积累纸那边同理）。 */

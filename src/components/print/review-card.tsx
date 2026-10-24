@@ -6,11 +6,11 @@ import {
     COLUMN_GAP_MM,
     REVIEW_FIGURE_BOX_RATIO,
     REVIEW_LAYOUT_MM,
-    REVIEW_PAGE_HEIGHT_MM,
     REVIEW_PUNCH_GUTTER_MM,
     VOLUME_HEADER_MM,
     type MeasuredPageLayout,
 } from '@/lib/review-card';
+import { DEFAULT_PAPER_ID, PAPERS, type PaperSpec } from '@/lib/paper';
 import {
     VOLUME_KIND_COLOR,
     VOLUME_KIND_LABEL,
@@ -106,6 +106,14 @@ export function MissingQuestionBlock({
 }
 
 export interface ReviewSheetProps {
+    /**
+     * 用哪张纸渲染（不传 = B5）。
+     *
+     * 它只管两件事：**页高**、以及页眉那条横线的**颜色**（A4 用蓝，
+     * 这样拍一张照就能看出这张纸是什么幅面）。
+     * 宽度不用管 —— 纸宽靠 CSS 的自适应，A4 下自然铺满。
+     */
+    paper?: PaperSpec;
     /** 这一页的排布（复练 1 栏 / 积累 2 栏）—— 由纯函数按**真实高度**分好 */
     page: MeasuredPageLayout;
     /** 本页页码（1 起）—— 也是页眉二维码里那一半 */
@@ -352,7 +360,7 @@ export function VolumeHeader({
                     marginTop: '1mm',
                 }}
             >
-                <span className="print-volume-header-rule" style={{ flex: 1, height: '0.25mm', background: '#666' }} />
+                <span className="print-volume-header-rule" style={{ flex: 1, height: '0.25mm', background: 'var(--paper-rule, #666)' }} />
             </div>
             {pageQr ? (
                 /* eslint-disable-next-line @next/next/no-img-element -- 打印页必须用原生 img：src 是 dataURL，要交给浏览器打印快照；next/image 会插一层优化/懒加载，反而可能打不出来 */
@@ -1181,6 +1189,7 @@ export function ReviewSheet({
     onMoveQuestion,
     totalSeq,
     L,
+    paper = PAPERS[DEFAULT_PAPER_ID],
 }: ReviewSheetProps) {
     /**
      * 打孔位：**奇数页留左、偶数页留右**。
@@ -1221,7 +1230,9 @@ export function ReviewSheet({
         <div
             className="print-card print-review-sheet"
             style={{
-                height: `${REVIEW_PAGE_HEIGHT_MM}mm`,
+                height: `${paper.content.h - 2}mm`,
+                // 页眉那条横线的颜色：A4 用蓝 —— 拍照时靠颜色分辨幅面
+                ['--paper-rule' as string]: paper.id === 'A4' ? '#1c7ed6' : '#666',
                 display: 'flex',
                 flexDirection: 'column',
                 position: 'relative',
