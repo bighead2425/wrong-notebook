@@ -70,8 +70,21 @@ export interface RestorePlan {
     warnings: string[];
 }
 
-/** 这一步是不可逆的，所以要求用户亲手打这两个字 */
-export const RESTORE_CONFIRM_WORD = "恢复";
+/**
+ * 从文件名里读备份日期。
+ *
+ * 三种名字都要认（前两种是同一个包在不同环节的名字）：
+ *   · 下载时的包名     `wn-backup-2026-10-24.tar.gz`
+ *   · 包里的库名       `wn-2026-10-24.db`
+ *   · 宿主机每周备份   `wn-2026-10-24.tar.gz`（里面的库叫 `dev.db`）
+ *
+ * ⚠️ 早先只写了 `wn-日期`，于是应用内导出的包一律显示"备份日期 ?"——
+ *    因为它的名字是 `wn-backup-…`，`wn-` 后面跟的是 backup。
+ */
+export function stampOfName(fileName: string): string | null {
+    const m = /wn-(?:backup-)?(\d{4}-\d{2}-\d{2})/.exec(fileName);
+    return m ? m[1] : null;
+}
 
 /**
  * 从包里的若干个 `.db` 文件名中挑出**主库**。
@@ -91,3 +104,6 @@ export function pickMainDb(names: readonly string[]): string | null {
 
     return names.length === 1 ? names[0] : null;
 }
+
+/** 这一步是不可逆的，所以要求用户亲手打这两个字（界面和服务端共用这一份） */
+export const RESTORE_CONFIRM_WORD = "恢复";

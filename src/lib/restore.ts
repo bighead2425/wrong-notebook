@@ -5,7 +5,14 @@ import { Readable } from "stream";
 import { PrismaClient } from "@prisma/client";
 import { resolveDbFilePath } from "./db-snapshot";
 import { extractTarStream, TarEmptyError, TarError } from "./tar-min";
-import { SUMMARY_TABLES, pickMainDb, type ContentSummary, type RestorePlan, type TableCount } from "./restore-types";
+import {
+    SUMMARY_TABLES,
+    pickMainDb,
+    stampOfName,
+    type ContentSummary,
+    type RestorePlan,
+    type TableCount,
+} from "./restore-types";
 import { createLogger } from "./logger";
 
 export type { ContentSummary, RestorePlan, TableCount } from "./restore-types";
@@ -334,23 +341,6 @@ function summarize(tables: TableCount[]): ContentSummary {
 }
 
 /**
- * 从文件名里读备份日期。
- *
- * 两种包都要认：
- *   · 应用内导出的包：包内 `wn-2026-10-24.db`；
- *   · 宿主机每周自动备份：包内 `dev.db`，日期在**包名** `wn-2026-10-24.tar.gz` 上。
- * 所以这里不锚定扩展名，匹配到 `wn-YYYY-MM-DD` 就算。
- */
-function stampOf(fileName: string): string | null {
-    const m = /wn-(\d{4}-\d{2}-\d{2})/.exec(fileName);
-    return m ? m[1] : null;
-}
-
-export function stampOfName(fileName: string): string | null {
-    return stampOf(fileName);
-}
-
-/**
  * 出一份"按下去会变成什么样"的报告。
  *
  * 这里**绝不改任何东西**，只读。
@@ -414,7 +404,7 @@ export async function buildPlan(
 
     return {
         token,
-        stamp: stampOf(dbFileName),
+        stamp: stampOfName(dbFileName),
         dbSize: probe.size,
         backup,
         current,

@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { pickMainDb, SUMMARY_LABELS, SUMMARY_TABLES, RESTORE_CONFIRM_WORD } from "@/lib/restore-types";
+import {
+    pickMainDb,
+    stampOfName,
+    SUMMARY_LABELS,
+    SUMMARY_TABLES,
+    RESTORE_CONFIRM_WORD,
+} from "@/lib/restore-types";
 
 /**
  * 两种备份包的库文件名不同，挑错了就是"拿别的库覆盖自己"。
@@ -55,5 +61,27 @@ describe("restore-types · 报告字段", () => {
 
     it("确认词是「恢复」，不能被意外改掉", () => {
         expect(RESTORE_CONFIRM_WORD).toBe("恢复");
+    });
+});
+
+/**
+ * 应用内导出的包叫 `wn-backup-YYYY-MM-DD.tar.gz`（注意中间有 backup），
+ * 早先只认 `wn-日期`，于是报告里"备份日期"一直显示 `?`。
+ */
+describe("restore-types · 备份日期", () => {
+    it("三种名字都认", () => {
+        expect(stampOfName("wn-backup-2026-10-24.tar.gz")).toBe("2026-10-24"); // 下载时的包名
+        expect(stampOfName("wn-2026-10-24.db")).toBe("2026-10-24"); // 包里的库名
+        expect(stampOfName("wn-2026-10-24.tar.gz")).toBe("2026-10-24"); // 宿主机每周备份
+    });
+
+    it("认不出就是 null，不瞎猜", () => {
+        expect(stampOfName("dev.db")).toBeNull();
+        expect(stampOfName("backup.tar.gz")).toBeNull();
+        expect(stampOfName("")).toBeNull();
+    });
+
+    it("日期格式不对的不认", () => {
+        expect(stampOfName("wn-backup-2026-1-5.tar.gz")).toBeNull();
     });
 });
