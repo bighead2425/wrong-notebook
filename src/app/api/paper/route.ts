@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { unauthorized } from "@/lib/api-errors";
-import { getAppConfig } from "@/lib/config";
+import { badRequest, forbidden, unauthorized } from "@/lib/api-errors";
+import { getAppConfig, updateAppConfig } from "@/lib/config";
 import { DEFAULT_PAPER_CONFIG, type PaperConfig } from "@/lib/paper";
 
 export const runtime = "nodejs";
@@ -28,4 +28,50 @@ export async function GET() {
     };
 
     return NextResponse.json({ paper });
+}
+
+/**
+ * 改某一种纸的幅面。
+ *
+ * 用途：打印预览页「第X页装不下」的提示里有一个按钮，点了直接切幅面 ——
+ * 不用先跑回设置页改一圈再回来。
+ *
+ * ⚠️ 只有管理员能改。孩子看得到幅面（GET），但改不了。
+ */
+export async function PATCH(req: NextRequest) {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.email) return unauthorized("Not authenticated");
+    if ((session.user as { role?: string }).role !== "admin") {
+        return forbidden("只有管理员能改幅面");
+    }
+
+    let body: { kind?: unknown; value?: unknown };
+    try {
+        body = (await req.json()) as typeof body;
+    } catch {
+        return badRequest("请求格式不对");
+    }
+
+    const kind = body.kind;
+    const value = body.value;
+    // 白名单：kind 必须是四种纸之一，value 必须是 B5/A4。
+    // 不做白名单的话，`{kind:"aiProvider", value:...}` 这类请求会写坏配置。
+    if (kind !== "deepDive" && kind !== "review" && kind !== "imitate" && kind !== "build") {
+        return badRequest("纸型不对");
+    }
+    if (value !== "B5" && value !== "A4") {
+        return badRequest("幅面只能是 B5 或 A4");
+    }
+
+    const cfg = getAppConfig();
+    const paper: PaperConfig = {
+        deepDive: cfg.paper?.deepDive ?? DEFAULT_PAPER_CONFIG.deepDive,
+        review: cfg.paper?.review ?? DEFAULT_PAPER_CONFIG.review,
+        imitate: cfg.paper?.imitate ?? DEFAULT_PAPER_CONFIG.imitate,
+        build: cfg.paper?.build ?? DEFAULT_PAPER_CONFIG.build,
+        [kind]: value,
+    };
+    updateAppConfig({ paper });
+
+    return NextResponse.json({ ok: true, paper });
 }

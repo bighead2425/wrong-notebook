@@ -1,6 +1,6 @@
 "use client";
 import { usePaperConfig, usePrintPageSize } from "@/lib/use-paper";
-import { paperFor } from "@/lib/paper";
+import { paperFor, type PaperConfig } from "@/lib/paper";
 
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import type { CSSProperties } from "react";
@@ -85,6 +85,10 @@ import {
  *    再把默认切到 deep、旧卡退役（一行改动）。
  */
 type PrintMode = "deep" | "review" | "build" | "imitate" | "card" | "practice" | "explain";
+
+/** 【2026-10-24 幅面】打印模式 → 配置里对应的纸型字段 */
+const kindOfMode = (m: PrintMode): keyof PaperConfig =>
+    m === "deep" ? "deepDive" : m === "imitate" ? "imitate" : m === "build" ? "build" : "review";
 
 /**
  * 【2026-10-12】**"已掌握"的绿** —— 只在这一屏用（模仿纸"收哪些附题"里，已掌握那道题的题号）。
@@ -2025,6 +2029,28 @@ function PrintPreviewContent() {
                                             .join('、')}。建议这几道改用「深挖纸」。`,
                                         `${reviewLayout.overflow.length} question(s) too long for this volume — use the deep-dive sheet instead.`,
                                     )}
+                                    {/* 【2026-10-24 幅面】有时候不是题太长，是纸太小 —— 就地切幅面，
+                                        免得先跑回设置改一圈再回来重新组卷。切完整页刷新（配置已存）。 */}
+                                    <div className="mt-2">
+                                        <button
+                                            type="button"
+                                            className="rounded border border-amber-600 px-2 py-1 text-xs font-medium hover:bg-amber-100"
+                                            onClick={() => {
+                                                const kind = kindOfMode(mode);
+                                                const to = paperCfg[kind] === "A4" ? "B5" : "A4";
+                                                void fetch("/api/paper", {
+                                                    method: "PATCH",
+                                                    headers: { "Content-Type": "application/json" },
+                                                    body: JSON.stringify({ kind, value: to }),
+                                                }).then(() => window.location.reload());
+                                            }}
+                                        >
+                                            {L(
+                                                `试试改为「${paperCfg[kindOfMode(mode)] === "A4" ? "B5" : "A4"}」幅面重排`,
+                                                `Try ${paperCfg[kindOfMode(mode)] === "A4" ? "B5" : "A4"} instead`,
+                                            )}
+                                        </button>
+                                    </div>
                                 </div>
                             )}
                             {reviewLayout?.pages.map((page, i) => (
