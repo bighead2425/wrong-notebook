@@ -8,24 +8,36 @@
  */
 
 import { formatMonthDay, formatYear } from './date-format';
+import { DEFAULT_PAPER_ID, PAPERS } from './paper';
 
 /* ======================== 纸张尺寸（实测，别改） ======================== */
+
+/**
+ * 2026-10-24 起，尺寸统一由 `lib/paper.ts` 提供（那边才是唯一源头）。
+ *
+ * 这里保留同名导出，是因为它们被组件、排版计算和一堆单测直接引用 ——
+ * 改导入路径会让 diff 铺满整个仓库，而值一个都没变。
+ *
+ * ⚠️ 下面这几个常量都是 **B5**。要按幅面排版，请用 `paperFor(kind, config)`
+ *    拿到 `PaperSpec` 再取字段，不要读这些常量。
+ */
+const B5 = PAPERS[DEFAULT_PAPER_ID];
 
 /**
  * 国内市售 B5 = 182mm × 257mm（**JIS B5**）。
  * ⚠️ CSS 的 `size: B5` 是 ISO B5 = 176×250mm，比国产纸每边小 6mm，满页排版会跑版，
  *    所以 globals.css 的 `@page` 里写的是明确毫米数，这里也必须与之一致。
  */
-export const PAPER_B5_MM = { w: 182, h: 257 } as const;
+export const PAPER_B5_MM: { readonly w: number; readonly h: number } = {
+    w: B5.w,
+    h: B5.h,
+};
 
 /** `@page` 的四边页边距（14mm 上 / 15mm 左右 / 16mm 下），与 globals.css 保持一致 */
-export const PAGE_MARGIN_MM = { top: 14, right: 15, bottom: 16, left: 15 } as const;
+export const PAGE_MARGIN_MM = B5.margin;
 
 /** 可排版的内容区 = 152mm × 227mm。整张纸的版面都按这两个数算。 */
-export const CONTENT_MM = {
-    w: PAPER_B5_MM.w - PAGE_MARGIN_MM.left - PAGE_MARGIN_MM.right,
-    h: PAPER_B5_MM.h - PAGE_MARGIN_MM.top - PAGE_MARGIN_MM.bottom,
-} as const;
+export const CONTENT_MM: { readonly w: number; readonly h: number } = B5.content;
 
 /**
  * 每一面**实际占**的高度：内容区 227mm 再留 2mm 呼吸。
@@ -35,7 +47,7 @@ export const CONTENT_MM = {
  * 就会判定"这一块装不下"而把它整体挪到下一页 —— 表现是每道题前面空一张白纸。
  * 留 2mm 松量对这个风险免疫，代价只是页脚离纸边多 2mm（本来也该留白）。
  */
-export const SIDE_HEIGHT_MM = CONTENT_MM.h - 2;
+export const SIDE_HEIGHT_MM: number = B5.sideHeight;
 
 /**
  * 打孔装订位：正面**左**侧、反面**右**侧各空出这么宽，不许排内容。
@@ -47,7 +59,7 @@ export const SIDE_HEIGHT_MM = CONTENT_MM.h - 2;
  * ⚠️ 这个是把"装得进活页夹"变成常量，而不是靠打印出来拿尺子量。
  *   不用活页夹 / 改成侧面粘贴装订时，把它改成 0 即可。
  */
-export const PUNCH_GUTTER_MM = 12;
+export const PUNCH_GUTTER_MM: number = B5.punchGutter;
 
 /**
  * 深挖纸**题图**的基准尺寸（缩放的 100% 就按它）。
@@ -60,7 +72,7 @@ export const PUNCH_GUTTER_MM = 12;
 export const DEEP_FIGURE_BASE_MM = { w: 60, h: 40 } as const;
 
 /** 扣掉打孔位之后**真正能排版**的宽度 = 152 − 12 = 140mm */
-export const USABLE_WIDTH_MM = CONTENT_MM.w - PUNCH_GUTTER_MM;
+export const USABLE_WIDTH_MM: number = B5.usableWidth;
 
 export type SheetSide = 'front' | 'back';
 

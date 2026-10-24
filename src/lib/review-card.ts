@@ -31,6 +31,7 @@
  */
 
 import { CONTENT_MM } from './deep-dive-card';
+import { DEFAULT_PAPER_ID, PAPERS, type PaperSpec } from './paper';
 import type { VolumeKind } from './volume-code';
 
 /* ============================ 版面常量 ============================ */
@@ -308,10 +309,19 @@ export function paginateMeasured(
      * 复练纸不传（= 0）⇒ 行为一字不变。
      */
     reservedMM = 0,
+    /**
+     * 【2026-10-24 幅面】用哪张纸来算"一栏能装多高"。
+     * **不传 = B5**，与原来完全一致；传 A4 ⇒ 栏高从 210 变成 250。
+     *
+     * ⚠️ 页眉恒 15mm，不随幅面变（二维码、卷号、日期那几样大小是固定的）。
+     */
+    paper: PaperSpec = PAPERS[DEFAULT_PAPER_ID],
 ): MeasuredSheetLayout {
     const variant = VOLUME_VARIANTS[kind];
-    /** 本栏**真正**可用的高度（扣掉页脚预留） */
-    const usableMM = Math.max(10, VOLUME_COLUMN_MM - reservedMM);
+    /** 本栏的物理高度：幅面内容高 − 2mm 松量 − 页眉 */
+    const columnHeightMM = paper.content.h - 2 - VOLUME_HEADER_MM;
+    /** 本栏**真正**可用（再扣掉页脚预留） */
+    const usableMM = Math.max(10, columnHeightMM - reservedMM);
     const pages: MeasuredPageLayout[] = [];
     const overflow: { key: string; heightMM: number }[] = [];
 
