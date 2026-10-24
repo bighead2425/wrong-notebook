@@ -59,7 +59,28 @@ export function RestoreSettings() {
     const [localDir, setLocalDir] = useState("");
     const [localExists, setLocalExists] = useState(true);
 
+    // 上次恢复的结果：恢复过程里应用是死的，只有 entrypoint 写的记录知道成没成
+    const [lastRestore, setLastRestore] = useState<Record<string, unknown> | null>(null);
+    const [beforeSize, setBeforeSize] = useState<number | null>(null);
+
     const fileRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        let alive = true;
+        fetch("/api/restore", { cache: "no-store" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d: Record<string, unknown> | null) => {
+                if (!alive || !d) return;
+                setLastRestore((d.lastRestore as Record<string, unknown>) ?? null);
+                setBeforeSize(typeof d.beforeRestoreSize === "number" ? d.beforeRestoreSize : null);
+            })
+            .catch(() => {
+                // 没登录 / 不是管理员：静默，这块本来只是"附带信息"
+            });
+        return () => {
+            alive = false;
+        };
+    }, []);
 
     const applyPlan = useCallback((data: Record<string, unknown>) => {
         const p = data.plan as RestorePlan;
@@ -200,6 +221,32 @@ export function RestoreSettings() {
     const dangerBox =
         "rounded-lg border border-red-300 bg-red-50 p-3 text-xs text-red-800";
 
+    // 上次恢复的结果，拼成一句话（成没成、什么时候、旧库还在不在）
+    const lastLine = (() => {
+        if (!lastRestore) return null;
+        const failed = Boolean(lastRestore.failed);
+        const when =
+            typeof lastRestore.stagedAt === "string"
+                ? lastRestore.stagedAt.replace("T", " ").slice(0, 16)
+                : String(lastRestore.stamp ?? "");
+
+        const parts: string[] = [];
+        if (failed) {
+            parts.push(`${zh ? "上次恢复没成功" : "Last restore failed"}（${String(lastRestore.reason ?? "")}）`);
+        } else if (when) {
+            parts.push(`${zh ? "上次恢复" : "Last restore"}: ${when}`);
+        }
+        if (beforeSize !== null) {
+            parts.push(
+                zh
+                    ? `恢复前的库还留着（${formatSize(beforeSize)}），在 data/.restore/before-restore.db`
+                    : `Pre-restore DB kept (${formatSize(beforeSize)}) at data/.restore/before-restore.db`,
+            );
+        }
+        if (parts.length === 0) return null;
+        return { failed, text: parts.join(" · ") };
+    })();
+
     return (
         <div className="space-y-3 pt-4 border-t border-red-200">
             <div className="flex items-center gap-2">
@@ -209,6 +256,18 @@ export function RestoreSettings() {
                 </h4>
             </div>
             <p className="text-xs text-red-800">{t.settings?.restoreDanger || "This overwrites all current data. There is no undo."}</p>
+
+            {lastLine && (
+                <div
+                    className={`rounded-md border px-2 py-1.5 text-xs ${
+                        lastLine.failed
+                            ? "border-red-300 bg-red-50 text-red-800"
+                            : "border-emerald-300 bg-emerald-50 text-emerald-800"
+                    }`}
+                >
+                    {lastLine.text}
+                </div>
+            )}
 
             {/* 来源选择 */}
             {phase === "idle" && !error && (
