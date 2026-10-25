@@ -1673,6 +1673,7 @@ export default function ReviewVolumesPage() {
                         <SheetZoom
                             className="mx-auto max-w-6xl px-4 py-6 print:max-w-none print:px-0 print:py-0"
                             defaultFit
+                            paperWmm={paperFor(kind === "build" ? "build" : "review", paperCfg).w}
                             L={L}
                         >
                             <div className="print-sheet">

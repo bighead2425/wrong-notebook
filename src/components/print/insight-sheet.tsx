@@ -382,6 +382,9 @@ export function InsightSheet({
             className="print-card print-review-sheet"
             style={{
                 height: `${paper.content.h - 2}mm`,
+                /* 【2026-10-24 幅面】宽度与纸边负距由 CSS 变量驱动（见 globals.css） */
+                ['--paper-content-w' as string]: `${paper.content.w}mm`,
+                ['--paper-pad-x' as string]: `${-(paper.w - PAPERS.B5.content.w) / 2}mm`,
                 display: 'flex',
                 flexDirection: 'column',
                 position: 'relative',

@@ -21,6 +21,13 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 /** B5 整纸宽（内容 152mm + 左右各 15mm 纸边）= 182mm，换算成 CSS px（CSS 规定 1in = 96px） */
 export const SHEET_FULL_WIDTH_PX = (182 * 96) / 25.4;
 
+/**
+ * 【2026-10-24 幅面】任意幅面的整纸宽（mm → CSS px）。
+ * A4 = 210mm ⇒ 794px，比 B5 的 688px 宽一截；
+ * 手机上适应宽度必须按它算，否则 A4 会横向滑。
+ */
+export const sheetFullWidthPx = (paperWmm: number): number => (paperWmm * 96) / 25.4;
+
 /** 最小缩放 —— 再小字就糊了，不如让他横滑 */
 export const SHEET_ZOOM_MIN = 0.3;
 
@@ -37,6 +44,7 @@ export function SheetZoom({
     children,
     className = "",
     defaultFit = false,
+    paperWmm = 182,
     L,
 }: {
     children: ReactNode;
@@ -48,6 +56,8 @@ export function SheetZoom({
      * ⇒ 也就是说**默认那档是"适应窗口"**（手机上纸本来就比屏宽，先给看得全的那档）。
      */
     defaultFit?: boolean;
+    /** 【2026-10-24 幅面】整纸宽（mm）；不传 = B5 的 182 */
+    paperWmm?: number;
     L: (zh: string, en: string) => string;
 }) {
     const ref = useRef<HTMLDivElement | null>(null);
@@ -83,7 +93,7 @@ export function SheetZoom({
     }, [fit, measure]);
 
     /** 实际大小 = 1；适应宽度 = 按可用宽度算（宽度还没量到时 `fitZoomFor` 会给 1，量到就纠正） */
-    const zoom = fit ? fitZoomFor(avail ?? 0) : 1;
+    const zoom = fit ? fitZoomFor(avail ?? 0, sheetFullWidthPx(paperWmm)) : 1;
 
     /**
      * 双击切换两档。

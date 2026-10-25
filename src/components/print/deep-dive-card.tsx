@@ -243,6 +243,9 @@ export function DeepDiveCard({
                 className="print-deep-side print-deep-front"
                 style={{
                     height: `${paper.content.h - 2}mm`,
+                    /* 【2026-10-24 幅面】宽度与纸边负距由 CSS 变量驱动（见 globals.css） */
+                    ['--paper-content-w' as string]: `${paper.content.w}mm`,
+                    ['--paper-pad-x' as string]: `${-(paper.w - PAPERS.B5.content.w) / 2}mm`,
                     display: 'flex',
                     flexDirection: 'column',
                     // ⚠️ 打孔位走 CSS 变量（理由同复练纸：屏幕上的"纸边"要叠在它外面）
@@ -396,6 +399,9 @@ export function DeepDiveCard({
                 className="print-deep-side print-deep-back"
                 style={{
                     height: `${paper.content.h - 2}mm`,
+                    /* 【2026-10-24 幅面】宽度与纸边负距由 CSS 变量驱动（见 globals.css） */
+                    ['--paper-content-w' as string]: `${paper.content.w}mm`,
+                    ['--paper-pad-x' as string]: `${-(paper.w - PAPERS.B5.content.w) / 2}mm`,
                     display: 'flex',
                     flexDirection: 'column',
                     ...punchVarsOf(backPad),

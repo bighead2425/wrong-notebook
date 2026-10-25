@@ -726,7 +726,11 @@
   .print-imitate-sheet,
   .print-deep-side {
     box-sizing: content-box;
-    margin: 0 -15mm 10mm;
+    /* 【2026-10-24 幅面】这两行原来写死 152mm / -15mm（= B5）。
+       现在跟着纸走，默认值仍是 B5 ⇒ 不设变量时与之前一字不差。
+       一个 A4 纸：内容 180mm、整纸 210mm ⇒ 负边距要 -29mm 才在 152mm 的内容列里居中。 */
+    width: var(--paper-content-w, 152mm);
+    margin: 0 var(--paper-pad-x, -15mm) 10mm;
     padding-top: 15mm;
     padding-bottom: 15mm;
     padding-left: calc(15mm + var(--punch-l, 0mm));

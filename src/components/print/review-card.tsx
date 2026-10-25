@@ -1231,6 +1231,10 @@ export function ReviewSheet({
             className="print-card print-review-sheet"
             style={{
                 height: `${paper.content.h - 2}mm`,
+                /* 【2026-10-24 幅面】宽度与纸边负距由 CSS 变量驱动（见 globals.css）：
+                   B5 = 152 / -15（与之前一字不差），A4 = 180 / -29。 */
+                ['--paper-content-w' as string]: `${paper.content.w}mm`,
+                ['--paper-pad-x' as string]: `${-(paper.w - PAPERS.B5.content.w) / 2}mm`,
                 // 页眉那条横线的颜色：A4 用蓝 —— 拍照时靠颜色分辨幅面
                 ['--paper-rule' as string]: paper.id === 'A4' ? '#1c7ed6' : '#666',
                 display: 'flex',

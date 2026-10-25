@@ -27,6 +27,8 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { usePaperConfig } from "@/lib/use-paper";
+import { paperFor } from "@/lib/paper";
 import { InsightSheet, type InsightPrintRow } from "@/components/print/insight-sheet";
 import { SheetZoom } from "@/components/print/sheet-zoom";
 import { pageQrPayload } from "@/components/print/review-card";
@@ -95,6 +97,8 @@ export function InsightScanView({
     backLabel?: string;
 }) {
     const { language } = useLanguage();
+    /** 【2026-10-24 幅面】积累纸按设置的 build 纸型（手机缩放要按真实纸宽算） */
+    const paperCfg = usePaperConfig();
     const L = useCallback(
         (zh: string, en: string) => (language === "zh" ? zh : en),
         [language],
@@ -337,6 +341,7 @@ export function InsightScanView({
                 <SheetZoom
                     className="mx-auto max-w-6xl px-4 py-6 print:max-w-none print:px-0 print:py-0"
                     defaultFit
+                    paperWmm={paperFor("build", paperCfg).w}
                     L={L}
                 >
                     <div className="print-sheet">

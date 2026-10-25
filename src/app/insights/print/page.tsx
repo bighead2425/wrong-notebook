@@ -1166,6 +1166,7 @@ function VolumePaper({
                     <SheetZoom
                         className="mx-auto max-w-6xl px-4 py-6 print:max-w-none print:px-0 print:py-0"
                         defaultFit
+                        paperWmm={buildPaper.w}
                         L={L}
                     >
                         <div className="print-sheet">
