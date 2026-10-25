@@ -208,6 +208,31 @@ export async function listRecentEvents(userId: string, errorItemId: string, limi
  * 唯一实现在 `lib/review-outcomes.ts` 的 `deriveReviewOutcomesJson()`（纯函数、前端也能用），
  * 这里只做转发 —— 免得"算最近 4 条"的逻辑有两份。
  */
+/**
+ * 【2026-10-25】按天统计流水条数 —— 统计页的"复习节奏热力"用它。
+ *
+ * 为什么放在这里、而不是让统计路由自己查：
+ * `review-event-sink-guard.test.ts` 钉着一条护栏 —— **只有本文件能直接动这张表**。
+ * 那条护栏的价值这次体现得很直接：我第一版就是图省事在路由里查的，被它拦住了。
+ *
+ * 口径：只算**未删**的题（回收箱里的复习记录不计入"练了多少"）。
+ */
+export async function countEventsByDay(
+    userId: string,
+    sinceKey: string,
+): Promise<Map<string, number>> {
+    const rows = await prisma.reviewEvent.groupBy({
+        by: ['occurredOn'],
+        where: {
+            userId,
+            occurredOn: { gte: sinceKey },
+            errorItem: { deletedAt: null },
+        },
+        _count: { _all: true },
+    });
+    return new Map(rows.map((r) => [r.occurredOn, r._count._all]));
+}
+
 export function deriveReviewOutcomes(events: readonly { outcome: unknown }[]): string {
     return deriveReviewOutcomesJson(events);
 }

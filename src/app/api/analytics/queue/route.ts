@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { internalError, unauthorized } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { reviewStatusOf, type ReviewStatus } from "@/lib/review-status";
+import { countEventsByDay } from "@/lib/review-events";
 import { subjectLabel } from "@/lib/notebook-fields";
 
 const logger = createLogger("api:analytics:queue");
@@ -123,17 +124,13 @@ export async function GET() {
          */
         const HEAT_DAYS = 84;
         const heatStart = format(addDays(today, -(HEAT_DAYS - 1)), "yyyy-MM-dd");
-        const grouped = await prisma.reviewEvent.groupBy({
-            by: ["occurredOn"],
-            where: {
-                userId,
-                occurredOn: { gte: heatStart },
-                errorItem: { deletedAt: null },
-            },
-            _count: { _all: true },
-        });
-        const heatMap = new Map<string, number>();
-        for (const g of grouped) heatMap.set(g.occurredOn, g._count._all);
+        /**
+         * ⚠️ 不能在这里直接查流水表 —— `review-event-sink-guard.test.ts` 钉着：
+         *    **只有 `lib/review-events.ts` 能直接读写这张表**。
+         * 那条护栏不是形式主义：绕过它就会出现"派生缓存和流水对不上、还不报错"。
+         * 所以读也走它提供的函数（`countEventsByDay`）。
+         */
+        const heatMap = await countEventsByDay(userId, heatStart);
 
         const heat: { date: string; count: number }[] = [];
         for (let i = HEAT_DAYS - 1; i >= 0; i -= 1) {
