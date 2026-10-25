@@ -13,7 +13,7 @@ import {
 } from "@/lib/volume-input";
 import { VOLUME_KINDS, type VolumeKind } from "@/lib/volume-code";
 import { ensureVolumeEmojiMark } from "@/lib/emoji-mark-store";
-import { readPhotoForPrint } from "@/lib/insight-photo";
+import { excludedFromPrint, readPhotoForPrint } from "@/lib/insight-photo";
 
 const logger = createLogger("api:review-volumes/[id]");
 
@@ -81,7 +81,34 @@ export async function GET(_request: Request, ctx: Ctx) {
          * 并写回库里（惰性生成，不做数据回填）。已有值直接原样返回。
          */
         const emojiMark = await ensureVolumeEmojiMark(volume);
-        return NextResponse.json({ volume: { ...volume, emojiMark } });
+
+        /**
+         * 【2026-10-25】**读卷时按「当前」入版开关过一遍图。**
+         *
+         * 为什么必须在这里：卷里的 `figureUrls` 是**建卷那一刻的快照**。
+         * 你在管理页把某张图拨成"不入版"，已建好的卷不会自己变 ——
+         * 打印出来照样有图，看起来就是"开关完全没起作用"。
+         *
+         * 只清 `figureUrls`（= 这张图这次不印），**不动**题文、顺序、页码：
+         * 快照该定死的（文字与版式）一个字不改，只是"这张图这次不跟着进"。
+         * 这与"绝不回头改已印出去的纸"不冲突 —— 已经印出来的物理纸我们改不了，
+         * 但屏幕上的下一份预览该听当前的开关。
+         */
+        let items = volume.items;
+        const insightIds = items
+            .map((it) => it.insightId)
+            .filter((x): x is string => Boolean(x));
+        if (insightIds.length > 0) {
+            // 判断收在 lib/insight-photo.ts（与 readPhotoForPrint 同一处）
+            const excluded = await excludedFromPrint(insightIds);
+            if (excluded.size > 0) {
+                items = items.map((it) =>
+                    it.insightId && excluded.has(it.insightId) ? { ...it, figureUrls: null } : it,
+                );
+            }
+        }
+
+        return NextResponse.json({ volume: { ...volume, items, emojiMark } });
     } catch (error) {
         logger.error({ error, id }, "Failed to read review volume");
         return internalError();

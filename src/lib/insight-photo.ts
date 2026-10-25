@@ -59,6 +59,24 @@ export async function readPhotoForPrint(insightId: string): Promise<string | nul
 }
 
 /**
+ * 【2026-10-25】**一次问清一批图里哪些是"不入版"的。**
+ *
+ * 用途：`GET /api/review-volumes/[id]` 读卷时按当前开关过一遍图
+ * （卷里的图是建卷快照，开关之后再拨不会自己变）。
+ *
+ * 为什么不直接在路由里查：与 `readPhotoForPrint` 同一条规矩 ——
+ * **"入版"这件事的判断只放在这个文件里**，别处只拿结论。
+ */
+export async function excludedFromPrint(insightIds: readonly string[]): Promise<Set<string>> {
+    if (insightIds.length === 0) return new Set();
+    const rows = await prisma.insightPhoto.findMany({
+        where: { insightId: { in: [...insightIds] } },
+        select: { insightId: true, includedInPrint: true },
+    });
+    return new Set(rows.filter((r) => !r.includedInPrint).map((r) => r.insightId));
+}
+
+/**
  * 【2026-10-13 第 6 条】**"入版"开关** —— 组成积累纸时这张图跟不跟着进去。
  *
  * 他原话："点中入版，则表示在组成积累纸的时候，这个图片是跟随进入的，
