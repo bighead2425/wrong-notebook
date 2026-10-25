@@ -1,4 +1,5 @@
 "use client";
+import { withBack } from "@/lib/back";
 
 /**
  * 【2026-10-19 空空第 2 条】**「举一反三」变成一扇门**
@@ -78,7 +79,7 @@ export function PracticeLinkDialog({
                         className="h-auto w-full justify-start gap-3 py-3"
                         onClick={() => {
                             onOpenChange(false);
-                            router.push(`/practice?id=${itemId}`);
+                            router.push(withBack(`/practice?id=${itemId}`));
                         }}
                     >
                         <RefreshCw className="h-4 w-4 shrink-0" />

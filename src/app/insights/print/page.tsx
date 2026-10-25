@@ -1,4 +1,5 @@
 'use client';
+import { useBackHref } from "@/lib/back";
 import { usePaperConfig, usePrintPageSize } from '@/lib/use-paper';
 import { paperFor } from '@/lib/paper';
 
@@ -167,6 +168,8 @@ function PrintContent() {
 function PrintWorkspace({ volId }: { volId: string }) {
     const router = useRouter();
     const { language } = useLanguage();
+    /** 【2026-10-25】返回键：认入口带来的 back，没有才回管理页 */
+    const backHref = useBackHref("/insights");
     const zh = language === 'zh';
     const L = (a: string, b: string) => (zh ? a : b);
 
@@ -288,7 +291,7 @@ function PrintWorkspace({ volId }: { volId: string }) {
                         title={L('返回日积月累', 'Back to takeaways')}
                         onClick={() => {
                             if (!confirmDiscard('返回', 'Go back')) return;
-                            router.push('/insights');
+                            router.push(backHref);
                         }}
                     >
                         <ArrowLeft className="h-4 w-4" />

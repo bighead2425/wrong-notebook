@@ -1,4 +1,5 @@
 "use client";
+import { useBackHref, withBack } from "@/lib/back";
 
 /**
  * ══════════════════════════════════════════════════════════════════════
@@ -83,6 +84,8 @@ const LS_SUBJECT = "insight.write.subject";
 
 export default function InsightWritePage() {
     const { language } = useLanguage();
+    /** 【2026-10-25】返回键：认入口带来的 back，没有才回主页 */
+    const backHref = useBackHref("/");
     const L = (a: string, b: string) => (language === "zh" ? a : b);
 
     const [gradeSemester, setGradeSemester] = useState("");
@@ -625,8 +628,8 @@ export default function InsightWritePage() {
                 他明说"此页不放标题"—— 这一页唯一的主角是那个编辑框。 */}
             <div className="border-b bg-background">
                 <div className="mx-auto flex w-full max-w-[1100px] items-center gap-1 px-3 py-2 md:px-6">
-                    <Link href="/">
-                        <Button variant="ghost" size="icon" title={L("返回主页", "Home")}>
+                    <Link href={backHref}>
+                        <Button variant="ghost" size="icon" title={L("返回上一页", "Back")}>
                             <ArrowLeft className="h-5 w-5" />
                         </Button>
                     </Link>
@@ -644,7 +647,7 @@ export default function InsightWritePage() {
                             <span className="hidden sm:inline">{L("管理", "Manage")}</span>
                         </Button>
                     </Link>
-                    <Link href="/insights/print">
+                    <Link href={withBack("/insights/print")}>
                         <Button variant="outline" size="sm" title={L("去日积月累·打印页", "Takeaway sheets")}>
                             <Printer className="h-4 w-4 sm:mr-1.5" />
                             <span className="hidden sm:inline">{L("打印", "Print")}</span>

@@ -1,4 +1,5 @@
 "use client";
+import { useBackHref } from "@/lib/back";
 
 import { useState, Suspense, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -22,6 +23,8 @@ function PracticeContent() {
     const router = useRouter();
     const errorItemId = searchParams.get("id");
     const { t, language } = useLanguage();
+    /** 【2026-10-25 路由审计】返回键：认入口带来的 back，没有才回主页 */
+    const backHref = useBackHref("/");
 
     const [question, setQuestion] = useState<ParsedQuestion | null>(null);
     const [loading, setLoading] = useState(false);
@@ -132,7 +135,9 @@ function PracticeContent() {
     return (
         <div className="max-w-3xl mx-auto space-y-8">
             <div className="flex justify-between items-center mb-4">
-                <Button variant="ghost" onClick={() => router.back()}>
+                {/* 【2026-10-25 路由审计】原来 router.back()：刷新过或直接打开就退站外。
+                    改成认入口带来的 back，没有才回主页。 */}
+                <Button variant="ghost" onClick={() => router.push(backHref)}>
                     <ArrowLeft className="mr-2 h-4 w-4" />
                     {t.common?.back || "返回"}
                 </Button>

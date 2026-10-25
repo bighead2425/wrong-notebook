@@ -1,4 +1,5 @@
 "use client";
+import { useBackHref, withBack } from "@/lib/back";
 
 /**
  * 日积月累 · **读**（`/insights/read`）—— 2026-10-19 如如建，同日真真按空空的要求扩
@@ -62,6 +63,8 @@ const PAGE = 20;
 
 export default function InsightReadPage() {
     const { language } = useLanguage();
+    /** 【2026-10-25】返回键：认入口带来的 back，没有才回管理页 */
+    const backHref = useBackHref("/insights");
     const L = (a: string, b: string) => (language === "zh" ? a : b);
     const router = useRouter();
 
@@ -173,14 +176,14 @@ export default function InsightReadPage() {
     const sendToPrint = () => {
         if (picked.size === 0) return;
         const ordered = rows.filter((r) => picked.has(r.id)).map((r) => r.id);
-        router.push(`/insights/print?new=${ordered.join(",")}`);
+        router.push(withBack(`/insights/print?new=${ordered.join(",")}`));
     };
 
     return (
         <main className="min-h-screen bg-background">
             <div className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur">
                 <div className="mx-auto flex w-full max-w-[720px] items-center gap-1 px-3 py-2 md:px-6">
-                    <Link href="/insights">
+                    <Link href={backHref}>
                         <Button variant="ghost" size="icon" title={L("回管理页", "Back to manage")}>
                             <ArrowLeft className="h-5 w-5" />
                         </Button>

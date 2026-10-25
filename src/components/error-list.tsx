@@ -1,4 +1,5 @@
 "use client";
+import { withBack } from "@/lib/back";
 
 import { useEffect, useState, useRef, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -180,7 +181,7 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
     const openDeepDivePrint = (id: string, e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        router.push(`/print-preview?ids=${encodeURIComponent(id)}&mode=deep`);
+        router.push(withBack(`/print-preview?ids=${encodeURIComponent(id)}&mode=deep`));
     };
 
     /**
@@ -214,7 +215,7 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
             params.set("ids", [...selectedIds].join(","));
         }
 
-        router.push(`/print-preview?${params.toString()}`);
+        router.push(withBack(`/print-preview?${params.toString()}`));
     };
 
     const handleTagClick = (tag: string) => {

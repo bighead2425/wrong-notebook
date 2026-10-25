@@ -1,4 +1,5 @@
 "use client";
+import { withBack } from "@/lib/back";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -462,7 +463,7 @@ export default function NotebooksPage() {
                     <Button
                         variant="secondary"
                         size="sm"
-                        onClick={() => router.push("/print-preview?unprinted=1")}
+                        onClick={() => router.push(withBack("/print-preview?unprinted=1"))}
                     >
                         <Printer className="mr-2 h-4 w-4" />
                         {t.notebooks?.printAllUnprinted || "打印所有未打印"}

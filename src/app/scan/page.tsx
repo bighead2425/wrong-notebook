@@ -1,4 +1,5 @@
 "use client";
+import { withBack } from "@/lib/back";
 
 /**
  * 扫码页（#11 / T8）—— 纸面二维码回流系统。
@@ -745,7 +746,7 @@ export default function ScanPage() {
 
                 {/* 顺手留个口子：手机上没键盘，翻卷去那一页看更省事 */}
                 <div className="text-center">
-                    <Button variant="ghost" size="sm" onClick={() => router.push("/review-volumes")}>
+                    <Button variant="ghost" size="sm" onClick={() => router.push(withBack("/review-volumes"))}>
                         {L("或者：去复练卷页翻一翻", "Or browse all volumes")}
                     </Button>
                 </div>

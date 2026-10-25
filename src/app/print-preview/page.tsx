@@ -1,12 +1,13 @@
 "use client";
 import { usePaperConfig, usePrintPageSize } from "@/lib/use-paper";
 import { paperFor, type PaperConfig } from "@/lib/paper";
+import { useBackHref } from "@/lib/back";
 
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import type { CSSProperties } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { House, PanelLeftClose, PanelLeftOpen, Printer } from "lucide-react";
+import { ArrowLeft, PanelLeftClose, PanelLeftOpen, Printer } from "lucide-react";
 import { cleanMarkdown } from "@/lib/markdown-utils";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
@@ -108,6 +109,8 @@ function PrintPreviewContent() {
     const { t, language } = useLanguage();
     /** 【2026-10-24 幅面】打印预览按当前纸型取纸（不传 = B5） */
     const paperCfg = usePaperConfig();
+    /** 【2026-10-25】返回键去哪：认入口带来的 ，没有才回主页 */
+    const backHref = useBackHref("/");
     const zh = language === "zh";
     const L = (a: string, b: string) => (zh ? a : b);
     /**
@@ -1480,17 +1483,19 @@ function PrintPreviewContent() {
                                     {printing ? L("准备中…", "Preparing…") : L("打印", "Print")}
                                 </span>
                             </Button>
+                            {/* 【2026-10-25 路由审计】原来固定回主页 —— 从册详情/错题列表进来打印，
+                                点它就跳过了来源那一层。改成认入口带来的 back 参数，没有才回主页。 */}
                             <Link
-                                href="/"
+                                href={backHref}
                                 onClick={(e) => {
                                     // 【2026-10-12 延伸】同上：改过就先吃掉这一下，再按他的选择决定跳不跳
                                     if (!leaveDirty) return;
                                     e.preventDefault();
-                                    void leaveThen("回主页", "Go home", () => router.push("/"));
+                                    void leaveThen("返回", "Go back", () => router.push(backHref));
                                 }}
                             >
-                                <Button variant="ghost" size="icon" title={L("回到主页", "Home")}>
-                                    <House className="h-5 w-5" />
+                                <Button variant="ghost" size="icon" title={L("返回上一页", "Back")}>
+                                    <ArrowLeft className="h-5 w-5" />
                                 </Button>
                             </Link>
                         </div>
