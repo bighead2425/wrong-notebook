@@ -564,7 +564,8 @@ function HomeContent() {
                                     className="group relative h-14 w-full flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm bg-sky-50 hover:bg-sky-100 dark:bg-sky-950/40 dark:hover:bg-sky-950/60"
                                 >
                                     <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-sky-500/60" />
-                                    <Upload aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 h-16 w-16 rotate-12 text-sky-600/20 dark:text-sky-300/15 transition-transform duration-300 group-hover:scale-110" />
+                                    <Upload aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 size-16 rotate-12 text-sky-600/20 dark:text-sky-300/15 transition-transform duration-300 group-hover:scale-110"
+                                        style={{ width: "4rem", height: "4rem" }} />
                                     <Upload className="relative h-5 w-5 shrink-0" />
                                     <span className="truncate">{L("批量上传", "Bulk")}</span>
                                 </Button>
@@ -588,7 +589,8 @@ function HomeContent() {
                                 }}
                             >
                                 <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-teal-500/60" />
-                                <Monitor aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 h-16 w-16 rotate-12 text-teal-600/20 dark:text-teal-300/15 transition-transform duration-300 group-hover:scale-110" />
+                                <Monitor aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 size-16 rotate-12 text-teal-600/20 dark:text-teal-300/15 transition-transform duration-300 group-hover:scale-110"
+                                        style={{ width: "4rem", height: "4rem" }} />
                                 <Monitor className="relative h-5 w-5 shrink-0" />
                                 <span className="truncate">{L("屏幕截图", "Shot")}</span>
                             </Button>
@@ -598,7 +600,8 @@ function HomeContent() {
                                     className="group relative h-14 w-full flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm bg-violet-50 hover:bg-violet-100 dark:bg-violet-950/40 dark:hover:bg-violet-950/60"
                                 >
                                     <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-violet-500/60" />
-                                    <Tags aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 h-16 w-16 rotate-12 text-violet-600/20 dark:text-violet-300/15 transition-transform duration-300 group-hover:scale-110" />
+                                    <Tags aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 size-16 rotate-12 text-violet-600/20 dark:text-violet-300/15 transition-transform duration-300 group-hover:scale-110"
+                                        style={{ width: "4rem", height: "4rem" }} />
                                     <Tags className="relative h-5 w-5 shrink-0" />
                                     <span className="truncate">{L("标签管理", "Tags")}</span>
                                 </Button>
@@ -609,7 +612,8 @@ function HomeContent() {
                                     className="group relative h-14 w-full flex-col gap-0.5 overflow-hidden px-1 text-[11px] sm:h-12 sm:flex-row sm:gap-2 sm:text-xs lg:h-14 lg:gap-2.5 lg:text-sm bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-950/60"
                                 >
                                     <span aria-hidden className="pointer-events-none absolute inset-x-3 top-0 h-[2px] bg-emerald-500/60" />
-                                    <QrCode aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 h-16 w-16 rotate-12 text-emerald-600/20 dark:text-emerald-300/15 transition-transform duration-300 group-hover:scale-110" />
+                                    <QrCode aria-hidden className="pointer-events-none absolute -bottom-3 -right-3 size-16 rotate-12 text-emerald-600/20 dark:text-emerald-300/15 transition-transform duration-300 group-hover:scale-110"
+                                        style={{ width: "4rem", height: "4rem" }} />
                                     <QrCode className="relative h-5 w-5 shrink-0" />
                                     <span className="truncate">{L("扫二维码", "QR")}</span>
                                 </Button>
