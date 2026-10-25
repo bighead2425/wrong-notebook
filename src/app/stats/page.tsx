@@ -3,10 +3,11 @@
 import { useLanguage } from "@/contexts/LanguageContext";
 import { WrongAnswerStats } from "@/components/wrong-answer-stats";
 import { PracticeStats } from "@/components/practice-stats";
+import { ReviewQueueStats } from "@/components/review-queue-stats";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
-import { BarChart3, TrendingUp, Activity, House } from "lucide-react";
+import { BarChart3, TrendingUp, Activity, House, Target } from "lucide-react";
 import Link from "next/link";
 
 export default function StatsPage() {
@@ -35,7 +36,7 @@ export default function StatsPage() {
             </div>
 
             <Tabs defaultValue="wrong" className="w-full">
-                <TabsList className="grid w-full grid-cols-2 mb-6">
+                <TabsList className="grid w-full grid-cols-3 mb-6">
                     <TabsTrigger value="wrong" className="flex items-center gap-2">
                         <Activity className="h-4 w-4" />
                         {t.wrongAnswerStats?.title || "Wrong Answer Stats"}
@@ -44,6 +45,12 @@ export default function StatsPage() {
                         <TrendingUp className="h-4 w-4" />
                         {t.stats?.title || "Practice Stats"}
                     </TabsTrigger>
+                    {/* 【2026-10-25】"该练什么" —— 现有两个 tab 看的是"积累了多少"，
+                        这一个回答"接下来干什么"。 */}
+                    <TabsTrigger value="queue" className="flex items-center gap-2">
+                        <Target className="h-4 w-4" />
+                        {language === "zh" ? "该练什么" : "What to practice"}
+                    </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="wrong" className="space-y-4">
@@ -51,6 +58,9 @@ export default function StatsPage() {
                 </TabsContent>
                 <TabsContent value="practice" className="space-y-4">
                     <PracticeStats />
+                </TabsContent>
+                <TabsContent value="queue" className="space-y-4">
+                    <ReviewQueueStats />
                 </TabsContent>
             </Tabs>
         </div>
