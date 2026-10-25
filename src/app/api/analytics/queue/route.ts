@@ -113,6 +113,35 @@ export async function GET() {
             if (k && k < todayKey) overdue += 1;
         }
 
+        // ── ④ 复习节奏热力（近 12 周）─────────────────────────────
+        /**
+         * 为什么要它：前三张图看"题目状态"，这张看**人**。
+         * 间隔复习最怕"停一周"—— 一停，所有题同时到期，那时再补就是雪崩。
+         *
+         * 数的是 `ReviewEvent`（真的按了"对/错"），不是"打开过页面"。
+         * 口径同错题本：不含回收箱的题（连 `userId` 一起过滤，事件表本身没有 `deletedAt`）。
+         */
+        const HEAT_DAYS = 84;
+        const heatStart = format(addDays(today, -(HEAT_DAYS - 1)), "yyyy-MM-dd");
+        const grouped = await prisma.reviewEvent.groupBy({
+            by: ["occurredOn"],
+            where: {
+                userId,
+                occurredOn: { gte: heatStart },
+                errorItem: { deletedAt: null },
+            },
+            _count: { _all: true },
+        });
+        const heatMap = new Map<string, number>();
+        for (const g of grouped) heatMap.set(g.occurredOn, g._count._all);
+
+        const heat: { date: string; count: number }[] = [];
+        for (let i = HEAT_DAYS - 1; i >= 0; i -= 1) {
+            const d = addDays(today, -i);
+            const key = format(d, "yyyy-MM-dd");
+            heat.push({ date: key, count: heatMap.get(key) ?? 0 });
+        }
+
         return NextResponse.json({
             total: rows.length,
             retired,
@@ -121,6 +150,7 @@ export async function GET() {
             buckets,
             subjects,
             forecast,
+            heat,
         });
     } catch (error) {
         logger.error({ error }, "Error fetching queue analytics");

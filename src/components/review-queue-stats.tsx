@@ -15,6 +15,8 @@ interface QueueData {
     buckets: { urgency: number; count: number }[];
     subjects: { subject: string; fresh: number; due: number; practicing: number; mastered: number; total: number }[];
     forecast: { date: string; count: number }[];
+    /** 近 84 天，每天真的按过"对/错"的次数 */
+    heat: { date: string; count: number }[];
 }
 
 /**
@@ -67,6 +69,23 @@ export function ReviewQueueStats() {
     }
 
     const maxBucket = Math.max(1, ...data.buckets.map((b) => b.count));
+
+    // ── 热力：连续天数 / 有练的天数 ──
+    const heat = data.heat ?? [];
+    let streak = 0;
+    {
+        let i = heat.length - 1;
+        // 今天还没练不算断 —— 早上的正常状态，不该让"连续"归零
+        if (i >= 0 && heat[i].count === 0) i -= 1;
+        for (; i >= 0; i -= 1) {
+            if (heat[i].count > 0) streak += 1;
+            else break;
+        }
+    }
+    const activeDays = heat.filter((d) => d.count > 0).length;
+    /** 五档深浅：0 / 1-3 / 4-8 / 9-16 / 17+ */
+    const heatColor = (n: number) =>
+        n === 0 ? "#e5e7eb" : n <= 3 ? "#bbf7d0" : n <= 8 ? "#4ade80" : n <= 16 ? "#16a34a" : "#14532d";
 
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -230,6 +249,53 @@ export function ReviewQueueStats() {
                             </Bar>
                         </BarChart>
                     </ResponsiveContainer>
+                </CardContent>
+            </Card>
+
+            {/* ── 图 4：复习节奏（近 12 周）── */}
+            <Card>
+                <CardHeader>
+                    <CardTitle className="text-base">
+                        {L("这 12 周，真正练了多少", "Actual practice over 12 weeks")}
+                    </CardTitle>
+                    <CardDescription>
+                        {L(
+                            "间隔复习最怕停一周：一停，所有题同时到期，补起来就是雪崩。空格子比深格子更值得注意。",
+                            "A skipped week makes everything come due at once. Empty cells matter more than dark ones.",
+                        )}
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                        <span>
+                            {L("连续", "Streak")} <b className="text-foreground">{streak}</b> {L("天", "days")}
+                        </span>
+                        <span>·</span>
+                        <span>
+                            {L("近 84 天里有练", "Active in last 84 days")}{" "}
+                            <b className="text-foreground">{activeDays}</b> {L("天", "days")}
+                        </span>
+                    </div>
+
+                    {/* 7 行 = 一星期，每列 = 一周。最后一列是本周（可能不满 7 格） */}
+                    <div className="grid grid-flow-col grid-rows-7 gap-[3px]">
+                        {heat.map((d) => (
+                            <div
+                                key={d.date}
+                                className="size-3 rounded-[2px]"
+                                style={{ background: heatColor(d.count) }}
+                                title={`${d.date} · ${d.count}`}
+                            />
+                        ))}
+                    </div>
+
+                    <div className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground">
+                        <span>{L("少", "less")}</span>
+                        {[0, 2, 6, 12, 20].map((n) => (
+                            <span key={n} className="size-3 rounded-[2px]" style={{ background: heatColor(n) }} />
+                        ))}
+                        <span>{L("多", "more")}</span>
+                    </div>
                 </CardContent>
             </Card>
         </div>
