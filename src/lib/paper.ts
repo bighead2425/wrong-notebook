@@ -121,3 +121,18 @@ export type PaperKind = keyof PaperConfig;
 export function paperFor(kind: PaperKind, config: Partial<PaperConfig> | null | undefined): PaperSpec {
     return paperOf(config?.[kind]);
 }
+
+/**
+ * 【2026-10-26 幅面审计】**卷的种类 → 用哪种纸的幅面**。
+ *
+ * 之前三处各写了一遍 `kind === "build" ? "build" : "review"` ——
+ * **模仿纸因此被当成复练纸**：设成 A4 也不生效（它去读了复练纸的设置）。
+ * 这类"同一个判断散在多处"的写法，改的时候一定会漏一处，收成一个函数。
+ */
+export function paperForVolumeKind(
+    kind: 'review' | 'build' | 'imitate',
+    cfg: PaperConfig,
+): PaperSpec {
+    const key: PaperKind = kind === "build" ? "build" : kind === "imitate" ? "imitate" : "review";
+    return paperFor(key, cfg);
+}

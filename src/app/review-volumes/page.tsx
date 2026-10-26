@@ -1,6 +1,6 @@
 "use client";
 import { usePaperConfig, usePrintPageSize } from "@/lib/use-paper";
-import { paperFor } from "@/lib/paper";
+import { paperFor, paperForVolumeKind } from "@/lib/paper";
 
 /**
  * 【2026-09-29 新增 / 2026-09-30 大改】**复练卷页**（复练卷管理页）。
@@ -304,7 +304,7 @@ export default function ReviewVolumesPage() {
     const kind: VolumeKind = detail?.kind && VOLUME_KINDS.includes(detail.kind) ? detail.kind : "review";
 
     /** 【2026-10-24 幅面】这一页也能打印（补印），所以页型要跟着当前卷走 */
-    usePrintPageSize(paperFor(kind === "build" ? "build" : "review", paperCfg));
+    usePrintPageSize(paperForVolumeKind(kind, paperCfg));
 
     const blankValueOf = useCallback(
         (id: string) => blankOverrides?.[id] ?? blankDefault,
@@ -1673,7 +1673,7 @@ export default function ReviewVolumesPage() {
                         <SheetZoom
                             className="mx-auto max-w-6xl px-4 py-6 print:max-w-none print:px-0 print:py-0"
                             defaultFit
-                            paperWmm={paperFor(kind === "build" ? "build" : "review", paperCfg).w}
+                            paperWmm={paperForVolumeKind(kind, paperCfg).w}
                             L={L}
                         >
                             <div className="print-sheet">
@@ -1899,7 +1899,7 @@ export default function ReviewVolumesPage() {
                                     : layout?.pages.map((page, i) => (
                                     <ReviewSheet
                                         key={i}
-                                        paper={paperFor(kind === "build" ? "build" : "review", paperCfg)}
+                                        paper={paperForVolumeKind(kind, paperCfg)}
                                         page={page}
                                         pageNo={i + 1}
                                         pageCount={layout.pages.length}

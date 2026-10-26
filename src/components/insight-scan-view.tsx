@@ -354,6 +354,9 @@ export function InsightScanView({
                                 className="mb-4"
                             >
                                 <InsightSheet
+                                    /* 【2026-10-26 幅面审计】原来没传 —— 扫码页一律按 B5 画，
+                                       所以"打印页是 A4、扫码进去变回 B5"。 */
+                                    paper={paperFor("build", paperCfg)}
                                     page={page}
                                     pageNo={i + 1}
                                     pageCount={layout.pages.length}

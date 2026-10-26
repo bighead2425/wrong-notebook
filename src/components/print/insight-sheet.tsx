@@ -385,6 +385,9 @@ export function InsightSheet({
                 /* 【2026-10-24 幅面】宽度与纸边负距由 CSS 变量驱动（见 globals.css） */
                 ['--paper-content-w' as string]: `${paper.content.w}mm`,
                 ['--paper-pad-x' as string]: `${-(paper.w - PAPERS.B5.content.w) / 2}mm`,
+                /* 【2026-10-26 幅面审计】身份条那条横线读 `var(--paper-rule, #666)`，
+                   复练纸早就设了，积累纸漏了 —— 于是 A4 下别处是蓝的、它还是灰的。 */
+                ['--paper-rule' as string]: paper.id === 'A4' ? '#1c7ed6' : '#666',
                 display: 'flex',
                 flexDirection: 'column',
                 position: 'relative',

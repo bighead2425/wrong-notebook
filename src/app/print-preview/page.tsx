@@ -137,12 +137,7 @@ function PrintPreviewContent() {
      * CSS 的 @page 规则不能按元素切换，一个文档只有一种
      * ⇒ 必须动态注入（见 lib/use-paper.ts 的 usePrintPageSize）。
      */
-    usePrintPageSize(
-        paperFor(
-            mode === "deep" ? "deepDive" : mode === "imitate" ? "imitate" : mode === "build" ? "build" : "review",
-            paperCfg,
-        ),
-    );
+    usePrintPageSize(paperFor(kindOfMode(mode), paperCfg));
     const [showQuestionText, setShowQuestionText] = useState(true);
     const [showImage, setShowImage] = useState(true);
     const [showAnswers, setShowAnswers] = useState(true);
@@ -2062,7 +2057,7 @@ function PrintPreviewContent() {
                             {reviewLayout?.pages.map((page, i) => (
                                 <ReviewSheet
                                     key={i}
-                                    paper={paperFor(mode === "build" ? "build" : "review", paperCfg)}
+                                    paper={paperFor(kindOfMode(mode), paperCfg)}
                                     page={page}
                                     pageNo={i + 1}
                                     pageCount={reviewLayout.pages.length}

@@ -28,7 +28,7 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { usePaperConfig } from "@/lib/use-paper";
-import { paperFor } from "@/lib/paper";
+import { paperFor, paperForVolumeKind } from "@/lib/paper";
 import type { ErrorItem, PaginatedResponse } from "@/types/api";
 import {
     ReviewSheet,
@@ -1246,7 +1246,7 @@ export function ScanVolumeView({
                 <SheetZoom
                     className="mx-auto max-w-6xl px-4 py-6 print:max-w-none print:px-0 print:py-0"
                     defaultFit
-                    paperWmm={paperFor(kind === "build" ? "build" : "review", paperCfg).w}
+                    paperWmm={paperForVolumeKind(kind, paperCfg).w}
                     L={L}
                 >
                     <div className="print-sheet">
@@ -1311,7 +1311,7 @@ export function ScanVolumeView({
                                 volumeNo={volume.volumeNo}
                                 kind={kind}
                                 /* 【2026-10-24 幅面】按设置里的纸渲染；不传 = B5 */
-                                paper={paperFor(kind === "build" ? "build" : "review", paperCfg)}
+                                paper={paperForVolumeKind(kind, paperCfg)}
                                 printDate={new Date()}
                                 /* 【2026-10-03 他要求】扫码预览页也显示 emoji 标识 —— 它是"查对"用的：
                                    手里这张纸和屏幕上这份卷，emoji 相同即同一份（积累纸那边同理）。 */
