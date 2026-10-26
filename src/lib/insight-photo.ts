@@ -77,6 +77,31 @@ export async function excludedFromPrint(insightIds: readonly string[]): Promise<
 }
 
 /**
+ * 【2026-10-25】**把一批卷行里"现在不入版"的图清掉**（读时过滤，不写库）。
+ *
+ * 为什么需要它：卷里的 `figureUrls` 是**建卷那一刻的快照**，
+ * 开关之后再拨不会自己变 —— 打印/扫码看到的还是老样子。
+ *
+ * ⚠️ 有**两条**按卷读数据的路，都要调这里：
+ *     · `GET /api/review-volumes/[id]`（按内部 id，打印页用）
+ *     · `GET /api/review-volumes/lookup?code=`（按纸上的卷号，扫码预览用）
+ *     漏掉任何一条，都会出现"这个页面没了、那个页面还挂着"。
+ *
+ * 只清 `figureUrls`，题文/顺序/页码一律不动 —— 快照该定死的照样定死。
+ */
+export async function stripExcludedFigures<
+    T extends { insightId: string | null; figureUrls: string | null },
+>(items: T[]): Promise<T[]> {
+    const ids = items.map((i) => i.insightId).filter((x): x is string => Boolean(x));
+    if (ids.length === 0) return items;
+    const excluded = await excludedFromPrint(ids);
+    if (excluded.size === 0) return items;
+    return items.map((it) =>
+        it.insightId && excluded.has(it.insightId) ? { ...it, figureUrls: null } : it,
+    );
+}
+
+/**
  * 【2026-10-13 第 6 条】**"入版"开关** —— 组成积累纸时这张图跟不跟着进去。
  *
  * 他原话："点中入版，则表示在组成积累纸的时候，这个图片是跟随进入的，

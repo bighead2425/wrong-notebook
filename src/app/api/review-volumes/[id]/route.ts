@@ -13,7 +13,7 @@ import {
 } from "@/lib/volume-input";
 import { VOLUME_KINDS, type VolumeKind } from "@/lib/volume-code";
 import { ensureVolumeEmojiMark } from "@/lib/emoji-mark-store";
-import { excludedFromPrint, readPhotoForPrint } from "@/lib/insight-photo";
+import { readPhotoForPrint, stripExcludedFigures } from "@/lib/insight-photo";
 
 const logger = createLogger("api:review-volumes/[id]");
 
@@ -94,19 +94,8 @@ export async function GET(_request: Request, ctx: Ctx) {
          * 这与"绝不回头改已印出去的纸"不冲突 —— 已经印出来的物理纸我们改不了，
          * 但屏幕上的下一份预览该听当前的开关。
          */
-        let items = volume.items;
-        const insightIds = items
-            .map((it) => it.insightId)
-            .filter((x): x is string => Boolean(x));
-        if (insightIds.length > 0) {
-            // 判断收在 lib/insight-photo.ts（与 readPhotoForPrint 同一处）
-            const excluded = await excludedFromPrint(insightIds);
-            if (excluded.size > 0) {
-                items = items.map((it) =>
-                    it.insightId && excluded.has(it.insightId) ? { ...it, figureUrls: null } : it,
-                );
-            }
-        }
+        // 按当前入版开关清图（判断与过滤都在 lib/insight-photo.ts）
+        const items = await stripExcludedFigures(volume.items);
 
         return NextResponse.json({ volume: { ...volume, items, emojiMark } });
     } catch (error) {

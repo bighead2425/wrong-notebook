@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { stripExcludedFigures } from "@/lib/insight-photo";
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
@@ -66,7 +67,12 @@ export async function GET(req: Request) {
         const emojiMark = await ensureVolumeEmojiMark(volume);
 
         // pageNo 直接回给前端用（超出总页数时由前端夹一下，这里不拦 —— 纸可能比库新）
-        return NextResponse.json({ volume: { ...volume, emojiMark }, pageNo });
+        /**
+         * 【2026-10-25】扫码预览这条也要按当前入版开关清图。
+         * 漏了它就会出现"打印页没了、扫码页还挂着"—— 事实上就是这样被发现的。
+         */
+        const items = await stripExcludedFigures(volume.items);
+        return NextResponse.json({ volume: { ...volume, items, emojiMark }, pageNo });
     } catch (error) {
         logger.error({ error }, "Failed to look up review volume by page code");
         return internalError();
