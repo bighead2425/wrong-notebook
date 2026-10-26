@@ -11,6 +11,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { paginateMeasured, type MeasuredBlock } from '@/lib/review-card';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 describe('超长题：独占一页、允许跨页、前后不挤', () => {
     it('★ 超长题单独成一页，里面只有它', () => {
@@ -75,5 +77,28 @@ describe('超长题：独占一页、允许跨页、前后不挤', () => {
         const blocks: MeasuredBlock[] = [{ key: 'long', heightMM: 400 }];
         const { overflow } = paginateMeasured(blocks, 'review');
         expect(overflow.map((o) => o.key)).toEqual(['long']);
+    });
+});
+
+describe('深挖纸：超长时从正面印 OCR（静态护栏）', () => {
+    const read = (rel: string) =>
+        readFileSync(join(__dirname, '..', '..', '..', 'src', rel), 'utf8');
+
+    it('★ 判定靠"真溢出"（scrollHeight / clientHeight），不是数字数', () => {
+        const src = read('components/print/deep-dive-card.tsx');
+        expect(src).toMatch(/scrollHeight\s*>\s*el\.clientHeight/);
+    });
+
+    it('★ 超长时正面高度放开、内容组搬进正面、反面整块不渲染', () => {
+        const src = read('components/print/deep-dive-card.tsx');
+        // 正面高度按 isLong 切换
+        expect(src).toMatch(/height:\s*isLong\s*\?\s*'auto'/);
+        // 正面有"超长才渲染"的分支（内容组 + 页脚）
+        expect(src).toMatch(/\{isLong\s*&&\s*\(/);
+        // 反面有"不超长才渲染"的分支
+        expect(src).toMatch(/\{!isLong\s*&&\s*\(/);
+        // 内容组和页脚确实被抽成了变量（否则搬不过去）
+        expect(src).toMatch(/const backBodyEl\s*=/);
+        expect(src).toMatch(/const backFooterEl\s*=/);
     });
 });

@@ -40,7 +40,7 @@
  */
 
 import { DEFAULT_PAPER_ID, PAPERS, type PaperSpec } from '@/lib/paper';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { SubjectChip } from '@/components/subject-chip';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
@@ -236,217 +236,50 @@ export function DeepDiveCard({
         </div>
     );
 
-    return (
-        <div className="print-card print-deep">
-            {/* ================= 正面：她反思的那面（左侧留打孔位） ================= */}
-            <div
-                className="print-deep-side print-deep-front"
-                style={{
-                    height: `${paper.content.h - 2}mm`,
-                    /* 【2026-10-24 幅面】宽度与纸边负距由 CSS 变量驱动（见 globals.css） */
-                    ['--paper-content-w' as string]: `${paper.content.w}mm`,
-                    ['--paper-pad-x' as string]: `${-(paper.w - PAPERS.B5.content.w) / 2}mm`,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    // ⚠️ 打孔位走 CSS 变量（理由同复练纸：屏幕上的"纸边"要叠在它外面）
-                    ...punchVarsOf(frontPad),
-                }}
-            >
-                {/* 二维码在正面右上（P25：正面右上 / 反面左下，各按自己那一面的视角） */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '2mm', flex: '0 0 auto' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>{identityBar}</div>
-                    {qr ? (
-                        <img
-                            className="print-qr"
-                            src={qr}
-                            alt=""
-                            style={{ width: '16mm', height: '16mm', flexShrink: 0 }}
-                        />
-                    ) : (
-                        <div style={{ width: '16mm', height: '16mm', flexShrink: 0 }} />
-                    )}
-                </div>
+    /**
+     * 【2026-10-26 超长题】**这一题一页装得下吗。**
+     *
+     * 判据就是"反面内容组会不会被裁"：它 `overflow: hidden`，
+     * 内容比版心高时 `scrollHeight > clientHeight` —— 这一条不用另算字数、
+     * 也算得准图片和公式，比按字符估可靠。
+     *
+     * 判定之后（`isLong = true`）结构与原来不同：
+     *   · 正面**不印原卷照片、不印分析区**（他原话："原来正面的内容不打印了"）
+     *   · 反过来把`内容组`（OCR + 图 + 遮挡线 + 手写区）从正面开始印
+     *   · 正面高度改成 auto ⇒ 装不下就自己翻到反面，后面的空白就空着
+     *
+     * ⚠️ 只在第一次测；判定成立后 body 变成 `overflow: visible`，
+     *    再测就永远量不出溢出了。
+     */
+    const bodyRef = useRef<HTMLDivElement | null>(null);
+    const [isLong, setIsLong] = useState(false);
+    useEffect(() => {
+        if (isLong) return;
+        const el = bodyRef.current;
+        if (!el) return;
+        if (el.scrollHeight > el.clientHeight + 2) setIsLong(true);
+    }, [isLong, item.id]);
 
-                {/*
-                    身份条横线**下面、靠左**：知识点，各知识点用 · 隔开。
-
-                    2026-09-26 他的两条意见，一起落在这块上：
-                      ① **贴着上面的横线**：原来 6mm 的盒子垂直居中，上下各空 1.6mm，
-                         看着"知识点掉下来了"；改成 `flex-start` + 0.4mm 上内边距。
-                      ② **写不下就折行，但绝不在某个知识点中间折**：
-                         所以每个知识点是**一个 nowrap 的整体**（`·` 也跟着前一个走），
-                         容器 `flex-wrap: wrap` —— 折点只会落在知识点之间的缝隙上。
-                      ③ 最多两行（容器 `maxHeight` 锁住），多出的宁可不印：
-                         两行还放不下 = 知识点标签打得太碎，该合并而不是挤第三行。
-
-                    ⚠️ 高度用 `minHeight` 而不是 `height`：绝大多数题**一行就够**，
-                       此时这一块仍是 6mm，上面横线和下面题图的位置**一动不动**。
-                */}
-                {tags.length > 0 && (
-                    <div
-                        className="print-deep-tags"
-                        style={{
-                            minHeight: `${T1_LAYOUT_MM.knowledgeRow}mm`,
-                            maxHeight: `${T1_LAYOUT_MM.knowledgeRowMax}mm`,
-                            display: 'flex',
-                            flexWrap: 'wrap',
-                            alignItems: 'flex-start',
-                            columnGap: '1.6mm',
-                            rowGap: 0,
-                            paddingTop: '0.4mm',
-                            fontSize: '8pt',
-                            lineHeight: 1.35,
-                            color: '#555',
-                            overflow: 'hidden',
-                            flex: '0 0 auto',
-                        }}
-                    >
-                        {tags.map((t, i) => (
-                            <span
-                                key={`${t}-${i}`}
-                                style={{ display: 'inline-flex', whiteSpace: 'nowrap' }}
-                            >
-                                {i > 0 && <span style={{ marginRight: '1.6mm' }}>·</span>}
-                                {t}
-                            </span>
-                        ))}
-                    </div>
-                )}
-
-                {/* 原题照片：带笔迹、**不带语义框，也不带外边框**（原页面的样子）。
-                    【2026-09-29】他要求这张也能拖右下角把手调大小（跟反面题图一样）：
-                    外层盒子 `position: relative` 托住把手，宽度/高度上限都跟着缩放百分比走。 */}
-                <div style={{ display: 'flex', justifyContent: 'center', flex: '0 0 auto', marginTop: '1.5mm' }}>
-                    <div
-                        className="print-deep-photo-box"
-                        style={{
-                            position: 'relative',
-                            width: `${photoWidthLimitPct}%`,
-                            maxWidth: '100%',
-                            // 手机上"按住照片左右拖 = 缩放"：别让浏览器把手势抢去当滚动
-                            touchAction: 'none',
-                        }}
-                        onPointerDown={(e) => {
-                            if (e.pointerType === 'mouse') return;
-                            onPhotoScaleStart?.(item.id)(e);
-                        }}
-                    >
-                        <img
-                            src={item.originalImageUrl}
-                            alt=""
-                            className="print-deep-photo"
-                            style={{
-                                width: '100%',
-                                height: 'auto',
-                                maxHeight: `${photoHeightMM}mm`,
-                                // 被 maxHeight 限住时只留白、不拉变形
-                                objectFit: 'contain',
-                                display: 'block',
-                            }}
-                        />
-                        {/* 拖拽把手：**只在屏幕上**（打印时被 CSS 隐藏），右下角、等比缩放 */}
-                        {onPhotoScaleStart && (
-                            <span
-                                className="print-fig-handle no-print"
-                                title={L('拖动调整原题照片大小', 'Drag to resize the photo')}
-                                onPointerDown={(e) => {
-                                    if (e.pointerType !== 'mouse') return;
-                                    onPhotoScaleStart(item.id)(e);
-                                }}
-                            />
-                        )}
-                    </div>
-                </div>
-
-                {/* 她自己分析的那块 —— **外边框与四角标识都归这一块**，不归照片 */}
+    /**
+     * 【2026-10-26 超长题】**反面的「内容组」：OCR + 题图 + 遮挡线 + 手写区。**
+     *
+     * 抽成变量的原因：语文/英语那种整段材料的阅读题，一页装不下。
+     * 他把规则定成 —— **正面不再印原卷照片和分析区，直接把这一组从正面开始印，
+     * 装不下就流到反面**（"原来正面的内容不打印了"）。
+     *
+     * 内容一字未动，只是从"写在反面里"变成"可以被两个分支共用"。
+     */
+    const backBodyEl = (
                 <div
-                    className="print-deep-analysis"
-                    style={{
-                        flex: 1,
-                        /**
-                         * 【2026-10-10】下限从 `crosshairMin`(110mm) 改成"一个小底"(20mm)。
-                         *
-                         * 原来写 110mm ⇒ 照片一放大，这一块就撑住 110mm 不肯让，
-                         * 整面必然溢出纸外（溢出的部分被裁掉）。
-                         * 现在它先让，照片才能真正长到纸面极限；默认尺寸下它
-                         * 本来就分到 110mm（`flex: 1` 撑满剩余空间），所以**表现不变**。
-                         */
-                        minHeight: `${DEEP_CROSSHAIR_FLOOR_MM}mm`,
-                        position: 'relative',
-                        marginTop: '1.5mm',
-                        border: '0.3mm solid #ded8ca',
-                    }}
-                >
-                    {/* 十字象限：只是"参考位置"，不赋四格语义（P6）。
-                        竖线在黄金比 61.8% 处 = 左略大右略小。 */}
-                    <div
-                        className="print-deep-cross-h"
-                        style={{ position: 'absolute', left: 0, right: 0, top: '50%', height: '0.3mm' }}
-                    />
-                    <div
-                        className="print-deep-cross-v"
-                        style={{ position: 'absolute', top: 0, bottom: 0, left: '61.8%', width: '0.3mm' }}
-                    />
-                    <CornerMark at="tl" />
-                    <CornerMark at="tr" />
-                    <CornerMark at="bl" />
-                    <CornerMark at="br" />
-                </div>
-            </div>
-
-            {/* ================= 反面：她重做的那面（右侧留打孔位） ================= */}
-            <div
-                className="print-deep-side print-deep-back"
-                style={{
-                    height: `${paper.content.h - 2}mm`,
-                    /* 【2026-10-24 幅面】宽度与纸边负距由 CSS 变量驱动（见 globals.css） */
-                    ['--paper-content-w' as string]: `${paper.content.w}mm`,
-                    ['--paper-pad-x' as string]: `${-(paper.w - PAPERS.B5.content.w) / 2}mm`,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    ...punchVarsOf(backPad),
-                }}
-            >
-                {manualDuplex && (
-                    <div
-                        className="print-flip-hint"
-                        style={{
-                            border: '1px dashed #888',
-                            borderRadius: '2mm',
-                            padding: '2mm',
-                            marginBottom: '2mm',
-                            fontSize: '9pt',
-                            color: '#555',
-                            flexShrink: 0,
-                        }}
-                    >
-                        ↩ {L('请在此处翻面', 'Flip the page here')}
-                    </div>
-                )}
-
-                {/* ⚠️ 反面**没有身份条**：有身份条就分不清哪面是正、哪面是反了 */}
-
-                {/*
-                    【2026-10-10】反面**内容组**：题干 + 题图 + 遮挡线 + 手写区 全包在里面。
-                    它 `flex: 1 1 auto + minHeight: 0 + overflow: hidden`，
-                    页脚（26mm）在外面、`flexShrink: 0`。
-
-                    为什么非这么包一层：他拿一道英语阅读题试印，**整块页脚不见了**
-                    （二维码 / 横线 / 四个日期格 / 虚线框全没了）。原因是旧结构里
-                    各块按"手写区先占 60mm"的顺序排，题干一长，60 + 26 就把一面吃满，
-                    页脚被顶到纸外、打印时被切掉。
-                    他的裁定："**留白部分是最后保障的**" ⇒ 空间不够时**先让留白**。
-                    包一层之后优先级就固定了：先扣出页脚，剩下的给内容组，
-                    内容组装不下就**裁自己**（裁掉的是最下面的手写区，不是页脚）。
-                */}
-                <div
+                    ref={bodyRef}
                     className="print-deep-body"
                     style={{
-                        flex: '1 1 auto',
+                        /* 超长时不再"抢剩余空间"，也不再裁 —— 让它自然长、自己翻页 */
+                        flex: isLong ? '0 0 auto' : '1 1 auto',
                         minHeight: 0,
                         display: 'flex',
                         flexDirection: 'column',
-                        overflow: 'hidden',
+                        overflow: isLong ? 'visible' : 'hidden',
                     }}
                 >
                     {/* 文字题干（OCR） */}
@@ -568,22 +401,11 @@ export function DeepDiveCard({
                     <PromoteBox manageType={item.manageType} L={L} />
                 </div>
                 </div>
-                {/* ↑ 反面"内容组"到此为止（题干 + 图 + 遮挡线 + 手写区）；
-                    它下面是页脚，**永远留在纸内** —— 详见上面那一大段注释。 */}
+    );
 
-                {/*
-                    页脚（2026-09-28 二改：上下结构 → **左右结构**）——
-                    他的原话：左边二维码，右边"上面是横线，下面是三个框和三个时间以及虚线框"，
-                    这样"结构更加紧凑、干净、利索"。
-
-                    演变史：
-                      · 09-26 前：整幅横线在上、二维码在左下；
-                      · 09-26：镜像正面 → 上行"二维码+横线"、下行"日期格+虚线框"（上下两行）；
-                      · 09-28（本次）：左右两块 —— 左=二维码，右=横线在上、日期格在下。
-
-                    ⚠️ 那条横线的**位置仍然固定** —— 它和上面的遮挡线一起夹出她的手写区，
-                       是 OCR 取的**下界**。页脚总高度（26mm）不变，上面的版面不受影响。
-                */}
+    /** 【2026-10-26 超长题】反面页脚（二维码 / 横线 / 四个日期格）。
+     *  超长时它跟内容组一起搬到正面末尾 —— 页脚永远留在纸内，这条规矩不变。 */
+    const backFooterEl = (
                 <div
                     className="print-deep-footer"
                     style={{
@@ -689,7 +511,246 @@ export function DeepDiveCard({
                         </div>
                     </div>
                 </div>
+    );
+
+    return (
+        <div className="print-card print-deep">
+            {/* ================= 正面：她反思的那面（左侧留打孔位） ================= */}
+            <div
+                className="print-deep-side print-deep-front"
+                style={{
+                    /* 超长题：不锁高度，让它自己翻页（反面那一页紧接着排） */
+                    height: isLong ? 'auto' : `${paper.content.h - 2}mm`,
+                    /* 【2026-10-24 幅面】宽度与纸边负距由 CSS 变量驱动（见 globals.css） */
+                    ['--paper-content-w' as string]: `${paper.content.w}mm`,
+                    ['--paper-pad-x' as string]: `${-(paper.w - PAPERS.B5.content.w) / 2}mm`,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    // ⚠️ 打孔位走 CSS 变量（理由同复练纸：屏幕上的"纸边"要叠在它外面）
+                    ...punchVarsOf(frontPad),
+                }}
+            >
+                {/* 二维码在正面右上（P25：正面右上 / 反面左下，各按自己那一面的视角） */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '2mm', flex: '0 0 auto' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>{identityBar}</div>
+                    {qr ? (
+                        <img
+                            className="print-qr"
+                            src={qr}
+                            alt=""
+                            style={{ width: '16mm', height: '16mm', flexShrink: 0 }}
+                        />
+                    ) : (
+                        <div style={{ width: '16mm', height: '16mm', flexShrink: 0 }} />
+                    )}
+                </div>
+
+                {/*
+                    身份条横线**下面、靠左**：知识点，各知识点用 · 隔开。
+
+                    2026-09-26 他的两条意见，一起落在这块上：
+                      ① **贴着上面的横线**：原来 6mm 的盒子垂直居中，上下各空 1.6mm，
+                         看着"知识点掉下来了"；改成 `flex-start` + 0.4mm 上内边距。
+                      ② **写不下就折行，但绝不在某个知识点中间折**：
+                         所以每个知识点是**一个 nowrap 的整体**（`·` 也跟着前一个走），
+                         容器 `flex-wrap: wrap` —— 折点只会落在知识点之间的缝隙上。
+                      ③ 最多两行（容器 `maxHeight` 锁住），多出的宁可不印：
+                         两行还放不下 = 知识点标签打得太碎，该合并而不是挤第三行。
+
+                    ⚠️ 高度用 `minHeight` 而不是 `height`：绝大多数题**一行就够**，
+                       此时这一块仍是 6mm，上面横线和下面题图的位置**一动不动**。
+                */}
+                {tags.length > 0 && (
+                    <div
+                        className="print-deep-tags"
+                        style={{
+                            minHeight: `${T1_LAYOUT_MM.knowledgeRow}mm`,
+                            maxHeight: `${T1_LAYOUT_MM.knowledgeRowMax}mm`,
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            alignItems: 'flex-start',
+                            columnGap: '1.6mm',
+                            rowGap: 0,
+                            paddingTop: '0.4mm',
+                            fontSize: '8pt',
+                            lineHeight: 1.35,
+                            color: '#555',
+                            overflow: 'hidden',
+                            flex: '0 0 auto',
+                        }}
+                    >
+                        {tags.map((t, i) => (
+                            <span
+                                key={`${t}-${i}`}
+                                style={{ display: 'inline-flex', whiteSpace: 'nowrap' }}
+                            >
+                                {i > 0 && <span style={{ marginRight: '1.6mm' }}>·</span>}
+                                {t}
+                            </span>
+                        ))}
+                    </div>
+                )}
+
+                {/* 【2026-10-26 超长题】超长时不印照片、不印分析区 —— 见下面那个分支 */}
+                {!isLong && (<>
+                {/* 原题照片：带笔迹、**不带语义框，也不带外边框**（原页面的样子）。
+                    【2026-09-29】他要求这张也能拖右下角把手调大小（跟反面题图一样）：
+                    外层盒子 `position: relative` 托住把手，宽度/高度上限都跟着缩放百分比走。 */}
+                <div style={{ display: 'flex', justifyContent: 'center', flex: '0 0 auto', marginTop: '1.5mm' }}>
+                    <div
+                        className="print-deep-photo-box"
+                        style={{
+                            position: 'relative',
+                            width: `${photoWidthLimitPct}%`,
+                            maxWidth: '100%',
+                            // 手机上"按住照片左右拖 = 缩放"：别让浏览器把手势抢去当滚动
+                            touchAction: 'none',
+                        }}
+                        onPointerDown={(e) => {
+                            if (e.pointerType === 'mouse') return;
+                            onPhotoScaleStart?.(item.id)(e);
+                        }}
+                    >
+                        <img
+                            src={item.originalImageUrl}
+                            alt=""
+                            className="print-deep-photo"
+                            style={{
+                                width: '100%',
+                                height: 'auto',
+                                maxHeight: `${photoHeightMM}mm`,
+                                // 被 maxHeight 限住时只留白、不拉变形
+                                objectFit: 'contain',
+                                display: 'block',
+                            }}
+                        />
+                        {/* 拖拽把手：**只在屏幕上**（打印时被 CSS 隐藏），右下角、等比缩放 */}
+                        {onPhotoScaleStart && (
+                            <span
+                                className="print-fig-handle no-print"
+                                title={L('拖动调整原题照片大小', 'Drag to resize the photo')}
+                                onPointerDown={(e) => {
+                                    if (e.pointerType !== 'mouse') return;
+                                    onPhotoScaleStart(item.id)(e);
+                                }}
+                            />
+                        )}
+                    </div>
+                </div>
+
+                {/* 她自己分析的那块 —— **外边框与四角标识都归这一块**，不归照片 */}
+                <div
+                    className="print-deep-analysis"
+                    style={{
+                        flex: 1,
+                        /**
+                         * 【2026-10-10】下限从 `crosshairMin`(110mm) 改成"一个小底"(20mm)。
+                         *
+                         * 原来写 110mm ⇒ 照片一放大，这一块就撑住 110mm 不肯让，
+                         * 整面必然溢出纸外（溢出的部分被裁掉）。
+                         * 现在它先让，照片才能真正长到纸面极限；默认尺寸下它
+                         * 本来就分到 110mm（`flex: 1` 撑满剩余空间），所以**表现不变**。
+                         */
+                        minHeight: `${DEEP_CROSSHAIR_FLOOR_MM}mm`,
+                        position: 'relative',
+                        marginTop: '1.5mm',
+                        border: '0.3mm solid #ded8ca',
+                    }}
+                >
+                    {/* 十字象限：只是"参考位置"，不赋四格语义（P6）。
+                        竖线在黄金比 61.8% 处 = 左略大右略小。 */}
+                    <div
+                        className="print-deep-cross-h"
+                        style={{ position: 'absolute', left: 0, right: 0, top: '50%', height: '0.3mm' }}
+                    />
+                    <div
+                        className="print-deep-cross-v"
+                        style={{ position: 'absolute', top: 0, bottom: 0, left: '61.8%', width: '0.3mm' }}
+                    />
+                    <CornerMark at="tl" />
+                    <CornerMark at="tr" />
+                    <CornerMark at="bl" />
+                    <CornerMark at="br" />
+                </div>
+                </>)}
+
+                {/* 【2026-10-26 超长题】把反面的内容组从正面开始印，装不下自己翻到反面。
+                    之后剩下的空间就是空白，不再塞东西（他的规则）。 */}
+                {isLong && (
+                    <>
+                        {backBodyEl}
+                        {backFooterEl}
+                    </>
+                )}
             </div>
+
+            {/* ================= 反面：她重做的那面（右侧留打孔位） ================= */}
+            {/* 【2026-10-26 超长题】超长时内容组已经搬到正面了，这一面不再渲染 */}
+            {!isLong && (
+            <div
+                className="print-deep-side print-deep-back"
+                style={{
+                    height: `${paper.content.h - 2}mm`,
+                    /* 【2026-10-24 幅面】宽度与纸边负距由 CSS 变量驱动（见 globals.css） */
+                    ['--paper-content-w' as string]: `${paper.content.w}mm`,
+                    ['--paper-pad-x' as string]: `${-(paper.w - PAPERS.B5.content.w) / 2}mm`,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    ...punchVarsOf(backPad),
+                }}
+            >
+                {manualDuplex && (
+                    <div
+                        className="print-flip-hint"
+                        style={{
+                            border: '1px dashed #888',
+                            borderRadius: '2mm',
+                            padding: '2mm',
+                            marginBottom: '2mm',
+                            fontSize: '9pt',
+                            color: '#555',
+                            flexShrink: 0,
+                        }}
+                    >
+                        ↩ {L('请在此处翻面', 'Flip the page here')}
+                    </div>
+                )}
+
+                {/* ⚠️ 反面**没有身份条**：有身份条就分不清哪面是正、哪面是反了 */}
+
+                {/*
+                    【2026-10-10】反面**内容组**：题干 + 题图 + 遮挡线 + 手写区 全包在里面。
+                    它 `flex: 1 1 auto + minHeight: 0 + overflow: hidden`，
+                    页脚（26mm）在外面、`flexShrink: 0`。
+
+                    为什么非这么包一层：他拿一道英语阅读题试印，**整块页脚不见了**
+                    （二维码 / 横线 / 四个日期格 / 虚线框全没了）。原因是旧结构里
+                    各块按"手写区先占 60mm"的顺序排，题干一长，60 + 26 就把一面吃满，
+                    页脚被顶到纸外、打印时被切掉。
+                    他的裁定："**留白部分是最后保障的**" ⇒ 空间不够时**先让留白**。
+                    包一层之后优先级就固定了：先扣出页脚，剩下的给内容组，
+                    内容组装不下就**裁自己**（裁掉的是最下面的手写区，不是页脚）。
+                */}
+                {backBodyEl}
+                {/* ↑ 反面"内容组"到此为止（题干 + 图 + 遮挡线 + 手写区）；
+                    它下面是页脚，**永远留在纸内** —— 详见上面那一大段注释。 */}
+
+                {/*
+                    页脚（2026-09-28 二改：上下结构 → **左右结构**）——
+                    他的原话：左边二维码，右边"上面是横线，下面是三个框和三个时间以及虚线框"，
+                    这样"结构更加紧凑、干净、利索"。
+
+                    演变史：
+                      · 09-26 前：整幅横线在上、二维码在左下；
+                      · 09-26：镜像正面 → 上行"二维码+横线"、下行"日期格+虚线框"（上下两行）；
+                      · 09-28（本次）：左右两块 —— 左=二维码，右=横线在上、日期格在下。
+
+                    ⚠️ 那条横线的**位置仍然固定** —— 它和上面的遮挡线一起夹出她的手写区，
+                       是 OCR 取的**下界**。页脚总高度（26mm）不变，上面的版面不受影响。
+                */}
+                {backFooterEl}
+            </div>
+            )}
         </div>
     );
 }
