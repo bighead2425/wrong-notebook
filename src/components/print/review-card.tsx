@@ -626,6 +626,8 @@ export function ReviewQuestionBlock({
     reviewMarkDisabled,
     masteryMastered,
     highlighted,
+    /** 【2026-10-26 超长题】允许这一块跨页（普通题不拆） */
+    long,
     onMasteryToggle,
     masteryLeftMM,
     onMoveUp,
@@ -711,6 +713,11 @@ export function ReviewQuestionBlock({
      */
     masteryMastered?: boolean;
     /**
+     * 【2026-10-26 超长题】这一块**独占一页且允许跨页**（由 `paginateMeasured` 判定）。
+     * 语文/英语那种整段材料的阅读题：一栏装不下，硬裁会把题干后半截切掉。
+     */
+    long?: boolean;
+    /**
      * 【2026-10-18 空空第 2 条】**把这道题凸显出来**（从详情页二维码跳进来看"相关卷"时）。
      * 只画一圈橙色描边 + 一枚"这道题"小标签，**纯屏幕元素（`no-print`）** ⇒ 不碰纸面任何东西。
      */
@@ -744,7 +751,7 @@ export function ReviewQuestionBlock({
 
     return (
         <div
-            className="print-review-block"
+            className={long ? "print-review-block print-long-question" : "print-review-block"}
             data-review-block={item.id}
             style={{
                 display: 'flex',
@@ -1303,6 +1310,7 @@ export function ReviewSheet({
                                      */
                                     <div key={b.key} style={{ position: 'relative', flex: '0 0 auto' }}>
                                         <ReviewQuestionBlock
+                                            long={b.long}
                                             item={item}
                                             seq={b.seq}
                                             blankLines={blank}
@@ -1346,6 +1354,7 @@ export function ReviewSheet({
                                 ) : (
                                     <Fragment key={b.key}>
                                         <ReviewQuestionBlock
+                                            long={b.long}
                                             item={item}
                                             seq={b.seq}
                                             blankLines={blank}

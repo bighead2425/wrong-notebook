@@ -787,6 +787,18 @@
     background: transparent !important;
   }
 
+  /* 【2026-10-26 超长题】**这一块允许自己翻页。**
+     语文/英语那种整段材料的阅读题，一栏装不下；按一页硬裁会把题干后半截切掉。
+     分页算法（`paginateMeasured`）已经让它独占一页，
+     这里只需要允许它跨页 —— 剩下的空间就按空白处理，后面不再排题。
+
+     ⚠️ 显式写死 `auto`：普通题块默认也是 auto，但将来谁给
+     `.print-review-block` 加了 `avoid`，长题又会被裁掉。 */
+  .print-long-question {
+    break-inside: auto !important;
+    page-break-inside: auto !important;
+  }
+
   .print-review-sheet,
   .print-imitate-sheet,
   .print-deep-side {

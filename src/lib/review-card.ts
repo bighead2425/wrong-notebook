@@ -273,6 +273,18 @@ export interface MeasuredBlock {
 export interface MeasuredBlockLayout extends MeasuredBlock {
     /** 流水号（1 起）—— 只是这份卷的排序号，不是题号 */
     seq: number;
+    /**
+     * 【2026-10-26 超长题】**这块一栏装不下**（语文/英语阅读那种整段材料）。
+     *
+     * 这类题的处理：
+     *   · **独占一页**（前面不满也换页、后面不许别的题续排 —— 见 `paginateMeasured`）
+     *   · **允许跨页**（渲染层给它 `break-inside: auto`；普通题是 avoid，不许拆）
+     *   · 排完之后剩下的空间就是留白，不再塞题
+     *
+     * 为什么值得单独一档：超长题总量很小（他判断"模仿绝无可能、复练较低"），
+     * 浪费那半页纸，比把题裁掉强得多。
+     */
+    long?: boolean;
 }
 
 export interface MeasuredColumnLayout {
@@ -350,8 +362,30 @@ export function paginateMeasured(
     blocks.forEach((b, i) => {
         // 量出来的高度 + 一点余量（吸收"量完再渲染"的取整差，见 REVIEW_BLOCK_SLACK_MM）
         const h = b.heightMM + REVIEW_BLOCK_SLACK_MM;
-        // 一栏都装不下 —— 记下来提示换纸，但仍给它单独一栏（**不静默丢题**）
-        if (h > usableMM + EPS) overflow.push({ key: b.key, heightMM: b.heightMM });
+        const isLong = h > usableMM + EPS;
+
+        /**
+         * 【2026-10-26 超长题】**一栏装不下 ⇒ 独占一页，允许跨页。**
+         *
+         * 原来的做法（2026-10-02 那版）：装不下也给它单独一栏、记进 `overflow`
+         * 提示"换大纸"。但栏高是死的 —— 内容超出就被页裁掉，**题目后半截直接消失**。
+         * 阅读题那种整段材料正好落在这个坑里。
+         *
+         * 现在改成：
+         *   · 先把前面的页收干净（前面那道题即使没排满，也在它自己那页结束）
+         *   · 它自己**单独成一页**（这一页只有它）
+         *   · 渲染层给它 `break-inside: auto` ⇒ 装不下就自己翻到下一页
+         *   · 之后 `current`/`pageColumns` 都是空的 ⇒ **后面的题自然另起一页**，
+         *     不会挤进超长题剩下的空白里（他要的就是"后面不排"）
+         */
+        if (isLong) {
+            overflow.push({ key: b.key, heightMM: b.heightMM });
+            closeAll();
+            pages.push({
+                columns: [{ blocks: [{ key: b.key, heightMM: b.heightMM, seq: i + 1, long: true }] }],
+            });
+            return;
+        }
 
         // 本栏排不下 ⇒ 整块推到下一栏（**不拆题**）
         if (current.length > 0 && used + h > usableMM + EPS) closeColumn();
