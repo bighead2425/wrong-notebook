@@ -116,7 +116,7 @@ describe('深挖纸：超长时从正面印 OCR（静态护栏）', () => {
         // 页头抽成 headerEl —— 正面与续页共用同一份
         expect(src).toMatch(/const headerEl\s*=/);
         // 续页里确实引用了 headerEl
-        expect(src).toMatch(/longCuts\.slice\(1\)[\s\S]{0,1200}\{headerEl\}/);
+        expect(src).toMatch(/longCuts\.slice\(1\)[\s\S]{0,3000}\{headerEl\}/);
         // 续页必须另起一张纸
         expect(src).toMatch(/breakBefore:\s*'page'/);
     });

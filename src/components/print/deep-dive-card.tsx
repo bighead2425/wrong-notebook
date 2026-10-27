@@ -837,6 +837,16 @@ export function DeepDiveCard({
                 const start = longCuts[i + 1];
                 const end = longCuts[i + 2] ?? qBlocks.length;
                 const isLast = i === longCuts.length - 2;
+                /**
+                 * 【2026-10-27 打孔位】续页也要**按奇偶交替**，不能一律靠左。
+                 *
+                 * 物理事实：双面打印时第 1、2 页是同一张纸的两面，翻过来看那条边在右边；
+                 * 第 3 页是新一张纸的正面，又回到左边。所以：
+                 *   页序 1（正面）→ 左孔 · 2（背面）→ 右孔 · 3 → 左 · 4 → 右 …
+                 * 原来这里一律用 frontPad，导致"奇偶页都在左边"，打孔位置对不上两张纸。
+                 * `i` 是续页序号，它对应整摞里的第 `i + 2` 页。
+                 */
+                const pad = (i + 2) % 2 === 0 ? backPad : frontPad;
                 return (
                     <div
                         key={`deep-page-${i + 2}`}
@@ -848,7 +858,7 @@ export function DeepDiveCard({
                             ['--paper-pad-x' as string]: `${-(paper.w - PAPERS.B5.content.w) / 2}mm`,
                             display: 'flex',
                             flexDirection: 'column',
-                            ...punchVarsOf(frontPad),
+                            ...punchVarsOf(pad),
                         }}
                     >
                         {headerEl}
