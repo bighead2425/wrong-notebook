@@ -19,7 +19,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, Trash2, Loader2, AlertTriangle, Eye, EyeOff, Languages, User, Bot, Shield, RefreshCw, Plus, Zap, CheckCircle2, XCircle, Download, Upload, BarChart3, LogOut } from "lucide-react";
+import { Settings, Trash2, Loader2, AlertTriangle, Eye, EyeOff, Languages, User, Bot, RefreshCw, Plus, Zap, CheckCircle2, XCircle, Download, Upload, BarChart3, LogOut } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
@@ -133,6 +133,12 @@ export function SettingsDialog({
     const [selectedFileName, setSelectedFileName] = useState<string>("");
 
     const router = useRouter();
+    /**
+     * 【2026-10-27】是否管理员。
+     * 单独抽出来有两个原因：① 下面要用好几次，别到处写 `as any`；
+     * ② 用 `{ role?: string }` 而不是 `any`，就不再新增 `no-explicit-any` 报错。
+     */
+    const isAdmin = (session?.user as { role?: string } | undefined)?.role === 'admin';
 
     useEffect(() => {
         if (open) {
@@ -739,14 +745,18 @@ export function SettingsDialog({
                 </DialogHeader>
 
                 <Tabs defaultValue="general" className="flex min-h-0 w-full flex-1 flex-col">
-                    <TabsList className={`grid w-full grid-cols-4 ${(session?.user as any)?.role === 'admin' ? 'sm:grid-cols-7' : 'sm:grid-cols-4'} gap-1 h-auto`}>
+                    <TabsList className={`grid w-full grid-cols-4 ${(session?.user as any)?.role === 'admin' ? 'sm:grid-cols-6' : 'sm:grid-cols-4'} gap-1 h-auto`}>
                         <TabsTrigger value="general" className="px-2 sm:px-3">
                             <Languages className="h-4 w-4 sm:mr-2" />
                             <span className="hidden sm:inline">{t.settings?.tabs?.general || "General"}</span>
                         </TabsTrigger>
+                        {/* 【2026-10-27 空空】「账户」和「用户管理」合并成**一个**页签，
+                            标签**仍然叫「账户」**（更简洁）；只是内容变了：
+                            管理员在上面多看到「用户列表」，中间一条分隔线，下面还是自己的账户。
+                            ⚠️ 功能一个没动 —— 非管理员照样只能看自己的资料。 */}
                         <TabsTrigger value="account" className="px-2 sm:px-3">
                             <User className="h-4 w-4 sm:mr-2" />
-                            <span className="hidden sm:inline">{t.settings?.tabs?.account || "Account"}</span>
+                            <span className="hidden sm:inline">{t.settings?.tabs?.account || "账户"}</span>
                         </TabsTrigger>
                         {(session?.user as any)?.role === 'admin' && (
                             <>
@@ -757,10 +767,6 @@ export function SettingsDialog({
                                 <TabsTrigger value="prompts" className="px-2 sm:px-3">
                                     <MessageSquareText className="h-4 w-4 sm:mr-2" />
                                     <span className="hidden sm:inline">{t.settings?.tabs?.prompts || "Prompts"}</span>
-                                </TabsTrigger>
-                                <TabsTrigger value="admin" className="px-2 sm:px-3">
-                                    <Shield className="h-4 w-4 sm:mr-2" />
-                                    <span className="hidden sm:inline">{t.settings?.tabs?.admin || "User Management"}</span>
                                 </TabsTrigger>
                             </>
                         )}
@@ -944,6 +950,27 @@ export function SettingsDialog({
 
                     {/* Account Tab */}
                     <TabsContent value="account" className="space-y-4 py-4">
+                        {/* 【2026-10-27 空空】用户管理在上、账户在下，中间一条分隔线。
+                            非管理员看不到这一块（那段代码在导入时就按 role 挡掉了）。 */}
+                        {isAdmin && (
+                            <>
+                                <Button
+                                    variant="outline"
+                                    className="w-full justify-start gap-2"
+                                    onClick={() => {
+                                        setOpen(false)
+                                        router.push("/admin")
+                                    }}
+                                >
+                                    <BarChart3 className="h-4 w-4" />
+                                    {t.admin?.dashboard?.title || "Admin Dashboard"}
+                                </Button>
+                                <div className="rounded-lg border p-3">
+                                    <UserManagement />
+                                </div>
+                                <div className="my-2 border-t" />
+                            </>
+                        )}
                         {profileLoading ? (
                             <div className="flex justify-center py-8">
                                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -1402,27 +1429,8 @@ export function SettingsDialog({
                         </Button>
                     </TabsContent>
 
-                    {/* Admin Tab */}
-                    {
-                        (session?.user as any)?.role === 'admin' && (
-                            <TabsContent value="admin" className="space-y-4 py-4">
-                                <Button
-                                    variant="outline"
-                                    className="w-full justify-start gap-2"
-                                    onClick={() => {
-                                        setOpen(false)
-                                        router.push("/admin")
-                                    }}
-                                >
-                                    <BarChart3 className="h-4 w-4" />
-                                    {t.admin?.dashboard?.title || "Admin Dashboard"}
-                                </Button>
-                                <div className="border-t pt-4">
-                                    <UserManagement />
-                                </div>
-                            </TabsContent>
-                        )
-                    }
+                    {/* 【2026-10-27】原来的「用户管理」独立页签已并入上面的「账户」页签，
+                        这里不再保留空壳。 */}
 
                     {/* 【2026-10-24】「备份」子页（原「危险」）：导出 / 导入 / 留后路 */}
                     <TabsContent value="danger" className="space-y-4 py-4">
