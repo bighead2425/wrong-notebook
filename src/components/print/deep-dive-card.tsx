@@ -65,6 +65,32 @@ import { normalizeFigureScale } from '@/lib/review-card';
 import { useFigureImages } from './use-print-images';
 import { PromoteBox } from './promote-box';
 
+/**
+ * 【2026-10-27 超长题分页】把题干按"空行"切成若干块。
+ *
+ * 为什么按空行：Markdown 里 `\n\n` 就是块边界（新段落/新列表/新图），
+ * 按它切**不会把一段话劈成两半**；拼回去用 `join('\n\n')` 语义完全等价。
+ *
+ * ⚠️ 代码围栏（```）里的空行不是块边界 —— 围栏没闭合时把后续合并回去，
+ *    否则一段代码会被切到两页去。
+ */
+export function splitMarkdownBlocks(text: string): string[] {
+    const raw = text.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
+    const out: string[] = [];
+    let buf = '';
+    for (const seg of raw) {
+        buf = buf ? `${buf}\n\n${seg}` : seg;
+        // 围栏数量为奇数 = 还在一段代码里，先不切
+        const fences = (buf.match(/```/g) || []).length;
+        if (fences % 2 === 0) {
+            out.push(buf);
+            buf = '';
+        }
+    }
+    if (buf) out.push(buf);
+    return out.length ? out : text.trim() ? [text.trim()] : [];
+}
+
 /** 四角定位标识。用**形状**而不是四种颜色 —— 黑白复印/灰度扫描下颜色全变灰。 */
 const CORNER_SIZE = '5mm';
 const CORNER_WEIGHT = '0.5mm';
@@ -260,6 +286,66 @@ export function DeepDiveCard({
         if (el.scrollHeight > el.clientHeight + 2) setIsLong(true);
     }, [isLong, item.id]);
 
+    /* ===== 【2026-10-27 超长题分页】 =====
+       超长时不再"把纸拉长、让浏览器自己截"，改成软件自己按 225mm 装页。
+
+       规矩（空空 2026-10-27 定）：
+         · **每页都印身份条** —— 续页是另外一张物理纸，掉了要一眼认得出是哪道题；
+           传统"反面"不印，是因为它和正面是同一张纸的两面，超长续页不是。
+         · **最后一页加页脚**（二维码 + 四个日期格 + 虚线框），并靠书写区 `flex:1` 顶到纸底。
+         · **宁可多一页，不可少一字** —— 页高用 minHeight，量高了就往下长。
+
+       ⚠️ 页高绝不能写死 height：`.print-deep-side` 是 `overflow: hidden`，
+          一旦写死并把内容估高，多出来的会被**静默裁掉**（不报错、不留痕）。 */
+    const qText = (item.questionText || item.ocrText || '').trim();
+    const qBlocks = useMemo(() => splitMarkdownBlocks(qText), [qText]);
+    /** 每页**结束**的块索引（不含本身）；null = 还没量完，先按老办法渲染 */
+    const [longCuts, setLongCuts] = useState<number[] | null>(null);
+    const measureRef = useRef<HTMLDivElement | null>(null);
+
+    useEffect(() => {
+        if (!isLong || longCuts) return;
+        const box = measureRef.current;
+        if (!box) return;
+        const kids = Array.from(box.children) as HTMLElement[];
+        if (!kids.length || kids.length !== qBlocks.length) return;
+        const toMM = (px: number) => (px * 25.4) / 96;
+        /* ⚠️ `getBoundingClientRect().height` **不含外边距**，而段落之间本来就有 4~5mm 的间距。
+           不算进去就会低估、每页多塞一块，结果是被顶出去。
+           每块统一加 5mm 当"段间距"，宁可少装一块。 */
+        const heights = kids.map((k) => toMM(k.getBoundingClientRect().height) + 5);
+
+        const pageMM = paper.content.h - 2;
+        /** 页眉：身份条 + 一点间隙 */
+        const headMM = T1_LAYOUT_MM.identityBar + 3;
+        /** 第一页还多一行知识点（按两行算，宁多不少） */
+        const knowMM = T1_LAYOUT_MM.knowledgeRowMax + 1;
+        /** 最后一页要给"题图 + 遮挡线 + 手写区 + 页脚"让地方 —— 按经验上限预留 */
+        const TAIL_MM = 95;
+        /** 量高必然有误差，每页留 4mm 安全垫：估小会被裁，估大只是多一页 */
+        const SAFE = 4;
+
+        /** 每一页**起始**的块索引。允许以 `heights.length` 结尾 ——
+         *  那表示"最后一页只剩尾部（题图/遮挡线/手写区/页脚），没有正文"。 */
+        const starts: number[] = [0];
+        let used = 0;
+        let cap = pageMM - headMM - knowMM - SAFE;
+        for (let i = 0; i < heights.length; i++) {
+            if (used > 0 && used + heights[i] > cap) {
+                starts.push(i);
+                used = 0;
+                cap = pageMM - headMM - SAFE;
+            }
+            used += heights[i];
+        }
+        // 本页剩下的空间放不下尾部 ⇒ 尾部另起一页（正文到此为止）
+        if (used + TAIL_MM > cap) starts.push(heights.length);
+
+        /* 放到下一帧再落状态：effect 里同步 setState 会触发级联渲染（lint 会拦）。 */
+        const raf = requestAnimationFrame(() => setLongCuts(starts));
+        return () => cancelAnimationFrame(raf);
+    }, [isLong, longCuts, qBlocks, paper]);
+
     /**
      * 【2026-10-26 超长题】**反面的「内容组」：OCR + 题图 + 遮挡线 + 手写区。**
      *
@@ -269,9 +355,10 @@ export function DeepDiveCard({
      *
      * 内容一字未动，只是从"写在反面里"变成"可以被两个分支共用"。
      */
-    const backBodyEl = (
+    const renderBody = (slice?: { text: string; tail: boolean }) => (
                 <div
-                    ref={bodyRef}
+                    /* 分页渲染时这一块只是"本页的正文"，不再当超长探针 */
+                    ref={slice ? undefined : bodyRef}
                     className="print-deep-body"
                     style={{
                         /* 超长时不再"抢剩余空间"，也不再裁 —— 让它自然长、自己翻页 */
@@ -284,7 +371,10 @@ export function DeepDiveCard({
                 >
                     {/* 文字题干（OCR） */}
                     <div className="print-deep-question" style={{ flexShrink: 0, marginTop: '2mm', fontSize: '10pt' }}>
-                    {item.questionText || item.ocrText ? (
+                    {slice ? (
+                        /* 分页渲染：只画本页这几块（拼回去与原 Markdown 语义等价） */
+                        <MarkdownRenderer content={slice.text} />
+                    ) : item.questionText || item.ocrText ? (
                         <MarkdownRenderer content={(item.questionText || item.ocrText) as string} />
                     ) : (
                         <div
@@ -300,6 +390,9 @@ export function DeepDiveCard({
                     )}
                 </div>
 
+                {/* 【2026-10-27 分页】题图 / 遮挡线 / 手写区 = "尾部"，只在**最后一页**画。
+                    Fragment 包不改变布局（不是盒子），正常单页那张纸一字不动。 */}
+                {(!slice || slice.tail) && (<>
                 {/* 题图：橙框圈出来的那块，挂在题干**下方、靠左**。
                     文字题干 + 题图 = 真题。没有橙框（大多数题）就什么都不挂。 */}
                 {figures.length > 0 && (
@@ -404,6 +497,7 @@ export function DeepDiveCard({
                 >
                     <PromoteBox manageType={item.manageType} L={L} />
                 </div>
+                </>)}
                 </div>
     );
 
@@ -517,14 +611,29 @@ export function DeepDiveCard({
                 </div>
     );
 
+    /** 【2026-10-27 超长题分页】页头（身份条 + 二维码）—— **每一页都印**。
+     *  续页是另外一张物理纸，掉了要一眼认得出是哪道题，所以不能只在第一页有。 */
+    const headerEl = (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '2mm', flex: '0 0 auto' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>{identityBar}</div>
+            {qr ? (
+                <img className="print-qr" src={qr} alt="" style={{ width: '16mm', height: '16mm', flexShrink: 0 }} />
+            ) : (
+                <div style={{ width: '16mm', height: '16mm', flexShrink: 0 }} />
+            )}
+        </div>
+    );
+
     return (
         <div className="print-card print-deep">
             {/* ================= 正面：她反思的那面（左侧留打孔位） ================= */}
             <div
                 className="print-deep-side print-deep-front"
                 style={{
-                    /* 超长题：不锁高度，让它自己翻页（反面那一页紧接着排） */
-                    height: isLong ? 'auto' : `${paper.content.h - 2}mm`,
+                    /* 【2026-10-27】超长题改成 minHeight：按页装箱后，估高了就往下长（不裁字）；
+                       普通单页仍是**定高**，版式靠它锁死，不能动。 */
+                    height: isLong ? undefined : `${paper.content.h - 2}mm`,
+                    minHeight: isLong ? `${paper.content.h - 2}mm` : undefined,
                     /* 【2026-10-24 幅面】宽度与纸边负距由 CSS 变量驱动（见 globals.css） */
                     ['--paper-content-w' as string]: `${paper.content.w}mm`,
                     ['--paper-pad-x' as string]: `${-(paper.w - PAPERS.B5.content.w) / 2}mm`,
@@ -535,19 +644,7 @@ export function DeepDiveCard({
                 }}
             >
                 {/* 二维码在正面右上（P25：正面右上 / 反面左下，各按自己那一面的视角） */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '2mm', flex: '0 0 auto' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>{identityBar}</div>
-                    {qr ? (
-                        <img
-                            className="print-qr"
-                            src={qr}
-                            alt=""
-                            style={{ width: '16mm', height: '16mm', flexShrink: 0 }}
-                        />
-                    ) : (
-                        <div style={{ width: '16mm', height: '16mm', flexShrink: 0 }} />
-                    )}
-                </div>
+                {headerEl}
 
                 {/*
                     身份条横线**下面、靠左**：知识点，各知识点用 · 隔开。
@@ -678,15 +775,79 @@ export function DeepDiveCard({
                 </div>
                 </>)}
 
+                {/* 【2026-10-27 分页】量高用的隐形容器：只量，不占位（绝对定位）。 */}
+                {isLong && !longCuts && qBlocks.length > 1 && (
+                    <div
+                        ref={measureRef}
+                        aria-hidden
+                        style={{
+                            position: 'absolute',
+                            left: 0,
+                            top: 0,
+                            width: `${paper.content.w - 12}mm`,
+                            height: 0,
+                            overflow: 'hidden',
+                            visibility: 'hidden',
+                            pointerEvents: 'none',
+                        }}
+                    >
+                        {qBlocks.map((b, i) => (
+                            <div key={i} className="print-deep-question" style={{ fontSize: '10pt' }}>
+                                <MarkdownRenderer content={b} />
+                            </div>
+                        ))}
+                    </div>
+                )}
+
                 {/* 【2026-10-26 超长题】把反面的内容组从正面开始印，装不下自己翻到反面。
-                    之后剩下的空间就是空白，不再塞东西（他的规则）。 */}
-                {isLong && (
+                    之后剩下的空间就是空白，不再塞东西（他的规则）。
+                    【2026-10-27 分页】还没量完时先按老办法（拉长纸面），至少不丢内容。 */}
+                {isLong && !longCuts && (
                     <>
-                        {backBodyEl}
+                        {renderBody()}
                         {backFooterEl}
                     </>
                 )}
+                {isLong && longCuts && (
+                    <>
+                        {renderBody({
+                            text: qBlocks.slice(longCuts[0], longCuts[1] ?? qBlocks.length).join('\n\n'),
+                            tail: longCuts.length === 1,
+                        })}
+                        {longCuts.length === 1 && backFooterEl}
+                    </>
+                )}
             </div>
+
+            {/* 【2026-10-27 分页】续页：**每页都印身份条**，最后一页带页脚。
+                minHeight 而不是 height —— 量高了往下长，宁可多一页，不可少一字。 */}
+            {isLong && longCuts && longCuts.slice(1).map((_v, i) => {
+                const start = longCuts[i + 1];
+                const end = longCuts[i + 2] ?? qBlocks.length;
+                const isLast = i === longCuts.length - 2;
+                return (
+                    <div
+                        key={`deep-page-${i + 2}`}
+                        className="print-deep-side print-deep-front"
+                        style={{
+                            minHeight: `${paper.content.h - 2}mm`,
+                            breakBefore: 'page',
+                            ['--paper-content-w' as string]: `${paper.content.w}mm`,
+                            ['--paper-pad-x' as string]: `${-(paper.w - PAPERS.B5.content.w) / 2}mm`,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            ...punchVarsOf(frontPad),
+                        }}
+                    >
+                        {headerEl}
+                        {renderBody({
+                            text: qBlocks.slice(start, end).join('\n\n'),
+                            tail: isLast,
+                        })}
+                        {isLast && backFooterEl}
+                    </div>
+                );
+            })}
 
             {/* ================= 反面：她重做的那面（右侧留打孔位） ================= */}
             {/* 【2026-10-26 超长题】超长时内容组已经搬到正面了，这一面不再渲染 */}
@@ -735,7 +896,7 @@ export function DeepDiveCard({
                     包一层之后优先级就固定了：先扣出页脚，剩下的给内容组，
                     内容组装不下就**裁自己**（裁掉的是最下面的手写区，不是页脚）。
                 */}
-                {backBodyEl}
+                {renderBody()}
                 {/* ↑ 反面"内容组"到此为止（题干 + 图 + 遮挡线 + 手写区）；
                     它下面是页脚，**永远留在纸内** —— 详见上面那一大段注释。 */}
 
