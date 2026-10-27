@@ -302,13 +302,18 @@ export function DeepDiveCard({
     /** 每页**结束**的块索引（不含本身）；null = 还没量完，先按老办法渲染 */
     const [longCuts, setLongCuts] = useState<number[] | null>(null);
     const measureRef = useRef<HTMLDivElement | null>(null);
+    const tailRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
         if (!isLong || longCuts) return;
         const box = measureRef.current;
         if (!box) return;
-        const kids = Array.from(box.children) as HTMLElement[];
+        const blocksBox = box.children[0] as HTMLElement | undefined;
+        const kids = blocksBox ? (Array.from(blocksBox.children) as HTMLElement[]) : [];
         if (!kids.length || kids.length !== qBlocks.length) return;
+        /* 尾部（题图 + 遮挡线 + 手写区 + 页脚）的真实高度 —— 不靠猜。
+           猜大了会平白多出一张几乎空白的纸（实测就是这样），猜小了会被顶出去。 */
+        const tailH = tailRef.current ? (tailRef.current.getBoundingClientRect().height * 25.4) / 96 : 95;
         const toMM = (px: number) => (px * 25.4) / 96;
         /* ⚠️ `getBoundingClientRect().height` **不含外边距**，而段落之间本来就有 4~5mm 的间距。
            不算进去就会低估、每页多塞一块，结果是被顶出去。
@@ -320,8 +325,8 @@ export function DeepDiveCard({
         const headMM = T1_LAYOUT_MM.identityBar + 3;
         /** 第一页还多一行知识点（按两行算，宁多不少） */
         const knowMM = T1_LAYOUT_MM.knowledgeRowMax + 1;
-        /** 最后一页要给"题图 + 遮挡线 + 手写区 + 页脚"让地方 —— 按经验上限预留 */
-        const TAIL_MM = 95;
+        /** 最后一页要给"题图 + 遮挡线 + 手写区 + 页脚"让地方 —— 用实测值 */
+        const TAIL_MM = tailH;
         /** 量高必然有误差，每页留 4mm 安全垫：估小会被裁，估大只是多一页 */
         const SAFE = 4;
 
@@ -362,7 +367,10 @@ export function DeepDiveCard({
                     className="print-deep-body"
                     style={{
                         /* 超长时不再"抢剩余空间"，也不再裁 —— 让它自然长、自己翻页 */
-                        flex: isLong ? '0 0 auto' : '1 1 auto',
+                        /* 分页渲染（有 slice）时这一页的正文块**要占满剩余高度**：
+                           手写区靠 flex:1 才能把页脚顶到纸底，否则页脚悬在半空。
+                           未分页的老路径（isLong 且还没量完）保持原样。 */
+                        flex: slice ? '1 1 auto' : isLong ? '0 0 auto' : '1 1 auto',
                         minHeight: 0,
                         display: 'flex',
                         flexDirection: 'column',
@@ -791,11 +799,15 @@ export function DeepDiveCard({
                             pointerEvents: 'none',
                         }}
                     >
-                        {qBlocks.map((b, i) => (
-                            <div key={i} className="print-deep-question" style={{ fontSize: '10pt' }}>
-                                <MarkdownRenderer content={b} />
-                            </div>
-                        ))}
+                        <div>
+                            {qBlocks.map((b, i) => (
+                                <div key={i} className="print-deep-question" style={{ fontSize: '10pt' }}>
+                                    <MarkdownRenderer content={b} />
+                                </div>
+                            ))}
+                        </div>
+                        {/* 尾部真实高度（题图 + 遮挡线 + 手写区 + 页脚），只量不显示 */}
+                        <div ref={tailRef}>{renderBody({ text: '', tail: true })}</div>
                     </div>
                 )}
 

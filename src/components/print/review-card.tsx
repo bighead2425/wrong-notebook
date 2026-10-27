@@ -1233,11 +1233,25 @@ export function ReviewSheet({
               }
             : {};
 
+    /**
+     * 【2026-10-27】这一页里有没有"超长题"（高过一栏，分页算法给它打了 long 标记）。
+     *
+     * 有的话这张纸**不能定高、也不能 overflow:hidden** —— 否则超出部分被静默裁掉。
+     * 他看到的正是这个："第 2 题自己占第 2 页，内容放不下也不跨第 3 页。"
+     * 分页算法早就把超长块单独放一页了（`long: true`），但渲染层还按定高画，
+     * 于是 `break-inside: auto` 也没用 —— 纸本身就把它切了。
+     */
+    const hasLongBlock = page.columns.some((c) => c.blocks.some((b) => b.long));
+
     return (
         <div
             className="print-card print-review-sheet"
             style={{
-                height: `${paper.content.h - 2}mm`,
+                /* 有超长题：改成 minHeight，让内容自己长、由浏览器按页切（块上已有
+                   `.print-long-question { break-inside: auto }` 放行）；其余页面仍是定高。 */
+                ...(hasLongBlock
+                    ? { minHeight: `${paper.content.h - 2}mm` }
+                    : { height: `${paper.content.h - 2}mm` }),
                 /* 【2026-10-24 幅面】宽度与纸边负距由 CSS 变量驱动（见 globals.css）：
                    B5 = 152 / -15（与之前一字不差），A4 = 180 / -29。 */
                 ['--paper-content-w' as string]: `${paper.content.w}mm`,
@@ -1247,7 +1261,7 @@ export function ReviewSheet({
                 display: 'flex',
                 flexDirection: 'column',
                 position: 'relative',
-                overflow: 'hidden',
+                overflow: hasLongBlock ? 'visible' : 'hidden',
                 ...punchVars,
             }}
         >
