@@ -1462,7 +1462,23 @@ function PrintPreviewContent() {
                                 onClick={handlePrint}
                                 size="sm"
                                 className="whitespace-nowrap"
-                                disabled={selectedItems.length === 0 || printing || ((isVolume || isImitate) && !volume)}
+                                disabled={
+                                    selectedItems.length === 0 ||
+                                    printing ||
+                                    ((isVolume || isImitate) && !volume) ||
+                                    /**
+                                     * 【2026-10-27】卷里有超长题（一栏装不下）时**不许打印**。
+                                     *
+                                     * 为什么：卷的纸是定高的一栏排版，超长题塞不进去，
+                                     * 渲染层只能把这张纸拉长 —— 那就**不是标准纸**了，
+                                     * 导出去打出来都不是 A4/B5，不能拿去用。
+                                     *
+                                     * 宁可拦住，也不让他印出一张奇怪的纸。
+                                     * 出路已经写在黄色提示条里：改用「深挖纸」（深挖纸能把同一道题
+                                     * 正确拆成多张标准纸，续页还带身份条）。
+                                     */
+                                    (reviewLayout?.overflow.length ?? 0) > 0
+                                }
                                 title={
                                     (isVolume || isImitate) && !volume
                                         ? isImitate
