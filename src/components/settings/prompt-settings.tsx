@@ -68,6 +68,22 @@ export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
      */
     const [kind, setKind] = useState<PromptKind>('analyze');
 
+    /**
+     * 【2026-10-27 空空】**正在编辑的草稿**（null = 这一份还没动过）。
+     *
+     * 为什么需要它：现在框里要**始终显示真正生效的那份提示词**（默认模板也算全文），
+     * 所以第一次打开时如果库里是空的，就把默认模板填进去给他看、给他改。
+     *
+     * 但不能直接用 `config || default`：那样他把字全删掉的**那一瞬间**，
+     * 默认全文会立刻弹回来，根本没法清空重写。
+     * 所以：动过之后以草稿为准（允许为空），没动过才回落到 `config || default`。
+     */
+    const [draft, setDraft] = useState<Record<PromptKind, string | null>>({
+        analyze: null,
+        similar: null,
+        insights: null,
+    });
+
     const defaultValueOf = (type: PromptKind): string =>
         type === 'analyze'
             ? DEFAULT_ANALYZE_TEMPLATE
@@ -82,12 +98,13 @@ export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
      * effect 去"把 config 同步进 state"。那种写法每次输入都会先落盘再同步回来，
      * 既多一轮渲染，又会在清空时把默认值又填回去（见下）。
      *
-     * ⚠️ 用 `??` 而不是 `||`：配置里存 `''` 的意思是"这份用默认模板"，
-     *    它是个**合法的、用户可以选择的值**；用 `||` 会把 `''` 也吞掉，
-     *    于是用户根本没法把框清空。
+     * 【2026-10-27 改】**空 = 显示默认全文**，不再是空框。
+     * 理由（空空原话）："现在都不知道系统提示词是什么，那还怎么修改呢。"
+     * 库里是空的（老配置 / 点过恢复默认）⇒ 这里把默认模板全文填进去，给人看、给人改。
+     * 用户动过之后就按草稿走（见上面 `draft`），所以仍然能把框清空。
      */
     const templateOf = (type: PromptKind): string =>
-        config.prompts?.[type] ?? defaultValueOf(type);
+        draft[type] ?? (config.prompts?.[type] || defaultValueOf(type));
 
     const titleOf = (type: PromptKind): string =>
         type === 'analyze'
@@ -104,15 +121,19 @@ export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
               : (t.settings?.prompts?.insightsTab || "日积月累提示词");
 
     /**
-     * 【2026-10-24】「重置」= 把这份存成**空**，而不是把默认模板抄一份进去。
+     * 【2026-10-27 改】「恢复默认」= **把默认全文抄回框里并存下来**。
      *
-     * 差别在以后：下游读模板时是 `customTemplate || DEFAULT_XXX`
-     * （见 `lib/ai/prompts.ts`），空串就等于"用默认"。存空 ⇒ 以后默认模板
-     * 升级了，他这份会跟着长；存全文 ⇒ 被钉死在今天这一版，再也不会更新。
+     * 原来是把这份存成空串（"空 = 用默认"）。现在改了，因为用户要能**看见**
+     * 自己正在用的到底是什么 —— 只存一个"空"是看不见的。
+     *
+     * 代价（跟他说清楚）：点过恢复默认之后，这份就**钉死**在当前这一版默认模板上，
+     * 以后软件升级改了默认模板，它不会跟着变（库里存的是全文，不是"跟随"）。
      */
     const handleReset = (type: PromptKind) => {
         if (!confirm(t.settings?.prompts?.resetConfirm || "Are you sure you want to reset to default?")) return;
-        onUpdate(type, '');
+        const def = defaultValueOf(type);
+        setDraft((d) => ({ ...d, [type]: def }));
+        onUpdate(type, def);
     };
 
     /** 每份提示词能用的变量不一样 —— 跟着选中的那份走 */
@@ -200,18 +221,22 @@ export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
                 </div>
 
                 {/*
-                  ⚠️ placeholder 只放一句短话，**不能放默认模板全文** ——
-                     默认模板是几百行，一旦框被清空，满屏都是灰色占位字，
-                     看起来像内容还在，实际一个字都没存。
+                  【2026-10-27】框里现在**始终显示真正生效的提示词**（默认模板也显示全文），
+                  所以原来那句"框里空着=用默认"只在真的清空时才需要出现。
                 */}
                 {templateOf(kind) === '' && (
                     <p className="text-xs text-muted-foreground">
-                        框里空着 ⇒ 用默认模板（会跟着软件升级走）。直接写就会覆盖它。
+                        框里空着 ⇒ 用默认模板（会跟着软件升级走）。点「恢复默认」可把默认全文填回来。
                     </p>
                 )}
                 <Textarea
                     value={templateOf(kind)}
-                    onChange={(e) => onUpdate(kind, e.target.value)}
+                    onChange={(e) => {
+                        /* 同时记草稿（允许为空）和回写配置 —— 只写其中一个都会出问题：
+                           只写配置 ⇒ 清空瞬间默认全文弹回来；只写草稿 ⇒ 保存不了。 */
+                        setDraft((d) => ({ ...d, [kind]: e.target.value }));
+                        onUpdate(kind, e.target.value);
+                    }}
                     className="font-mono text-xs min-h-[400px]"
                     placeholder="留空 = 使用默认模板"
                 />
