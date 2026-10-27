@@ -940,13 +940,6 @@ export default function ErrorDetailPage() {
                                 <ArrowLeft className="w-4 h-4" />
                             </Button>
                         </Link>
-                        {/* 【2026-10-27 空空第 2 条】左上角补一个**主页**按钮。
-                            原来只有"返回上一页"，从扫码/深链进来时要连按好几次才回得去。 */}
-                        <Link href="/">
-                            <Button variant="ghost" size="icon" title="返回主页">
-                                <Home className="w-4 h-4" />
-                            </Button>
-                        </Link>
                         <h1
                             /* 【2026-10-19 手机版面第 1 批】标题分档：手机上 `text-lg`。
                                24px 的"错题详情"在手机上一行就吃掉小半屏高度（`docs\27` 病根 3）。 */
@@ -984,6 +977,14 @@ export default function ErrorDetailPage() {
                     </div>
 
                     <div className="flex flex-wrap gap-2 justify-end">
+                        {/* 【2026-10-28 空空】主页按钮放**右上角**。
+                            `order-last` 让它在这一排里排到最右 —— 不用去数这排有几个按钮，
+                            以后往这儿加按钮也不会把它挤到中间。 */}
+                        <Link href="/" className="order-last">
+                            <Button variant="ghost" size="icon" title="返回主页">
+                                <Home className="w-4 h-4" />
+                            </Button>
+                        </Link>
                         {/* 需求六：用原图重新跑 AI，只更新分析类字段 */}
                         <Button
                             variant="outline"
