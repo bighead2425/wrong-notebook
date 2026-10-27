@@ -89,16 +89,41 @@ describe('深挖纸：超长时从正面印 OCR（静态护栏）', () => {
         expect(src).toMatch(/scrollHeight\s*>\s*el\.clientHeight/);
     });
 
-    it('★ 超长时正面高度放开、内容组搬进正面、反面整块不渲染', () => {
+    it('★ 超长时改成按页装箱：minHeight 而不是定高（定高会把字裁掉）', () => {
         const src = read('components/print/deep-dive-card.tsx');
-        // 正面高度按 isLong 切换
-        expect(src).toMatch(/height:\s*isLong\s*\?\s*'auto'/);
-        // 正面有"超长才渲染"的分支（内容组 + 页脚）
-        expect(src).toMatch(/\{isLong\s*&&\s*\(/);
-        // 反面有"不超长才渲染"的分支
-        expect(src).toMatch(/\{!isLong\s*&&\s*\(/);
-        // 内容组和页脚确实被抽成了变量（否则搬不过去）
-        expect(src).toMatch(/const backBodyEl\s*=/);
+        // 判定仍然靠"真溢出"（scrollHeight / clientHeight），不是数字数
+        expect(src).toMatch(/scrollHeight\s*>\s*el\.clientHeight/);
+        /**
+         * 【2026-10-27 改】
+         * 原来正面高度是 `height: isLong ? 'auto'` —— 靠浏览器自己截断。
+         * 现在改成软件按 225mm 装箱，且**必须**用 minHeight：
+         * `.print-deep-side` 是 `overflow: hidden`，写死 height 一旦把内容估高，
+         * 多出来的会被静默裁掉（不报错、不留痕）。这条是这个改动的命门。
+         */
+        expect(src).not.toMatch(/height:\s*isLong\s*\?\s*'auto'/);
+        expect(src).toMatch(/minHeight:\s*isLong\s*\?/);
+        // 正文抽成"可切片"的 renderBody；尾部只在最后一页画
+        expect(src).toMatch(/const renderBody\s*=/);
+        expect(src).toMatch(/slice\.tail/);
+        // 页脚仍然抽成变量（正面/续页共用）
         expect(src).toMatch(/const backFooterEl\s*=/);
+        // 反面仍是不超长才渲染
+        expect(src).toMatch(/\{!isLong\s*&&\s*\(/);
+    });
+
+    it('★ 超长时每一页都印身份条（续页是独立一张纸，掉了要认得出）', () => {
+        const src = read('components/print/deep-dive-card.tsx');
+        // 页头抽成 headerEl —— 正面与续页共用同一份
+        expect(src).toMatch(/const headerEl\s*=/);
+        // 续页里确实引用了 headerEl
+        expect(src).toMatch(/longCuts\.slice\(1\)[\s\S]{0,1200}\{headerEl\}/);
+        // 续页必须另起一张纸
+        expect(src).toMatch(/breakBefore:\s*'page'/);
+    });
+
+    it('★ 分页宽度/高度都取自 paper，不写死 B5（换成 A4 也成立）', () => {
+        const src = read('components/print/deep-dive-card.tsx');
+        expect(src).toMatch(/const pageMM\s*=\s*paper\.content\.h\s*-\s*2/);
+        expect(src).toMatch(/width:\s*`\$\{paper\.content\.w\s*-\s*12\}mm`/);
     });
 });
