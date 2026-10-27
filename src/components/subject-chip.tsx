@@ -60,8 +60,19 @@ export function SubjectChip({
                     padding: "0 2mm",
                     height: "7mm",
                     borderRadius: "1.5mm",
-                    background: def.hex,
-                    color: "#FFFFFF",
+                    /**
+                     * 【2026-10-27 透印 · 空空】实心色块 → **底纹**。
+                     *
+                     * 原话："深挖纸左上角的带底色的阴文……恐怕也要调整为底纹。"
+                     * 理由是 80g 道林纸上实心块会整块透到背面。
+                     *
+                     * 一个 7×11mm 的实心块 = 77mm² 满墨；改成 16% 底纹后约 12mm²，
+                     * **省墨八成多**，而学科仍然一眼可辨（底纹是同色系，字是深色）。
+                     * 留 0.25mm 同色描边，是为了让块有边界 —— 喷墨晕开后也仍然是个"块"。
+                     */
+                    background: getSubjectTint(def.key, 0.16),
+                    border: `0.25mm solid ${def.hex}`,
+                    color: def.hex,
                     fontSize: "10pt",
                     fontWeight: 700,
                     letterSpacing: "0.3px",

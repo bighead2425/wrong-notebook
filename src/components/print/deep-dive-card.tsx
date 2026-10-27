@@ -374,11 +374,15 @@ export function DeepDiveCard({
                         flexShrink: 0,
                     }}
                 >
-                    <span style={{ flex: 1, height: '0.7mm', background: '#111' }} />
+                    {/* 【2026-10-27 透印】原来是 0.7mm 纯黑 `#111`：
+                        80g 道林纸上这条带会**整条透到正面**（背面就这一处最显眼）。
+                        改成中灰 + 细一点 —— 它的作用是"把题目和答案分开"和给 OCR 当坐标，
+                        这两件事浅灰照样成立；真正需要认得出的是中间那三个字，所以文字仍是深色。 */}
+                    <span style={{ flex: 1, height: '0.5mm', background: '#8a8a8a' }} />
                     <span style={{ fontSize: '8pt', letterSpacing: '1.5px', whiteSpace: 'nowrap' }}>
                         遮挡线
                     </span>
-                    <span style={{ flex: 1, height: '0.7mm', background: '#111' }} />
+                    <span style={{ flex: 1, height: '0.5mm', background: '#8a8a8a' }} />
                 </div>
 
                 {/* 她手写内容区：不加十字线（模拟真实考场）。上界=遮挡线，下界=页脚细线。
