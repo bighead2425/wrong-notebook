@@ -254,6 +254,23 @@
     page-break-inside: avoid;
   }
 
+  /* 【2026-10-27 超长题】深挖纸超长时整块内容会跨页，由浏览器按 227mm 截断。
+     截断点原本可以落在一行中间（半句话在上页、半句在下页），最难看。
+     这里把题干里的"块级元素"全部标成不可内断 —— 浏览器就只能在
+     **段落/列表项/图片/表格之间**切，不会切句子。
+     ⚠️ 单块本身就比一页高时会失效（Chrome 会照切），这是预期行为。 */
+  .print-deep-question p,
+  .print-deep-question ul,
+  .print-deep-question ol,
+  .print-deep-question li,
+  .print-deep-question blockquote,
+  .print-deep-question table,
+  .print-deep-question pre,
+  .print-deep-question img {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
   /* 大题独占一页 */
   .print-question--solo {
     break-before: page;
