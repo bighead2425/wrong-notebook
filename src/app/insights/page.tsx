@@ -199,7 +199,7 @@ function insightListQuery(p: {
 
 /**
  * 【2026-10-03 他要求】新建条目时**默认沿用上一次用的年级/学期**。
- * 原话："新建一条积累条目，年级/学期默认选为上次新建时的年级学期，这样就减少一次输入了。"
+ * 原话："新建积累条目，年级/学期默认选为上次新建时的年级学期，这样就减少一次输入了。"
  *
  * ⚠️ 为什么用 `localStorage` 而不是"参考右栏当前值"：右栏的值会**跟着你看的那条走** ——
  *    你要是先翻了一条三年级的，再点新建，就会默认成三年级，那正是他要避免的。
@@ -1109,7 +1109,7 @@ export default function InsightsPage() {
                     {/**
                      * 【2026-10-19 空空第 5 条】手机上这排按钮**折到第二行**、靠右对齐。
                      *
-                     * 他原话："在手机端，将右上角的新建一条到返回主页按钮，折行到下面，
+                     * 他原话："在手机端，将右上角的新建到返回主页按钮，折行到下面，
                      *          现在手机端都挤在一起，实在是难看至极。"
                      *
                      * 做法：父容器 `flex-wrap` + 这一组在 `md` 以下 `w-full`（强制换行）、
@@ -1121,15 +1121,15 @@ export default function InsightsPage() {
                      */}
                     <div className="flex items-center gap-2 max-md:w-full max-md:justify-end max-md:border-t max-md:pt-2">
                     {/* 【2026-10-02 他要求】窄屏/手机上**只留图标**（文字藏起来）——
-                        "当浏览器变窄，或者在手机端屏幕比较窄的时候，右上角的新建一条按钮，
+                        "当浏览器变窄，或者在手机端屏幕比较窄的时候，右上角的新建按钮，
                         文字隐藏，只留前面的加号既可"。打印按钮同样处理。 */}
-                    <Button size="sm" onClick={createOne} title={L('新建一条', 'New')}>
+                    <Button size="sm" onClick={createOne} title={L('新建', 'New')}>
                         <Plus className="h-4 w-4 sm:mr-1.5" />
-                        <span className="hidden sm:inline">{L('新建一条', 'New')}</span>
+                        <span className="hidden sm:inline">{L('新建', 'New')}</span>
                     </Button>
                     {/* 【2026-10-13】回**录入页**的入口 —— 他要的那条环："进门就录入，
                         从录入到管理和打印，管理返回录入" ⇒ 管理页必须能再回去写。
-                        （页内的「新建一条」保留：那是"顺手记一条"，不动位置。） */}
+                        （页内的「新建」保留：那是"顺手记一条"，不动位置。） */}
                     <Link href="/insights/write">
                         <Button variant="outline" size="sm" title={L('去录入页（进门就写的那一页）', 'Go to the writing page')}>
                             <PenLine className="h-4 w-4 sm:mr-1.5" />
@@ -1257,7 +1257,7 @@ export default function InsightsPage() {
                             )}
                             {!loading && visible.length === 0 && (
                                 <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-                                    {L('没有符合条件的条目。点右上角「新建一条」开始。', 'Nothing here — press New to start.')}
+                                    {L('没有符合条件的条目。点右上角「新建」开始。', 'Nothing here — press New to start.')}
                                 </p>
                             )}
                             {/**
@@ -1363,7 +1363,7 @@ export default function InsightsPage() {
                     <section className="min-w-0" {...rightSwipe}>
                         {!current ? (
                             <div className="rounded-md border border-dashed px-6 py-16 text-center text-sm text-muted-foreground">
-                                {L('左边选一条，或者右上角新建一条。', 'Pick one on the left, or create a new entry.')}
+                                {L('左边选一条，或者右上角新建。', 'Pick one on the left, or create a new entry.')}
                             </div>
                         ) : (
                             <div className="space-y-4">

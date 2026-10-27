@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "rea
 import type { CSSProperties } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, PanelLeftClose, PanelLeftOpen, Printer } from "lucide-react";
+import { ArrowLeft, Home, PanelLeftClose, PanelLeftOpen, Printer } from "lucide-react";
 import { cleanMarkdown } from "@/lib/markdown-utils";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
@@ -1496,17 +1496,19 @@ function PrintPreviewContent() {
                             </Button>
                             {/* 【2026-10-25 路由审计】原来固定回主页 —— 从册详情/错题列表进来打印，
                                 点它就跳过了来源那一层。改成认入口带来的 back 参数，没有才回主页。 */}
+                            {/* 【2026-10-27 空空第 2 条】右上角原来是**返回** —— 和左上角那颗重复了。
+                                改成**主页**：左上角留「返回上一页」，右上角留「直接回主页」。
+                                ⚠️ 有未保存改动时仍然先问一句（和原来同一套 leaveThen）。 */}
                             <Link
-                                href={backHref}
+                                href="/"
                                 onClick={(e) => {
-                                    // 【2026-10-12 延伸】同上：改过就先吃掉这一下，再按他的选择决定跳不跳
                                     if (!leaveDirty) return;
                                     e.preventDefault();
-                                    void leaveThen("返回", "Go back", () => router.push(backHref));
+                                    void leaveThen("返回主页", "Go home", () => router.push("/"));
                                 }}
                             >
-                                <Button variant="ghost" size="icon" title={L("返回上一页", "Back")}>
-                                    <ArrowLeft className="h-5 w-5" />
+                                <Button variant="ghost" size="icon" title={L("返回主页", "Home")}>
+                                    <Home className="h-5 w-5" />
                                 </Button>
                             </Link>
                         </div>

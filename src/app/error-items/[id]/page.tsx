@@ -6,7 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X, Sparkles, Loader2, Printer, ChevronLeft, ChevronRight, Unlink, ArrowUp, RotateCcw, Link2Off } from "lucide-react";
+import { ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X, Sparkles, Loader2, Printer, ChevronLeft, ChevronRight, Unlink, ArrowUp, RotateCcw, Link2Off, Home } from "lucide-react";
 import Link from "next/link";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { MdEditor } from "@/components/md-editor";
@@ -940,6 +940,13 @@ export default function ErrorDetailPage() {
                                 <ArrowLeft className="w-4 h-4" />
                             </Button>
                         </Link>
+                        {/* 【2026-10-27 空空第 2 条】左上角补一个**主页**按钮。
+                            原来只有"返回上一页"，从扫码/深链进来时要连按好几次才回得去。 */}
+                        <Link href="/">
+                            <Button variant="ghost" size="icon" title="返回主页">
+                                <Home className="w-4 h-4" />
+                            </Button>
+                        </Link>
                         <h1
                             /* 【2026-10-19 手机版面第 1 批】标题分档：手机上 `text-lg`。
                                24px 的"错题详情"在手机上一行就吃掉小半屏高度（`docs\27` 病根 3）。 */
@@ -1001,7 +1008,7 @@ export default function ErrorDetailPage() {
                             disabled={exportState === "doing"}
                             title="导出到 Obsidian 仓库"
                         >
-                            {exportState === "doing" ? "导出中…" : "导出到ob"}
+                            {exportState === "doing" ? "导出中…" : "Ob"}
                         </Button>
                         {/* 【custom-v26】单题直通打印：只带这一道的 id 进打印预览（默认错题卡排版）。
                             ⚠️ 必须走 ?ids= 而不是 ?notebookId=：列表接口对 ids 分支不强制 deletedAt，
@@ -1009,7 +1016,7 @@ export default function ErrorDetailPage() {
                         <Link href={withBack(`/print-preview?ids=${item.id}`)}>
                             <Button variant="outline" size="sm" title="只打印这一道题">
                                 <Printer className="mr-2 h-4 w-4" />
-                                打印本题
+                                深挖纸
                             </Button>
                         </Link>
                         {exportState === "ok" && (

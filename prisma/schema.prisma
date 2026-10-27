@@ -23,6 +23,13 @@ model User {
   educationStage String? // primary, junior_high, senior_high, university
   enrollmentYear Int?
 
+  /// 【2026-10-27 空空第 1 条】主页顶栏选中的「年级/学期」（如 "五年级上"）。
+  ///
+  /// 原来只存在**浏览器 localStorage**（`home.gradeTerm`）⇒ 换一台终端、换个浏览器
+  /// 就得重选一遍。存到这里以后跟着账号走，重新构建/部署也不会丢。
+  /// 空串按 null 存（"没选"就是没选）。
+  gradeTerm      String?
+
   role     String  @default("user") // "admin" or "user"
   isActive Boolean @default(true) // 用户是否启用
 

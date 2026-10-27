@@ -15,6 +15,8 @@ const userUpdateSchema = z.object({
     password: z.string().optional(),
     educationStage: z.string().optional(),
     enrollmentYear: z.number().optional().nullable(),
+    /** 【2026-10-27】主页「年级/学期」。传空串 = 清空（存 null）。 */
+    gradeTerm: z.string().optional().nullable(),
 });
 
 export async function GET() {
@@ -32,6 +34,7 @@ export async function GET() {
                 email: true,
                 educationStage: true,
                 enrollmentYear: true,
+                gradeTerm: true,
                 // Do not return password
             }
         });
@@ -58,13 +61,22 @@ export async function PATCH(req: Request) {
 
     try {
         const body = await req.json();
-        const { name, email, password, educationStage, enrollmentYear } = userUpdateSchema.parse(body);
+        const { name, email, password, educationStage, enrollmentYear, gradeTerm } = userUpdateSchema.parse(body);
 
         const updateData: any = {};
 
         // 只有非空字符串才会触发更新
         if (name && name.trim()) updateData.name = name.trim();
         if (educationStage && educationStage.trim()) updateData.educationStage = educationStage.trim();
+        /**
+         * 【2026-10-27】年级/学期**允许清空**，所以不能套上面那个"非空才更新"的规矩
+         * （那个规矩是为 name 这类"空 = 没改"设计的）。这里按"传了就算数"处理：
+         * 空串 / null ⇒ 存 null。
+         */
+        if (gradeTerm !== undefined) {
+            const v = (gradeTerm ?? '').trim();
+            updateData.gradeTerm = v || null;
+        }
         if (typeof enrollmentYear === 'number' && !isNaN(enrollmentYear)) {
             updateData.enrollmentYear = enrollmentYear;
         }
@@ -95,6 +107,7 @@ export async function PATCH(req: Request) {
                 email: true,
                 educationStage: true,
                 enrollmentYear: true,
+                gradeTerm: true,
             }
         });
 

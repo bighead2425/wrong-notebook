@@ -87,16 +87,39 @@ function HomeContent() {
 
     useEffect(() => {
         /**
-         * 从 localStorage 读上次选的年级/学期。
-         * ⚠️ 只能在挂载后读（服务端没有 localStorage）⇒ 这里必须 `setState` 一次；
-         *    项目的 `react-hooks/set-state-in-effect` 是 error，所以显式豁免并说明理由。
+         * 【2026-10-27 空空第 1 条】年级/学期改成**跟着账号走**（`User.gradeTerm`）。
+         *
+         * 原来只存 localStorage ⇒ 换一台终端就得重选一遍。
+         * 现在的读法：**先问服务器**，没有（老账号第一次）再退回本机 localStorage ——
+         * 这样不会因为上线这个功能把谁已经选好的值弄丢。
+         * 读到服务器值后顺手镜像进本地键：录入页（校对页 / 日积月累页）还在读那两个
+         * 本地键，镜像一下它们就不用跟着改。
          */
-        try {
-            const gt = localStorage.getItem("home.gradeTerm");
-            if (gt) setGradeTerm(gt);
-        } catch {
-            // 隐私模式下 localStorage 会抛：当没存过
-        }
+        let cancelled = false;
+        void (async () => {
+            try {
+                const res = await fetch('/api/user');
+                if (res.ok) {
+                    const u = await res.json();
+                    if (!cancelled && typeof u?.gradeTerm === 'string' && u.gradeTerm) {
+                        setGradeTerm(u.gradeTerm);
+                        try {
+                            localStorage.setItem('home.gradeTerm', u.gradeTerm);
+                        } catch { /* 隐私模式 */ }
+                        return;
+                    }
+                }
+            } catch { /* 拿不到就退回本地，不挡页面 */ }
+            try {
+                const gt = localStorage.getItem('home.gradeTerm');
+                if (!cancelled && gt) setGradeTerm(gt);
+            } catch {
+                // 隐私模式下 localStorage 会抛：当没存过
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
     }, []);
     useEffect(() => {
         try {
@@ -492,7 +515,20 @@ function HomeContent() {
                         【第 3 条】右边的「扫一扫」撤掉了 —— 第一行已经有「扫二维码」，两个功能一模一样。 */}
                     <select
                         value={gradeTerm}
-                        onChange={(e) => setGradeTerm(e.target.value)}
+                        onChange={(e) => {
+                            const v = e.target.value;
+                            setGradeTerm(v);
+                            /**
+                             * 【2026-10-27 第 1 条】同时写进账号（`User.gradeTerm`）。
+                             * 这样换终端、重新构建部署都不会丢。
+                             * 存不上也不挡操作 —— 本地那份还在（下面那个 effect 会写 localStorage）。
+                             */
+                            void fetch('/api/user', {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ gradeTerm: v }),
+                            }).catch(() => { /* 离线：忽略 */ });
+                        }}
                         className="rounded-md border bg-background px-2 py-1.5 text-xs"
                         aria-label={L("年级学期", "Grade and term")}
                         title={L("选定后，新录入的题和日积月累默认用这个年级/学期", "New questions and notes default to this")}
@@ -669,8 +705,8 @@ function HomeContent() {
                         <div className="rounded-xl border border-dashed border-sky-400 p-2 dark:border-sky-600">
                         <div className="grid grid-cols-4 gap-0.5">
                             {[
-                                { zh: "复练纸", en: "Review sheet", Icon: Layers, href: "/review-volumes?kind=review" },
-                                { zh: "模仿纸", en: "Imitate sheet", Icon: Copy, href: "/review-volumes?kind=imitate" },
+                                { zh: "复练纸库", en: "Review sheet", Icon: Layers, href: "/review-volumes?kind=review" },
+                                { zh: "模仿纸库", en: "Imitate sheet", Icon: Copy, href: "/review-volumes?kind=imitate" },
                                 { zh: "积累管理", en: "Notes · manage", Icon: NotebookPen, href: "/insights" },
                                 { zh: "积累打印", en: "Notes · print", Icon: Printer, href: "/insights/print" },
                                 { zh: "回录分析", en: "Recover", Icon: ScanText, href: "/recover" },
