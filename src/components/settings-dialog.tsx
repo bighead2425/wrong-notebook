@@ -32,6 +32,7 @@ import { PromptSettings } from "@/components/settings/prompt-settings";
 import { RestoreSettings } from "@/components/settings/restore-settings";
 import { ScanInboxSettings } from "@/components/settings/scan-inbox-settings";
 import { DEFAULT_PAPER_CONFIG, DEFAULT_PAPER_ID, type PaperId } from "@/lib/paper";
+import { DEFAULT_PRINT_ROUTE, DEFAULT_PRINT_SERVER, type PrintRoute } from "@/lib/print-route";
 
 import { MessageSquareText, Info, ExternalLink, Github, ScrollText } from "lucide-react";
 const MAX_OPENAI_INSTANCES = 10;
@@ -98,6 +99,9 @@ export function SettingsDialog({
      * 挂载之后再变 dirs 也不会重探 —— 那正是"输入时不狂发请求"的代价。
      */
     const [configLoaded, setConfigLoaded] = useState(false);
+    /** 「测试连接」的结果（共享打印那一块用） */
+    const [printTest, setPrintTest] = useState<{ ok: boolean; text: string } | null>(null);
+    const [printTesting, setPrintTesting] = useState(false);
     // OpenAI 多实例状态
     const [selectedInstanceId, setSelectedInstanceId] = useState<string | undefined>(undefined);
 
@@ -939,6 +943,113 @@ export function SettingsDialog({
                                             </div>
                                         ))}
                                     </div>
+                                </div>
+                            )}
+
+                            {/* ===== 【2026-10-28 打印出口】 =====
+                                电脑和手机分开设，不是啰嗦：手机浏览器**没有打印机发现能力**，
+                                点"打印"只能得到一个 PDF。所以"本机打印"在手机上是不一样的东西。
+                                ⚠️ 手机上仍然保留这三个值（空空要求）：
+                                   以后手机能直连打印机时，只改实现、不动界面。 */}
+                            {configLoaded && (
+                                <div className="space-y-3 border-t pt-4">
+                                    <div>
+                                        <Label>{zh ? "打印出口" : "Printing"}</Label>
+                                        <p className="mt-1 text-xs text-muted-foreground">
+                                            {zh
+                                                ? "点「打印」时走哪条路：本机弹浏览器打印窗口；共享是送到 NAS 上那台打印机（手机上只有这条能真出纸）。"
+                                                : "Where the Print button sends your paper: this device's dialog, or the shared printer on the NAS."}
+                                        </p>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {([
+                                            ["desktop", zh ? "电脑端" : "Desktop"],
+                                            ["mobile", zh ? "移动端" : "Mobile"],
+                                        ] as const).map(([key, label]) => (
+                                            <div key={key} className="space-y-1">
+                                                <Label className="text-xs text-muted-foreground">{label}</Label>
+                                                <Select
+                                                    value={config.print?.[key] ?? DEFAULT_PRINT_ROUTE[key]}
+                                                    onValueChange={(v) =>
+                                                        setConfig(prev => ({
+                                                            ...prev,
+                                                            print: { ...prev.print, [key]: v as PrintRoute },
+                                                        }))
+                                                    }
+                                                >
+                                                    <SelectTrigger>
+                                                        <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="local">{zh ? "本机打印" : "This device"}</SelectItem>
+                                                        <SelectItem value="shared">{zh ? "共享打印机" : "Shared printer"}</SelectItem>
+                                                        <SelectItem value="ask">{zh ? "每次询问" : "Ask every time"}</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <p className="text-xs text-muted-foreground">
+                                        {zh
+                                            ? "手机上选「本机打印」= 把纸存成 PDF（手机浏览器没有打印对话框），可以再发给别的 App。"
+                                            : "On a phone, “This device” saves the sheet as a PDF (no browser print dialog)."}
+                                    </p>
+
+                                    {/* 地址只给管理员改：它是**服务端**会去 POST 的地址 */}
+                                    {isAdmin && (
+                                        <div className="space-y-1">
+                                            <Label className="text-xs text-muted-foreground">
+                                                {zh ? "共享打印机地址" : "Shared printer URL"}
+                                            </Label>
+                                            <div className="flex gap-2">
+                                                <Input
+                                                    value={config.print?.serverUrl ?? ""}
+                                                    placeholder={DEFAULT_PRINT_SERVER}
+                                                    onChange={(e) =>
+                                                        setConfig(prev => ({
+                                                            ...prev,
+                                                            print: { ...prev.print, serverUrl: e.target.value },
+                                                        }))
+                                                    }
+                                                />
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    disabled={printTesting}
+                                                    onClick={async () => {
+                                                        setPrintTesting(true);
+                                                        setPrintTest(null);
+                                                        try {
+                                                            const candidate = config.print?.serverUrl || "";
+                                                            const res = await fetch(
+                                                                `/api/print/submit?url=${encodeURIComponent(candidate)}`,
+                                                                { cache: "no-store" },
+                                                            );
+                                                            const d = await res.json();
+                                                            setPrintTest(
+                                                                d.ok && d.reachable
+                                                                    ? { ok: true, text: zh ? `已连上：${d.target}` : `Connected: ${d.target}` }
+                                                                    : { ok: false, text: d.error || (zh ? "连不上" : "Unreachable") },
+                                                            );
+                                                        } catch {
+                                                            setPrintTest({ ok: false, text: zh ? "连不上" : "Unreachable" });
+                                                        } finally {
+                                                            setPrintTesting(false);
+                                                        }
+                                                    }}
+                                                >
+                                                    {printTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : (zh ? "测试连接" : "Test")}
+                                                </Button>
+                                            </div>
+                                            {printTest && (
+                                                <p className={`text-xs ${printTest.ok ? "text-emerald-700" : "text-red-600"}`}>
+                                                    {printTest.text}
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>

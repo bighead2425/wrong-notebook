@@ -79,7 +79,20 @@ export async function POST(req: Request) {
          * POST 回来的。若直接拒绝，"改超时"这种正常操作也会报错。
          * 所以改成**白名单式丢弃** —— 能改的留下，改不了的当没传。
          */
-        const body = isAdmin ? rawBody : { timeouts: rawBody?.timeouts };
+        const body = isAdmin
+            ? rawBody
+            : {
+                timeouts: rawBody?.timeouts,
+                /**
+                 * 【2026-10-28 打印出口】**普通用户也可以选自己那台设备走哪条路** ——
+                 * 那是使用习惯，不是系统配置。
+                 * ⚠️ 但 `serverUrl` **不在这里**：那是服务端会去 POST 的地址，
+                 *    放给普通用户等于开了一个"让 NAS 替我访问任意地址"的口子。
+                 */
+                print: rawBody?.print
+                    ? { desktop: rawBody.print.desktop, mobile: rawBody.print.mobile }
+                    : undefined,
+            };
 
         // Don't save masked keys if they somehow get sent back (for Gemini)
         if (body.gemini?.apiKey === MASK) {

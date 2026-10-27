@@ -188,6 +188,15 @@ export interface OpenAIInstance {
 
 export interface AppConfig {
     aiProvider: 'gemini' | 'openai' | 'azure';
+    /**
+     * 【2026-10-28 打印出口】电脑 / 手机分别走哪个出口。
+     * 缺项由 `lib/print-route.ts` 给默认值（电脑本地、手机共享），老配置不需要迁移。
+     */
+    print?: {
+        desktop?: 'local' | 'shared' | 'ask';
+        mobile?: 'local' | 'shared' | 'ask';
+        serverUrl?: string;
+    };
     allowRegistration?: boolean;
     openai?: {
         instances?: OpenAIInstance[];

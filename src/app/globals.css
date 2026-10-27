@@ -863,6 +863,46 @@
 }
 
 /* ============================================================================
+ * 截图用的「屏外页盒」—— 只给 `lib/print-pdf.ts` 用（共享打印生成 PDF 时）
+ *
+ * 屏幕上那张纸是"带纸边"的演示样式（content-box + 15mm padding + 负外边距），
+ * 直接拍下来会把 194mm 宽的东西塞进 182mm 的纸 ⇒ 整版缩一圈。
+ * 这里把克隆出来的那一面**强制成打印时的几何**：152mm 内容 + 打孔位，其余清零。
+ *
+ * ⚠️ 这些值必须与 `@media print` 里 `.print-deep-side` 的规则一字不差；
+ *    否则"屏幕预览 / 纸面 / 共享打印"三者会各印一个样。
+ * ==========================================================================*/
+.print-capture-page {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  z-index: -1;
+  box-sizing: border-box;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.print-capture-page > * {
+  box-sizing: border-box !important;
+  width: 100% !important;
+  margin: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  padding-left: var(--punch-l, 0mm) !important;
+  padding-right: var(--punch-r, 0mm) !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  zoom: 1 !important;
+  overflow: hidden;
+  break-inside: auto !important;
+}
+
+/* 深挖纸的"一面"是定高版式：高度必须和纸上一样，否则页脚会飘 */
+.print-capture-page > .print-deep-side {
+  height: var(--capture-content-h, 225mm) !important;
+}
+
+/* ============================================================================
  * T2/T3 卷：每道题的留白微调（「− X ＋」）—— **只在屏幕上**（2026-09-28）
  *
  * 用户的原话：这个调整小标签**只在打印阅览中能看见、能使用，打印时不能出现**，

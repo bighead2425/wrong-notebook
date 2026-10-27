@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { createLogger } from './logger';
 import { DEFAULT_PAPER_CONFIG, type PaperConfig } from './paper';
+import type { PrintSettings } from './print-route';
 
 const logger = createLogger('config');
 
@@ -85,6 +86,15 @@ export interface AppConfig {
      *
      * 与"卷"无关：幅面是**渲染规则**，同一份卷切到 A4 就用 A4 渲染（页内题数照旧）。
      */
+    /**
+     * 【2026-10-28 打印出口】电脑 / 手机分别走哪个出口。
+     *
+     * 三个值：`local`（本机浏览器打印）/ `shared`（送 NAS 上的 EasyPrinter）/
+     * `ask`（每次点打印都问一遍）。
+     * 缺项一律走 `lib/print-route.ts` 的默认值（电脑本地、手机共享），
+     * 所以老配置原样能用，**不需要迁移**。
+     */
+    print?: PrintSettings;
     paper?: PaperConfig;
 }
 
@@ -229,6 +239,9 @@ export function updateAppConfig(newConfig: Partial<AppConfig>) {
         prompts: { ...currentConfig.prompts, ...newConfig.prompts },
         timeouts: { ...currentConfig.timeouts, ...newConfig.timeouts },
         scanInbox: { ...currentConfig.scanInbox, ...newConfig.scanInbox },
+        /* 【2026-10-28】必须深合并：普通用户保存设置时只会回传 desktop/mobile，
+           浅合并会把管理员填的 serverUrl 一起冲掉。 */
+        print: { ...currentConfig.print, ...newConfig.print },
     };
 
     try {

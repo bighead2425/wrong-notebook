@@ -51,6 +51,17 @@ import {
 } from "@/lib/imitate-card";
 import type { LinkView } from "@/lib/item-link";
 import { SheetZoom } from "@/components/print/sheet-zoom";
+import { PrintOptionsDialog, PrintRouteDialog } from "@/components/print/print-dialogs";
+import {
+    detectDevice,
+    readRememberedRoute,
+    resolveRoute,
+    storeRememberedRoute,
+    type PrintOptions,
+    type PrintRoute,
+    type PrintSettings,
+} from "@/lib/print-route";
+import { buildPrintPdf, captureTargets } from "@/lib/print-pdf";
 import {
     blankLinesFromDrag,
     VOLUME_VARIANTS,
@@ -123,6 +134,36 @@ function PrintPreviewContent() {
     const [items, setItems] = useState<ErrorItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [printing, setPrinting] = useState(false);
+
+    /* ===== 【2026-10-28 打印出口】电脑/手机各走哪条路 =====
+       `printCfg` 从 `/api/print/settings` 读（只回两项，不碰 AI 配置）。
+       还没读到时按 `undefined` 处理 ⇒ `routeFor` 给默认值（电脑本地、手机共享），
+       所以"设置接口慢了一拍"也不会让打印按钮失灵。 */
+    const [printCfg, setPrintCfg] = useState<PrintSettings | null>(null);
+    /** 「每次询问」那个窗 */
+    const [routeAskOpen, setRouteAskOpen] = useState(false);
+    /** 「共享打印」四格设置那个窗 */
+    const [optionsOpen, setOptionsOpen] = useState(false);
+    const [printBusy, setPrintBusy] = useState(false);
+    const [printStatus, setPrintStatus] = useState<string | null>(null);
+    const [printError, setPrintError] = useState<string | null>(null);
+    /** 这次会印几页（打开设置窗时数一次；不在这里数会让渲染函数碰 DOM） */
+    const [printPageCount, setPrintPageCount] = useState(1);
+    /** 任务已经递出去了 —— 窗口留着说一句"已送到"，别让它自己消失 */
+    const [printDone, setPrintDone] = useState(false);
+
+    /* 读一次出口设置。读不到就保持 null —— `routeFor` 会给默认值，
+       所以"这个接口挂了"只意味着"回到 10 月 28 日之前的行为"，不会挡住打印。 */
+    useEffect(() => {
+        let alive = true;
+        fetch("/api/print/settings", { cache: "no-store" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d: { desktop?: PrintRoute; mobile?: PrintRoute } | null) => {
+                if (alive && d) setPrintCfg({ desktop: d.desktop, mobile: d.mobile });
+            })
+            .catch(() => { /* 保持默认 */ });
+        return () => { alive = false; };
+    }, []);
 
     /**
      * 【custom-v25】默认进**错题卡**，不再是练习卷。
@@ -821,7 +862,39 @@ function PrintPreviewContent() {
     }, [isDeep, selectedKey]);
 
     /**
-     * 打印触发：先落 printCount（#10 / T4），再调浏览器打印。
+     * 记账：这次印了哪几道。
+     *
+     * 【2026-09-30】印的是**卷**（复练/积累/模仿）就记"复练纸印刷次数"；
+     * 其余（深挖纸/错题卡/练习卷）沿用深挖口径的 printCount。
+     */
+    const markPrinted = useCallback(async () => {
+        try {
+            await apiClient.post("/api/error-items/mark-printed", {
+                ids: selectedItems.map((i) => i.id),
+                kind: isVolume || isImitate ? "review" : "deep",
+            });
+        } catch (error) {
+            console.error("Failed to record print count:", error);
+        }
+    }, [selectedItems, isVolume, isImitate]);
+
+    /**
+     * 等纸面"真的能拍/能印"了。
+     *
+     * 【M1 / 2026-09-26 三修 + 四修】必须等两件事，缺一件就是"概率性少图"：
+     *   ① 题图**生成完**（它是打印时才从原图现裁的，见 `use-print-images`）
+     *   ② 纸面上**所有 img 解码完** —— 图上其实有三个异步来源：
+     *      正面原题照片、反面题图、以及 `makeQrDataUrl()` 现生成的二维码。
+     *      dataURL 不走网络但**要解码**，没解码完时快照会空白（打印、截图都一样）。
+     * 两道门都有超时兜底：宁可少一张图，也不能把打印卡住。
+     */
+    const waitForPaperReady = useCallback(async () => {
+        await whenImagesSettled();
+        await whenImagesDecoded(document.querySelector('.print-sheet'));
+    }, []);
+
+    /**
+     * **本机打印**：先落 printCount（#10 / T4），再调浏览器打印。
      *
      * 【custom-v25：为什么不改成"真打印了才计数"】
      * `window.print()` 背后是浏览器自带的打印对话框，它**不回传任何结果**：
@@ -829,6 +902,88 @@ function PrintPreviewContent() {
      * beforeprint / afterprint 在"点了取消"时同样会触发，拿它计数会变成
      * "取消也记一次"，比现在还差。所以在浏览器给出可用的回传通道之前，
      * 保持"点打印按钮即计数"—— 用户已确认这条路走不通就维持原样。
+     */
+    const doLocalPrint = useCallback(async () => {
+        setPrinting(true);
+        // 【M3】把"打印日"刷成此刻：页面跨天开着时，纸面日期/三个日期格必须是今天
+        setPrintDate(new Date());
+        await markPrinted();
+        // 让 printCount / 打印日的新值先渲染到纸上（若纸面要显示次数）
+        await waitForPaperReady();
+        setTimeout(() => {
+            window.print();
+            setPrinting(false);
+        }, 120);
+    }, [markPrinted, waitForPaperReady]);
+
+    /**
+     * **共享打印**：把纸面拍成 PDF → 交给 NAS 上的 EasyPrinter → 它直接出纸。
+     *
+     * 与"本机打印"的两处不同：
+     *   · 计数放在**提交成功之后**（这条路有回执，没必要提前记）；
+     *   · 不需要 `window.print()`，所以在手机上也能真的印出来。
+     */
+    const doSharedPrint = useCallback(async (opts: PrintOptions) => {
+        setPrintBusy(true);
+        setPrintError(null);
+        setPrintDone(false);
+        setPrintStatus(zh ? "正在把纸面拍成图…" : "Rendering pages…");
+        // 纸面日期与计数一样，要先刷成今天再拍
+        setPrintDate(new Date());
+        try {
+            await waitForPaperReady();
+            const root = document.querySelector('.print-sheet') ?? document;
+            let targets = captureTargets(root);
+            if (opts.range === "current") targets = targets.slice(0, 1);
+            if (targets.length === 0) throw new Error(zh ? "这页上没有可打印的纸面" : "Nothing to print");
+
+            const blob = await buildPrintPdf(targets, opts.paper, (done, total) => {
+                setPrintStatus(zh ? `正在生成第 ${done}/${total} 页…` : `Rendering page ${done}/${total}…`);
+            });
+            setPrintStatus(zh ? "正在送到打印机…" : "Sending to printer…");
+
+            const form = new FormData();
+            form.append("file", blob, `wrong-notebook-${Date.now()}.pdf`);
+            form.append("copies", String(opts.copies));
+            form.append("duplex", opts.duplex);
+            form.append("paper", opts.paper);
+            form.append("range", opts.range);
+            const res = await fetch("/api/print/submit", { method: "POST", body: form });
+            const data = (await res.json().catch(() => ({}))) as { ok?: boolean; jobId?: number; error?: string };
+            if (!res.ok || !data.ok) {
+                throw new Error(data.error || (zh ? `提交失败（HTTP ${res.status}）` : `Failed (HTTP ${res.status})`));
+            }
+            await markPrinted();
+            setPrintStatus(
+                zh
+                    ? `已送到打印机${data.jobId ? `（任务 ${data.jobId}）` : ""}，纸会从打印机出来。`
+                    : `Sent to printer${data.jobId ? ` (job ${data.jobId})` : ""}.`,
+            );
+            setPrintDone(true);
+        } catch (error) {
+            setPrintError(error instanceof Error ? error.message : String(error));
+        } finally {
+            setPrintBusy(false);
+        }
+    }, [zh, markPrinted, waitForPaperReady]);
+
+    /** 打开"共享打印"设置窗：先把页数数出来（给"共 N 页"那句提示用） */
+    const openSharedDialog = useCallback(() => {
+        setPrintError(null);
+        setPrintStatus(null);
+        setPrintDone(false);
+        const root = document.querySelector('.print-sheet') ?? document;
+        setPrintPageCount(Math.max(1, captureTargets(root).length));
+        setOptionsOpen(true);
+    }, []);
+
+    /**
+     * 打印按钮的**唯一入口**：先看这台设备该走哪个出口。
+     *
+     * 三个出口（`lib/print-route.ts`）：
+     *   local  → 浏览器打印对话框（电脑上的老路）
+     *   shared → 四格设置 → 拍成 PDF → 送 EasyPrinter（手机上唯一真能出纸的路）
+     *   ask    → 先问一句，并可"以后这台设备都这样"
      */
     const handlePrint = useCallback(async () => {
         if (selectedItems.length === 0) return;
@@ -841,40 +996,26 @@ function PrintPreviewContent() {
         if ((isVolume || isImitate) && !volume) {
             setVolumeError(
                 isImitate
-                    ? L("请先点「生成模仿卷」再打印", "Build the imitate volume first")
-                    : L("请先点「生成复练卷」再打印", "Build the volume first"),
+                    ? (zh ? "请先点「生成模仿卷」再打印" : "Build the imitate volume first")
+                    : (zh ? "请先点「生成复练卷」再打印" : "Build the volume first"),
             );
             return;
         }
-        setPrinting(true);
-        // 【M3】把"打印日"刷成此刻：页面跨天开着时，纸面日期/三个日期格必须是今天
-        setPrintDate(new Date());
-        try {
-            await apiClient.post("/api/error-items/mark-printed", {
-                ids: selectedItems.map((i) => i.id),
-                // 【2026-09-30】印的是**卷**（复练/积累/模仿）就记"复练纸印刷次数"；
-                // 其余（深挖纸/错题卡/练习卷）沿用深挖口径的 printCount。
-                kind: isVolume || isImitate ? "review" : "deep",
-            });
-        } catch (error) {
-            console.error("Failed to record print count:", error);
+        const device = detectDevice(
+            typeof navigator === "undefined" ? "" : navigator.userAgent,
+            typeof navigator !== "undefined" && (navigator.maxTouchPoints ?? 0) > 0,
+        );
+        const route = resolveRoute(device, printCfg, readRememberedRoute());
+        if (route === "local") {
+            await doLocalPrint();
+            return;
         }
-        // 让 printCount / 打印日的新值先渲染到纸上（若纸面要显示次数）
-        // 【M1 / 2026-09-26 三修 + 四修】打印前必须等两件事，缺一件就是"概率性少图"：
-        //   ① 题图**生成完**（它是打印时才从原图现裁的，见 use-print-images）
-        //   ② 纸面上**所有 img 解码完** —— 图上其实有三个异步来源：
-        //      正面原题照片、反面题图、以及 `makeQrDataUrl()` 现生成的二维码。
-        //      dataURL 不走网络但**要解码**，解码没完成时 Chrome 的快照会印成空白。
-        //      一次选 4 道就是十几个 img，这个窗口比选 1 道明显得多。
-        // 两道门都有超时兜底：宁可少一张图，也不能把打印卡住。
-        await whenImagesSettled();
-        await whenImagesDecoded(document.querySelector('.print-sheet'));
-        setTimeout(() => {
-            window.print();
-            setPrinting(false);
-        }, 120);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedItems, isVolume, isImitate, volume?.volumeNo, zh]);
+        if (route === "shared") {
+            openSharedDialog();
+            return;
+        }
+        setRouteAskOpen(true);
+    }, [selectedItems, isVolume, isImitate, volume, zh, printCfg, doLocalPrint, openSharedDialog]);
 
     /**
      * 【T2/T3 · 2026-09-28】**组建一份卷** —— 落库，拿到卷号（如 `RE20260926001`）。
@@ -2321,6 +2462,43 @@ function PrintPreviewContent() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            {/* ===== 【2026-10-28 打印出口】 =====
+                ① 「每次询问」时的二选一；
+                ② 「共享打印」的四格设置。
+                两个窗都带 `no-print`：它们是操作，不是纸上的内容。 */}
+            <div className="no-print">
+                {/* 只在打开时挂载：两个窗都靠"新实例"来保证"上次选择/勾选状态"是干净的，
+                    这样里面不需要任何 effect 去同步 state。 */}
+                {routeAskOpen && (
+                <PrintRouteDialog
+                    open
+                    onOpenChange={(v) => { if (!v) setRouteAskOpen(false); }}
+                    onPick={(picked, remember) => {
+                        setRouteAskOpen(false);
+                        storeRememberedRoute(remember ? picked : null);
+                        if (picked === "local") {
+                            void doLocalPrint();
+                        } else {
+                            openSharedDialog();
+                        }
+                    }}
+                />
+                )}
+                {optionsOpen && (
+                <PrintOptionsDialog
+                    open
+                    onOpenChange={(v) => { if (!v) setOptionsOpen(false); }}
+                    paper={paperFor(kindOfMode(mode), paperCfg).id}
+                    pageCount={printPageCount}
+                    busy={printBusy}
+                    done={printDone}
+                    status={printStatus}
+                    error={printError}
+                    onConfirm={(opts) => { void doSharedPrint(opts); }}
+                />
+                )}
+            </div>
         </div>
     );
 }
