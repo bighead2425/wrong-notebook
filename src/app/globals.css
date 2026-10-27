@@ -201,7 +201,19 @@
 @media print {
   /* 国内市售 B5 = 182mm × 257mm（JIS B5）。
      注意：CSS 的 size: B5 是 ISO B5 = 176×250mm，比国产纸每边小 6mm，
-     满页排版时会跑版，所以必须写明确毫米数，不能用 B5 简写。 */
+     满页排版时会跑版，所以必须写明确毫米数，不能用 B5 简写。
+
+     ── 【2026-10-28】底部多出 6mm 的真正原因（实测定位，别再猜）──────
+     症状：正面底部空 24mm、反面 30mm，而设计是 18mm；整版字也略小一点。
+     机制：**Chrome 打印时一旦内容比可打印区宽，就把整份文档等比缩小。**
+       · 包着纸面的 `.print-preview-frame` 上有 Tailwind 的 `px-4`（16px ≈ 4.23mm）；
+       · 打印时可打印区只有 152mm，这一层内边距把 152mm 的纸挤成了 156.2mm；
+       · 整页于是按 152 ÷ 156.2 = 0.973 缩小 ⇒ 卡片 225mm 变成 219mm，
+         底部从 18mm 变成 24mm；左右 15mm 缩成 14.6mm，肉眼反而"看不出错"。
+     证据：① 同一道题把对话框边距改成"无"再导一次，卡片正好 225mm、左右正好 15mm；
+           ② 最小样例复刻（152mm 纸 + 一个 155.9mm 的元素）得到同样的 23.7mm 底边。
+     对策：**打印时把这类包装层的左右内边距清零**（见文件末尾 `.print-preview-frame`
+           的 @media print 规则），@page 与卡片高度都保持原样。 */
   @page {
     size: 182mm 257mm;
     margin: 14mm 15mm 16mm;
@@ -835,6 +847,18 @@
 
   .print-preview-right {
     overflow: visible !important;
+  }
+
+  /* 【2026-10-28 底部 24mm 的真凶】包住纸面的几层容器**必须没有左右内边距**。
+     纸面宽 152mm，与可打印宽度正好相等；这一层哪怕多出 4.23mm（Tailwind `px-4`），
+     Chrome 就会把整份文档缩到 97.3% —— 表现就是"底部空一大截、字还小一圈"。
+     实测：正面底 24mm / 反面 30mm；同一份文件改成"边距：无"后卡片正好 225mm。 */
+  .print-preview-shell,
+  .print-preview-body,
+  .print-preview-frame,
+  .print-preview-right {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
   }
 }
 
