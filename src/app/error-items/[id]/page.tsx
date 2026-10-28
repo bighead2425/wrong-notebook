@@ -1002,14 +1002,14 @@ export default function ErrorDetailPage() {
                                 ? (t.detail?.aiReanalyzing || "AI 分析中…")
                                 : (t.detail?.aiReanalyze || "AI 重新分析")}
                         </Button>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={exportToObsidian}
-                            disabled={exportState === "doing"}
-                            title="导出到 Obsidian 仓库"
-                        >
-                            {exportState === "doing" ? "导出中…" : "Ob"}
+                        {/* 【2026-10-19 空空第 2 条】原来是**直接跳**去生成练习题；
+                            现在它是一扇门：练习 / 扫码关联 / 拍照新增，三选一。
+                            入口名字保留「举一反三」（他说的是"合并"，没说改名）。
+                            【2026-10-28 顺序】按他给的从左到右：AI分析 → 举一反三 → 深挖纸 → Ob
+                            → 点击掌握 → 删除 → 主页。 */}
+                        <Button variant="outline" size="sm" onClick={() => setPracticeOpen(true)}>
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            {t.detail.practice}
                         </Button>
                         {/* 【custom-v26】单题直通打印：只带这一道的 id 进打印预览（默认错题卡排版）。
                             ⚠️ 必须走 ?ids= 而不是 ?notebookId=：列表接口对 ids 分支不强制 deletedAt，
@@ -1020,19 +1020,21 @@ export default function ErrorDetailPage() {
                                 深挖纸
                             </Button>
                         </Link>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={exportToObsidian}
+                            disabled={exportState === "doing"}
+                            title="导出到 Obsidian 仓库"
+                        >
+                            {exportState === "doing" ? "导出中…" : "Ob"}
+                        </Button>
                         {exportState === "ok" && (
                             <span className="self-center text-green-600 text-sm">已导出</span>
                         )}
                         {exportState === "err" && (
                             <span className="self-center text-red-600 text-sm">导出失败</span>
                         )}
-                        {/* 【2026-10-19 空空第 2 条】原来是**直接跳**去生成练习题；
-                            现在它是一扇门：练习 / 扫码关联 / 拍照新增，三选一。
-                            入口名字保留「举一反三」（他说的是"合并"，没说改名）。 */}
-                        <Button variant="outline" size="sm" onClick={() => setPracticeOpen(true)}>
-                            <RefreshCw className="mr-2 h-4 w-4" />
-                            {t.detail.practice}
-                        </Button>
                         <Button
                             size="sm"
                             variant={item.masteryLevel > 0 ? "default" : "default"}
