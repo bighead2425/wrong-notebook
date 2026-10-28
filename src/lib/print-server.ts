@@ -33,6 +33,15 @@ export function normalizedPrintSettings(raw?: PrintSettings | null): ResolvedPri
 
 /** 从当前配置文件读 —— 提交打印时用 */
 export function printServerUrl(): string {
+    /**
+     * 【2026-10-28】**环境变量优先**。
+     *
+     * 为什么需要：① E2E 里要把它指到本地假打印机（CI 的机器连不到 192.168.1.10）；
+     * ② 将来换了 NAS 地址，改 docker-compose 的一个环境变量就行，不必进设置页。
+     * 仍然走 `normalizePrintServer`，非法值一律回默认地址。
+     */
+    const fromEnv = process.env.EASYPRINTER_URL;
+    if (fromEnv) return normalizePrintServer(fromEnv);
     return normalizedPrintSettings(getAppConfig().print).serverUrl;
 }
 

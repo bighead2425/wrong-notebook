@@ -39,6 +39,7 @@ import {
 import { SettingsDialog } from "@/components/settings-dialog";
 import { TaskBrief } from "@/components/home/task-brief";
 import { WrongAnswerStats } from "@/components/wrong-answer-stats";
+import { ReviewQueueMini } from "@/components/review-queue-mini";
 import { NotebookOverview } from "@/components/home/notebook-overview";
 import { captureScreen, ScreenshotError, isScreenshotSupported } from "@/lib/screenshot";
 /**
@@ -840,8 +841,14 @@ function HomeContent() {
                                     />
                                 </button>
                                 {statsOpen && (
-                                    <div className="border-t p-3">
-                                        <WrongAnswerStats />
+                                    <div className="space-y-3 border-t p-3">
+                                        {/* 【2026-10-28】先给"今天该练什么"，再给"积累了多少"。
+                                            顺序理由：每天打开首页想知道的是"现在做什么"，
+                                            总量是回头看的。 */}
+                                        <ReviewQueueMini />
+                                        <div className="border-t pt-3">
+                                            <WrongAnswerStats />
+                                        </div>
                                     </div>
                                 )}
                             </div>

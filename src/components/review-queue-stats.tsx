@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { apiClient } from "@/lib/api-client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { Loader2 } from "lucide-react";
+import { QUEUE_LEVELS_META } from "@/lib/queue-summary";
 
 interface QueueData {
     total: number;
@@ -19,19 +20,9 @@ interface QueueData {
     heat: { date: string; count: number }[];
 }
 
-/**
- * 五档的**含义**（与 `lib/review-status.ts` 的 urgency 一一对应）。
- *
- * ⚠️ 界面上**不出现"紧迫度""等级"这些词**（定盘星：界面用生活语言）。
- *    这里说的是"多久后会再到期"—— 家长能直接理解成"这周要不要管"。
- */
-const BUCKETS = [
-    { urgency: 5, zh: "还没练过 / 连着错", en: "Untouched / repeated misses", color: "#dc2626", hintZh: "明天就到期", hintEn: "due tomorrow" },
-    { urgency: 4, zh: "最近错了一次", en: "Missed last time", color: "#f97316", hintZh: "3 天后到期", hintEn: "due in 3 days" },
-    { urgency: 3, zh: "对了一次", en: "Right once", color: "#eab308", hintZh: "7 天后到期", hintEn: "due in 7 days" },
-    { urgency: 2, zh: "连对两次", en: "Right twice", color: "#3b82f6", hintZh: "14 天后到期", hintEn: "due in 14 days" },
-    { urgency: 1, zh: "连对三次", en: "Right three times", color: "#14b8a6", hintZh: "28 天后到期", hintEn: "due in 28 days" },
-] as const;
+/* 【2026-10-28】五档的文案/配色搬到 `lib/queue-summary.ts`：首页摘要与这一页共用一份，
+   否则两处各写一套，改了一边另一边还是旧说法。 */
+const BUCKETS = QUEUE_LEVELS_META;
 
 export function ReviewQueueStats() {
     const { language } = useLanguage();
