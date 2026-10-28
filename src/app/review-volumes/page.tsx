@@ -191,6 +191,15 @@ export default function ReviewVolumesPage() {
     /** 【2026-10-09】正在要下一页（防止滚到底时连点、连发请求） */
     const [listLoadingMore, setListLoadingMore] = useState(false);
     /** 列表滚动容器 + 底部哨兵（滚到哨兵露头就自动要下一页） */
+    /**
+     * 【2026-10-29 审计修复】切卷的**请求序号**。
+     *
+     * 病：连点两卷时，先发的请求可能后到 —— 界面标题已经是 B 卷，
+     * 内容和基线却还是 A 卷的 ⇒ 这时候点"保存"，会把 A 的留白/图大小写进 B。
+     * 这不是"慢"，是**写错数据**。
+     * 判据：每次打开 +1，异步回来后比对，不是最新那次就整段丢弃。
+     */
+    const openSeqRef = useRef(0);
     const listScrollRef = useRef<HTMLDivElement | null>(null);
     const listSentinelRef = useRef<HTMLDivElement | null>(null);
     /**
@@ -468,6 +477,7 @@ export default function ReviewVolumesPage() {
      */
     const openVolume = useCallback(
         async (id: string) => {
+            const mySeq = ++openSeqRef.current;
             setSelectedId(id);
             setDetailLoading(true);
             setNotice("");
@@ -478,6 +488,8 @@ export default function ReviewVolumesPage() {
             setSavedBaseline(null);
             try {
                 const { volume } = await apiClient.get<{ volume: VolumeDetail }>(`/api/review-volumes/${id}`);
+                /* 期间又点了别的卷 ⇒ 这份结果已经过期，一个字都别写 */
+                if (mySeq !== openSeqRef.current) return;
                 setDetail(volume);
                 setTitleDraft(volume.title || "");
 
@@ -507,6 +519,7 @@ export default function ReviewVolumesPage() {
                     const res = await apiClient.get<PaginatedResponse<ErrorItem>>(
                         `/api/error-items/list?${params.toString()}`,
                     );
+                    if (mySeq !== openSeqRef.current) return;
                     live = res.items || [];
                 }
                 setItems(live);
@@ -530,11 +543,13 @@ export default function ReviewVolumesPage() {
                     figureScale: figures,
                 });
             } catch (error) {
+                if (mySeq !== openSeqRef.current) return;
                 console.error("Failed to open volume:", error);
                 setNotice(L("打开这份卷失败", "Failed to open this volume"));
                 setDetail(null);
             } finally {
-                setDetailLoading(false);
+                /* 只有当自己仍是最新那次时才关 loading —— 否则会把新卷的转圈关掉 */
+                if (mySeq === openSeqRef.current) setDetailLoading(false);
             }
         },
         [L, closeScan],

@@ -1,7 +1,7 @@
 "use client";
 import { withBack } from "@/lib/back";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -342,16 +342,29 @@ export default function ErrorDetailPage() {
      * ⚠️ 失败**不弹窗**：它只是卡片里的一小块，够不上打断他（与"失败一律提示"那条的边界是
      *    **"这次操作有没有意义"** —— 拉一块只读数据失败，弹窗只会让他莫名紧张）。
      */
+    /**
+     * 【2026-10-29 审计修复】**这一条是竞态**：快速点"上一题/下一题"时，
+     * 上一道题的流水可能在切过去之后才回来，直接盖到新题的表格上（4 个圈显错）。
+     * 用"当前题 id"做闸：回来时不是当前题，就丢掉。
+     */
+    const currentItemIdRef = useRef<string | null>(null);
     const fetchReviewEvents = useCallback(async (id: string) => {
         try {
             const res = await apiClient.get<{ events: ReviewEventRowView[] }>(
                 `/api/error-items/${id}/review-events`,
             );
+            const now = currentItemIdRef.current;
+            if (now && now !== id) return;
             setReviewEvents(res?.events ?? []);
         } catch (error) {
             console.error(error);
         }
     }, []);
+
+    /* 当前题 id 记在 ref 里：异步回来时用它判断"还是不是同一道题" */
+    useEffect(() => {
+        currentItemIdRef.current = item?.id ?? null;
+    }, [item?.id]);
 
     useEffect(() => {
         if (item?.id) void fetchReviewEvents(item.id);

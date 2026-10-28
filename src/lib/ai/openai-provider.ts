@@ -14,6 +14,16 @@ type OpenAIUserContent = string | Array<
     { type: "image_url"; image_url: { url: string } }
 >;
 
+/**
+ * 【2026-10-29 审计修复】AI 调用必须有超时。
+ *
+ * 原来 SDK 那条路没设超时（默认 10 分钟），LongCat 那条**裸 fetch 连 signal 都没有** ——
+ * 模型端挂了不返回，服务端的请求就一直挂着，直到平台强制断开。
+ * 180 秒这个值与前端 `config?.timeouts?.analyze || 180000` 对齐：
+ * 两端等的是同一件事，不该一个 180 秒、一个无限。
+ */
+const AI_TIMEOUT_MS = 180_000;
+
 export class OpenAIProvider implements AIService {
     private openai: OpenAI;
     private model: string;
@@ -32,6 +42,9 @@ export class OpenAIProvider implements AIService {
         this.openai = new OpenAI({
             apiKey: apiKey,
             baseURL: baseURL || undefined,
+            /* 超时与下面裸 fetch 那条保持一致（见 AI_TIMEOUT_MS 的注释） */
+            timeout: AI_TIMEOUT_MS,
+            maxRetries: 0,
             defaultHeaders: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             },
@@ -248,18 +261,27 @@ export class OpenAIProvider implements AIService {
                     },
                 ]);
 
-                const res = await fetch(`${this.baseURL}/chat/completions`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${this.apiKey}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        model: this.model,
-                        messages,
-                        max_tokens: 8192,
-                    }),
-                });
+                /* 【2026-10-29】裸 fetch 同样要超时，否则模型端挂住 = 服务端请求挂住 */
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+                let res: Response;
+                try {
+                    res = await fetch(`${this.baseURL}/chat/completions`, {
+                        method: 'POST',
+                        signal: controller.signal,
+                        headers: {
+                            'Authorization': `Bearer ${this.apiKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            model: this.model,
+                            messages,
+                            max_tokens: 8192,
+                        }),
+                    });
+                } finally {
+                    clearTimeout(timer);
+                }
 
                 if (!res.ok) {
                     const errBody = await res.text();

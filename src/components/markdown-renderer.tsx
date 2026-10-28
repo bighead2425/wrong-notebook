@@ -21,8 +21,23 @@ interface MarkdownRendererProps {
  *   2. 正文里的字面 `\n` 还原 —— 旧写法无差别全局替换，会把 `\ne` `\notin`
  *      `\nabla` 这类 LaTeX 命令打断。现在先保护公式片段再替换。
  */
-export function MarkdownRenderer({ content, className = '' }: MarkdownRendererProps) {
-    const processedContent = preprocess(content);
+/**
+ * 【2026-10-29 审计修复】**给它加 memo**。
+ *
+ * 打印预览一次取 200 题，每题 4 个 MarkdownRenderer（题干/答案/解析/错因），
+ * 而且**量尺一遍 + 真实版面一遍** ⇒ 单页最多 800 个 ReactMarkdown 实例。
+ * 原来这个组件没有 memo：父组件任何一次 state 变化（拖分隔条、改留白、切页），
+ * 800 个实例全部重新解析、整棵子树重新挂载 —— 弱设备上就是打印对话框卡死。
+ *
+ * 只做两件事，不动渲染内容：
+ *   ① `memo`：props（content / className）没变就不重渲染；
+ *   ② `useMemo(preprocess)`：同一段文本只跑一次预处理。
+ * ⚠️ 没有把 `components` 提到模块级：它是一堆**只依赖自身 props** 的纯渲染器，
+ *    加了 memo 之后只在 content 变化时才会重建，收益已经拿到；
+ *    整体搬出去要动 200 多行，风险不值得。
+ */
+function MarkdownRendererImpl({ content, className = '' }: MarkdownRendererProps) {
+    const processedContent = React.useMemo(() => preprocess(content), [content]);
 
     return (
         <div className={`markdown-content overflow-x-auto min-w-0 ${className}`}>
@@ -120,3 +135,6 @@ export function MarkdownRenderer({ content, className = '' }: MarkdownRendererPr
         </div>
     );
 }
+
+/** 对外仍然是同名组件（memo 包装，props 相同即跳过重渲染） */
+export const MarkdownRenderer = React.memo(MarkdownRendererImpl);

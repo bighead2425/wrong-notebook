@@ -86,7 +86,17 @@ export async function GET(req: Request) {
 
     // 分页参数
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
-    const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(MIN_PAGE_SIZE, parseInt(searchParams.get("pageSize") || String(DEFAULT_PAGE_SIZE), 10)));
+    /**
+     * 【2026-10-29 审计修复】**带图时的上限单独一档**。
+     *
+     * `MAX_PAGE_SIZE` 是 1000，而题图单张最大约 1.37MB ⇒ 理论上一次响应能到 GB 级。
+     * 但**不能一刀切夹成 50**：打印预览要的正是 `pageSize=200`（`PRINT_PREVIEW_PAGE_SIZE`），
+     * 夹到 50 会让"超过 50 道的卷只印前 50 道"——那是比慢严重得多的事故。
+     * ⇒ 带图的上限就定 200：与打印预览一致，只砍掉"1000"那个没有任何调用方需要的尾巴。
+     */
+    const MAX_PAGE_SIZE_WITH_IMAGES = 200;
+    const cap = withImages ? Math.min(MAX_PAGE_SIZE, MAX_PAGE_SIZE_WITH_IMAGES) : MAX_PAGE_SIZE;
+    const pageSize = Math.min(cap, Math.max(MIN_PAGE_SIZE, parseInt(searchParams.get("pageSize") || String(DEFAULT_PAGE_SIZE), 10)));
 
     try {
         let user;
