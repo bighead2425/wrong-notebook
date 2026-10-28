@@ -23,7 +23,7 @@ import {
 import { codeToSubjectKey, subjectKeyToCode } from "@/lib/question-no";
 import { termSearchVariants } from "@/lib/grade-term";
 import { pickRandomEmoji } from "@/lib/emoji-mark";
-import { readPhotoForPrint } from "@/lib/insight-photo";
+import { hasPhotoForPrint } from "@/lib/insight-photo";
 
 const logger = createLogger("api:review-volumes");
 
@@ -102,11 +102,12 @@ export async function POST(request: Request) {
         const items = parseVolumeItems(rawItems, defaultBlankLines);
         /**
          * 【积累纸】挂了积累条目的行：图由服务端按 insightId 补进快照（前端手上没有图本体）。
-         * ⚠️【2026-10-19 真真】取图一律走 `readPhotoForPrint` —— 它把"入版"开关算进去。
+         * ⚠️【2026-10-28】只问"有没有可印的图"（`hasPhotoForPrint`，同样把"入版"开关算进去），
+         *              然后把**引用**挂进 `figureUrls` —— 图本身不再进卷。
          *    原来这里只 `select: { data: true }`，开关拨到"不入版"纸上照样有图
          *    （前端 `NewVolume` 算的 `photoUrl` 根本传不过来 —— 建卷只传 insightId）。
          */
-        await attachInsightFigures(items, readPhotoForPrint);
+        await attachInsightFigures(items, hasPhotoForPrint);
         const pageCount = resolvePageCount(raw.pageCount, items);
 
         const created = await prisma.reviewVolume.create({

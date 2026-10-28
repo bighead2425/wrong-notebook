@@ -1,5 +1,6 @@
 import { isManageType } from "./manage-type";
 import { normalizeBlankLines, normalizeFigureScale } from "./review-card";
+import { insightFigureRef } from "./volume-figure-ref";
 
 /**
  * 卷内条目的**规范化**（POST 建卷 / PATCH 覆盖保存**共用这一处**）。
@@ -34,16 +35,28 @@ export function parseVolumeItems(rawItems: unknown, defaultBlankLines: number): 
     const list = Array.isArray(rawItems) ? rawItems : [];
     return list.map((entry, index) => {
         const e = (entry ?? {}) as Record<string, unknown>;
+        const insightId = typeof e.insightId === "string" && e.insightId ? e.insightId : null;
         const figs = e.figureUrls;
-        const figureUrls = Array.isArray(figs)
+        let figureUrls = Array.isArray(figs)
             ? JSON.stringify(figs.filter((x) => typeof x === "string"))
             : typeof figs === "string"
                 ? figs
                 : null;
+        /**
+         * 【2026-10-28】**入口收敛：挂积累的行，图一律存成引用。**
+         *
+         * 为什么必须在入口做：打印页读到的 `figureUrls` 是**解析后的真图**
+         * （data URL，见 `resolveFigureRefs`），它保存时可能原样传回来。
+         * 不在入口改回来，这些 MB 级副本会立刻重新长回库里 ——
+         * 那就成了"一边清、一边存"，等于没改。
+         */
+        if (insightId && figureUrls && figureUrls.includes("data:")) {
+            figureUrls = JSON.stringify([insightFigureRef(insightId)]);
+        }
         const mt = typeof e.manageType === "string" && isManageType(e.manageType) ? e.manageType : null;
         return {
             errorItemId: typeof e.errorItemId === "string" && e.errorItemId ? e.errorItemId : null,
-            insightId: typeof e.insightId === "string" && e.insightId ? e.insightId : null,
+            insightId,
             seqInVolume: Number.isFinite(Number(e.seqInVolume)) ? Number(e.seqInVolume) : index + 1,
             pageIndex: Number.isFinite(Number(e.pageIndex)) ? Number(e.pageIndex) : 1,
             columnIndex: Number.isFinite(Number(e.columnIndex)) ? Number(e.columnIndex) : 0,
@@ -65,20 +78,25 @@ export function parseVolumeItems(rawItems: unknown, defaultBlankLines: number): 
  * 为什么不让前端传：列表接口刻意不返回图片本体（图片在独立表，列表查询不碰它，
  * 见 20261001220000 那条迁移的注释），前端手上根本没有图。
  *
- * 所以由服务端补：按 insightId 一次查回配图，填进 `figureUrls`（快照列）。
- * 判据仍是定盘星 —— **印出去的凭证必须存快照**，图也得落进卷里，
- * 否则原条目一改图，已经印出去的卷就"变了"。
+ * ── 【2026-10-28 改：存引用，不存副本】────────────────────────────
+ * 原来的写法是把图（data URL）整个塞进 `figureUrls` 当"快照"。
+ * 结果：一张 1.15MB 的图被印进 10 个卷 ⇒ 库里 10 份副本，光这一条 10.3MB。
+ * 他的判断：**积累是会进化的，改内容就是进化**，"恢复到当初那张纸"没有意义。
+ * ⇒ 现在只记 `ref:insight:<id>`，打印时读当前那条的图（见 `lib/volume-figure-ref.ts`）。
+ *
+ * 判据仍然看"入版"开关（`hasPhotoForPrint`）：关掉的行**连引用都不挂**。
  *
  * @param items 已规范化的卷内行（会被**原地**补 figureUrls）
  */
 export async function attachInsightFigures(
     items: VolumeItemInput[],
-    loadPhoto: (insightId: string) => Promise<string | null>,
+    hasPhoto: (insightId: string) => Promise<boolean>,
 ): Promise<void> {
     const need = items.filter((i) => i.insightId && !i.figureUrls);
     for (const it of need) {
-        const url = await loadPhoto(it.insightId!);
-        if (url) it.figureUrls = JSON.stringify([url]);
+        if (await hasPhoto(it.insightId!)) {
+            it.figureUrls = JSON.stringify([insightFigureRef(it.insightId!)]);
+        }
     }
 }
 

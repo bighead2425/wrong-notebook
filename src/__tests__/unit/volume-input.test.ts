@@ -129,3 +129,41 @@ describe('卷名 normalizeVolumeTitle', () => {
         expect(normalizeVolumeTitle(long)).toHaveLength(60);
     });
 });
+
+/**
+ * 【2026-10-28】入口收敛：**挂积累的行，图一律存成引用**。
+ *
+ * 为什么非要在入口做：打印页读到的是**解析后的真图**（data URL），
+ * 它保存卷时可能原样传回来。不在入口改回来，那些 MB 级副本会立刻长回库里 ——
+ * 一边清、一边存，等于没改。这条一破，整次改造就白做。
+ */
+describe('卷内条目 · 积累配图存引用', () => {
+    it('前端传回 data URL 的积累行 ⇒ 落库变成引用', () => {
+        const items = parseVolumeItems(
+            [{ insightId: 'ins_1', itemNo: 'JL20260101001', figureUrls: ['data:image/jpeg;base64,AAAA'] }],
+            5,
+        );
+        expect(items[0].figureUrls).toBe('["ref:insight:ins_1"]');
+    });
+
+    it('只挂了题（没有 insightId）的行不受影响 —— 复练纸的题图照旧', () => {
+        const items = parseVolumeItems(
+            [{ errorItemId: 'e1', figureUrls: ['data:image/png;base64,BBBB'] }],
+            5,
+        );
+        expect(items[0].figureUrls).toBe('["data:image/png;base64,BBBB"]');
+    });
+
+    it('已经是引用的不会被二次改写', () => {
+        const items = parseVolumeItems(
+            [{ insightId: 'ins_1', figureUrls: ['ref:insight:ins_1'] }],
+            5,
+        );
+        expect(items[0].figureUrls).toBe('["ref:insight:ins_1"]');
+    });
+
+    it('没有图的积累行仍然是 null（不是空数组）', () => {
+        const items = parseVolumeItems([{ insightId: 'ins_1' }], 5);
+        expect(items[0].figureUrls).toBeNull();
+    });
+});

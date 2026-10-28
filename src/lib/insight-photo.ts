@@ -77,6 +77,44 @@ export async function excludedFromPrint(insightIds: readonly string[]): Promise<
 }
 
 /**
+ * 【2026-10-28】**只问"这条积累这次有没有可印的图"，不把图取回来。**
+ *
+ * 为什么需要：建卷时只决定两件事 —— ① 这一行要不要挂图；② 挂的话存成**引用**
+ * （`ref:insight:<id>`，见 `lib/volume-figure-ref.ts`）。
+ * 以前这里调 `readPhotoForPrint`，为了判断"有没有图"把几百 KB 的 data URL 读进内存，
+ * 读完再塞进 `figureUrls` —— 那份数据正是要消灭的副本。
+ *
+ * 判据与 `readPhotoForPrint` **必须一致**（同一个 `includedInPrint` 开关），
+ * 所以两处都以 `InsightPhoto` 那一行为准，只是取的列不同。
+ */
+export async function hasPhotoForPrint(insightId: string): Promise<boolean> {
+    const row = await prisma.insightPhoto.findUnique({
+        where: { insightId },
+        select: { includedInPrint: true },
+    });
+    return Boolean(row?.includedInPrint);
+}
+
+/**
+ * 【2026-10-28】**一批"能印"的图**（`insightId → data URL`），给卷里的引用解析用。
+ *
+ * 为什么放在这里而不是让 `volume-figure-ref.ts` 自己查：
+ * 「取图只能在这个文件里」是 2026-10-19 定下的看门护栏（有测试钉着），
+ * 图的取法一分散，"入版开关"这种判据迟早在某条路上被漏掉。
+ *
+ * 只返回**入版**的行：不入版的那条连引用都不该解析出图来。
+ * 引用指向一条已经不存在的积累 ⇒ 映射里没有它，调用方当作"这张图没了"。
+ */
+export async function readPhotosForPrint(insightIds: readonly string[]): Promise<Map<string, string>> {
+    if (insightIds.length === 0) return new Map();
+    const rows = await prisma.insightPhoto.findMany({
+        where: { insightId: { in: [...insightIds] }, includedInPrint: true },
+        select: { insightId: true, data: true },
+    });
+    return new Map(rows.map((r) => [r.insightId, r.data]));
+}
+
+/**
  * 【2026-10-25】**把一批卷行里"现在不入版"的图清掉**（读时过滤，不写库）。
  *
  * 为什么需要它：卷里的 `figureUrls` 是**建卷那一刻的快照**，

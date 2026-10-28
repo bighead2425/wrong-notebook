@@ -13,7 +13,8 @@ import {
 } from "@/lib/volume-input";
 import { VOLUME_KINDS, type VolumeKind } from "@/lib/volume-code";
 import { ensureVolumeEmojiMark } from "@/lib/emoji-mark-store";
-import { readPhotoForPrint, stripExcludedFigures } from "@/lib/insight-photo";
+import { hasPhotoForPrint, stripExcludedFigures } from "@/lib/insight-photo";
+import { resolveFigureRefs } from "@/lib/volume-figure-ref";
 
 const logger = createLogger("api:review-volumes/[id]");
 
@@ -95,7 +96,7 @@ export async function GET(_request: Request, ctx: Ctx) {
          * 但屏幕上的下一份预览该听当前的开关。
          */
         // 按当前入版开关清图（判断与过滤都在 lib/insight-photo.ts）
-        const items = await stripExcludedFigures(volume.items);
+        const items = await resolveFigureRefs(await stripExcludedFigures(volume.items));
 
         return NextResponse.json({ volume: { ...volume, items, emojiMark } });
     } catch (error) {
@@ -192,7 +193,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
          * ⚠️【2026-10-19 真真】取图一律走 `readPhotoForPrint` —— 它把"入版"开关算进去。
          *    原来这里只 `select: { data: true }`，开关拨到"不入版"纸上照样有图。
          */
-        await attachInsightFigures(items, readPhotoForPrint);
+        await attachInsightFigures(items, hasPhotoForPrint);
         const pageCount = resolvePageCount(raw.pageCount, items);
 
         /**

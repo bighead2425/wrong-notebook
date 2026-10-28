@@ -54,12 +54,16 @@ function sourceFiles(root = 'src'): string[] {
  * 这个文件是不是在"自己取图"。
  *
  * 判据两条同时成立：
- *  ① 出现 `insightPhoto.findUnique(`（或 `findFirst(`）；
+ *  ① 出现 `insightPhoto.findUnique(` / `findFirst(` / `findMany(`；
  *  ② 同一段里出现 `data: true`（真的把图本体取出来了）。
  * 只看名字不算 —— 注释里提到 `insightPhoto.findUnique` 的说明文字不该触发。
+ *
+ * ⚠️【2026-10-28】把 `findMany` 补进判据：批量取图同样是"自己取图"。
+ *    那天 `lib/volume-figure-ref.ts` 用 `findMany({ select: { data: true } })` 取了一批图，
+ *    护栏没红 —— 因为它只认单条。**漏掉的判据等于没有判据。**
  */
 export function takesPhotoDirectly(source: string): boolean {
-    const calls = source.match(/insightPhoto\.(findUnique|findFirst)\s*\(/g);
+    const calls = source.match(/insightPhoto\.(findUnique|findFirst|findMany)\s*\(/g);
     if (!calls) return false;
     return /data\s*:\s*true/.test(source);
 }
@@ -79,11 +83,23 @@ describe('入版开关的看门护栏', () => {
         expect(takesPhotoDirectly('await prisma.insightPhoto.findUnique({ where, select: { data: true } })')).toBe(true);
     });
 
-    it('★ 两条建卷路径都**把 readPhotoForPrint 交给补图那一步**（不是只 import 了不用）', () => {
+    it('★ 两条建卷路径都**把"入版"这一步交给补图那一步**（不是只 import 了不用）', () => {
         const post = readFileSync('src/app/api/review-volumes/route.ts', 'utf8');
         const patch = readFileSync('src/app/api/review-volumes/[id]/route.ts', 'utf8');
-        // 断言的是**调用形式**：只 `import` 了、实际又自己写一段 findUnique 的话，这条会红
-        expect(post).toMatch(/attachInsightFigures\(items,\s*readPhotoForPrint\)/);
-        expect(patch).toMatch(/attachInsightFigures\(items,\s*readPhotoForPrint\)/);
+        /**
+         * 断言的是**调用形式**：只 `import` 了、实际又自己写一段查图的话，这条会红。
+         *
+         * ⚠️【2026-10-28】原来钉的是 `readPhotoForPrint` —— 那是"把整张图读进来"的写法。
+         * 现在建卷只要回答"有没有可印的图"，图本身不再进卷（存引用），
+         * 所以这里跟着改成 `hasPhotoForPrint`。判据（看 `includedInPrint`）没有变。
+         */
+        expect(post).toMatch(/attachInsightFigures\(items,\s*hasPhotoForPrint\)/);
+        expect(patch).toMatch(/attachInsightFigures\(items,\s*hasPhotoForPrint\)/);
+    });
+
+    it('★ 引用解析也只走 lib/insight-photo.ts（不许自己 findMany 取图）', () => {
+        const src = readFileSync('src/lib/volume-figure-ref.ts', 'utf8');
+        expect(src).not.toMatch(/insightPhoto\./);
+        expect(src).toMatch(/readPhotosForPrint/);
     });
 });
