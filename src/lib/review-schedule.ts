@@ -21,12 +21,20 @@ import type { ReviewStatus } from './review-status';
 export interface ScheduleRow {
     /** 存库用的到期时刻（本地 12:00） */
     dueAt: Date;
-    /** 第几轮：1 = 首次深挖，2 = 第一次复练，3 = 第二次…… */
+    /** 第几轮：1 = 首次深挖，2 = 第一次复练，3 = 第二次及以后（见 MAX_ROUND） */
     round: number;
 }
 
-/** 轮次上限：只为挡住脏数据把 round 撑成天文数字（界面不显示它） */
-const MAX_ROUND = 99;
+/**
+ * 轮次上限 = **3**。
+ *
+ * ⚠️ 2026-10-28 真库验完改的：`ReviewSchedule.round` 在 schema 里的定义是
+ * "第几轮独立检查（R14：1 = 第 0 天首次深挖 / 2 = 第 7 天 / 3 = 第 21 天）"——
+ * 它只定义了三轮。我第一版按"证据条数 + 1"算，真库里落成了 **5**，
+ * 与那个定义对不上。排程的真实信息在 `scheduledFor`（日期）上，
+ * round 只是个标签 ⇒ 超过三轮一律记 3，别再往上涨。
+ */
+const MAX_ROUND = 3;
 
 /**
  * 由状态算出"下一行排程"。

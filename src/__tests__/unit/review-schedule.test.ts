@@ -23,14 +23,16 @@ describe('scheduleFromStatus', () => {
     it('轮次从 1 起：第 0 条证据 ⇒ 第 1 轮', () => {
         expect(scheduleFromStatus({ nextDueKey: '2026-10-29' }, 0)!.round).toBe(1);
         expect(scheduleFromStatus({ nextDueKey: '2026-10-29' }, 1)!.round).toBe(2);
-        expect(scheduleFromStatus({ nextDueKey: '2026-10-29' }, 3)!.round).toBe(4);
+        /* 【2026-10-28】schema 只定义了 1/2/3 三轮 ⇒ 第四次以后一律记 3 */
+        expect(scheduleFromStatus({ nextDueKey: '2026-10-29' }, 3)!.round).toBe(3);
+        expect(scheduleFromStatus({ nextDueKey: '2026-10-29' }, 8)!.round).toBe(3);
     });
 
     it('轮次被夹在 1..99（负数 / 小数 / NaN 都不会传出去）', () => {
         expect(scheduleFromStatus({ nextDueKey: '2026-10-29' }, -5)!.round).toBe(1);
         expect(scheduleFromStatus({ nextDueKey: '2026-10-29' }, 2.7)!.round).toBe(3);
         expect(scheduleFromStatus({ nextDueKey: '2026-10-29' }, Number.NaN)!.round).toBe(1);
-        expect(scheduleFromStatus({ nextDueKey: '2026-10-29' }, 5000)!.round).toBe(99);
+        expect(scheduleFromStatus({ nextDueKey: '2026-10-29' }, 5000)!.round).toBe(3);
     });
 
     it('退休 / 没有下一日 / 脏日期 ⇒ null（不排，而不是排到一个假日期）', () => {
