@@ -162,11 +162,22 @@ jobs:
       # bcd53ac 那次卡了 40 分钟没动：`npx playwright install --with-deps`
       # 去微软 CDN 下载浏览器，网络一抖就一直等（历史上这步只要 40 秒）。
       # 命中缓存后这步接近秒过；没命中也不会更慢。
+      #
+      # 【2026-10-28】缓存键从 `hashFiles('package-lock.json')` 换成**Playwright 的版本号**。
+      # 起因：fd321ca 只加了两个前端库（html2canvas-pro / jspdf），锁文件一变，键就变了；
+      # restore-keys 没接上 ⇒ 重新去 CDN 拉 chromium ⇒ 卡满 10 分钟超时，整条 CI 判红。
+      # 但**浏览器只跟 Playwright 的版本走**，和锁文件里别的依赖毫无关系。
+      # 键钉在版本号上：① 加删依赖不再触发重下；② Playwright 真升级时才换键（该换）。
+      - name: Read Playwright version
+        id: pwv
+        run: |
+          echo "v=$(node -p 'require("@playwright/test/package.json").version')" >> "$GITHUB_OUTPUT"
+
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          key: playwright-${{ runner.os }}-${{ steps.pwv.outputs.v }}
           restore-keys: |
             playwright-${{ runner.os }}-
 
@@ -178,9 +189,16 @@ jobs:
       #
       # timeout-minutes：卡住时**当场死**，不要拖到 job 级的 60 分钟。
       # 命中缓存时这步 3 秒，没命中约 40 秒；给到 10 分钟已经是 15 倍余量。
+      # 【2026-10-28】再补一层兜底：`timeout 300` 先把第一次卡死的可能掐掉（shell 级，
+      # 不是 step 级）——卡住时 5 分钟就返回非零，接着退一步"只拉浏览器、跳过系统依赖"重试。
+      # 只靠 step 级 timeout 的话，一卡就是 10 分钟直到整步判死，重试根本没机会跑。
       - name: Install Playwright Browsers
-        run: npx playwright install --with-deps chromium
-        timeout-minutes: 10
+        run: |
+          timeout 300 npx playwright install --with-deps chromium || {
+            echo "::warning::--with-deps 首次失败或超时，改为只装浏览器再试一次"
+            npx playwright install chromium
+          }
+        timeout-minutes: 12
 
       - name: Setup Database
         run: |
