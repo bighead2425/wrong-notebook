@@ -40,6 +40,8 @@ describe('summarizeQueue', () => {
         expect(s.levels.map((l) => l.urgency)).toEqual([5, 4, 3, 2, 1]);
         expect(s.levels.map((l) => l.count)).toEqual([1, 0, 4, 0, 0]);
         expect(s.dueNow).toBe(5);
+        /* 10 道里 5 道到期 ⇒ 另有 5 道没到期（五根条加起来是 10，不是 5） */
+        expect(s.notYetDue).toBe(5);
         expect(s.hasWork).toBe(true);
     });
 
@@ -67,6 +69,8 @@ describe('summarizeQueue', () => {
         });
         expect(s.total).toBe(0);
         expect(s.dueNow).toBe(3);
+        /* 总数 0 却算出 3 道到期（脏数据）⇒ 差额夹在 0，不能出现负数 */
+        expect(s.notYetDue).toBe(0);
         expect(s.levels).toEqual([
             { urgency: 5, count: 0 },
             { urgency: 4, count: 2 },

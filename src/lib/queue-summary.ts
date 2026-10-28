@@ -49,6 +49,15 @@ export interface QueueSummary {
     overdue: number;
     /** 五档各自的数量，**固定 5 项、按 5→1 排**，缺的补 0 —— 画图时不会缺柱子 */
     levels: { urgency: number; count: number }[];
+    /**
+     * 库里还有多少道**没到期**（= 总数 − 今天该练）。
+     *
+     * 【2026-10-28】加它的原因：截图里"今天该练 83 道"，而五根条加起来是 100
+     * —— 两个数对不上，看着像算错。其实条画的是**全部题按档位的分布**，
+     * 83 只是"今天到期 + 逾期"。把差额明说出来（"另有 17 道还没到期"），
+     * 两个数就自洽了，也不用改后端。
+     */
+    notYetDue: number;
     /** 现在有没有事可做（用于"空态"文案） */
     hasWork: boolean;
     /**
@@ -83,7 +92,9 @@ export function summarizeQueue(q: QueueLike | null | undefined): QueueSummary {
     const dueNow = dueToday + overdue;
     const firstLevel = levels.find((l) => l.count > 0)?.urgency ?? null;
 
-    return { total, dueNow, overdue, levels, hasWork: dueNow > 0, firstLevel };
+    const notYetDue = Math.max(0, total - dueNow);
+
+    return { total, dueNow, overdue, notYetDue, levels, hasWork: dueNow > 0, firstLevel };
 }
 
 /**

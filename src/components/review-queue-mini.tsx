@@ -94,6 +94,16 @@ export function ReviewQueueMini() {
                     );
                 })}
             </div>
+
+            {/* 【2026-10-28】必须把差额说出来：五根条画的是**全部题的分布**，
+                标题那个数是"今天该练"。不解释的话，两个数对不上会让人以为算错了。 */}
+            {s.notYetDue > 0 && (
+                <p className="text-[11px] text-muted-foreground">
+                    {zh
+                        ? `以上是全部 ${s.total} 道的分布，其中另有 ${s.notYetDue} 道还没到期`
+                        : `All ${s.total} questions by level — ${s.notYetDue} not due yet`}
+                </p>
+            )}
         </div>
     );
 }
