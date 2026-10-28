@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
         findFirst: vi.fn(), // 用于去重检查
         findMany: vi.fn(),
         update: vi.fn(),
+        /** 【2026-10-29】notes 改成 updateMany(where 带 userId) 之后需要它 */
+        updateMany: vi.fn(),
         delete: vi.fn(),
         count: vi.fn(),
     },
@@ -1168,14 +1170,18 @@ describe('/api/error-items', () => {
         });
     });
 
+    /**
+     * 【2026-10-29 审计修复】这一组比原来多三条，因为"归属校验"是这次补的：
+     *   · updateMany 命中 0 行 + 题**存在** ⇒ 403（不是本人的）；
+     *   · updateMany 命中 0 行 + 题**不存在** ⇒ 404；
+     *   · userNotes 不是字符串 ⇒ 400（原来会一路走到 Prisma 炸成 500）。
+     */
     describe('PATCH /api/error-items/[id]/notes (更新笔记)', () => {
+        const existingItem = { id: 'error-item-1', userId: 'user-123', userNotes: '' };
+
         it('应该成功更新用户笔记', async () => {
-            const existingItem = {
-                id: 'error-item-1',
-                userId: 'user-123',
-                userNotes: '',
-            };
-            mocks.mockPrismaErrorItem.update.mockResolvedValue({
+            mocks.mockPrismaErrorItem.updateMany.mockResolvedValue({ count: 1 });
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({
                 ...existingItem,
                 userNotes: '这道题需要注意移项变号',
             });
@@ -1191,18 +1197,16 @@ describe('/api/error-items', () => {
 
             expect(response.status).toBe(200);
             expect(data.userNotes).toBe('这道题需要注意移项变号');
+            /* 归属条件必须进 where —— 这条是本次修复的核心 */
+            expect(mocks.mockPrismaErrorItem.updateMany).toHaveBeenCalledWith({
+                where: { id: 'error-item-1', userId: 'user-123' },
+                data: { userNotes: '这道题需要注意移项变号' },
+            });
         });
 
         it('应该成功清空笔记', async () => {
-            const existingItem = {
-                id: 'error-item-1',
-                userId: 'user-123',
-                userNotes: '旧笔记内容',
-            };
-            mocks.mockPrismaErrorItem.update.mockResolvedValue({
-                ...existingItem,
-                userNotes: '',
-            });
+            mocks.mockPrismaErrorItem.updateMany.mockResolvedValue({ count: 1 });
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({ ...existingItem, userNotes: '' });
 
             const request = new Request('http://localhost/api/error-items/error-item-1/notes', {
                 method: 'PATCH',
@@ -1219,11 +1223,8 @@ describe('/api/error-items', () => {
 
         it('应该成功保存长笔记', async () => {
             const longNote = '这是一段很长的笔记内容。'.repeat(100);
-            mocks.mockPrismaErrorItem.update.mockResolvedValue({
-                id: 'error-item-1',
-                userId: 'user-123',
-                userNotes: longNote,
-            });
+            mocks.mockPrismaErrorItem.updateMany.mockResolvedValue({ count: 1 });
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({ ...existingItem, userNotes: longNote });
 
             const request = new Request('http://localhost/api/error-items/error-item-1/notes', {
                 method: 'PATCH',
@@ -1234,6 +1235,46 @@ describe('/api/error-items', () => {
             const response = await PATCH_NOTES(request, { params: Promise.resolve({ id: 'error-item-1' }) });
 
             expect(response.status).toBe(200);
+        });
+
+        it('★ 别人的题：命中 0 行且题存在 ⇒ 403（不再改得动别人的笔记）', async () => {
+            mocks.mockPrismaErrorItem.updateMany.mockResolvedValue({ count: 0 });
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({ id: 'error-item-1' });
+
+            const request = new Request('http://localhost/api/error-items/error-item-1/notes', {
+                method: 'PATCH',
+                body: JSON.stringify({ userNotes: '偷偷改' }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await PATCH_NOTES(request, { params: Promise.resolve({ id: 'error-item-1' }) });
+            expect(response.status).toBe(403);
+        });
+
+        it('题不存在 ⇒ 404', async () => {
+            mocks.mockPrismaErrorItem.updateMany.mockResolvedValue({ count: 0 });
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(null);
+
+            const request = new Request('http://localhost/api/error-items/nope/notes', {
+                method: 'PATCH',
+                body: JSON.stringify({ userNotes: '笔记' }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await PATCH_NOTES(request, { params: Promise.resolve({ id: 'nope' }) });
+            expect(response.status).toBe(404);
+        });
+
+        it('userNotes 不是字符串 ⇒ 400（而不是 500）', async () => {
+            const request = new Request('http://localhost/api/error-items/error-item-1/notes', {
+                method: 'PATCH',
+                body: JSON.stringify({ userNotes: { evil: true } }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await PATCH_NOTES(request, { params: Promise.resolve({ id: 'error-item-1' }) });
+            expect(response.status).toBe(400);
+            expect(mocks.mockPrismaErrorItem.updateMany).not.toHaveBeenCalled();
         });
 
         it('应该拒绝未登录用户', async () => {
@@ -1254,7 +1295,7 @@ describe('/api/error-items', () => {
         });
 
         it('应该处理数据库错误', async () => {
-            mocks.mockPrismaErrorItem.update.mockRejectedValue(new Error('Database error'));
+            mocks.mockPrismaErrorItem.updateMany.mockRejectedValue(new Error('Database error'));
 
             const request = new Request('http://localhost/api/error-items/error-item-1/notes', {
                 method: 'PATCH',

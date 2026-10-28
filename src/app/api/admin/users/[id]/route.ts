@@ -43,7 +43,14 @@ export async function PATCH(
             },
             data: {
                 isActive
-            }
+            },
+            /**
+             * 【2026-10-29 审计修复】原来 `update` 不带 `select`，返回的是**整行**，
+             * 包括 `password`（bcrypt 哈希）—— 它就这么进了响应体，
+             * 在浏览器的网络面板、任何抓包的代理里都能看到。
+             * 只回界面上真正要用的四个字段。
+             */
+            select: { id: true, name: true, email: true, role: true, isActive: true },
         })
 
         return NextResponse.json(user)
@@ -84,7 +91,9 @@ export async function DELETE(
         const user = await prisma.user.delete({
             where: {
                 id
-            }
+            },
+            /* 同上：删完也不该把密码哈希回给前端 */
+            select: { id: true, name: true, email: true, role: true, isActive: true },
         })
 
         return NextResponse.json(user)

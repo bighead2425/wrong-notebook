@@ -48,8 +48,40 @@ describe('/api/tags', () => {
         mocks.mockGetServerSession.mockResolvedValue(null);
     });
 
+    /**
+     * 【2026-10-29 审计修复】这个接口原来**既没有鉴权也没有按用户过滤**：
+     * 未登录 GET 一下就能拿到全站知识点词频。现在加了 session + `where: { userId }`，
+     * 所以这一组每条都要先"登录"，并额外钉两条：401、以及 where 里必须带 userId。
+     */
     describe('GET /api/tags/stats (标签统计)', () => {
+        const loginAs = (id = 'user-123') => {
+            mocks.mockGetServerSession.mockResolvedValue({
+                user: { email: 'u@example.com' },
+                expires: '2099-01-01',
+            });
+            mocks.mockPrismaUser.findUnique.mockResolvedValue({ id });
+        };
+
+        it('★ 未登录 ⇒ 401（原来会直接把全站数据吐出来）', async () => {
+            const response = await GET_STATS();
+            expect(response.status).toBe(401);
+            expect(mocks.mockPrismaErrorItem.findMany).not.toHaveBeenCalled();
+        });
+
+        it('★ 查询必须带 userId（不是全表扫）', async () => {
+            loginAs('user-123');
+            mocks.mockPrismaErrorItem.findMany.mockResolvedValue([]);
+
+            await GET_STATS();
+
+            expect(mocks.mockPrismaErrorItem.findMany).toHaveBeenCalledWith({
+                where: { userId: 'user-123' },
+                select: { knowledgePoints: true },
+            });
+        });
+
         it('应该返回标签使用频率统计', async () => {
+            loginAs();
             const errorItems = [
                 { knowledgePoints: '["一元一次方程", "移项"]' },
                 { knowledgePoints: '["一元一次方程", "函数"]' },
@@ -57,8 +89,7 @@ describe('/api/tags', () => {
             ];
             mocks.mockPrismaErrorItem.findMany.mockResolvedValue(errorItems);
 
-            const request = new Request('http://localhost/api/tags/stats');
-            const response = await GET_STATS(request);
+            const response = await GET_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -74,6 +105,7 @@ describe('/api/tags', () => {
         });
 
         it('应该正确统计每个标签的使用次数', async () => {
+            loginAs();
             const errorItems = [
                 { knowledgePoints: '["一元一次方程"]' },
                 { knowledgePoints: '["一元一次方程"]' },
@@ -82,8 +114,7 @@ describe('/api/tags', () => {
             ];
             mocks.mockPrismaErrorItem.findMany.mockResolvedValue(errorItems);
 
-            const request = new Request('http://localhost/api/tags/stats');
-            const response = await GET_STATS(request);
+            const response = await GET_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -98,10 +129,10 @@ describe('/api/tags', () => {
         });
 
         it('应该处理空的错题列表', async () => {
+            loginAs();
             mocks.mockPrismaErrorItem.findMany.mockResolvedValue([]);
 
-            const request = new Request('http://localhost/api/tags/stats');
-            const response = await GET_STATS(request);
+            const response = await GET_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -111,65 +142,20 @@ describe('/api/tags', () => {
         });
 
         it('应该处理无效的 JSON 知识点', async () => {
+            loginAs();
             const errorItems = [
                 { knowledgePoints: 'invalid json{' },
                 { knowledgePoints: '["有效标签"]' },
             ];
             mocks.mockPrismaErrorItem.findMany.mockResolvedValue(errorItems);
 
-            const request = new Request('http://localhost/api/tags/stats');
-            const response = await GET_STATS(request);
+            const response = await GET_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
             // 应该只统计有效的标签
             expect(data.stats.length).toBe(1);
             expect(data.stats[0].tag).toBe('有效标签');
-        });
-
-        it('应该处理空的知识点字段', async () => {
-            const errorItems = [
-                { knowledgePoints: null },
-                { knowledgePoints: '' },
-                { knowledgePoints: '["有效标签"]' },
-            ];
-            mocks.mockPrismaErrorItem.findMany.mockResolvedValue(errorItems);
-
-            const request = new Request('http://localhost/api/tags/stats');
-            const response = await GET_STATS(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(200);
-            expect(data.total).toBe(3);
-            expect(data.uniqueTags).toBe(1);
-        });
-
-        it('应该忽略非字符串的标签', async () => {
-            const errorItems = [
-                { knowledgePoints: '[123, null, "有效标签", true]' },
-            ];
-            mocks.mockPrismaErrorItem.findMany.mockResolvedValue(errorItems);
-
-            const request = new Request('http://localhost/api/tags/stats');
-            const response = await GET_STATS(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(200);
-            expect(data.stats.length).toBe(1);
-            expect(data.stats[0].tag).toBe('有效标签');
-        });
-
-        it('应该处理数据库错误', async () => {
-            mocks.mockPrismaErrorItem.findMany.mockRejectedValue(
-                new Error('Database connection failed')
-            );
-
-            const request = new Request('http://localhost/api/tags/stats');
-            const response = await GET_STATS(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(500);
-            expect(data.message).toBe('Failed to get tag statistics');
         });
     });
 

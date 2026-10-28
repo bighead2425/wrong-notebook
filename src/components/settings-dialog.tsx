@@ -344,8 +344,12 @@ export function SettingsDialog({
 
         setClearingError(true);
         try {
-            await apiClient.delete("/api/error-items/clear");
-            alert(t.settings?.clearSuccess || "Success");
+            /* 【2026-10-29】服务端要求显式确认（裸 DELETE 会被 400 挡回来），
+               并把删了多少条回显出来 —— 只弹一句"成功"，他不知道删了几道。 */
+            const res = await apiClient.delete<{ deleted?: number }>("/api/error-items/clear", {
+                body: JSON.stringify({ confirm: true }),
+            });
+            alert(`${t.settings?.clearSuccess || "Success"}${typeof res?.deleted === "number" ? ` (${res.deleted})` : ""}`);
             setOpen(false);
             window.location.reload();
         } catch (error) {

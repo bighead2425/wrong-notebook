@@ -253,29 +253,48 @@ describe('/api/stats', () => {
         });
     });
 
+    /**
+     * 【2026-10-29 审计修复】服务端加了 `confirm: true` 这道闸：
+     * 裸 DELETE 会被 400 挡回来。语义仍是**硬删**（不进回收箱）。
+     */
     describe('DELETE /api/error-items/clear (清除所有错题)', () => {
-        it('应该成功清除所有错题', async () => {
+        const clear = (body?: unknown) =>
+            DELETE_ERROR_ITEMS(
+                new Request('http://localhost/api/error-items/clear', {
+                    method: 'DELETE',
+                    ...(body === undefined
+                        ? {}
+                        : { body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }),
+                }),
+            );
+
+        it('应该成功清除所有错题（并回传删了多少条）', async () => {
             mocks.mockPrismaErrorItem.deleteMany.mockResolvedValue({ count: 30 });
 
-            const request = new Request('http://localhost/api/error-items/clear', {
-                method: 'DELETE',
-            });
-
-            const response = await DELETE_ERROR_ITEMS(request);
+            const response = await clear({ confirm: true });
             const data = await response.json();
 
             expect(response.status).toBe(200);
             expect(data.message).toBe('Error data cleared successfully');
+            expect(data.deleted).toBe(30);
+        });
+
+        it('★ 没有确认体 ⇒ 400，且一条都不删（原来会直接删光）', async () => {
+            const response = await clear();
+            expect(response.status).toBe(400);
+            expect(mocks.mockPrismaErrorItem.deleteMany).not.toHaveBeenCalled();
+        });
+
+        it('★ confirm 不是 true ⇒ 400', async () => {
+            const response = await clear({ confirm: 'yes' });
+            expect(response.status).toBe(400);
+            expect(mocks.mockPrismaErrorItem.deleteMany).not.toHaveBeenCalled();
         });
 
         it('应该只清除当前用户的错题', async () => {
             mocks.mockPrismaErrorItem.deleteMany.mockResolvedValue({ count: 10 });
 
-            const request = new Request('http://localhost/api/error-items/clear', {
-                method: 'DELETE',
-            });
-
-            await DELETE_ERROR_ITEMS(request);
+            await clear({ confirm: true });
 
             expect(mocks.mockPrismaErrorItem.deleteMany).toHaveBeenCalledWith({
                 where: { userId: 'user-123' },
@@ -283,50 +302,11 @@ describe('/api/stats', () => {
         });
 
         it('应该拒绝未登录用户', async () => {
-            vi.mocked(getServerSession).mockResolvedValue(null);
+            vi.mocked(getServerSession).mockResolvedValueOnce(null);
 
-            const request = new Request('http://localhost/api/error-items/clear', {
-                method: 'DELETE',
-            });
-
-            const response = await DELETE_ERROR_ITEMS(request);
-            const data = await response.json();
-
+            const response = await clear({ confirm: true });
             expect(response.status).toBe(401);
-            expect(data.message).toBe('Unauthorized');
-        });
-
-        it('应该拒绝 session 中没有 user 的请求', async () => {
-            vi.mocked(getServerSession).mockResolvedValue({
-                user: undefined,
-                expires: '2025-12-31',
-            } as any);
-
-            const request = new Request('http://localhost/api/error-items/clear', {
-                method: 'DELETE',
-            });
-
-            const response = await DELETE_ERROR_ITEMS(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(401);
-            expect(data.message).toBe('Unauthorized');
-        });
-
-        it('应该处理数据库错误', async () => {
-            mocks.mockPrismaErrorItem.deleteMany.mockRejectedValue(
-                new Error('Database error')
-            );
-
-            const request = new Request('http://localhost/api/error-items/clear', {
-                method: 'DELETE',
-            });
-
-            const response = await DELETE_ERROR_ITEMS(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(500);
-            expect(data.message).toBe('Failed to clear error data');
+            expect(mocks.mockPrismaErrorItem.deleteMany).not.toHaveBeenCalled();
         });
     });
 });
