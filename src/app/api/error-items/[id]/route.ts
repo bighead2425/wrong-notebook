@@ -24,6 +24,8 @@ import {
     updateReviewEvent,
 } from "@/lib/review-events";
 import { dayKey } from "@/lib/calendar-grid";
+import { reviewStatusOf } from '@/lib/review-status';
+import { sameScheduleDay, scheduleFromStatus } from '@/lib/review-schedule';
 /**
  * 【2026-10-15】**等级完全交给系统** —— 规则在 `lib/level-settle.ts`（纯函数），
  * 结算在 `lib/daily-settle.ts`。本文件只用两个纯函数：
@@ -320,6 +322,83 @@ export async function PUT(
 
                     // ⑤ 连对 4 次 ⇒ 直接已掌握
                     autoMastered = shouldAutoMaster(asField);
+
+                    /**
+                     * ⑥ 【2026-10-28 M7】**把"下次什么时候练"落成一行排程**。
+                     *
+                     * 以前 `reviewStatusOf()` 每次都是现算（"从现在起 N 天"），
+                     * 结果只出现在界面上，没人把它变成"到某一天该练"的事实。
+                     * ⇒ 排程表一直是空的，"今天该练什么"只能靠现算扫全表。
+                     *
+                     * 现在：录完一条结果 ⇒ 重排**唯一那条未完成**的排程（同一题不堆多条）。
+                     *   · 状态说退休（连对够 4 次）⇒ 把未完成的排程标完成，不再排；
+                     *   · 日期没变 ⇒ **一个字都不写**（避免"每点一次圈就多一条日志"的噪音）。
+                     *
+                     * ⚠️ 与 ⑤ 同一个 try：排程失败只记日志，绝不让"录结果"这条主路径失败。
+                     *    排程可以下次再算，她的记录不能丢。
+                     */
+                    try {
+                        const status = reviewStatusOf(asField);
+                        const next = scheduleFromStatus(status, recent.length);
+                        const pending = await prisma.reviewSchedule.findFirst({
+                            where: { errorItemId: id, completedAt: null },
+                            orderBy: { scheduledFor: 'desc' },
+                            select: { id: true, scheduledFor: true },
+                        });
+
+                        if (!next) {
+                            if (pending) {
+                                await prisma.reviewSchedule.update({
+                                    where: { id: pending.id },
+                                    data: { completedAt: new Date() },
+                                });
+                                await prisma.stateChangeLog.create({
+                                    data: {
+                                        errorItemId: id,
+                                        field: 'nextDueOn',
+                                        fromValue: dayKey(pending.scheduledFor),
+                                        toValue: null,
+                                        actor: 'system',
+                                        scanReturnId: null,
+                                        note: '连对已够，退出排程',
+                                    },
+                                });
+                            }
+                        } else if (!pending) {
+                            await prisma.reviewSchedule.create({
+                                data: { errorItemId: id, round: next.round, scheduledFor: next.dueAt },
+                            });
+                            await prisma.stateChangeLog.create({
+                                data: {
+                                    errorItemId: id,
+                                    field: 'nextDueOn',
+                                    fromValue: null,
+                                    toValue: dayKey(next.dueAt),
+                                    actor: 'system',
+                                    scanReturnId: null,
+                                    note: '首次排程',
+                                },
+                            });
+                        } else if (!sameScheduleDay(pending.scheduledFor, next.dueAt)) {
+                            await prisma.reviewSchedule.update({
+                                where: { id: pending.id },
+                                data: { scheduledFor: next.dueAt, round: next.round },
+                            });
+                            await prisma.stateChangeLog.create({
+                                data: {
+                                    errorItemId: id,
+                                    field: 'nextDueOn',
+                                    fromValue: dayKey(pending.scheduledFor),
+                                    toValue: dayKey(next.dueAt),
+                                    actor: 'system',
+                                    scanReturnId: null,
+                                    note: '录结果后重排',
+                                },
+                            });
+                        }
+                    } catch (error) {
+                        logger.error({ error, id }, 'Failed to reschedule review');
+                    }
                 } catch (error) {
                     logger.error({ error, id }, 'Failed to write review event / derive outcomes');
                 }
