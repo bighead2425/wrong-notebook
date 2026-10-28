@@ -45,6 +45,18 @@ test.describe('共享打印链路', () => {
     test('四格设置 → 生成 PDF → 交给打印机 → 表单参数正确', async ({ page }) => {
         test.setTimeout(180_000);
 
+        /**
+         * 拍图自检的告警要当成失败。
+         *
+         * 事故背景（2026-10-28 手机真机）：版心按整纸宽铺开、右边被裁，
+         * 参数全对、PDF 也真、纸却废了。两处自检（DOM 宽度 / 画布右侧出血）
+         * 会把这种情况喊出来 —— 这里把它接住，别让它只留在控制台里。
+         */
+        const captureWarnings: string[] = [];
+        page.on('console', (msg) => {
+            if (msg.text().includes('[print-capture]')) captureWarnings.push(msg.text());
+        });
+
         await page.goto('/login');
         await page.locator('input[name="email"]').fill('admin@localhost');
         await page.locator('input[name="password"]').fill('123456');
@@ -96,6 +108,12 @@ test.describe('共享打印链路', () => {
             expect(last.isPdf, '收到的内容不是 PDF（缺 %PDF 头）').toBe(true);
             expect(last.bytes, `PDF 太小（${last.bytes} 字节），像是拍空了`).toBeGreaterThan(20_000);
             expect(last.fileName || '').toMatch(/\.pdf$/);
+
+            /* 纸面几何自检：版心宽度 / 右侧出血。参数对但版面错，印出来一样是废纸 */
+            expect(
+                captureWarnings,
+                `拍图自检没通过：\n${captureWarnings.join('\n')}`,
+            ).toEqual([]);
         } finally {
             /* 还原配置：别把"电脑端=共享"留给后面的用例 */
             await page.request.post('/api/settings', {
