@@ -21,6 +21,15 @@ vi.mock('@/lib/logger', () => ({
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
+/**
+ * 【2026-10-29】这个接口原来没鉴权（审计发现：baseUrl 由查询参数决定 ⇒ SSRF）。
+ * 补了 session + 地址白名单之后，这里必须把 session mock 出来，
+ * 并额外钉住两条：未登录 401、环回地址 400。
+ */
+const authMocks = vi.hoisted(() => ({ getServerSession: vi.fn() }));
+vi.mock('next-auth', () => ({ getServerSession: authMocks.getServerSession }));
+vi.mock('@/lib/auth', () => ({ authOptions: {} }));
+
 import { GET } from '@/app/api/ai/models/route';
 
 function makeRequest(params: Record<string, string>): NextRequest {
@@ -34,6 +43,7 @@ function makeRequest(params: Record<string, string>): NextRequest {
 describe('GET /api/ai/models - Gemini provider', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        authMocks.getServerSession.mockResolvedValue({ user: { email: 'u@example.com' } });
     });
 
     it('应该正确获取并返回 Gemini 视觉模型列表', async () => {
@@ -165,6 +175,7 @@ describe('GET /api/ai/models - Gemini provider', () => {
 describe('GET /api/ai/models - OpenAI provider', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        authMocks.getServerSession.mockResolvedValue({ user: { email: 'u@example.com' } });
     });
 
     it('应该正确获取并返回 OpenAI 视觉模型列表', async () => {
@@ -204,5 +215,60 @@ describe('GET /api/ai/models - OpenAI provider', () => {
         expect(res.status).toBe(200);
         expect(body.models).toEqual([]);
         expect(body.error).toContain('API error');
+    });
+});
+
+/**
+ * 【2026-10-29 审计修复】两道新闸。
+ */
+describe('GET /api/ai/models - 鉴权与地址白名单', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('未登录 ⇒ 401，且不会去请求任何地址', async () => {
+        authMocks.getServerSession.mockResolvedValue(null);
+
+        const req = makeRequest({ provider: 'gemini', apiKey: 'k' });
+        const res = await GET(req);
+
+        expect(res.status).toBe(401);
+        expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('baseUrl 指向环回地址 ⇒ 400（SSRF 探测内网这条路被堵上）', async () => {
+        authMocks.getServerSession.mockResolvedValue({ user: { email: 'u@example.com' } });
+
+        const req = makeRequest({ provider: 'openai', apiKey: 'k', baseUrl: 'http://127.0.0.1:8080/v1' });
+        const res = await GET(req);
+        const body = await res.json();
+
+        expect(res.status).toBe(400);
+        expect(body.models).toEqual([]);
+        expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('云元数据地址 ⇒ 400', async () => {
+        authMocks.getServerSession.mockResolvedValue({ user: { email: 'u@example.com' } });
+
+        const req = makeRequest({ provider: 'openai', apiKey: 'k', baseUrl: 'http://169.254.169.254/latest' });
+        const res = await GET(req);
+
+        expect(res.status).toBe(400);
+        expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('局域网地址仍然放行（将来跑本地模型不拦）', async () => {
+        authMocks.getServerSession.mockResolvedValue({ user: { email: 'u@example.com' } });
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({ data: [{ id: 'qwen2.5', owned_by: 'local' }] }),
+        });
+
+        const req = makeRequest({ provider: 'openai', apiKey: 'k', baseUrl: 'http://192.168.1.10:11434/v1' });
+        const res = await GET(req);
+
+        expect(res.status).toBe(200);
+        expect(mockFetch).toHaveBeenCalled();
     });
 });
