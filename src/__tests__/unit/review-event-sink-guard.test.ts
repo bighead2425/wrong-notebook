@@ -38,10 +38,19 @@ describe('复习流水 · 唯一写入口（看门护栏）', () => {
     const files = walk(join(ROOT, 'src'));
     const short = (f: string) => f.replace(ROOT, '').replace(/\\/g, '/');
 
-    /** 判据：文件里出现 `prisma.reviewEvent.`（= 真的在动那张表） */
-    const touching = files.filter((f) => /prisma\.reviewEvent\./.test(readFileSync(f, 'utf8')));
+    /**
+     * 判据：出现**写** reviewEvent 的调用（create / update / delete / upsert）。
+     *
+     * 【2026-10-30】原来判据是 `/prisma\.reviewEvent\./`——把**读**也算进去了。
+     * 那天新增 `lib/difficulty-infer.ts` 只是 `findMany` 读流水来推断难度，
+     * 就被判成"绕过唯一写入口"。**读不会破坏流水，写才会。**
+     * 判据收窄到写操作，护栏才守的是它真正要守的东西。
+     */
+    const WRITE_REVIEW_EVENT =
+        /prisma\.reviewEvent\.(create|createMany|update|updateMany|delete|deleteMany|upsert)\b/;
+    const touching = files.filter((f) => WRITE_REVIEW_EVENT.test(readFileSync(f, 'utf8')));
 
-    it('★★ 只有 `lib/review-events.ts` 能直接碰 `prisma.reviewEvent`', () => {
+    it('★★ 只有 `lib/review-events.ts` 能直接**写** `prisma.reviewEvent`（读不限）', () => {
         const SINK = short(join(ROOT, 'src', 'lib', 'review-events.ts'));
         expect(touching.map(short).sort()).toEqual([SINK]);
     });

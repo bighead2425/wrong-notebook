@@ -14,17 +14,20 @@ import {
  * 错因分类（2026-09-30 换代：6 个自由分类 → **8 种、分 3 组、带优先级**）。
  *
  * 钉住的是他口述的三条规矩，不是实现细节：
- *   ① 8 种分三组（不掌握 / 没做对 / 其他），组决定复习类型（见 manage-type.test）
+ *   ① 11 种分三组（不掌握 5 / 没做对 4 / 其他 2），组决定复习类型（见 manage-type.test）
  *   ② **顺序即优先级**，一题只留一个错因
  *   ③ 旧值能平滑搬过来（库里不能留两套说法）
  */
-describe('错因分类 · 8 种三组', () => {
-    it('8 种，顺序就是他列的那个顺序（顺序 = 优先级，改顺序就是改优先级）', () => {
+describe('错因分类 · 11 种三组', () => {
+    it('11 种，顺序就是优先级（改顺序就是改优先级）', () => {
         expect(MISTAKE_CATEGORIES).toEqual([
             'concept_vague',
             'knowledge_gap',
             'memory_weak',
+            'interpretation_error',
+            'incomplete_cases',
             'misread',
+            'method_mischoice',
             'calc_slip',
             'fixed_mindset',
             'just_record',
@@ -32,10 +35,10 @@ describe('错因分类 · 8 种三组', () => {
         ]);
     });
 
-    it('三组，每组三个 / 三个 / 两个，且不重不漏', () => {
+    it('三组：5 / 4 / 2，且不重不漏', () => {
         expect(MISTAKE_GROUPS.map((g) => g.zh)).toEqual(['不掌握', '没做对', '其他']);
-        expect(MISTAKE_GROUPS[0].items).toEqual(['concept_vague', 'knowledge_gap', 'memory_weak']);
-        expect(MISTAKE_GROUPS[1].items).toEqual(['misread', 'calc_slip', 'fixed_mindset']);
+        expect(MISTAKE_GROUPS[0].items).toEqual(['concept_vague', 'knowledge_gap', 'memory_weak', 'interpretation_error', 'incomplete_cases']);
+        expect(MISTAKE_GROUPS[1].items).toEqual(['misread', 'method_mischoice', 'calc_slip', 'fixed_mindset']);
         expect(MISTAKE_GROUPS[2].items).toEqual(['just_record', 'unknown_reason']);
         const flat = MISTAKE_GROUPS.flatMap((g) => g.items);
         expect([...flat].sort()).toEqual([...MISTAKE_CATEGORIES].sort());
@@ -50,8 +53,8 @@ describe('错因分类 · 8 种三组', () => {
     it('优先级序号从 1 起，与数组顺序一致', () => {
         expect(priorityOf('concept_vague')).toBe(1);
         expect(priorityOf('knowledge_gap')).toBe(2);
-        expect(priorityOf('calc_slip')).toBe(5);
-        expect(priorityOf('unknown_reason')).toBe(8);
+        expect(priorityOf('calc_slip')).toBe(8);
+        expect(priorityOf('unknown_reason')).toBe(11);
     });
 });
 
