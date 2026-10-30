@@ -70,6 +70,8 @@ export const LIST_ITEM_SCALARS = [
     'errorType',
     'userNotes',
     'mistakeCategory',
+    /* 【2026-10-30】错因来源（'ai' | 'human'）：用来统计"AI 判的错因有多少被人改掉" */
+    'mistakeCategorySource',
     'masteryLevel',
     'levelCountdown',
     'gradeSemester',
