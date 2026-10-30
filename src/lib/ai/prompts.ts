@@ -1,3 +1,5 @@
+import type { TagBranch } from './tag-service';
+
 /**
  * Shared AI prompt templates
  * This module provides centralized prompt management
@@ -110,6 +112,11 @@ export interface PromptOptions {
   prefetchedChemistryTags?: string[];
   prefetchedBiologyTags?: string[];
   prefetchedEnglishTags?: string[];
+  /**
+   * 【2026-10-30】结构化标签清单（按单元分组）。
+   * 有它就用它渲染；没有则退回 prefetched* 的平铺模式（兼容旧调用）。
+   */
+  tagTree?: TagBranch[];
 }
 
 export const DEFAULT_ANALYZE_TEMPLATE = `【角色与核心任务 (ROLE AND CORE TASK)】
@@ -129,6 +136,21 @@ export const DEFAULT_ANALYZE_TEMPLATE = `【角色与核心任务 (ROLE AND CORE
 <knowledge_points>
 在此处填写知识点，使用逗号分隔，例如：知识点1, 知识点2, 知识点3
 </knowledge_points>
+
+<mistake_category>
+从下面 11 个里选**一个**最符合的（她这次为什么错）。看不到她的作答痕迹、无法判断时留空。
+concept_vague（概念模糊，知道用哪个知识点但用错了）
+knowledge_gap（知识盲区，根本不知道该用哪个）
+memory_weak（记忆不牢，应该用 A 却用成了 B）
+interpretation_error（理解偏差，看懂了每个字但把题意理解成另一件事）
+incomplete_cases（遗漏情形，知道要分类但漏了分支）
+misread（审题不清，没看清单位/条件/关键词）
+method_mischoice（方法选错，会几种但选了更繁更易错的那个）
+calc_slip（计算失误，符号/进位/步骤跳跃）
+fixed_mindset（思维定式，拿老方法套新题）
+just_record（就想记录，她写的是对的或没有作答）
+unknown_reason（前 10 个都不合适）
+</mistake_category>
 
 <requires_image>
 判断这道题是否需要依赖图片才能正确解答。如果题目包含几何图形、函数图像、实验装置图、电路图等必须看图才能理解的内容，填写 true；如果只需要文字描述即可理解（如英语题、纯文字数学题），填写 false。
@@ -204,7 +226,7 @@ export const DEFAULT_ANALYZE_TEMPLATE = `【角色与核心任务 (ROLE AND CORE
 - 每题最多 5 个标签。
 
 【!!! 关键格式与内容约束 (CRITICAL RULES) !!!】
-1. **格式严格**：必须严格包含上述 9 个 XML 标签，除此之外不要输出任何其他“开场白”或“结束语”。
+1. **格式严格**：必须严格包含上述 10 个 XML 标签，除此之外不要输出任何其他“开场白”或“结束语”。
 2. **纯文本**：内容作为纯文本处理，**不要转义反斜杠**。
 3. **内容完整**：如果包含子问题，请在 question_text 中完整列出。
 4. **禁止图片**：严禁包含任何图片链接或 markdown 图片语法。
@@ -293,7 +315,7 @@ function replaceVariables(template: string, variables: Record<string, string>): 
  * @returns 标签数组
  */
 export function getMathTagsForGrade(
-  grade: 7 | 8 | 9 | 10 | 11 | 12 | null,
+  grade: number | null,   // 1-12；函数已弃用，仅保留签名兼容
   prefetchedTags?: string[]
 ): string[] {
   // 必须使用预获取的数据库标签
@@ -307,6 +329,29 @@ export function getMathTagsForGrade(
 }
 
 /**
+ * 把标签树渲染成「■ 单元 / 知识点」的分组清单。
+ *
+ * 同名单元（不同年级下重名）在这里合并，避免 AI 看到两个一模一样的 ■；
+ * 同一单元内的重复知识点也去重（A/B 两个年级可能都列了同一个点）。
+ */
+function renderTagTree(branches: TagBranch[]): string {
+  const merged = new Map<string, string[]>();
+  for (const b of branches) {
+    const list = merged.get(b.unit) ?? [];
+    for (const pt of b.points) {
+      if (!list.includes(pt)) list.push(pt);
+    }
+    merged.set(b.unit, list);
+  }
+  const lines: string[] = [];
+  for (const [unit, points] of merged) {
+    lines.push(`■ ${unit}`);
+    lines.push(`    ${points.join(' / ')}`);
+  }
+  return lines.join('\n');
+}
+
+/**
  * Generates the analyze image prompt
  * @param language - Target language for analysis ('zh' or 'en')
  * @param grade - Optional grade level (7-9:初中, 10-12:高中) for cumulative tag filtering
@@ -314,7 +359,7 @@ export function getMathTagsForGrade(
  */
 export function generateAnalyzePrompt(
   language: 'zh' | 'en',
-  grade?: 7 | 8 | 9 | 10 | 11 | 12 | null,
+  grade?: number | null,
   subject?: string | null,
   options?: PromptOptions,
   gradeSemester?: string | null
@@ -343,13 +388,33 @@ export function generateAnalyzePrompt(
   let tagsSection = "";
 
   if (subject === '数学') {
-    tagsSection = `**数学标签 (Math Tags):**
+    /**
+     * 【2026-10-30】优先用**按单元分组**的清单。
+     *
+     * 平铺时 AI 看不出「平行四边形的面积」属于「多边形的面积」，只能按字面相似度猜；
+     * 分组后它先在单元层定位，再在单元内选点。这是"标签能挂对父节点"的前提。
+     * 没有树时退回平铺，保证旧调用不炸。
+     */
+    const tree = options?.tagTree;
+    if (tree && tree.length > 0) {
+      tagsSection = `**数学知识点（按单元分组）**
+
+${renderTagTree(tree)}
+
+**选择规则**：
+- 先判断这题属于哪个单元（■ 开头的行），再**只在该单元下列出的知识点里选**，1–3 个；
+- **必须逐字使用上面出现的名字**，不要改写、不要加括号补充、不要合并；
+- 如果都不合适，knowledge_points 只写 UNMATCHED，并在 mistake_analysis 里用一句话说明它实际考了什么；
+- **不要勉强选一个最像的** —— 选错比不选更糟。`;
+    } else {
+      tagsSection = `**数学标签 (Math Tags):**
 使用人教版课程大纲中的**精确标签名称**，可选标签如下：
 ${mathTagsString}
 
 **重要提示**：
 - 必须从上述列表中选择精确匹配的标签
 - 每题最多 5 个标签`;
+    }
   } else if (subject === '物理') {
     tagsSection = `**物理标签 (Physics Tags):**
 使用课程大纲中的**精确标签名称**，可选标签如下：

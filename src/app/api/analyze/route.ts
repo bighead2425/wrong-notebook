@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getAIService } from "@/lib/ai";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
-import { calculateGradeNumber } from "@/lib/knowledge-tags";
+import { calculateGradeNumber, gradeTermToNumber } from "@/lib/knowledge-tags";
 import { calculateGrade } from "@/lib/grade-calculator";
 import { prisma } from "@/lib/prisma";
 import { badRequest, internalError, createErrorResponse, ErrorCode } from "@/lib/api-errors";
@@ -50,7 +50,7 @@ export async function POST(req: Request) {
         }
 
         // 先获取用户年级信息，用于动态生成 AI prompt 中的标签列表
-        let userGrade: 7 | 8 | 9 | 10 | 11 | 12 | null = null;
+        let userGrade: number | null = null;   // 1-12（2026-10-30 补齐小学）
         let userGradeSemester: string | null = null;
         let subjectName: 'math' | 'physics' | 'chemistry' | 'biology' | 'english' | 'chinese' | 'history' | 'geography' | 'politics' | null = null;
 
@@ -59,15 +59,31 @@ export async function POST(req: Request) {
                 // 获取用户信息
                 const user = await prisma.user.findUnique({
                     where: { email: session.user.email },
-                    select: { educationStage: true, enrollmentYear: true }
+                    select: { educationStage: true, enrollmentYear: true, gradeTerm: true }
                 });
 
                 if (user) {
-                    userGrade = calculateGradeNumber(user.educationStage, user.enrollmentYear);
-                    if (user.educationStage && user.enrollmentYear) {
-                        userGradeSemester = calculateGrade(user.educationStage, user.enrollmentYear, new Date(), 'zh');
+                    /**
+                     * 【2026-10-30】**先用主页手填的「年级/学期」，算出来的只作兜底。**
+                     *
+                     * 手填值 = 她实际在读什么，是事实；
+                     * `enrollmentYear` 推算是二次推断，入学年份填错就整体偏一级
+                     * （现实里就出现过：填 2021 算出六年级上，而题是五年级的）。
+                     */
+                    const fromTerm = gradeTermToNumber(user.gradeTerm);
+                    if (fromTerm) {
+                        userGrade = fromTerm;
+                        userGradeSemester = user.gradeTerm!.trim();
+                    } else {
+                        userGrade = calculateGradeNumber(user.educationStage, user.enrollmentYear);
+                        if (user.educationStage && user.enrollmentYear) {
+                            userGradeSemester = calculateGrade(user.educationStage, user.enrollmentYear, new Date(), 'zh');
+                        }
                     }
-                    logger.debug({ userGrade, userGradeSemester }, 'Calculated user grade');
+                    logger.debug(
+                        { userGrade, userGradeSemester, source: fromTerm ? 'gradeTerm' : 'calculated' },
+                        'Resolved user grade',
+                    );
                 }
 
                 // 学科直接读 Notebook.subject（5.5），不再从显示名反推

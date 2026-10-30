@@ -3,7 +3,9 @@ import { AIService, ParsedQuestion, DifficultyLevel, ReanswerQuestionResult } fr
 import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateReanswerPrompt } from './prompts';
 import { getAppConfig } from '../config';
 import { safeParseParsedQuestion } from './schema';
-import { getMathTagsFromDB, getTagsFromDB } from './tag-service';
+import { getMathTagsFromDB, getTagsFromDB, getTagTree } from './tag-service';
+import { splitKnowledgePoints } from './knowledge-split';
+import { normalizeMistakeCategory } from '../mistake-category';
 import { createLogger } from '../logger';
 import { normalizeMistakeStatusForSave } from '../mistake-status';
 
@@ -104,6 +106,9 @@ export class AzureOpenAIProvider implements AIService {
         const mistakeAnalysis = this.extractTag(text, "mistake_analysis") || "";
         const mistakeStatusRaw = this.extractTag(text, "mistake_status");
 
+        /* 【2026-10-30】错因初判：AI 只当"靶子"，非法值降级为 undefined（宁缺勿错） */
+        const mistakeCategory = normalizeMistakeCategory(this.extractTag(text, "mistake_category")) ?? undefined;
+
         // Basic Validation
         if (!questionText || !answerText || !analysis) {
             logger.error({ rawTextSample: text.substring(0, 500) }, 'Missing critical XML tags');
@@ -120,7 +125,7 @@ export class AzureOpenAIProvider implements AIService {
         // Process Knowledge Points
         let knowledgePoints: string[] = [];
         if (knowledgePointsRaw) {
-            knowledgePoints = knowledgePointsRaw.split(/[,，\n]/).map(k => k.trim()).filter(k => k.length > 0);
+            knowledgePoints = splitKnowledgePoints(knowledgePointsRaw);
         }
 
         // Process requiresImage
@@ -137,6 +142,7 @@ export class AzureOpenAIProvider implements AIService {
             mistakeStatus,
             subject,
             knowledgePoints,
+            mistakeCategory,
             requiresImage
         };
 
@@ -155,7 +161,7 @@ export class AzureOpenAIProvider implements AIService {
         imageBase64: string,
         mimeType: string = 'image/jpeg',
         language: 'zh' | 'en' = 'zh',
-        grade?: 7 | 8 | 9 | 10 | 11 | 12 | null,
+        grade?: number | null,
         subject?: string | null,
         gradeSemester?: string | null
     ): Promise<ParsedQuestion> {
@@ -169,6 +175,12 @@ export class AzureOpenAIProvider implements AIService {
         const prefetchedBiologyTags = (subject === '生物' || !subject) ? await getTagsFromDB('biology') : [];
         const prefetchedEnglishTags = (subject === '英语' || !subject) ? await getTagsFromDB('english') : [];
 
+        /**
+         * 【2026-10-30】结构化的数学标签树（按单元分组）。
+         * 只有数学走这条路；其他学科没有小学数据，保持平铺，避免建出一棵空树。
+         */
+        const tagTree = (subject === '数学' || !subject) ? await getTagTree('math', grade ?? null) : [];
+
         const systemPrompt = generateAnalyzePrompt(language, grade, subject, {
             customTemplate: config.prompts?.analyze,
             prefetchedMathTags,
@@ -176,6 +188,7 @@ export class AzureOpenAIProvider implements AIService {
             prefetchedChemistryTags,
             prefetchedBiologyTags,
             prefetchedEnglishTags,
+            tagTree,
         }, gradeSemester);
 
         logger.box('🔍 AI Image Analysis Request', {
@@ -370,7 +383,7 @@ Knowledge Points: ${knowledgePoints.join(", ")}
             const answerText = this.extractTag(text, "answer_text") || "";
             const analysis = this.extractTag(text, "analysis") || "";
             const knowledgePointsRaw = this.extractTag(text, "knowledge_points") || "";
-            const knowledgePoints = knowledgePointsRaw.split(/[,，\n]/).map(k => k.trim()).filter(k => k.length > 0);
+            const knowledgePoints = splitKnowledgePoints(knowledgePointsRaw);
             const wrongAnswerText = this.extractTag(text, "wrong_answer_text") || "";
             const mistakeAnalysis = this.extractTag(text, "mistake_analysis") || "";
             const mistakeStatus = normalizeMistakeStatusForSave(

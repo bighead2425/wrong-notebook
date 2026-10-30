@@ -47,6 +47,8 @@ export async function POST(req: Request) {
             cropRegions,
             // 【2026-09-28】错题等级 + 错因受控枚举
             mistakeCategory,
+            /** 【2026-10-30】'ai' | 'human'，缺省视为人确认 */
+            mistakeCategorySource,
             manageType,
             manageTypeSource,
             /**
@@ -166,6 +168,15 @@ export async function POST(req: Request) {
         // 处理知识点标签
         const tagNames: string[] = Array.isArray(knowledgePoints) ? knowledgePoints : [];
         const tagConnections: { id: string }[] = [];
+        /**
+         * 【2026-10-30】**归类不了就放手，不要硬建一个爹都没有的标签。**
+         *
+         * 原来找不到父节点时 `parentId` 传 null，于是 `create` 出一个**根节点标签**——
+         * 2026-10-30 查库：60 个自建标签**全部**是根节点，AI 标出来的"单位换算"
+         * 和系统预设的"五年级"平级，树从此是平的。
+         * 现在的规矩：解析不到父单元 ⇒ 不建，记进 unmatchedTags 回给前端。
+         */
+        const unmatchedTags: string[] = [];
 
         // 学科：直接读 Notebook.subject（5.5）——不再从显示名反推
         const notebook = await prisma.notebook.findUnique({ where: { id: notebookId || '' } });
@@ -175,9 +186,11 @@ export async function POST(req: Request) {
         // 处理每个标签
         for (const tagName of tagNames) {
             try {
+                /* 查重必须带 subject：原来只按 name 查，数学的「函数」会和别的学科撞成一条 */
                 let tag = await prisma.knowledgeTag.findFirst({
                     where: {
                         name: tagName,
+                        subject: subjectKey,
                         OR: [
                             { isSystem: true },
                             { userId: user.id },
@@ -187,7 +200,16 @@ export async function POST(req: Request) {
 
                 if (!tag) {
                     const parentId = await findParentTagIdForGrade(finalGradeSemester, subjectKey);
-                    logger.debug({ tagName, parentId, subjectKey }, 'Creating new custom tag');
+
+                    /* 没有父单元就不建 —— 宁可不归类，也不要造一个根节点 */
+                    if (!parentId) {
+                        unmatchedTags.push(tagName);
+                        logger.warn(
+                            { tagName, subjectKey, gradeSemester: finalGradeSemester },
+                            'No parent unit resolved; skip creating tag (unmatched)',
+                        );
+                        continue;
+                    }
 
                     tag = await prisma.knowledgeTag.create({
                         data: {
@@ -195,10 +217,10 @@ export async function POST(req: Request) {
                             subject: subjectKey,
                             isSystem: false,
                             userId: user.id,
-                            parentId: parentId,
+                            parentId,
                         },
                     });
-                    logger.debug({ tagId: tag.id, tagName }, 'Custom tag created');
+                    logger.debug({ tagId: tag.id, tagName, parentId }, 'Custom tag created under unit');
                 } else {
                     logger.debug({ tagId: tag.id, tagName, isSystem: tag.isSystem }, 'Existing tag found');
                 }
@@ -238,6 +260,13 @@ export async function POST(req: Request) {
          * 见 `lib/manage-type.ts` 与二次设计《阅读入口》§6.2 / §6.3。
          */
         const category = normalizeMistakeCategory(mistakeCategory);
+        /** 只认这两个值；其余一律 null（不猜） */
+        const categorySource: 'ai' | 'human' | null =
+            mistakeCategorySource === 'ai' || mistakeCategorySource === 'human'
+                ? mistakeCategorySource
+                : category
+                    ? 'human'
+                    : null;
         /**
          * 【2026-10-03 修】**"未定"是个明确的选择，不能和"没传"混为一谈。**
          *
@@ -300,6 +329,7 @@ export async function POST(req: Request) {
                     paperLevel: paperLevel,
                     // 【2026-09-28】错因（受控枚举）+ 错题等级 + 来源
                     mistakeCategory: category,
+                    mistakeCategorySource: categorySource,
                     manageType: finalManageType,
                     manageTypeSource: finalManageSource,
                     /**
@@ -349,7 +379,8 @@ export async function POST(req: Request) {
             // 注：按用户要求，保存错题时**不再自动导出**到 Obsidian（避免每次保存都写盘）。
             //     需要导出时走错题详情页的「导出到 ob」按钮，即 /api/error-items/[id]/export-obsidian。
 
-            return NextResponse.json(errorItem, { status: 201 });
+            /* 把"没能归类"的标签回给前端：他看得见，才知道词表缺哪块 */
+            return NextResponse.json({ ...errorItem, unmatchedTags }, { status: 201 });
         } catch (dbError) {
             logger.error({
                 error: dbError,

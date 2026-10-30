@@ -17,6 +17,14 @@ export const ParsedQuestionSchema = z.object({
         "政治", "其他"
     ]),
     knowledgePoints: z.array(z.string()).max(5, "知识点最多 5 个"),
+    /**
+     * 【2026-10-30】AI 给的**错因初判**——当靶子，不当事实。
+     *
+     * 用 string 而不是 z.enum：错因枚举还在长（这次刚从 8 条加到 11 条），
+     * 在校验层硬编码会让"加一条错因"变成"改两处"。落库前一律过
+     * `normalizeMistakeCategory`，非法值降级为 null（宁缺勿错）。
+     */
+    mistakeCategory: z.string().optional(),
     requiresImage: z.boolean().optional().default(false), // 题目是否依赖图片（如几何题）
 });
 

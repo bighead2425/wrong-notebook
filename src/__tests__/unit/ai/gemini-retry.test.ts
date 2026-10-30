@@ -35,6 +35,8 @@ vi.mock('@/lib/ai/schema', () => ({
 vi.mock('@/lib/ai/tag-service', () => ({
     getMathTagsFromDB: vi.fn().mockResolvedValue([]),
     getTagsFromDB: vi.fn().mockResolvedValue([]),
+    /** 【2026-10-30】provider 现在还会拉结构化标签树，mock 里必须补上，否则是 undefined */
+    getTagTree: vi.fn().mockResolvedValue([]),
 }));
 
 import { GeminiProvider } from '@/lib/ai/gemini-provider';

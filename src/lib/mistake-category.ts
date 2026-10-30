@@ -36,8 +36,14 @@ export type MistakeCategory =
     | 'knowledge_gap'
     /** 不掌握 · 学过但记混了，应该用 A、用着用着成了 B */
     | 'memory_weak'
+    /** 不掌握 · 看懂了每个字、也选对了知识点，但把题意理解成另一件事（把「至少」当成「恰好」） */
+    | 'interpretation_error'
+    /** 不掌握 · 知道要分类讨论或多解，但只考虑了部分情况（绝对值漏负、几何只画锐角图） */
+    | 'incomplete_cases'
     /** 没做对 · 没看清单位/限制条件/关键词（把"不正确"看成"正确"） */
     | 'misread'
+    /** 没做对 · 会几种方法，但选了更繁、更易错或更耗时的那个，导致算错或做不完 */
+    | 'method_mischoice'
     /** 没做对 · 符号写错、进位出错、步骤跳跃（"粗心"表象下的基本功问题） */
     | 'calc_slip'
     /** 没做对 · 习惯用老方法套新题，忽略条件变化，"想当然"出错 */
@@ -53,7 +59,10 @@ const LABELS_ZH: Record<MistakeCategory, string> = {
     concept_vague: '概念模糊',
     knowledge_gap: '知识盲区',
     memory_weak: '记忆不牢',
+    interpretation_error: '理解偏差',
+    incomplete_cases: '遗漏情形',
     misread: '审题不清',
+    method_mischoice: '方法选错',
     calc_slip: '计算失误',
     fixed_mindset: '思维定式',
     just_record: '就想记录',
@@ -64,7 +73,10 @@ const LABELS_EN: Record<MistakeCategory, string> = {
     concept_vague: 'Vague concept',
     knowledge_gap: 'Knowledge gap',
     memory_weak: 'Shaky memory',
+    interpretation_error: 'Misinterpreted the task',
+    incomplete_cases: 'Missed cases',
     misread: 'Misread the question',
+    method_mischoice: 'Wrong method chosen',
     calc_slip: 'Calculation slip',
     fixed_mindset: 'Fixed mindset',
     just_record: 'Just recording',
@@ -79,7 +91,10 @@ export const MISTAKE_CATEGORIES: readonly MistakeCategory[] = [
     'concept_vague',
     'knowledge_gap',
     'memory_weak',
+    'interpretation_error',
+    'incomplete_cases',
     'misread',
+    'method_mischoice',
     'calc_slip',
     'fixed_mindset',
     'just_record',
@@ -97,13 +112,13 @@ export const MISTAKE_GROUPS: readonly {
         key: 'not_mastered',
         zh: '不掌握',
         en: 'Not yet understood',
-        items: ['concept_vague', 'knowledge_gap', 'memory_weak'],
+        items: ['concept_vague', 'knowledge_gap', 'memory_weak', 'interpretation_error', 'incomplete_cases'],
     },
     {
         key: 'not_right',
         zh: '没做对',
         en: 'Slipped up',
-        items: ['misread', 'calc_slip', 'fixed_mindset'],
+        items: ['misread', 'method_mischoice', 'calc_slip', 'fixed_mindset'],
     },
     {
         key: 'other',
@@ -132,7 +147,10 @@ export const MISTAKE_CATEGORY_DESC_ZH: Record<MistakeCategory, string> = {
     concept_vague: '对基本定义、公式理解不透彻，只知其然不知其所以然（知道用哪个知识点，但实际使用中搞错了）',
     knowledge_gap: '根本没学过或遗漏了关键考点，导致无法下手（干脆不知道该用什么知识点）',
     memory_weak: '学过但记混了，比如把相似概念搞错，或考场上突然遗忘（应该用知识点 A，用着用着成了 B）',
+    interpretation_error: '看懂了每个字、也选对了知识点，但把题意理解成另一件事（把「至少」理解成「恰好」、把「求剩余」理解成「求总量」）',
+    incomplete_cases: '知道要分类讨论或多解，但只考虑了部分情况（绝对值漏负、几何只画锐角图、方程增根未验）',
     misread: '没看清单位、限制条件或关键词，如把"不正确"看成"正确"',
+    method_mischoice: '会几种方法，但选了更繁、更易错或更耗时的那个，导致算错或做不完（区别于思维定式：那个是只会一种）',
     calc_slip: '符号写错、进位出错或步骤跳跃，属于"粗心"表象下的基本功问题',
     fixed_mindset: '习惯用老方法套新题，忽略题目条件的变化，导致"想当然"出错',
     just_record: '适用于录入的一道题：手写做出的答案是对的，或者这道题没有手写答案',
