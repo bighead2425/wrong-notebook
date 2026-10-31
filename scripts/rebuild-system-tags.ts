@@ -120,18 +120,47 @@ async function seedStandardSubject(tx: any, subject: string, curriculum: any, gr
             });
             count++;
 
-            for (let tagIdx = 0; tagIdx < chapter.tags.length; tagIdx++) {
-                const tagName = chapter.tags[tagIdx];
-                await tx.knowledgeTag.create({
-                    data: {
-                        name: tagName,
-                        subject: subject,
-                        parentId: chapterNode.id,
-                        isSystem: true,
-                        order: tagIdx + 1,
-                    },
-                });
-                count++;
+            /**
+             * 【2026-11-01】两种结构都支持：
+             *   两层：{ chapter, tags }              → 考点直接挂章下（地理/政治仍是这种）
+             *   三层：{ chapter, sections: [...] }   → 先建「节」，考点挂节下
+             *                                          （历史/语文/英语已改成三层）
+             */
+            const sections: Array<{ section?: string; tags: string[] }> = Array.isArray(chapter.sections)
+                ? chapter.sections
+                : [{ tags: chapter.tags ?? [] }];
+
+            for (let sectionIdx = 0; sectionIdx < sections.length; sectionIdx++) {
+                const section = sections[sectionIdx];
+                let parentId = chapterNode.id;
+
+                if (section.section) {
+                    const sectionNode = await tx.knowledgeTag.create({
+                        data: {
+                            name: section.section,
+                            subject: subject,
+                            parentId: chapterNode.id,
+                            isSystem: true,
+                            order: sectionIdx + 1,
+                        },
+                    });
+                    parentId = sectionNode.id;
+                    count++;
+                }
+
+                for (let tagIdx = 0; tagIdx < section.tags.length; tagIdx++) {
+                    const tagName = section.tags[tagIdx];
+                    await tx.knowledgeTag.create({
+                        data: {
+                            name: tagName,
+                            subject: subject,
+                            parentId,
+                            isSystem: true,
+                            order: tagIdx + 1,
+                        },
+                    });
+                    count++;
+                }
             }
         }
     }

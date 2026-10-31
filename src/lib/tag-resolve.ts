@@ -16,7 +16,7 @@
 import { bookKeyOf } from './ai/tag-scope';
 import { normalizeTagName, type TagRef } from './ai/tag-ref';
 
-export type MatchedBy = 'path' | 'book-name' | 'legacy' | 'none' | 'human';
+export type MatchedBy = 'path' | 'book-name' | 'legacy' | 'none' | 'human' | 'nearby';
 
 export interface FlatTag {
     id: string;
@@ -30,6 +30,13 @@ export interface ResolverIndex {
     rootNameOf: Map<string, string>;
     /** 节点 id → 直接父节点的名字（节 / 板块） */
     parentNameOf: Map<string, string | null>;
+    /**
+     * 【2026-10-31】有子节点的 id 集合。
+     *
+     * 用它区分「节」和「知识点」：**有子节点的是节，没有的才是知识点**。
+     * 真实词表里「列方程解决问题」既是节名又是知识点名，不区分就会在两个节点间摇摆。
+     */
+    hasChild: Set<string>;
 }
 
 export interface ResolvedTag {
@@ -60,7 +67,12 @@ export function buildResolverIndex(tags: FlatTag[]): ResolverIndex {
         rootNameOf.set(t.id, cur?.name ?? t.name);
     }
 
-    return { byId, rootNameOf, parentNameOf };
+    const hasChild = new Set<string>();
+    for (const t of tags) {
+        if (t.parentId) hasChild.add(t.parentId);
+    }
+
+    return { byId, rootNameOf, parentNameOf, hasChild };
 }
 
 /**
@@ -82,10 +94,22 @@ export function resolveOne(ref: TagRef, index: ResolverIndex, tags: FlatTag[]): 
     };
 
     const wantName = normalizeTagName(ref.name);
-    const sameName = tags.filter(
+    const sameNameAll = tags.filter(
         (t) => t.name === ref.name || normalizeTagName(t.name) === wantName,
     );
-    if (sameName.length === 0) return base;
+    if (sameNameAll.length === 0) return base;
+
+    /**
+     * 【2026-10-31】同名时**优先取知识点（叶子），不要取节**。
+     *
+     * 真实词表里「列方程解决问题」既是节名、又是这一节里一个知识点的名字，
+     * 于是同名节点有两个（一个是节，一个是点）。不区分的话：
+     *   · 回溯时"唯一"条件永远不成立（两个都在同一册）⇒ 整题 none；
+     *   · 挂上去的可能是节而不是知识点。
+     * 有子节点的是节，没有的才是知识点 —— 用它一刀切开。
+     */
+    const leaves = sameNameAll.filter((t) => !index.hasChild.has(t.id));
+    const sameName = leaves.length > 0 ? leaves : sameNameAll;
 
     /* 高三上/下 与 高三 是同一册；其余学科原样 */
     const bookKey = ref.book ? bookKeyOf(ref.book) : null;
@@ -105,7 +129,28 @@ export function resolveOne(ref: TagRef, index: ResolverIndex, tags: FlatTag[]): 
             return { ...base, tagId: inBook[0].id, matchedBy: 'book-name' };
         }
 
-        /* 说了册但库里这册没有 → 不跨册乱找，直接放弃 */
+        /**
+         * 【2026-10-31 真实题评测发现】**往前追溯**。
+         *
+         * 他最早的原话：
+         *   "如果没有当前学年学期的，则往前追溯，离得越近的则越能命中。"
+         *
+         * 真实题 SX20260919001（长安塔·一元一次方程应用）就是这个情形：
+         * AI 写 book="五年级下"，而「认识方程」在**四年级下**。
+         * 原来的规则是"说了册、那册没有 ⇒ 直接放弃"⇒ 整题 none，
+         * 于是这道**明显属于认识方程**的题连知识点都挂不上。
+         *
+         * 规矩（保守版）：
+         *   · 在**其他册**里找同名节点；
+         *   · **只有一个**才认（多个同名仍然是猜，不认）——保持"不猜"这条底线；
+         *   · 命中时标记 `nearby`，界面上能看出"这是回溯挂的"，人可复核。
+         */
+        const elsewhere = sameName.filter((t) => index.rootNameOf.get(t.id) !== bookKey);
+        if (elsewhere.length === 1) {
+            return { ...base, tagId: elsewhere[0].id, matchedBy: 'nearby' };
+        }
+
+        /* 说了册但库里这册没有，且别处也不唯一 → 不跨册乱找，直接放弃 */
         return base;
     }
 

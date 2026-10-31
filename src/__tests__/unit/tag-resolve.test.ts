@@ -26,6 +26,15 @@ const TAGS: FlatTag[] = [
     { id: 'tG', name: '导数的几何意义', parentId: 'secG' },
 
     { id: 'tOnly', name: '独一份的知识点', parentId: 'sec1' },
+
+    /**
+     * 【2026-10-31】模拟真实题 SX20260919001：
+     * 「列方程解决问题」只存在于**四年级下**，而 AI 写的是"五年级下" ⇒ 该走回溯。
+     */
+    { id: 'book4D', name: '四年级下', parentId: null },
+    { id: 'chEQ', name: '第五单元 认识方程', parentId: 'book4D' },
+    { id: 'secEQ', name: '列方程解决问题', parentId: 'chEQ' },
+    { id: 'tEQ', name: '列方程解决问题', parentId: 'secEQ' },
 ];
 
 const index = buildResolverIndex(TAGS);
@@ -62,6 +71,21 @@ describe('resolveOne · 第三级 legacy（唯一同名）', () => {
 
     it('没有册信息且同名多条 ⇒ **不猜**，交给待确认', () => {
         const r = resolve({ name: '轴对称图形', legacy: true });
+        expect(r.matchedBy).toBe('none');
+        expect(r.tagId).toBeNull();
+    });
+});
+
+describe('resolveOne · 往前追溯（nearby）', () => {
+    it('AI 说的册里没有，但别处**唯一**同名 ⇒ 回溯挂上去', () => {
+        /* 模拟真实题：AI 写"五年级下"，而这个知识点只在"四年级下" */
+        const r = resolve({ book: '五年级下', section: '列方程解决问题', name: '列方程解决问题' });
+        expect(r.matchedBy).toBe('nearby');
+        expect(r.tagId).toBe('tEQ');
+    });
+
+    it('别处有多个同名 ⇒ 仍然是猜，不认（保持"不猜"底线）', () => {
+        const r = resolve({ book: '六年级上', name: '轴对称图形' });
         expect(r.matchedBy).toBe('none');
         expect(r.tagId).toBeNull();
     });
