@@ -166,6 +166,13 @@ describe('真实错题评测 · 带图片', () => {
                 });
                 const index = buildResolverIndex(all as FlatTag[]);
                 const resolved: ResolvedTag[] = resolveTagRefs(refs, index, all as FlatTag[]);
+                if (process.env.TAG_EVAL_DEBUG === '1') {
+                    console.log('  [debug] refs =', JSON.stringify(refs));
+                    console.log('  [debug] all 条数 =', all.length, '| 命中的节点 =',
+                        resolved.map((r) => (r.tagId
+                            ? `${index.rootNameOf.get(r.tagId)} > ${index.parentNameOf.get(r.tagId)} > ${all.find((t) => t.id === r.tagId)?.name}`
+                            : '(无)')));
+                }
 
                 const actualBooks = resolved.filter((r) => r.tagId)
                     .map((r) => index.rootNameOf.get(r.tagId as string) || '');
