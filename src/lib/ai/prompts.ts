@@ -226,13 +226,66 @@ unknown_reason（前 10 个都不合适）
 - 每题最多 5 个标签。
 
 【!!! 关键格式与内容约束 (CRITICAL RULES) !!!】
-1. **格式严格**：必须严格包含上述 10 个 XML 标签，除此之外不要输出任何其他“开场白”或“结束语”。
+1. **格式严格**：必须严格包含上述**全部** XML 标签（一个都不能少），除此之外不要输出任何其他“开场白”或“结束语”。
+   ⚠️ 计数以**实际列出的标签**为准，不要按“几个”这种数字去凑。
 2. **纯文本**：内容作为纯文本处理，**不要转义反斜杠**。
 3. **内容完整**：如果包含子问题，请在 question_text 中完整列出。
 4. **禁止图片**：严禁包含任何图片链接或 markdown 图片语法。
 
 {{grade_instruction}}
 {{provider_hints}}`;
+
+/**
+ * 分析模板里**必须有**的输出字段。
+ *
+ * 【2026-10-31】为什么要这张表：
+ * 提示词可以存在配置里（`config.prompts.analyze`）。一旦存了副本，
+ * 代码里新加的字段就永远到不了运行时 —— 2026-10-30 加 `<mistake_category>`
+ * 就是这么静默失效的：容器日志里那份 system prompt 里压根没有它。
+ * 更麻烦的是，那份旧副本里还留着一句代码里早就没有的"小学补充白名单"，
+ * 模型照着它选标签，看起来像"AI 又自己编标签"，其实是在执行一条过时指令。
+ *
+ * 所以这里做**自愈**：不管拿到的模板多旧，缺哪个字段就把哪段规格补在后面。
+ * 补的是"字段要求"，不是整段模板 ⇒ 不会覆盖他自己改过的措辞。
+ *
+ * 加新输出字段时，只改这张表 + DEFAULT_ANALYZE_TEMPLATE 各一处。
+ */
+const REQUIRED_OUTPUT_TAGS: Array<{ tag: string; spec: string }> = [
+    {
+        tag: 'mistake_category',
+        spec: `从下面 11 个里选**一个**最符合的（她这次为什么错）。看不到她的作答痕迹、无法判断时留空。
+concept_vague（概念模糊，知道用哪个知识点但用错了）
+knowledge_gap（知识盲区，根本不知道该用哪个）
+memory_weak（记忆不牢，应该用 A 却用成了 B）
+interpretation_error（理解偏差，看懂了每个字但把题意理解成另一件事）
+incomplete_cases（遗漏情形，知道要分类但漏了分支）
+misread（审题不清，没看清单位/条件/关键词）
+method_mischoice（方法选错，会几种但选了更繁更易错的那个）
+calc_slip（计算失误，符号/进位/步骤跳跃）
+fixed_mindset（思维定式，拿老方法套新题）
+just_record（就想记录，她写的是对的或没有作答）
+unknown_reason（以上几条都不合适）`,
+    },
+];
+
+/**
+ * 把模板里缺的必填字段补上；已经有该字段就原样返回（尊重改过的版本）。
+ *
+ * 追加而不是插入：老副本里各段的顺序不可控，硬插容易插进半个句子中间。
+ * 末尾追加 + 明确"以本段为准"，对模型足够。
+ */
+export function withRequiredOutputTags(template: string): string {
+    const missing = REQUIRED_OUTPUT_TAGS.filter((t) => !template.includes(`<${t.tag}>`));
+    if (missing.length === 0) return template;
+
+    const block = missing.map((t) => `<${t.tag}>\n${t.spec}\n</${t.tag}>`).join('\n\n');
+    return `${template}
+
+【补充输出字段（代码新增，模板里还没有这些）】
+下面这些字段**必须输出**。如果上文写过"必须包含 N 个标签"，**以实际列出的标签为准，不要按那个数字去凑**。
+
+${block}`;
+}
 
 export const DEFAULT_SIMILAR_TEMPLATE = `你是一位资深的K12教育题目生成专家，具备跨学科的题目创作能力。你的核心任务是**根据以下原题和知识点，举一反三生成高质量教学题目**，帮助学生巩固知识并拓展解题思路。
 ### 角色定义
@@ -465,7 +518,8 @@ ${biologyTagsString}
 ${englishTagsString}`;
   }
 
-  const template = options?.customTemplate || DEFAULT_ANALYZE_TEMPLATE;
+  /* 【2026-10-31】不管模板来自代码还是配置，缺的必填字段都在这里补齐 */
+  const template = withRequiredOutputTags(options?.customTemplate || DEFAULT_ANALYZE_TEMPLATE);
 
   return replaceVariables(template, {
     language_instruction: langInstruction,

@@ -50,7 +50,7 @@ export type MistakeCategory =
     | 'fixed_mindset'
     /** 其他 · 手写答案是对的，或这道题本来就没有手写答案，只是想记下来 */
     | 'just_record'
-    /** 其他 · 前 7 个都无法归因 */
+    /** 其他 · 以上几条都无法归因 */
     | 'unknown_reason';
 
 export type MistakeGroup = 'not_mastered' | 'not_right' | 'other';
@@ -154,7 +154,7 @@ export const MISTAKE_CATEGORY_DESC_ZH: Record<MistakeCategory, string> = {
     calc_slip: '符号写错、进位出错或步骤跳跃，属于"粗心"表象下的基本功问题',
     fixed_mindset: '习惯用老方法套新题，忽略题目条件的变化，导致"想当然"出错',
     just_record: '适用于录入的一道题：手写做出的答案是对的，或者这道题没有手写答案',
-    unknown_reason: '适用于前面 7 个原因都无法归因的情况',
+    unknown_reason: '以上几条都不合适时的兜底项（选它表示"暂时说不好"，不是"她太粗心"）',
 };
 
 /* ============================ 归一化与迁移 ============================ */
