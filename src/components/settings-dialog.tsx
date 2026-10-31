@@ -652,6 +652,19 @@ export function SettingsDialog({
         }));
     };
 
+    /**
+     * 【2026-11-01 两段式】总开关。
+     *
+     * 关闭（默认）= 和以前完全一样：拍照 → 一次分析 → 直接出标签。
+     * 打开 = 拍照只做转录+考点短语（快、省 token），标签在保存后由后台补。
+     */
+    const updateTwoStage = (enabled: boolean) => {
+        setConfig(prev => ({
+            ...prev,
+            twoStage: { ...prev.twoStage, enabled },
+        }));
+    };
+
     // 测试 AI 连接
     const handleTestConnection = async () => {
         setTesting(true);
@@ -1537,6 +1550,24 @@ export function SettingsDialog({
 
                     {/* Prompts Tab */}
                     <TabsContent value="prompts" className="space-y-4 py-4">
+                        {/* 【2026-11-01】两段式总开关 —— 关着时行为与以前完全一致 */}
+                        <div className="flex items-center justify-between gap-3 rounded-md border p-3">
+                            <div className="space-y-1">
+                                <p className="text-sm font-medium">两段式分析</p>
+                                <p className="text-xs text-muted-foreground">
+                                    打开后：拍照只做转录和「考点短语」，标签在保存后由后台补。
+                                    拍照会更快、更省，标签晚几秒出现。
+                                </p>
+                            </div>
+                            <select
+                                className="h-9 rounded-md border bg-background px-2 text-sm"
+                                value={config.twoStage?.enabled ? 'on' : 'off'}
+                                onChange={(e) => updateTwoStage(e.target.value === 'on')}
+                            >
+                                <option value="off">关闭（当前行为）</option>
+                                <option value="on">开启</option>
+                            </select>
+                        </div>
                         <PromptSettings config={config} onUpdate={updatePrompts} />
                         <Button onClick={handleSaveSettings} disabled={saving} className="w-full">
                             {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

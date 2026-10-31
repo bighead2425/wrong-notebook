@@ -84,6 +84,11 @@ interface ErrorItemDetail {
     tagResolution?: string | null;
     /** 偏离默认册时 AI 交的判据；非空就说明这题的册次是"改过的" */
     tagDeviation?: string | null;
+    /**
+     * 【2026-11-01 两段式】标签归位状态：
+     *   null/undefined = 没走两段式；'pending' = 后台正在补；'done'；'failed'
+     */
+    tagStatus?: string | null;
     masteryLevel: number;
     originalImageUrl: string;
     userNotes: string | null;
@@ -342,6 +347,30 @@ export default function ErrorDetailPage() {
             setLoading(false);
         }
     };
+
+    /**
+     * 【2026-11-01 两段式】标签在保存后由后台补，这期间每 3 秒看一次。
+     *
+     * 只轮询 20 次（约 1 分钟）就停 —— 后台那边自己也只重试 2 次，
+     * 一分钟还没好，多半是失败了（tagStatus 会变成 'failed'，提示里会说）。
+     * 不做无限轮询：那会一直打接口，白天开着一堆标签页时很浪费。
+     */
+    useEffect(() => {
+        if (item?.tagStatus !== 'pending') return;
+        let tries = 0;
+        const itemId = item.id;
+        const timer = setInterval(async () => {
+            tries += 1;
+            try {
+                const data = await apiClient.get<ErrorItemDetail>(`/api/error-items/${itemId}`);
+                setItem(data);
+            } catch {
+                /* 这一次失败不处理，下一次再试 */
+            }
+            if (tries >= 20) clearInterval(timer);
+        }, 3000);
+        return () => clearInterval(timer);
+    }, [item?.tagStatus, item?.id]);
 
     /**
      * 【2026-10-16 如如】拉这道题的**复习流水**（表格用；最多 4 条、正序）。
@@ -1280,6 +1309,23 @@ export default function ErrorDetailPage() {
                                             </Button>
                                         )}
                                     </div>
+
+                                    {/*
+                                      * 【2026-11-01 两段式】标签在保存后由后台补，
+                                      * 这期间要让人知道"它在算"，而不是"怎么是空的"。
+                                      * 归位失败也给一句实话 + 一个自己重试的入口。
+                                      */}
+                                    {item.tagStatus === 'pending' && (
+                                        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                                            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+                                            正在归位标签…（几秒后自动刷新）
+                                        </p>
+                                    )}
+                                    {item.tagStatus === 'failed' && (
+                                        <p className="text-xs text-amber-700">
+                                            标签没能自动归位。可以直接在上面手动选，或者刷新页面再试一次。
+                                        </p>
+                                    )}
 
                                     {isEditingTags ? (
                                         <div className="space-y-3">
