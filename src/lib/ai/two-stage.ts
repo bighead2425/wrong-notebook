@@ -113,34 +113,18 @@ export function parseStage1(raw: string): Stage1Result {
 }
 
 /**
- * 第二段提示词。
+ * 第二段的**可编辑模板**（设置页用）。
  *
- * 刻意做得**很短**：没有模板、没有长篇规则，只有"题目 + 编号候选 + 选择要求"。
- * 这一段的任务是"在已有候选里挑"，不是"理解题目"——理解在第一段已经做完了。
+ * 占位符只有三个：{{subject}} {{case_text}} {{candidates}}
+ * 用户改坏了的代价是"第二段选不准"，不会崩 —— 但页面会给"恢复默认"。
  */
-export function buildStage2Prompt(params: {
-    caseText: string;
-    candidates: SectionEntry[];
-    currentBook?: string | null;
-    subjectCn: string;
-}): string {
-    const { caseText, candidates, currentBook, subjectCn } = params;
-
-    const list = candidates
-        .map((c, i) => {
-            const head = [c.book, c.chapter, c.section].filter(Boolean).join(' · ');
-            const mark = currentBook && c.book === currentBook ? '〔当前册〕' : '';
-            return `[${i + 1}] ${head}${mark}\n    ${c.tags.join(' / ')}`;
-        })
-        .join('\n');
-
-    return `你是一个${subjectCn}教研员。下面是一道学生做错的题，以及它可能的归属位置（编号候选）。
+export const DEFAULT_STAGE2_TEMPLATE = `你是一个{{subject}}教研员。下面是一道学生做错的题，以及它可能的归属位置（编号候选）。
 
 **题目**
-${caseText}
+{{case_text}}
 
 **候选位置**（格式：[编号] 册 · 章 · 节 / 该节下的知识点）
-${list}
+{{candidates}}
 
 **任务**
 从上面的候选里挑出这道题**真正考的位置**，最多两处。规则：
@@ -156,6 +140,38 @@ ${list}
 <confidence>high|medium|low</confidence>
 <reason>一句话说明你为什么选它（不超过 30 字）</reason>
 `;
+
+/**
+ * 第二段提示词。
+ *
+ * 刻意做得**很短**：没有模板式长规则，只有"题目 + 编号候选 + 选择要求"。
+ * 这一段的任务是"在已有候选里挑"，不是"理解题目"——理解在第一段已经做完了。
+ *
+ * `template` 可传设置页里用户改过的那份；不传就用默认。
+ */
+export function buildStage2Prompt(params: {
+    caseText: string;
+    candidates: SectionEntry[];
+    currentBook?: string | null;
+    subjectCn: string;
+    template?: string | null;
+}): string {
+    const { caseText, candidates, currentBook, subjectCn, template } = params;
+
+    const list = candidates
+        .map((c, i) => {
+            const head = [c.book, c.chapter, c.section].filter(Boolean).join(' · ');
+            const mark = currentBook && c.book === currentBook ? '〔当前册〕' : '';
+            return `[${i + 1}] ${head}${mark}\n    ${c.tags.join(' / ')}`;
+        })
+        .join('\n');
+
+    const tpl = template && template.trim() ? template : DEFAULT_STAGE2_TEMPLATE;
+
+    return tpl
+        .replace(/\{\{subject\}\}/g, subjectCn)
+        .replace(/\{\{case_text\}\}/g, caseText)
+        .replace(/\{\{candidates\}\}/g, list);
 }
 
 export interface Stage2Result {

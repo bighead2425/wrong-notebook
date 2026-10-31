@@ -219,6 +219,8 @@ export interface AppConfig {
         similar?: string;
         /** 【2026-10-18】日积月累整理提示词（空 = 用默认模板） */
         insights?: string;
+        /** 【2026-11-01 两段式】第二段（在候选里挑）的提示词（空 = 用默认模板） */
+        stage2?: string;
     };
     timeouts?: {
         analyze?: number; // 毫秒

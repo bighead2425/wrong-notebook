@@ -6,12 +6,21 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { AppConfig } from "@/types/api";
 import { DEFAULT_ANALYZE_TEMPLATE, DEFAULT_SIMILAR_TEMPLATE, DEFAULT_INSIGHTS_TEMPLATE } from "@/lib/ai/prompts";
+import { DEFAULT_STAGE2_TEMPLATE } from "@/lib/ai/two-stage";
 import { RotateCcw, AlertTriangle, Info } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 
-type PromptKind = 'analyze' | 'similar' | 'insights';
+/**
+ * 四份提示词。
+ *
+ * 【2026-11-01 两段式】多了一份 `stage2`：
+ *   第一段（`analyze`）= 看图转录 + 给 3 个考点短语；
+ *   第二段（`stage2`）= 拿着候选节，纯文字挑一个。
+ * 两者任务不同、改坏了的后果也不同，所以必须分开配置。
+ */
+type PromptKind = 'analyze' | 'stage2' | 'similar' | 'insights';
 
-const KINDS: readonly PromptKind[] = ['analyze', 'similar', 'insights'] as const;
+const KINDS: readonly PromptKind[] = ['analyze', 'stage2', 'similar', 'insights'] as const;
 
 interface PromptSettingsProps {
     config: AppConfig;
@@ -80,6 +89,7 @@ export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
      */
     const [draft, setDraft] = useState<Record<PromptKind, string | null>>({
         analyze: null,
+        stage2: null,
         similar: null,
         insights: null,
     });
@@ -87,9 +97,11 @@ export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
     const defaultValueOf = (type: PromptKind): string =>
         type === 'analyze'
             ? DEFAULT_ANALYZE_TEMPLATE
-            : type === 'similar'
-              ? DEFAULT_SIMILAR_TEMPLATE
-              : DEFAULT_INSIGHTS_TEMPLATE;
+            : type === 'stage2'
+              ? DEFAULT_STAGE2_TEMPLATE
+              : type === 'similar'
+                ? DEFAULT_SIMILAR_TEMPLATE
+                : DEFAULT_INSIGHTS_TEMPLATE;
 
     /**
      * 文本框里显示什么 —— **直接读 config，不留本地副本**。
@@ -109,16 +121,20 @@ export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
     const titleOf = (type: PromptKind): string =>
         type === 'analyze'
             ? (t.settings?.prompts?.customAnalysis || "Custom Analysis Template")
-            : type === 'similar'
-              ? (t.settings?.prompts?.customSimilar || "Custom Similar Question Template")
-              : (t.settings?.prompts?.customInsights || "日积月累 · 整理提示词");
+            : type === 'stage2'
+              ? "第二段（归位）提示词"
+              : type === 'similar'
+                ? (t.settings?.prompts?.customSimilar || "Custom Similar Question Template")
+                : (t.settings?.prompts?.customInsights || "日积月累 · 整理提示词");
 
     const labelOf = (type: PromptKind): string =>
         type === 'analyze'
             ? (t.settings?.prompts?.analysisTab || "Analysis Prompt")
-            : type === 'similar'
-              ? (t.settings?.prompts?.similarTab || "Similar Question Prompt")
-              : (t.settings?.prompts?.insightsTab || "日积月累提示词");
+            : type === 'stage2'
+              ? "第二段 · 归位"
+              : type === 'similar'
+                ? (t.settings?.prompts?.similarTab || "Similar Question Prompt")
+                : (t.settings?.prompts?.insightsTab || "日积月累提示词");
 
     /**
      * 【2026-10-27 改】「恢复默认」= **把默认全文抄回框里并存下来**。
@@ -144,6 +160,13 @@ export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
                 { name: 'language_instruction', description: v?.languageInstruction || "Injects instructions based on target language (e.g., keep English questions in English but analysis in Chinese)." },
                 { name: 'knowledge_points_list', description: v?.knowledgePointsList || "Injects the standard list of knowledge point tags for the specific subject." },
                 { name: 'provider_hints', description: v?.providerHints || "System-injected hints (e.g., enforcing JSON format)." },
+            ];
+        }
+        if (type === 'stage2') {
+            return [
+                { name: 'subject', description: "学科（数学/英语/…）" },
+                { name: 'case_text', description: "第一段转录出来的题干、答案、解析" },
+                { name: 'candidates', description: "候选位置清单（带编号，第二段只能从这里选）" },
             ];
         }
         if (type === 'similar') {

@@ -117,11 +117,14 @@ describe('两段式评测', () => {
                 limit: 40,
             });
 
-            /* 召回：期望的节在不在候选里 */
-            const wantSection = normalizeTagName(c.section || '');
+            /* 召回：期望的节在不在候选里（允许多解） */
+            const accepted = [c.section, ...(c.altSections ?? [])]
+                .filter(Boolean)
+                .map((s) => normalizeTagName(s as string));
             const wantBook = bookKeyOf(c.book || '');
+            const matchSection = (sec: string) => accepted.includes(normalizeTagName(sec));
             const recall = cands.some(
-                (x) => normalizeTagName(x.entry.section) === wantSection
+                (x) => matchSection(x.entry.section)
                     && (!wantBook || bookKeyOf(x.entry.book) === wantBook),
             );
 
@@ -142,7 +145,7 @@ describe('两段式评测', () => {
 
             const chosen = picked.picks.map((n) => cands[n - 1]?.entry).filter(Boolean);
             const hit = chosen.some(
-                (e) => normalizeTagName(e!.section) === wantSection
+                (e) => matchSection(e!.section)
                     && (!wantBook || bookKeyOf(e!.book) === wantBook),
             );
 

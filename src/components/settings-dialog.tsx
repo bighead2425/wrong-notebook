@@ -642,7 +642,7 @@ export function SettingsDialog({
         }
     }, [config.openai?.activeInstanceId, selectedInstanceId]);
 
-    const updatePrompts = (type: 'analyze' | 'similar' | 'insights', value: string) => {
+    const updatePrompts = (type: 'analyze' | 'stage2' | 'similar' | 'insights', value: string) => {
         setConfig(prev => ({
             ...prev,
             prompts: {

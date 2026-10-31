@@ -45,6 +45,15 @@ export interface AppConfig {
          * 这个场景是**开放的**（不是固定靶），提示词一定会反复调 ⇒ 必须可配置、不能写死。
          */
         insights?: string;
+        /**
+         * 【2026-11-01 两段式】第二段（"在候选里挑"）的提示词。
+         *
+         * 第一段仍是 `analyze`（看图转录），第二段是纯文字定位，两者任务完全不同，
+         * 所以要分开配置。空 = 用 `lib/ai/two-stage.ts` 的 `DEFAULT_STAGE2_TEMPLATE`。
+         *
+         * 占位符只有三个：{{subject}} {{case_text}} {{candidates}}
+         */
+        stage2?: string;
     };
     timeouts?: {
         analyze?: number; // 毫秒
@@ -171,6 +180,7 @@ const DEFAULT_CONFIG: AppConfig = {
         analyze: '',
         similar: '',
         insights: '',
+        stage2: '',
     },
     timeouts: {
         analyze: 180000,

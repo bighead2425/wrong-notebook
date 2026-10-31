@@ -130,6 +130,28 @@ export function searchByKeywords(keywords: string[], index: SectionEntry[]): Sco
     return out.sort((a, b) => b.score - a.score);
 }
 
+/**
+ * 【2026-11-01 用户定的规则】**语文/英语/政治/历史/地理：整学段全送，不做关键词筛选。**
+ *
+ * 理由（他说的，我认同）：
+ *   · 这五科本来就没有"册"，只有学段，标签总量很小
+ *     （英语小学整学段 21 个点、语文高中 32 个、政治高中 35 个）；
+ *   · **第一段本来就在猜，第二段才有选项确认** —— 猜不准的时候把选项砍掉，
+ *     等于让第一段的错误去惩罚第二段；
+ *   · 实测：英语那道题的关键词是"阅读理解"，而小学词表叫"短文阅读"，
+ *     检索直接召回 0，第二段连选的机会都没有。
+ *
+ * 所以关键词只为数理化生服务（那才是"册"多、候选大的地方）。
+ */
+export const STAGE_SCOPE_SUBJECTS = new Set([
+    'chinese', 'english', 'politics', 'history', 'geography',
+]);
+
+/** 该学科是否按"整学段全送"处理（不筛关键词） */
+export function isStageScopeSubject(subject: string): boolean {
+    return STAGE_SCOPE_SUBJECTS.has(subject);
+}
+
 export interface BuildOptions {
     /** 她当前在读的册（数学 = 「五年级上」；语文/英语 = 「小学」） */
     currentBook?: string | null;
@@ -158,6 +180,22 @@ export function buildCandidates(subject: string, opts: BuildOptions): ScoredSect
     const currentOrder = currentBook
         ? (SUBJECT_DATA[subject]?.order[currentBook] ?? null)
         : null;
+
+    /**
+     * ★ 五科：**整学段全送**。
+     *   不看关键词、不筛节 —— 这五科标签本来就少，筛一遍只会把正确答案筛掉。
+     *   排序仍然按"离当前学段多远"，但学段就三个，实际几乎全在同一条线上。
+     */
+    if (isStageScopeSubject(subject)) {
+        return index
+            .map<ScoredSection>((entry) => ({
+                entry,
+                score: 0,
+                distance: currentOrder === null ? 0 : bookDistance(entry.bookOrder, currentOrder),
+                hits: [],
+            }))
+            .sort((a, b) => a.distance - b.distance || a.entry.bookOrder - b.entry.bookOrder);
+    }
 
     /* 1. 当前册全册 */
     const chosen: ScoredSection[] = [];
@@ -188,7 +226,7 @@ export function buildCandidates(subject: string, opts: BuildOptions): ScoredSect
         }))
         .sort((a, b) => (currentOrder === null ? a.order - b.order : bookDistance(a.order, currentOrder) - bookDistance(b.order, currentOrder)));
 
-    for (const { book, list } of bookRank.slice(0, maxBooksFromKeywords)) {
+    for (const { list } of bookRank.slice(0, maxBooksFromKeywords)) {
         for (const s of list.slice(0, 8)) {
             s.distance = currentOrder === null ? 0 : bookDistance(s.entry.bookOrder, currentOrder);
             chosen.push(s);
