@@ -6,7 +6,9 @@ import { calculateGrade } from "@/lib/grade-calculator";
 import { unauthorized, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { pickRandomEmoji } from "@/lib/emoji-mark";
-import { findParentTagIdForGrade } from "@/lib/tag-recognition";
+/* 【2026-10-31】标签改成"按坐标解析"，不再按名字反查（见 lib/tag-resolve.ts） */
+import { buildResolverIndex, resolveTagRefs, type ResolvedTag } from "@/lib/tag-resolve";
+import type { TagRef } from "@/lib/ai/tag-ref";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { normalizeMistakeCategory } from "@/lib/mistake-category";
 import {
@@ -38,6 +40,12 @@ export async function POST(req: Request) {
             mistakeAnalysis,
             mistakeStatus,
             knowledgePoints,
+            /**
+             * 【2026-10-31】AI 交回的标签坐标（册/章/节/名）与偏离判据。
+             * 没有这两个字段时退回旧行为（只按名字，唯一同名才认）。
+             */
+            knowledgeRefs,
+            bookReason,
             originalImageUrl,
             notebookId,
             gradeSemester,
@@ -177,58 +185,55 @@ export async function POST(req: Request) {
          * 现在的规矩：解析不到父单元 ⇒ 不建，记进 unmatchedTags 回给前端。
          */
         const unmatchedTags: string[] = [];
+        /** 每个标签是怎么命中的（path / book-name / legacy / none），落库供事后核算 */
+        const tagResolution: ResolvedTag[] = [];
 
         // 学科：直接读 Notebook.subject（5.5）——不再从显示名反推
         const notebook = await prisma.notebook.findUnique({ where: { id: notebookId || '' } });
         const subjectKey = notebook?.subject || 'other';
         logger.debug({ notebookId, notebookName: notebook?.displayName, subjectKey }, 'Subject resolved from Notebook');
 
-        // 处理每个标签
-        for (const tagName of tagNames) {
-            try {
-                /* 查重必须带 subject：原来只按 name 查，数学的「函数」会和别的学科撞成一条 */
-                let tag = await prisma.knowledgeTag.findFirst({
-                    where: {
-                        name: tagName,
-                        subject: subjectKey,
-                        OR: [
-                            { isSystem: true },
-                            { userId: user.id },
-                        ],
-                    },
-                });
+        /**
+         * 【2026-10-31】**按坐标解析，不再按名字反查。**
+         *
+         * 名字不是唯一键（数学里 38 个知识点跨册重名），拿它 `findFirst` 必然撞车。
+         * AI 现在会交回 `<kp book chapter section name/>`，这里按
+         * 册+节+名 → 册+名 → 唯一同名 三级降级，每级记 matchedBy。
+         *
+         * ⚠️ 解析不到就**不建新节点**（连自定义标签也不建）——
+         *    宁可进「待归类」由人补一次，也不要往册底下塞野节点。
+         */
+        const refs: TagRef[] = Array.isArray(knowledgeRefs) && knowledgeRefs.length > 0
+            ? (knowledgeRefs as TagRef[])
+            : tagNames.map((name) => ({ name, legacy: true } as TagRef));
 
-                if (!tag) {
-                    const parentId = await findParentTagIdForGrade(finalGradeSemester, subjectKey);
+        if (refs.length > 0) {
+            const allTags = await prisma.knowledgeTag.findMany({
+                where: {
+                    subject: subjectKey,
+                    OR: [
+                        { isSystem: true },
+                        { userId: user.id },
+                    ],
+                },
+                select: { id: true, name: true, parentId: true },
+            });
 
-                    /* 没有父单元就不建 —— 宁可不归类，也不要造一个根节点 */
-                    if (!parentId) {
-                        unmatchedTags.push(tagName);
-                        logger.warn(
-                            { tagName, subjectKey, gradeSemester: finalGradeSemester },
-                            'No parent unit resolved; skip creating tag (unmatched)',
-                        );
-                        continue;
-                    }
-
-                    tag = await prisma.knowledgeTag.create({
-                        data: {
-                            name: tagName,
-                            subject: subjectKey,
-                            isSystem: false,
-                            userId: user.id,
-                            parentId,
-                        },
-                    });
-                    logger.debug({ tagId: tag.id, tagName, parentId }, 'Custom tag created under unit');
+            const index = buildResolverIndex(allTags);
+            for (const r of resolveTagRefs(refs, index, allTags)) {
+                tagResolution.push(r);
+                if (r.tagId) {
+                    tagConnections.push({ id: r.tagId });
                 } else {
-                    logger.debug({ tagId: tag.id, tagName, isSystem: tag.isSystem }, 'Existing tag found');
+                    unmatchedTags.push(r.name);
                 }
+            }
 
-                tagConnections.push({ id: tag.id });
-            } catch (tagError) {
-                logger.error({ tagName, error: tagError }, 'Error processing tag');
-                throw tagError;
+            if (unmatchedTags.length > 0) {
+                logger.warn(
+                    { unmatchedTags, subjectKey, bookReason },
+                    'Some knowledge points could not be located; kept for manual confirm',
+                );
             }
         }
 
@@ -325,6 +330,12 @@ export async function POST(req: Request) {
                     mistakeAnalysis: mistakeAnalysis || null,
                     mistakeStatus: normalizeMistakeStatusForSave(mistakeStatus, wrongAnswerText),
                     knowledgePoints: JSON.stringify(tagNames),
+                    /* 【2026-10-31】标签怎么命中的、凭什么换册 —— 没有这两列，两周后无法核算 */
+                    tagResolution: tagResolution.length ? JSON.stringify(tagResolution) : null,
+                    tagDeviation:
+                        typeof bookReason === 'string' && bookReason.trim()
+                            ? bookReason.trim()
+                            : null,
                     gradeSemester: finalGradeSemester,
                     paperLevel: paperLevel,
                     // 【2026-09-28】错因（受控枚举）+ 错题等级 + 来源

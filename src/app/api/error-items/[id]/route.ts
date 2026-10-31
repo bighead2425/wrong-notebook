@@ -5,7 +5,9 @@ import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { unauthorized, forbidden, notFound, badRequest, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
-import { findParentTagIdForGrade } from "@/lib/tag-recognition";
+/* 【2026-10-31】标签按坐标解析（与 POST 同一套规则） */
+import { buildResolverIndex, resolveTagRefs } from "@/lib/tag-resolve";
+import type { TagRef } from "@/lib/ai/tag-ref";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { normalizeMistakeCategory } from "@/lib/mistake-category";
 import {
@@ -124,6 +126,8 @@ export async function PUT(
         const body = await req.json();
         const {
             knowledgePoints, gradeSemester, paperLevel, questionText, answerText, analysis,
+            /* 【2026-10-31】标签坐标（册/章/节/名）与偏离判据；旧调用方不传也能工作 */
+            knowledgeRefs, bookReason,
             notebookId, wrongAnswerText, mistakeAnalysis, mistakeStatus,
             // 【custom-v28】批量里「重新分析已录入的题」时会带上新图（很可能重新裁过）。
             // 旧实现不收这个字段 —— 于是题目文本换成新的、原图还是旧的，图文对不上。
@@ -678,7 +682,13 @@ export async function PUT(
         }
 
         // 处理 knowledgePoints (标签)
-        if (knowledgePoints !== undefined) {
+        /**
+         * 【2026-10-31】归不上的词要回给前端（与 POST 口径一致）。
+         * 原来这条路径会把没归类的名字**直接建成根节点**，且失败时静默 ——
+         * 树越改越平，人还完全不知道。
+         */
+        const unmatchedTags: string[] = [];
+        if (knowledgePoints !== undefined || knowledgeRefs !== undefined) {
             const tagNames: string[] = Array.isArray(knowledgePoints)
                 ? knowledgePoints
                 : typeof knowledgePoints === 'string'
@@ -695,46 +705,55 @@ export async function PUT(
                 subjectKey = 'other';
             }
 
-            const tagConnections: { id: string }[] = [];
-            for (const tagName of tagNames) {
-                let tag = await prisma.knowledgeTag.findFirst({
-                    where: {
-                        name: tagName,
-                        OR: [
-                            { isSystem: true },
-                            { userId: user.id },
-                        ],
-                    },
-                });
+            /**
+             * 【2026-10-31】与 POST 同一套：**按坐标解析，不按名字反查**。
+             * 前端传了坐标就用坐标；只传了名字（旧调用方）就按"唯一同名"尽力而为。
+             */
+            const refs: TagRef[] = Array.isArray(knowledgeRefs) && knowledgeRefs.length > 0
+                ? (knowledgeRefs as TagRef[])
+                : tagNames.map((name) => ({ name, legacy: true } as TagRef));
 
-                if (!tag) {
-                    // Determine grade context for the new tag
-                    // Use the incoming gradeSemester (priority) or the existing one on the item
-                    const contextGrade = gradeSemester !== undefined ? gradeSemester : errorItem.gradeSemester;
+            const allTags = await prisma.knowledgeTag.findMany({
+                where: {
+                    subject: subjectKey,
+                    OR: [
+                        { isSystem: true },
+                        { userId: user.id },
+                    ],
+                },
+                select: { id: true, name: true, parentId: true },
+            });
 
-                    const parentId = await findParentTagIdForGrade(contextGrade, subjectKey);
+            const index = buildResolverIndex(allTags);
+            const resolved = resolveTagRefs(refs, index, allTags);
+            const tagConnections = resolved
+                .filter((r) => !!r.tagId)
+                .map((r) => ({ id: r.tagId as string }));
 
-                    tag = await prisma.knowledgeTag.create({
-                        data: {
-                            name: tagName,
-                            subject: subjectKey,
-                            isSystem: false,
-                            userId: user.id,
-                            parentId: parentId, // Link to Grade node
-                        },
-                    });
-                }
-                tagConnections.push({ id: tag.id });
+            for (const r of resolved) {
+                if (!r.tagId) unmatchedTags.push(r.name);
             }
 
-            // 更新标签关联: 先断开所有，再连接新的
-            updateData.tags = {
-                set: [], // 先清空
-                connect: tagConnections,
-            };
+            /**
+             * ⚠️【2026-10-31】**全都没解析出来时不要清空原有标签。**
+             *
+             * 原来的写法是「先 set: [] 再 connect」——一旦这次解析全失败，
+             * 这道题已有的标签会被清光，比"没更新"更糟。改为：至少中一条才覆盖。
+             */
+            if (tagConnections.length > 0) {
+                updateData.tags = {
+                    set: [], // 先清空
+                    connect: tagConnections,
+                };
+                updateData.knowledgePoints = JSON.stringify(resolved.map((r) => r.name));
+            } else if (refs.length > 0) {
+                logger.warn({ id, unmatchedTags, subjectKey }, 'No tag resolved; keep existing tags untouched');
+            }
 
-            // 保留旧字段兼容
-            updateData.knowledgePoints = JSON.stringify(tagNames);
+            updateData.tagResolution = JSON.stringify(resolved);
+            if (typeof bookReason === 'string' && bookReason.trim()) {
+                updateData.tagDeviation = bookReason.trim();
+            }
         }
 
         logger.info({ id }, 'Updating error item');
@@ -789,6 +808,8 @@ export async function PUT(
          */
         return NextResponse.json({
             ...updated,
+            /* 【2026-10-31】没归类的词回给前端，让它能提示"这几个标签没存上" */
+            ...(unmatchedTags.length ? { unmatchedTags } : {}),
             ...(linkNote ? { linkNote } : {}),
             ...(reviewEventIgnored ? { reviewEventIgnored } : {}),
         });

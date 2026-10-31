@@ -24,8 +24,7 @@ interface TagTreeNode {
 }
 
 // 学科配置
-const SUBJECTS = [
-    { key: 'math', name: '数学' },
+const SUBJECTS = [    { key: 'math', name: '数学' },
     { key: 'english', name: '英语' },
     { key: 'physics', name: '物理' },
     { key: 'chemistry', name: '化学' },
@@ -37,6 +36,25 @@ const SUBJECTS = [
 ] as const;
 
 type SubjectKey = typeof SUBJECTS[number]['key'];
+
+/**
+ * 【2026-10-31】「待归类」：AI 选了名字、但词表里定位不到位置的题。
+ * 以前这些标签会被静默丢掉，界面看着一切正常 —— 这个 tab 就是让它们现形。
+ */
+interface PendingCandidate {
+    id: string;
+    name: string;
+    path: string;
+}
+interface PendingItem {
+    id: string;
+    source: string | null;
+    questionText: string;
+    notebook: string;
+    subject: string;
+    deviation: string;
+    pending: Array<{ name: string; book: string; section: string; candidates: PendingCandidate[] }>;
+}
 
 export default function TagsPage() {
     const { t } = useLanguage();
@@ -58,6 +76,48 @@ export default function TagsPage() {
 
     // 自定义标签 (扁平列表，仅用于显示)
     const [customTags, setCustomTags] = useState<Array<{ id: string; name: string; subject: string; parentName?: string }>>([]);
+
+    /* ===== 【2026-10-31】待归类 ===== */
+    const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
+    const [pendingLoading, setPendingLoading] = useState(false);
+    /** 每条的备注草稿（键 = `${itemId}:${name}`）；可选，不填也能确认 */
+    const [pendingNotes, setPendingNotes] = useState<Record<string, string>>({});
+
+    const loadPending = useCallback(async () => {
+        setPendingLoading(true);
+        try {
+            const data = await apiClient.get<{ items: PendingItem[] }>('/api/tags/pending');
+            setPendingItems(data.items || []);
+        } catch (e) {
+            console.error('Failed to load pending tags', e);
+        } finally {
+            setPendingLoading(false);
+        }
+    }, []);
+
+    const confirmPending = async (itemId: string, name: string, tagId: string) => {
+        const key = `${itemId}:${name}`;
+        try {
+            await apiClient.post('/api/tags/pending/resolve', {
+                itemId,
+                name,
+                tagId,
+                ...(pendingNotes[key]?.trim() ? { note: pendingNotes[key].trim() } : {}),
+            });
+            /* 本地摘掉这一条，不必整页重刷 */
+            setPendingItems((prev) =>
+                prev
+                    .map((it) =>
+                        it.id === itemId
+                            ? { ...it, pending: it.pending.filter((p) => p.name !== name) }
+                            : it,
+                    )
+                    .filter((it) => it.pending.length > 0),
+            );
+        } catch (e) {
+            console.error('Failed to resolve pending tag', e);
+        }
+    };
 
     // 新建标签表单
     const [newTagSubject, setNewTagSubject] = useState<SubjectKey>("math");
@@ -115,7 +175,9 @@ export default function TagsPage() {
         fetchCustomTags();
         // 默认加载数学标签
         fetchTags('math');
-    }, [fetchTags, fetchCustomTags]);
+        // 【2026-10-31】顺便数一下有没有"标签没归类"的题（数量要能一眼看见）
+        loadPending();
+    }, [fetchTags, fetchCustomTags, loadPending]);
 
     // 当学科变化时，获取对应的年级列表
     useEffect(() => {
@@ -424,6 +486,85 @@ export default function TagsPage() {
         );
     };
 
+    /**
+     * 【2026-10-31】渲染「待归类」。
+     *
+     * 一屏解决一件事：AI 当时写的是什么、词表里最像的是哪几个、确认时能不能顺手留一句原因。
+     * 候选只给"同科 + 名字相近"，不给人看整棵树 —— 那等于把猜谜又推回给人。
+     */
+    const renderPending = () => {
+        if (pendingLoading) return <div className="text-center py-8 text-muted-foreground">加载中…</div>;
+        if (pendingItems.length === 0) {
+            return (
+                <div className="text-center py-12 text-muted-foreground space-y-1">
+                    <p>没有待归类的标签。</p>
+                    <p className="text-xs">AI 选的每个知识点都找到了位置。</p>
+                </div>
+            );
+        }
+        return (
+            <div className="space-y-4">
+                {pendingItems.map((item) => (
+                    <Card key={item.id}>
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-base flex items-center gap-2">
+                                <span className="font-mono text-sm">{item.source || item.id.slice(0, 8)}</span>
+                                {item.notebook && <Badge variant="outline">{item.notebook}</Badge>}
+                            </CardTitle>
+                            <p className="text-sm text-muted-foreground line-clamp-2">{item.questionText}</p>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            {item.pending.map((p) => {
+                                const key = `${item.id}:${p.name}`;
+                                return (
+                                    <div key={p.name} className="space-y-2 border-t pt-3 first:border-0 first:pt-0">
+                                        <div className="text-sm">
+                                            AI 写的是 <span className="font-medium">「{p.name}」</span>
+                                            {(p.book || p.section) && (
+                                                <span className="text-muted-foreground">
+                                                    （{p.book}{p.section ? ` › ${p.section}` : ''}）
+                                                </span>
+                                            )}
+                                        </div>
+                                        {p.candidates.length > 0 ? (
+                                            <div className="flex flex-wrap gap-2">
+                                                {p.candidates.map((c) => (
+                                                    <Button
+                                                        key={c.id}
+                                                        size="sm"
+                                                        variant="secondary"
+                                                        onClick={() => confirmPending(item.id, p.name, c.id)}
+                                                    >
+                                                        {c.name}
+                                                        {c.path && (
+                                                            <span className="ml-1 text-xs text-muted-foreground">{c.path}</span>
+                                                        )}
+                                                    </Button>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <p className="text-xs text-amber-600">
+                                                词表里没有相近的。可能要在「标准标签」里手工建一个，再回来确认。
+                                            </p>
+                                        )}
+                                        <Input
+                                            value={pendingNotes[key] || ''}
+                                            onChange={(e) =>
+                                                setPendingNotes((prev) => ({ ...prev, [key]: e.target.value }))
+                                            }
+                                            placeholder="可选：一句话说明，例如「这题其实是三下的」"
+                                            className="h-8 text-sm"
+                                        />
+                                    </div>
+                                );
+                            })}
+                        </CardContent>
+                    </Card>
+                ))}
+            </div>
+        );
+    };
+
     // 渲染统计
     const renderStats = () => {
         if (loading) return <div className="text-center py-8">{t.tags?.stats?.loading || "Loading..."}</div>;
@@ -472,14 +613,18 @@ export default function TagsPage() {
             </div>
 
             <Tabs defaultValue="standard" className="w-full">
-                <TabsList className="grid w-full grid-cols-3 mb-6">
+                <TabsList className="grid w-full grid-cols-4 mb-6">
                     <TabsTrigger value="standard">{t.tags?.tabs?.standard || "Standard Tags"}</TabsTrigger>
                     <TabsTrigger value="custom">{t.tags?.tabs?.custom || "Custom Tags"}</TabsTrigger>
+                    <TabsTrigger value="pending">
+                        {`待归类${pendingItems.length > 0 ? ` (${pendingItems.length})` : ''}`}
+                    </TabsTrigger>
                     <TabsTrigger value="stats">{t.tags?.tabs?.stats || "Usage Statistics"}</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="standard" className="space-y-4">{renderStandardTags()}</TabsContent>
                 <TabsContent value="custom">{renderCustomTags()}</TabsContent>
+                <TabsContent value="pending">{renderPending()}</TabsContent>
                 <TabsContent value="stats">{renderStats()}</TabsContent>
             </Tabs>
         </div>

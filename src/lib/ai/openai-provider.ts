@@ -6,6 +6,7 @@ import { safeParseParsedQuestion } from './schema';
 import { getMathTagsFromDB, getTagsFromDB, getTagTree } from './tag-service';
 import { SUBJECT_KEY_BY_NAME } from './tag-scope';
 import { splitKnowledgePoints } from './knowledge-split';
+import { parseTagRefs } from './tag-ref';
 import { normalizeMistakeCategory } from '../mistake-category';
 import { createLogger } from '../logger';
 import { normalizeMistakeStatusForSave } from '../mistake-status';
@@ -154,12 +155,24 @@ export class OpenAIProvider implements AIService {
             subject = subjectRaw as ParsedQuestion['subject'];
         }
 
-        // Process Knowledge Points
+        /**
+         * 【2026-10-31】知识点：**优先按新协议解析坐标**。
+         *
+         * 解析出 `<kp .../>` 就用它（带册/章/节）；一条都解析不出就退回旧的逗号切分，
+         * 并给每条打上 `legacy: true` —— 这种没有位置信息，落库时只能进待确认，
+         * **不允许**拿名字去全局猜。
+         */
         let knowledgePoints: string[] = [];
-        if (knowledgePointsRaw) {
-            // Split by comma or newline, trim whitespaces
+        let knowledgeRefs = parseTagRefs(knowledgePointsRaw);
+        if (knowledgeRefs.length > 0) {
+            knowledgePoints = knowledgeRefs.map((r) => r.name);
+        } else if (knowledgePointsRaw) {
             knowledgePoints = splitKnowledgePoints(knowledgePointsRaw);
+            knowledgeRefs = knowledgePoints.map((name) => ({ name, legacy: true }));
         }
+
+        /** 册次判据：只有 AI 换了默认册才该有内容 */
+        const bookReason = this.extractTag(text, "book_reason") || undefined;
 
         // Process requiresImage (default to false if not present or unrecognized)
         const requiresImage = requiresImageRaw?.toLowerCase().trim() === 'true';
@@ -175,6 +188,8 @@ export class OpenAIProvider implements AIService {
             mistakeStatus,
             subject,
             knowledgePoints,
+            knowledgeRefs,
+            bookReason,
             mistakeCategory,
             requiresImage
         };
@@ -197,11 +212,18 @@ export class OpenAIProvider implements AIService {
 
         // 从数据库获取各学科标签
         // 如果指定了学科，只获取该学科；否则获取所有学科标签供 AI 判断
-        const prefetchedMathTags = (subject === '数学' || !subject) ? await getMathTagsFromDB(grade || null) : [];
-        const prefetchedPhysicsTags = (subject === '物理' || !subject) ? await getTagsFromDB('physics') : [];
-        const prefetchedChemistryTags = (subject === '化学' || !subject) ? await getTagsFromDB('chemistry') : [];
-        const prefetchedBiologyTags = (subject === '生物' || !subject) ? await getTagsFromDB('biology') : [];
-        const prefetchedEnglishTags = (subject === '英语' || !subject) ? await getTagsFromDB('english') : [];
+        /**
+         * 【2026-10-31】学科未知时**不再预取任何学科的标签**。
+         *
+         * 原来每行都写 `(subject === '数学' || !subject)`：不知道学科就把五科全拉来，
+         * 于是语文题的照片会看到一整套数学知识点，模型要么判成数学，要么写一堆 UNMATCHED。
+         * 改成"不猜"——不拉、不给。这些题会走「待归类」，由人补一次，比给错的干净。
+         */
+        const prefetchedMathTags = subject === '数学' ? await getMathTagsFromDB(grade || null) : [];
+        const prefetchedPhysicsTags = subject === '物理' ? await getTagsFromDB('physics') : [];
+        const prefetchedChemistryTags = subject === '化学' ? await getTagsFromDB('chemistry') : [];
+        const prefetchedBiologyTags = subject === '生物' ? await getTagsFromDB('biology') : [];
+        const prefetchedEnglishTags = subject === '英语' ? await getTagsFromDB('english') : [];
 
         /**
          * 【2026-10-30】结构化的数学标签树（按单元分组）。
@@ -212,8 +234,12 @@ export class OpenAIProvider implements AIService {
          * 语文/英语/政史地改成"按学段分组"之后，它们也需要树 ——
          * 否则提示词退回平铺，AI 又会看到别的学段的条目。
          */
-        const subjectKey = subject ? (SUBJECT_KEY_BY_NAME[subject] ?? 'math') : 'math';
-        const tagTree = await getTagTree(subjectKey, grade ?? null);
+        /**
+         * 【2026-10-31】学科未知 ⇒ `subjectKey` 为 null，**一棵树都不拉**。
+         * 原来兜底写的是 `: 'math'`，等于替用户做了一个"这题是数学"的判断。
+         */
+        const subjectKey = subject ? (SUBJECT_KEY_BY_NAME[subject] ?? null) : null;
+        const tagTree = subjectKey ? await getTagTree(subjectKey, grade ?? null) : [];
 
         const systemPrompt = generateAnalyzePrompt(language, grade, subject, {
             customTemplate: config.prompts?.analyze,

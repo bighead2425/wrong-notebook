@@ -77,6 +77,13 @@ interface ErrorItemDetail {
     mistakeStatus?: string | null;
     knowledgePoints: string; // 保留兼容旧数据
     tags: KnowledgeTag[]; // 新的标签关联
+    /**
+     * 【2026-10-31】AI 选标签的解析结果（JSON）。用来在标签下面显示"这题挂在哪一章"。
+     * 只是辅助信息，**不占标签位** —— 家长要看的是"错在哪"，不是"属于第几单元"。
+     */
+    tagResolution?: string | null;
+    /** 偏离默认册时 AI 交的判据；非空就说明这题的册次是"改过的" */
+    tagDeviation?: string | null;
     masteryLevel: number;
     originalImageUrl: string;
     userNotes: string | null;
@@ -564,6 +571,9 @@ export default function ErrorDetailPage() {
             answerText: data.answerText,
             analysis: data.analysis,
             knowledgePoints: data.knowledgePoints,
+            /* 【2026-10-31】重新分析给的是坐标，一起送过去，否则又要靠名字猜册 */
+            ...(data.knowledgeRefs ? { knowledgeRefs: data.knowledgeRefs } : {}),
+            ...(data.bookReason ? { bookReason: data.bookReason } : {}),
             wrongAnswerText: data.wrongAnswerText,
             mistakeAnalysis: data.mistakeAnalysis,
             mistakeStatus: data.mistakeStatus,
@@ -939,6 +949,28 @@ export default function ErrorDetailPage() {
         }
     }
 
+    /**
+     * 【2026-10-31】标签的"位置"：册 › 节。
+     *
+     * 用普通变量而不是 useMemo —— 这个组件在 return 之前有多处早退，
+     * hook 放早了报错、放晚了违反规则（这条坑踩过）。JSON.parse 很小，不值得缓存。
+     */
+    const tagPathLine = (() => {
+        if (!item.tagResolution) return '';
+        try {
+            const arr = JSON.parse(item.tagResolution) as Array<{ book?: string; section?: string }>;
+            if (!Array.isArray(arr)) return '';
+            const seen = new Set<string>();
+            for (const r of arr) {
+                if (!r.book) continue;
+                seen.add(r.section ? `${r.book} › ${r.section}` : r.book);
+            }
+            return [...seen].join('　');
+        } catch {
+            return '';
+        }
+    })();
+
     return (
         <main className="min-h-screen bg-background">
             <div className="container mx-auto p-4 space-y-6 pb-20">
@@ -1280,6 +1312,21 @@ export default function ErrorDetailPage() {
                                                 </Badge>
                                             ))}
                                         </div>
+                                    )}
+                                    {/*
+                                      * 【2026-10-31】标签挂在教材的哪个位置 —— 一行灰字，不占标签位。
+                                      * AI 换过册的（有判据）前面点一个黄点，鼠标悬停能看到它凭什么换。
+                                      */}
+                                    {(tagPathLine || item.tagDeviation) && (
+                                        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                                            {item.tagDeviation && (
+                                                <span
+                                                    className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500"
+                                                    title={item.tagDeviation}
+                                                />
+                                            )}
+                                            {tagPathLine && <span>{tagPathLine}</span>}
+                                        </p>
                                     )}
                                 </div>
 

@@ -135,6 +135,14 @@ model ErrorItem {
   mistakeStatus   String? // not_attempted, wrong_attempt, unknown
   knowledgePoints String? // [DEPRECATED] JSON string - kept for migration only
 
+  /// 【2026-10-31】AI 选标签的**可追溯结果**（JSON 数组）。
+  /// 形如 [{"name":"底和高的对应","book":"五年级上","section":"平行四边形的面积","tagId":"...","matchedBy":"path"}]
+  /// 只用来回答"它选对了没有 / 挂错册没有"，不参与业务查询 —— 所以刻意不建关联表。
+  tagResolution String?
+  /// 偏离默认册时 AI 交的一句判据（例如"题干出现分数乘整数，属六上"）。
+  /// 用来审"它是真读了题，还是顺着默认值走"；人确认时也可以在这里留一句备注。
+  tagDeviation String?
+
   // New: many-to-many relation with KnowledgeTag
   tags KnowledgeTag[]
 

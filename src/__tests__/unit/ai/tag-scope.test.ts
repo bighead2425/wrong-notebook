@@ -5,7 +5,7 @@
  * 给少了会把正常的题逼成 UNMATCHED。两头都是错的，所以要钉住。
  */
 import { describe, expect, it } from 'vitest';
-import { GRADE_TO_TOPNODE, topNodeNamesForSubject, topNodeNamesUpTo } from '@/lib/ai/tag-scope';
+import { GRADE_TO_TOPNODE, bookKeyOf, topNodeNamesForSubject, topNodeNamesUpTo } from '@/lib/ai/tag-scope';
 
 describe('topNodeNamesUpTo · 小学只给"当前年级 + 上一学年"', () => {
     it('★ 五年级 ⇒ 四下、五上、五下（不含一~三，也不含六年级）', () => {
@@ -35,11 +35,27 @@ describe('topNodeNamesUpTo · 中学保持累进', () => {
         ]);
     });
 
-    it('高三 ⇒ 从高一上累到高三下', () => {
+    /**
+     * 【2026-10-31 改】**高三不分上/下。**
+     *
+     * 这条断言原来钉的是 `'高三下'` + 长度 6 —— 它把错误行为焊成了正确行为：
+     * 词表顶层只有「高三」，映射却给出「高三上/高三下」，到库里一个都找不到，
+     * 高三整册于是静默掉出 AI 清单。测试反而在替这个 bug 作保。
+     */
+    it('高三 ⇒ 从高一上累到高三（高三只有一册）', () => {
         const names = topNodeNamesUpTo(12);
         expect(names[0]).toBe('高一上');
-        expect(names[names.length - 1]).toBe('高三下');
-        expect(names).toHaveLength(6);
+        expect(names[names.length - 1]).toBe('高三');
+        expect(names).toHaveLength(5);
+        expect(names).not.toContain('高三上');
+        expect(names).not.toContain('高三下');
+    });
+
+    it('高三上 / 高三下 都算高三（bookKeyOf 归一）', () => {
+        expect(bookKeyOf('高三上')).toBe('高三');
+        expect(bookKeyOf('高三下')).toBe('高三');
+        expect(bookKeyOf('五年级上')).toBe('五年级上');
+        expect(bookKeyOf(null)).toBeNull();
     });
 });
 
@@ -48,7 +64,7 @@ describe('topNodeNamesUpTo · 年级未知', () => {
         const all = topNodeNamesUpTo(null);
         expect(all.length).toBe(Object.values(GRADE_TO_TOPNODE).flat().length);
         expect(all).toContain('五年级上');
-        expect(all).toContain('高三下');
+        expect(all).toContain('高三');
     });
 });
 

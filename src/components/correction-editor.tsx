@@ -214,6 +214,12 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                 answerText: result.answerText,
                 analysis: result.analysis,
                 knowledgePoints: result.knowledgePoints,
+                /**
+                 * 【2026-10-31】重新作答只改了名字、没给坐标 ⇒ **必须把旧坐标清掉**。
+                 * 否则保存时"名字是新的、册/节还是上一次的"，服务端会按过期坐标锚定，
+                 * 比没有坐标更糟。
+                 */
+                knowledgeRefs: undefined,
                 wrongAnswerText: result.wrongAnswerText || "",
                 mistakeAnalysis: result.mistakeAnalysis || "",
                 mistakeStatus: normalizeMistakeStatusForSave(

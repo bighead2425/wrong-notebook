@@ -133,10 +133,6 @@ export const DEFAULT_ANALYZE_TEMPLATE = `【角色与核心任务 (ROLE AND CORE
 在此处填写学科，必须是以下之一："数学", "物理", "化学", "生物", "英语", "语文", "历史", "地理", "政治", "其他"。
 </subject>
 
-<knowledge_points>
-在此处填写知识点，使用逗号分隔，例如：知识点1, 知识点2, 知识点3
-</knowledge_points>
-
 <mistake_category>
 从下面 11 个里选**一个**最符合的（她这次为什么错）。看不到她的作答痕迹、无法判断时留空。
 concept_vague（概念模糊，知道用哪个知识点但用错了）
@@ -222,8 +218,25 @@ unknown_reason（前 10 个都不合适）
 {{knowledge_points_list}}
 
 【标签使用规则 (TAG RULES)】
-- 标签必须与题目实际考查的知识点精准匹配。
-- 每题最多 5 个标签。
+- **先定位，再选点**：判断这题属于哪一册（book）、哪一章（chapter）、哪一节（section），
+  再**只在该节列出的名字里选**，1–3 个。
+- **逐字抄写**：必须使用清单里出现的原词，不要改写、不要加括号补充、不要合并两个词。
+- **必须交回坐标**（四段）：册 + 章 + 节 + 名字。这样服务端才能把它挂到正确的位置。
+- 如果都不合适，knowledge_points 只写 UNMATCHED，不要勉强选"最像的"。
+
+【输出顺序 · 重要】
+**先写完 <analysis>，再输出 <knowledge_points>。**
+不要因为看到格式说明就提前写标签 —— 你要在写完解析之后，回头判断这题到底考了什么。
+
+<knowledge_points>
+<kp book="五年级上" chapter="第五单元 多边形的面积" section="平行四边形的面积" name="底和高的对应"/>
+<kp book="五年级上" chapter="第五单元 多边形的面积" section="平行四边形的面积" name="平行四边形的面积"/>
+</knowledge_points>
+
+<book_reason>
+仅当 book 与她当前在读的那一册不同时才填，一句话说明依据（例如：题干出现分数乘整数，属六上）。
+相同则留空。**不许编造依据**：不确定就留空，服务端会把这题放进待确认。
+</book_reason>
 
 【!!! 关键格式与内容约束 (CRITICAL RULES) !!!】
 1. **格式严格**：必须严格包含上述**全部** XML 标签（一个都不能少），除此之外不要输出任何其他“开场白”或“结束语”。
@@ -285,6 +298,45 @@ export function withRequiredOutputTags(template: string): string {
 下面这些字段**必须输出**。如果上文写过"必须包含 N 个标签"，**以实际列出的标签为准，不要按那个数字去凑**。
 
 ${block}`;
+}
+
+/** 新协议的标签段：四段坐标 + 偏离判据 */
+const KP_BLOCK_V2 = `<knowledge_points>
+<kp book="…" chapter="…" section="…" name="…"/>
+</knowledge_points>`;
+
+const BOOK_REASON_BLOCK = `<book_reason>
+仅当 book 与她当前在读的那一册不同时才填，一句话说明依据（例如：题干出现分数乘整数，属六上）。
+相同则留空。**不许编造依据**：不确定就留空，服务端会把这题放进待确认。
+</book_reason>`;
+
+/**
+ * 把 `<knowledge_points>` 段**升级成四段坐标，并挪到整份提示词的最后**。
+ *
+ * 【2026-10-31】两件事必须一起做，否则等于没做：
+ *
+ * 1. **顺序**：模型是自回归的，写在前面 = 在还没开始写解析时就定案。
+ *    挪到最后，等于让它看着自己刚写完的转录和解析再回头选。
+ * 2. **旧副本**：`config.prompts.analyze` 里可能存着一份旧模板（上次
+ *    `<mistake_category>` 就是这么静默失效的）。自愈函数只补"缺失的字段"，
+ *    补不了"顺序不对"和"格式过时"。所以这里对**任何来源**的模板统一重排。
+ *
+ * 纯字符串操作，可单测：喂一份 knowledge_points 在中间的模板，
+ * 输出里它必须在 `<analysis>` 之后。
+ */
+export function upgradeKnowledgePointsBlock(template: string): string {
+    const kpRe = /<knowledge_points>[\s\S]*?<\/knowledge_points>/;
+    const matched = template.match(kpRe);
+    const isNewFormat = !!matched && /<kp\b/i.test(matched[0]);
+
+    /* 先摘掉旧的标签段和 book_reason，再统一拼到最后 —— 避免出现两份 */
+    const rest = template
+        .replace(kpRe, '')
+        .replace(/<book_reason>[\s\S]*?<\/book_reason>/g, '')
+        .trim();
+
+    const kpBlock = (isNewFormat ? matched![0] : KP_BLOCK_V2).trim();
+    return `${rest}\n\n${kpBlock}\n\n${BOOK_REASON_BLOCK}\n`;
 }
 
 export const DEFAULT_SIMILAR_TEMPLATE = `你是一位资深的K12教育题目生成专家，具备跨学科的题目创作能力。你的核心任务是**根据以下原题和知识点，举一反三生成高质量教学题目**，帮助学生巩固知识并拓展解题思路。
@@ -457,6 +509,20 @@ ${renderTagTree(tree)}
 - **必须逐字使用上面出现的名字**，不要改写、不要加括号补充、不要合并；
 - 如果都不合适，knowledge_points 只写 UNMATCHED，并在 mistake_analysis 里用一句话说明它实际考了什么；
 - **不要勉强选一个最像的** —— 选错比不选更糟。`;
+  } else if (!subject) {
+    /**
+     * 【2026-10-31】**学科未知 ⇒ 不给任何清单。**
+     *
+     * 原来这里没有这个分支，会掉进最后的 else，把数学/物理/化学/生物/英语
+     * 五科的标签全平铺给模型 —— 一张语文题的照片看到几百个数学知识点，
+     * 它要么标成数学，要么写一堆 UNMATCHED。两条都是错的。
+     *
+     * 宁可不给：让它老实说"不知道"。这些题会在「待归类」里出现，由人补一次，
+     * 比"给错的"污染统计要好。
+     */
+    tagsSection = `**学科未知，本次不提供知识点清单。**
+knowledge_points 只写 UNMATCHED，并在 mistake_analysis 里说明它实际考了什么。
+**严禁**自己发明标签名，也**不要**因为看到别的学科的词就改变 <subject> 的判断。`;
   } else if (subject === '数学') {
       tagsSection = `**数学标签 (Math Tags):**
 使用人教版课程大纲中的**精确标签名称**，可选标签如下：
@@ -523,8 +589,11 @@ ${biologyTagsString}
 ${englishTagsString}`;
   }
 
-  /* 【2026-10-31】不管模板来自代码还是配置，缺的必填字段都在这里补齐 */
-  const template = withRequiredOutputTags(options?.customTemplate || DEFAULT_ANALYZE_TEMPLATE);
+  /* 【2026-10-31】不管模板来自代码还是配置，缺的必填字段都在这里补齐；
+     再把标签段升级成四段坐标并挪到最后（顺序也是协议的一部分）。 */
+  const template = upgradeKnowledgePointsBlock(
+    withRequiredOutputTags(options?.customTemplate || DEFAULT_ANALYZE_TEMPLATE),
+  );
 
   return replaceVariables(template, {
     language_instruction: langInstruction,

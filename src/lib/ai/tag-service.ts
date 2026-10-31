@@ -161,6 +161,21 @@ export async function getTagTree(subject: string, grade: number | null): Promise
         const roots = all.filter((t) => t.parentId === null && wantedTops.has(t.name));
         if (roots.length === 0) return [];
 
+        /**
+         * 【2026-10-31】映射表与词表对不上时，**不许静默少册**。
+         *
+         * 高三那次就是这样：`GRADE_TO_TOPNODE[12]` 写的是「高三上/高三下」，
+         * 而词表只有「高三」——过滤后高三整册消失，AI 从没看到过高三的知识点，
+         * 但没有任何一处报错。现在只要少一册就打一条 warn，下次查日志一眼能看见。
+         */
+        if (roots.length < wantedTops.size) {
+            const missing = [...wantedTops].filter((n) => !roots.some((r) => r.name === n));
+            logger.warn(
+                { subject, grade, missing },
+                'wantedTops 与库中根节点对不上，可能有册被漏掉',
+            );
+        }
+
         /* 收集这些根的全部后代 */
         const inScope = new Set(roots.map((r) => r.id));
         let grew = true;

@@ -18,6 +18,27 @@ export const ParsedQuestionSchema = z.object({
     ]),
     knowledgePoints: z.array(z.string()).max(5, "知识点最多 5 个"),
     /**
+     * 【2026-10-31】AI 交回的**坐标**（册/章/节/名）。
+     *
+     * `knowledgePoints` 保留不动（前端、打印、统计都在读它），这里只是**多存一份位置**。
+     * 落库时按 册+节+名 → 册+名 → 放弃 三级降级，见 `lib/tag-ref.ts`。
+     *
+     * 用 `.optional()`：旧模型/旧配置没按新格式输出时，这个字段为空，
+     * 解析端会退回逗号切分并标 `legacy: true`。
+     */
+    knowledgeRefs: z.array(z.object({
+        book: z.string().optional(),
+        chapter: z.string().optional(),
+        section: z.string().optional(),
+        name: z.string(),
+        legacy: z.boolean().optional(),
+    })).optional(),
+    /**
+     * AI 把「册」判成**与她当前在读不同的那一册**时，必须交一句判据。
+     * 用来审"它是真读了题，还是顺着默认值走"。
+     */
+    bookReason: z.string().optional(),
+    /**
      * 【2026-10-30】AI 给的**错因初判**——当靶子，不当事实。
      *
      * 用 string 而不是 z.enum：错因枚举还在长（这次刚从 8 条加到 11 条），

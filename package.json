@@ -15,7 +15,8 @@
     "test:e2e": "playwright test",
     "test:report": "playwright show-report --host 0.0.0.0",
     "print:sample": "node scripts/print-sample/render.mjs",
-    "lint:gate": "node scripts/lint-baseline.mjs"
+    "lint:gate": "node scripts/lint-baseline.mjs",
+    "verify:tags": "node scripts/verify-tag-resolution.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.34.0",

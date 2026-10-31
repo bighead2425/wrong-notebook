@@ -233,6 +233,14 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
     const [progress, setProgress] = useState(0);
     const [run, setRun] = useState<{ i: number; n: number } | null>(null);
     const [savedCount, setSavedCount] = useState(0);
+    /**
+     * 【2026-10-31】这一批里有几道题"标签没归类上"。
+     *
+     * 服务端早就把 `unmatchedTags` 回给了前端，但**没有任何地方读它** ——
+     * 于是标签丢了没人知道，界面看着一切正常。这里只在完成页报一个数，
+     * 不打断保存流程（批量 20 道不该弹 20 次窗）。
+     */
+    const [unmatchedCount, setUnmatchedCount] = useState(0);
 
     /** 审阅时用来把 AI 认出的学科对到错题本（与单题流同一套匹配） */
     const [notebooks, setNotebooks] = useState<Notebook[]>([]);
@@ -1019,8 +1027,11 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
              * PUT 只覆盖分析类字段 + 原图，**不碰 source（题号）**，所以题号天然不变。
              */
             if (cur.savedId) {
-                await apiClient.put(`/api/error-items/${cur.savedId}`, {
+                const putRes = await apiClient.put<{ unmatchedTags?: string[] }>(`/api/error-items/${cur.savedId}`, {
                     knowledgePoints: data.knowledgePoints,
+                    /* 【2026-10-31】坐标与判据一起送，服务端才能按册+节锚定而不是按名字猜 */
+                    ...(data.knowledgeRefs ? { knowledgeRefs: data.knowledgeRefs } : {}),
+                    ...(data.bookReason ? { bookReason: data.bookReason } : {}),
                     questionText: data.questionText,
                     answerText: data.answerText,
                     analysis: data.analysis,
@@ -1035,12 +1046,13 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                 frontendLogger.info('[BatchSave]', 'Re-analysis: updated existing item', {
                     batchId: cur.id, itemId: cur.savedId,
                 });
+                if (putRes?.unmatchedTags?.length) setUnmatchedCount(c => c + 1);
                 setItems(prev => prev.map(x => x.id === cur.id ? { ...x, status: "saved" } : x));
                 setSavedCount(c => c + 1);
                 return;
             }
 
-            const res = await apiClient.post<{ id: string; duplicate?: boolean }>("/api/error-items", {
+            const res = await apiClient.post<{ id: string; duplicate?: boolean; unmatchedTags?: string[] }>("/api/error-items", {
                 ...data,
                 originalImageUrl: cur.base64 || "",
                 /* 【2026-10-31】AI 初判的错因要标 ai（否则服务端记成 human，那条指标就没分母了） */
@@ -1057,6 +1069,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                 frontendLogger.info('[BatchSave]', 'Duplicate submission detected, using existing record', { id: cur.id });
             }
             // 【custom-v27】记下入库 id：缩略图点击时用它新开详情页
+            if (res.unmatchedTags?.length) setUnmatchedCount(c => c + 1);
             setItems(prev => prev.map(x => x.id === cur.id ? { ...x, status: "saved", savedId: res.id } : x));
             setSavedCount(c => c + 1);
             // 不递增索引：当前项已变 saved，会从 readyItems 里移除，
@@ -1118,6 +1131,12 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                                 <span className="text-amber-600">
                                     ，{(t.common.batch?.skippedSummary || "{n} 道已跳过")
                                         .replace("{n}", String(skippedCount))}
+                                </span>
+                            )}
+                            {/* 【2026-10-31】标签没归类上的题：以前这件事完全是静默的 */}
+                            {unmatchedCount > 0 && (
+                                <span className="text-amber-600">
+                                    ，{`其中 ${unmatchedCount} 道有标签没能归类（可在「知识点」页补）`}
                                 </span>
                             )}
                             {errCount > 0 && (

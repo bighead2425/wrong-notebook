@@ -1,5 +1,6 @@
 
 import { prisma } from "@/lib/prisma";
+import { bookKeyOf } from "@/lib/ai/tag-scope";
 
 export async function findParentTagIdForGrade(gradeSemester: string | null | undefined, subjectKey: string): Promise<string | null> {
     if (!gradeSemester || !subjectKey) return null;
@@ -17,7 +18,12 @@ export async function findParentTagIdForGrade(gradeSemester: string | null | und
 
     if (rootTags.length === 0) return null;
 
-    const normalizedInput = gradeSemester.trim();
+    /**
+     * 【2026-10-31】先归一到"词表里的册名"再找。
+     * 「高三上」「高三下」在库里都不存在——词表只有「高三」一个顶层节点，
+     * 不归一的话新建标签会找不到父节点，只能落成根节点（树又平一层）。
+     */
+    const normalizedInput = bookKeyOf(gradeSemester) ?? gradeSemester.trim();
 
     // 1. Try Exact Match
     const exactMatch = rootTags.find(t => t.name === normalizedInput);
