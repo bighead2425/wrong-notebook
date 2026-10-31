@@ -57,6 +57,18 @@ describe('topNodeNamesUpTo · 中学保持累进', () => {
         expect(bookKeyOf('五年级上')).toBe('五年级上');
         expect(bookKeyOf(null)).toBeNull();
     });
+
+    /**
+     * 【2026-10-31 真实题评测发现】模型写的册名会带一个"册"字。
+     * 真实题 SX20260917002 里模型写 `book="四年级下册"`，词表里叫「四年级下」——
+     * 一个字之差，整题从"能判对"变成 none。
+     */
+    it('册名末尾的"册"字要去掉', () => {
+        expect(bookKeyOf('四年级下册')).toBe('四年级下');
+        expect(bookKeyOf('五年级上册')).toBe('五年级上');
+        expect(bookKeyOf('高三上册')).toBe('高三');
+        expect(bookKeyOf(' 五年级上 ')).toBe('五年级上');
+    });
 });
 
 describe('topNodeNamesUpTo · 年级未知', () => {

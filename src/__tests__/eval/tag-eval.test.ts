@@ -75,8 +75,15 @@ async function callModel(ai: AiConf, system: string, userText: string): Promise<
                         { role: 'system', content: system },
                         { role: 'user', content: userText },
                     ],
-                    temperature: 0,
-                    max_tokens: 2500,
+                    /**
+                     * 与线上一致：max_tokens 8192、**不设 temperature**（走平台默认）。
+                     * 线上 provider 就是这样；之前这里写死 temperature=0 / 2500 tokens，
+                     * 会让推理模型写完 reasoning 就到顶、content 空 —— 是评测自己的锅。
+                     */
+                    max_tokens: Number(process.env.TAG_EVAL_MAX_TOKENS || 8192),
+                    ...(process.env.TAG_EVAL_TEMP
+                        ? { temperature: Number(process.env.TAG_EVAL_TEMP) }
+                        : {}),
                 }),
             });
             if (res.status === 429) {

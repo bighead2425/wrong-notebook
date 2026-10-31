@@ -49,7 +49,13 @@ export const GRADE_TO_TOPNODE: Record<number, string[]> = {
  */
 export function bookKeyOf(term: string | null | undefined): string | null {
     if (!term) return null;
-    const t = term.trim();
+    /**
+     * 【2026-10-31 真实题评测发现】模型写的册名会带"册"字：
+     * 真实题 SX20260917002（26.73-12.5）里模型写的是 `book="四年级下册"`，
+     * 而词表里叫「四年级下」—— 精确相等匹配不上 ⇒ 整题落到 none。
+     * 一个"册"字把一道本来能判对的题变成了"不知道"，所以这里先归一。
+     */
+    const t = String(term).trim().replace(/\s+/g, '').replace(/册$/, '');
     if (!t) return null;
     if (t === '高三上' || t === '高三下' || t === '高三') return '高三';
     return t;
