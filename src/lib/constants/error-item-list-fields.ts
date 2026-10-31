@@ -100,6 +100,13 @@ export const LIST_ITEM_SCALARS = [
      */
     'tagResolution',
     'tagDeviation',
+    /**
+     * 【2026-11-01 两段式】归位状态 + 第一段的关键词。
+     * 列表页暂时不显示，但**必须列在这里** —— 这个清单是"列表接口该带哪些列"的唯一真源，
+     * 漏一个不报错、只静默少一个字段（护栏测试就是为这个存在的）。
+     */
+    'tagStatus',
+    'stage1Keywords',
     'createdAt',
     'updatedAt',
     'parentId',
