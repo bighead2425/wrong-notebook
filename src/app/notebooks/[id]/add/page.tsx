@@ -360,6 +360,8 @@ export default function AddErrorPage() {
             const result = await apiClient.post<{ id: string; duplicate?: boolean }>("/api/error-items", {
                 ...finalData,
                 originalImageUrl: currentImage || "",
+                /* 【2026-10-31】同上：AI 的初判要标 ai，否则会被当成"人填的" */
+                ...(finalData.mistakeCategory ? { mistakeCategorySource: "ai" } : {}),
                 inputMethod: currentImage ? undefined : "manual",
                 notebookId: notebookId,
                 // 【M1】框坐标（已序列化）。null 就不带这个键 —— 后端按"未提供"处理，保持字段原样，

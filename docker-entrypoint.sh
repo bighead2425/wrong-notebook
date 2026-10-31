@@ -50,11 +50,8 @@ else
     echo "[Entrypoint] Database already exists at $TARGET_DB."
 fi
 
-# Check for version upgrade
-PREVIOUS_VERSION=""
-if [ -f "$VERSION_FILE" ]; then
-    PREVIOUS_VERSION=$(cat "$VERSION_FILE")
-fi
+# 【2026-10-31】原来这里读一个 PREVIOUS_VERSION 供"版本变了才重建标签"用。
+# 触发条件已改成词表指纹（见下方），这个变量没有消费方了，删掉免得误导。
 
 # Run migrations to ensure DB schema is available and up to date.
 echo "[Entrypoint] Running database migrations to sync schema..."
@@ -88,16 +85,18 @@ cd /app && node "$SEED_ADMIN_SCRIPT" && {
 } || echo "[Entrypoint] Admin seed failed (non-fatal, continuing...)."
 touch "$SEED_MARKER" 2>/dev/null
 
-# Check if version changed - rebuild system tags automatically
-if [ "$PREVIOUS_VERSION" != "$CURRENT_VERSION" ]; then
-    echo "[Entrypoint] Version upgrade detected: $PREVIOUS_VERSION -> $CURRENT_VERSION"
-    echo "[Entrypoint] Rebuilding system tags to sync with new version..."
-    cd /app && node "$REBUILD_TAGS_SCRIPT" && {
-        echo "[Entrypoint] System tags rebuilt successfully."
-    } || echo "[Entrypoint] Tag rebuild failed (non-fatal, continuing...)."
-    # Update version marker
-    echo "$CURRENT_VERSION" > "$VERSION_FILE"
-fi
+# 系统标签同步：由**词表内容指纹**决定要不要重建（脚本内部判断，没变就秒退）
+#
+# 【2026-10-31】原来这里判的是 `PREVIOUS_VERSION != CURRENT_VERSION`，
+# 于是"改了词表但没改 package.json 版本号"就永远不重建 —— custom-v144 就这样白跑一轮。
+# 现在每次启动都调，改没改由指纹说了算；没改的话只是一次文件读取 + 一条 count，几十毫秒。
+echo "[Entrypoint] Syncing system tags (hash-based)..."
+( cd /app && node "$REBUILD_TAGS_SCRIPT" ) && {
+    echo "[Entrypoint] System tags in sync."
+} || echo "[Entrypoint] Tag sync failed (non-fatal, continuing...)."
+
+# 版本文件仍然更新（别处会读它，跟标签没关系）
+echo "$CURRENT_VERSION" > "$VERSION_FILE"
 
 # HTTPS Setup
 CERT_DIR="/app/certs"

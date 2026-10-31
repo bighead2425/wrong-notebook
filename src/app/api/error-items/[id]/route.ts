@@ -548,6 +548,14 @@ export async function PUT(
             const nextCategory = normalizeMistakeCategory(mistakeCategory);
             if ((errorItem.mistakeCategory ?? null) !== nextCategory) {
                 updateData.mistakeCategory = nextCategory;
+                /**
+                 * 【2026-10-31】改错因这个动作发生在详情页 = **人改的**，来源记 human。
+                 *
+                 * 不写这一句的话，AI 初判（source='ai'）被人改掉之后仍留着 'ai'，
+                 * 于是"AI 判的错因被改掉多少"永远算成 0 —— 一个永远不动的指标
+                 * 比没有指标更糟：它会让人误以为 AI 很准。
+                 */
+                updateData.mistakeCategorySource = 'human';
                 stateLogs.push({
                     errorItemId: id,
                     field: 'mistakeCategory',

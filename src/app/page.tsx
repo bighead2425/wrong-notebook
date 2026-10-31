@@ -436,6 +436,15 @@ function HomeContent() {
             const result = await apiClient.post<{ id: string; duplicate?: boolean }>("/api/error-items", {
                 ...finalData,
                 originalImageUrl: currentImage || "",
+                /**
+                 * 【2026-10-31】AI 给的错因必须标成 `ai`。
+                 *
+                 * `...finalData` 里已经带了 `mistakeCategory`（分析时就给了初判），
+                 * 但不带来源 ⇒ 服务端按"有人填了"默认记成 `human`。
+                 * 结果就是那道"AI 判的错因有多少被人改掉"的指标**永远算不出来**：
+                 * 库里全是 human，分母是 0。
+                 */
+                ...(finalData.mistakeCategory ? { mistakeCategorySource: "ai" } : {}),
                 // 【M1】框坐标（已序列化）。没有就不带这个键 —— 后端按"未提供"处理，不写列。
                 ...(pendingCropRegions ? { cropRegions: pendingCropRegions } : {}),
             });

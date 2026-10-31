@@ -1,7 +1,18 @@
 /**
  * 系统标签重建脚本 - 可在 Docker entrypoint 中自动运行
- * 用于版本升级时自动重建系统标签并保留关联关系
+ * 用于重建系统标签并保留关联关系
+ *
+ * 【2026-10-31】触发条件从"应用版本号变了"改成"**词表内容指纹变了**"。
+ *
+ * 原来 entrypoint 只在 `package.json` 的 version 变化时才调它。后果很实际：
+ * 2026-10-31 把五年级词表按北师大教材重写、发了新镜像（custom-v144），
+ * 但 version 仍写 1.9.0 ⇒ 重建没触发，词表根本没进库，
+ * 而我以为"发版就生效了"，直到查库才发现五年级还是老单元。
+ *
+ * 改成内容哈希之后：改词表不必再记得碰版本号，改了就重建，没改就秒退。
  */
+import { createHash } from 'crypto';
+import { readFileSync, writeFileSync } from 'fs';
 import { PrismaClient } from '@prisma/client';
 import {
     MATH_CURRICULUM, MATH_GRADE_ORDER,
@@ -127,8 +138,76 @@ async function seedStandardSubject(tx: any, subject: string, curriculum: any, gr
     return count;
 }
 
+/**
+ * 词表指纹：只算"喂给数据库的那些内容"，不含任何时间/路径。
+ * 同样一份词表，无论编译多少次，指纹都一样。
+ */
+function computeCurriculumHash(): string {
+    const payload = JSON.stringify([
+        MATH_CURRICULUM, PHYSICS_CURRICULUM, ENGLISH_CURRICULUM, CHEMISTRY_CURRICULUM,
+        BIOLOGY_CURRICULUM, CHINESE_CURRICULUM, HISTORY_CURRICULUM, GEOGRAPHY_CURRICULUM,
+        POLITICS_CURRICULUM,
+    ]);
+    return createHash('sha256').update(payload).digest('hex').slice(0, 16);
+}
+
+/**
+ * 指纹落盘位置：**紧跟数据库文件**（同一目录）。
+ *
+ * 为什么不能写死 `/app/data/.tags_hash`：这个脚本在**构建镜像时**也会跑一次
+ * （Dockerfile 里 `node ./dist-scripts/scripts/rebuild-system-tags.js`，那时
+ * `DATABASE_URL=file:/app/prisma/dev.db`）。写死路径的话，指纹会被烘进镜像，
+ * 而运行时用的是另一个库（`/app/data/dev.db`）—— 两边指纹一比对就"相同"，
+ * 于是刚发的新词表又被跳过。这跟原来那个版本门控是同一个错误，只是换了个壳。
+ *
+ * 跟着 DATABASE_URL 走，标记永远描述"它旁边那个库"，构建期和运行期互不干扰。
+ */
+function resolveHashMarker(): string {
+    if (process.env.TAGS_HASH_FILE) return process.env.TAGS_HASH_FILE;
+    const url = process.env.DATABASE_URL || '';
+    const m = url.match(/^file:(.+)$/);
+    if (m) {
+        const dbPath = m[1];
+        const dir = dbPath.slice(0, dbPath.lastIndexOf('/')) || '.';
+        return `${dir}/.tags_hash`;
+    }
+    return '/app/data/.tags_hash';
+}
+
+const HASH_MARKER = resolveHashMarker();
+
 async function main() {
-    console.log('[RebuildTags] Starting automatic system tag rebuild...');
+    const hash = computeCurriculumHash();
+
+    let prevHash = '';
+    let prevCount = -1;
+    try {
+        const raw = readFileSync(HASH_MARKER, 'utf8').trim();
+        const [h, c] = raw.split(/\s+/);
+        prevHash = h || '';
+        prevCount = Number.isFinite(Number(c)) ? Number(c) : -1;
+    } catch {
+        /* 第一次跑，没有标记文件 */
+    }
+
+    if (prevHash === hash) {
+        /**
+         * 光看指纹不够：库里若被换成了旧备份，标记文件不会跟着回退，
+         * 那样会"以为是最新的"而跳过重建 ⇒ 词表悄悄退回旧版。
+         * 所以标记里连**标签条数**一起记，数量对不上就重建。
+         * 一次 count 查询，代价可以忽略。
+         */
+        const systemCount = await prisma.knowledgeTag.count({ where: { isSystem: true } });
+        if (systemCount > 0 && (prevCount < 0 || systemCount === prevCount)) {
+            console.log(`[RebuildTags] 词表未变（hash=${hash}，${systemCount} 个系统标签），跳过。`);
+            return;
+        }
+        console.log(
+            `[RebuildTags] 指纹相同但条数对不上（标记 ${prevCount}，实际 ${systemCount}）——可能换了旧备份，重建。`,
+        );
+    }
+
+    console.log(`[RebuildTags] Starting automatic system tag rebuild... (hash ${prevHash || '(无)'} → ${hash})`);
 
     let totalCreated = 0;
     let associationsRestored = 0;
@@ -282,6 +361,15 @@ async function main() {
     });
 
     console.log(`[RebuildTags] Completed. System tags: ${totalCreated}, Associations: ${associationsRestored}, Custom tags: ${customTagsCreated}`);
+
+    /* 重建成功才写指纹：半路失败绝不能写，否则下次会"以为已经同步过"而跳过，错得更隐蔽。 */
+    try {
+        const finalCount = await prisma.knowledgeTag.count({ where: { isSystem: true } });
+        writeFileSync(HASH_MARKER, `${hash} ${finalCount}\n`, 'utf8');
+        console.log(`[RebuildTags] 指纹已记录：${hash}（${finalCount} 个系统标签）`);
+    } catch (e) {
+        console.warn('[RebuildTags] 指纹写入失败（不影响本次结果，下次会再重建一遍）:', e);
+    }
 }
 
 main()

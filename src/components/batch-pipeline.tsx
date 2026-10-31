@@ -1043,6 +1043,8 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             const res = await apiClient.post<{ id: string; duplicate?: boolean }>("/api/error-items", {
                 ...data,
                 originalImageUrl: cur.base64 || "",
+                /* 【2026-10-31】AI 初判的错因要标 ai（否则服务端记成 human，那条指标就没分母了） */
+                ...(data.mistakeCategory ? { mistakeCategorySource: "ai" } : {}),
                 /** 【2026-10-10】"拍照新增并关联"：新题直接挂到那道题下面（不传 = 孤题，与以前一样） */
                 ...(linkToId ? { parentId: linkToId } : {}),
                 // 【M1】这张图自己的框坐标。没有就不带这个键 ——
