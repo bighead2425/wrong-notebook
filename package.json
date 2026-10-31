@@ -16,7 +16,8 @@
     "test:report": "playwright show-report --host 0.0.0.0",
     "print:sample": "node scripts/print-sample/render.mjs",
     "lint:gate": "node scripts/lint-baseline.mjs",
-    "verify:tags": "node scripts/verify-tag-resolution.mjs"
+    "verify:tags": "node scripts/verify-tag-resolution.mjs",
+    "eval:tags": "vitest run src/__tests__/eval/tag-eval.test.ts --pool=threads --testTimeout=2400000"
   },
   "dependencies": {
     "@google/genai": "^1.34.0",
