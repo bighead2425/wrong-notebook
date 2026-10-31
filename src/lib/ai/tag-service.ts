@@ -5,15 +5,9 @@
 
 import { prisma } from '@/lib/prisma';
 import { createLogger } from '@/lib/logger';
+import { topNodeNamesUpTo } from './tag-scope';
 
 const logger = createLogger('ai:tag-service');
-
-interface TagTreeNode {
-    id: string;
-    name: string;
-    parentId: string | null;
-    children?: TagTreeNode[];
-}
 
 /**
  * 给 AI 的标签清单分支：一个单元 + 它下面的知识点。
@@ -32,41 +26,9 @@ export interface TagBranch {
  * 【2026-10-30 重写】原来只映射 7–12，且用 if/else 分流：
  * `grade = 5` 会落进 `else` 分支执行 `for (g = 10; g <= 5)` —— **一次都不循环**，
  * 于是返回空数组，AI 拿不到任何小学标签。
- * 现在小学（1–6）与中学（7–9 / 10–12）各自累进，互不掺和。
+ * 现在小学拆成 12 册（一上…六下），与中学一样「一册一个顶层节点」；
+ * 具体给哪几册由下面的 `topNodeNamesUpTo` 决定（小学只给当前年级+上一学年）。
  */
-const GRADE_TO_TOPNODE: Record<number, string[]> = {
-    1: ['一年级'],
-    2: ['二年级'],
-    3: ['三年级'],
-    4: ['四年级'],
-    5: ['五年级'],
-    6: ['六年级'],
-    7: ['七年级上', '七年级下'],
-    8: ['八年级上', '八年级下'],
-    9: ['九年级上', '九年级下'],
-    10: ['高一上', '高一下'],
-    11: ['高二上', '高二下'],
-    12: ['高三上', '高三下'],
-};
-
-/**
- * 取「当前年级及以前」的顶层节点名（累进）。
- * - 小学 1–6：一年级 → 六年级
- * - 初中 7–9：七上 → 当前（不含小学，保持原行为）
- * - 高中 10–12：高一上 → 当前
- */
-function topNodeNamesUpTo(grade: number | null): string[] {
-    if (!grade) {
-        return Object.values(GRADE_TO_TOPNODE).flat();
-    }
-    const start = grade <= 6 ? 1 : grade <= 9 ? 7 : 10;
-    const names: string[] = [];
-    for (let g = start; g <= grade; g++) {
-        names.push(...(GRADE_TO_TOPNODE[g] || []));
-    }
-    return names;
-}
-
 /**
  * 从数据库获取指定年级的数学标签
  * @param grade - 年级 (1-12) 或 null
