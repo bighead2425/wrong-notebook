@@ -91,6 +91,15 @@ export const LIST_ITEM_SCALARS = [
     'lastPrintedAt',
     'inputMethod',
     'cropRegions',
+    /**
+     * 【2026-10-31】标签坐标解析结果 & 换册判据。
+     *
+     * 列表页目前不用它们，但**必须列在这里** —— 这个清单是"列表接口该带哪些列"的
+     * 唯一真源，漏一个不会报错，只会静默少一个字段（护栏测试就是为这个存在的）。
+     * 以后若列表要显示"这道题属于哪一章"，直接读 tagResolution，不必再查一次库。
+     */
+    'tagResolution',
+    'tagDeviation',
     'createdAt',
     'updatedAt',
     'parentId',

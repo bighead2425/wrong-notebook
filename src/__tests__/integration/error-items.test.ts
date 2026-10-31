@@ -23,6 +23,12 @@ const mocks = vi.hoisted(() => ({
     },
     mockPrismaKnowledgeTag: {
         findFirst: vi.fn(),
+        /**
+         * 【2026-10-31】标签改成"按坐标解析"之后，落库先一次性取该学科的全部节点
+         * （`buildResolverIndex` 需要父子关系），不再逐个 `findFirst`。
+         * 默认给空数组 ⇒ 解析结果全是 `none` ⇒ 不连标签、也不建节点（这正是新行为）。
+         */
+        findMany: vi.fn(() => Promise.resolve([])),
         create: vi.fn(),
     },
     mockPrismaNotebook: {

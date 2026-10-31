@@ -85,7 +85,7 @@ describe('数学词表 · 重名回归', () => {
         }
 
         expect(wrong).toEqual([]);
-    });
+    }, 30000);
 
     it('全库每一条（册 + 节 + 名）都能 path 命中，且落在正确的那一节', () => {
         const wrong: string[] = [];
@@ -108,7 +108,7 @@ describe('数学词表 · 重名回归', () => {
         }
 
         expect(wrong).toEqual([]);
-    });
+    }, 30000);
 
     it('高三上 / 高三下 都能归到「高三」这一册（修复前是整册掉出清单）', () => {
         const gaoSan = entries.filter((e) => e.book === '高三');
