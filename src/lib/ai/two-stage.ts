@@ -54,6 +54,19 @@ export function buildStage1Template(template: string): string {
 export interface Stage1Result {
     subject: string | null;
     keywords: string[];
+    /**
+     * 输出里**有没有** `<keywords>` 这一段。
+     *
+     * 【2026-11-01】要区分两种"没关键词"：
+     *   · `keywordsPresent=true` 但 `keywords=[]` → 模型明确说了 UNMATCHED，
+     *     这是**有效信息**（这题确实没有现成的节名可挂），接受，不重试；
+     *   · `keywordsPresent=false` → 模型压根没按格式输出（偷懒/被截断），
+     *     这才是需要重试的。
+     *
+     * 为什么不能一律重试：逼模型"必须给词"，它会为了合规编出
+     * "竖式对齐""和差倍问题"这类自己拼的说法，反而把噪音灌进检索。
+     */
+    keywordsPresent: boolean;
     gradeGuess: string | null;
     raw: string;
 }
@@ -101,8 +114,8 @@ export function extractField(text: string, tag: string): string | null {
 
 /** 解析第一段输出 */
 export function parseStage1(raw: string): Stage1Result {
-    const kwRaw = pickTag(raw, 'keywords') || '';
-    const keywords = kwRaw
+    const kwRaw = pickTag(raw, 'keywords');
+    const keywords = (kwRaw || '')
         .split(/[|｜,，、;；]/)
         .map((s) => s.trim())
         .filter((s) => s && s.toUpperCase() !== 'UNMATCHED')
@@ -112,6 +125,8 @@ export function parseStage1(raw: string): Stage1Result {
     return {
         subject: pickTag(raw, 'subject')?.trim() || null,
         keywords,
+        /* 标签在不在 —— 决定要不要重试（见 Stage1Result 的注释） */
+        keywordsPresent: kwRaw !== null,
         gradeGuess: gradeRaw && gradeRaw.toUpperCase() !== 'UNKNOWN' ? gradeRaw : null,
         raw,
     };
@@ -132,16 +147,23 @@ export const DEFAULT_STAGE2_TEMPLATE = `你是一个{{subject}}教研员。下�
 {{candidates}}
 
 **任务**
-从上面的候选里挑出这道题**真正考的位置**，最多两处。规则：
+两件事：
+
+1. 从上面的候选里挑出这道题**真正考的位置**（节），最多两处。
+2. 在那个节后面的知识点里，挑出**这题具体考到的点**，1–2 个即可。
+
+规则：
 
 - 只能从候选里选，**不要发明新的册/章/节/知识点**；
 - 标了〔当前册〕的，是学生**现在正在读**的那一册 —— 如果题目确实是当前册内容，优先选它；
   但如果题目明显是别的册的内容（比如复习旧学期、提前学），**不要因为它是当前册就将就**；
-- 拿不准就少选，甚至可以不选 —— **选错比不选更糟**。
+- 知识点必须**逐字照抄**候选里那行斜杠分隔的名字，不要改写、不要缩写；
+- 实在分不清是哪一节的什么点，就只给节、把知识点留空 —— **选错比不选更糟**。
 
 **输出格式**
 
 <pick>3</pick>                      ← 选中的编号，多个用逗号：<pick>3, 7</pick>；不选写 <pick></pick>
+<kps>小数减法 | 数位对齐</kps>       ← 对应第一个编号的知识点，用 | 分隔；留空写 <kps></kps>
 <confidence>high|medium|low</confidence>
 <reason>一句话说明你为什么选它（不超过 30 字）</reason>
 `;
@@ -181,6 +203,17 @@ export function buildStage2Prompt(params: {
 
 export interface Stage2Result {
     picks: number[];
+    /**
+     * 该题具体考到的**知识点**（对应 picks[0] 那个节下的条目）。
+     *
+     * 【2026-11-01】为什么要有这个：
+     *   只选到"节"的话，落库落的是**节节点**，比单段式的"知识点"粗一级 ——
+     *   同一个节下的「小数减法」「数位对齐」会被当成同一个桶，复习统计就糊了。
+     *   节已经选对了，再在它下面 1–5 个点里挑，是小范围判断，模型做得来。
+     *
+     * 允许为空：分不清就只给节，落库退到节节点，不会比现在差。
+     */
+    kps: string[];
     confidence: 'high' | 'medium' | 'low';
     reason: string | null;
 }
@@ -197,8 +230,15 @@ export function parseStage2(raw: string): Stage2Result {
     const confidence: Stage2Result['confidence'] =
         confRaw.includes('high') ? 'high' : confRaw.includes('low') ? 'low' : 'medium';
 
+    const kps = (pickTag(raw, 'kps') || '')
+        .split(/[|｜,，、;；]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .slice(0, 3);
+
     return {
         picks: [...new Set(picks)],
+        kps,
         confidence,
         reason: pickTag(raw, 'reason'),
     };

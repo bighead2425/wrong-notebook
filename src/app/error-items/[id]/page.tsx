@@ -261,6 +261,8 @@ export default function ErrorDetailPage() {
     const [isEditingTags, setIsEditingTags] = useState(false);
     const [tagsInput, setTagsInput] = useState<string[]>([]);
     const [exportState, setExportState] = useState<"idle" | "doing" | "ok" | "err">("idle");
+    /** 【2026-11-01 两段式】手动重新归位：failed 之后的第二次机会 */
+    const [relocating, setRelocating] = useState(false);
     /** 【2026-10-19 空空第 2 条】右上角「举一反三」现在是一扇门（练习 / 扫码关联 / 拍照新增） */
     const [practiceOpen, setPracticeOpen] = useState(false);
 
@@ -345,6 +347,27 @@ export default function ErrorDetailPage() {
             router.push("/notebooks");
         } finally {
             setLoading(false);
+        }
+    };
+
+    /**
+     * 【2026-11-01 两段式】手动把这道题重新送进归位队列。
+     *
+     * 只在 failed 时显示这个按钮。为什么不让它自动无限重试：
+     * 用户明确说过"安稳最重要，怕一直打接口"。手动点一次，是人的判断。
+     */
+    const handleRelocate = async () => {
+        if (!item || relocating) return;
+        setRelocating(true);
+        try {
+            await apiClient.post(`/api/error-items/${item.id}/relocate`, {});
+            /* 立刻切成 pending，让轮询接管后续刷新（不用手动刷新页面） */
+            setItem((prev) => (prev ? { ...prev, tagStatus: 'pending' } : prev));
+        } catch (e) {
+            console.error(e);
+            alert('重新归位没能启动，稍后再试');
+        } finally {
+            setRelocating(false);
         }
     };
 
@@ -1322,9 +1345,20 @@ export default function ErrorDetailPage() {
                                         </p>
                                     )}
                                     {item.tagStatus === 'failed' && (
-                                        <p className="text-xs text-amber-700">
-                                            标签没能自动归位。可以直接在上面手动选，或者刷新页面再试一次。
-                                        </p>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <p className="text-xs text-amber-700">
+                                                标签没能自动归位。可以直接在上面手动选，或者再试一次。
+                                            </p>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={handleRelocate}
+                                                disabled={relocating}
+                                                className="h-7 text-xs"
+                                            >
+                                                {relocating ? '正在排队…' : '重新归位'}
+                                            </Button>
+                                        </div>
                                     )}
 
                                     {isEditingTags ? (

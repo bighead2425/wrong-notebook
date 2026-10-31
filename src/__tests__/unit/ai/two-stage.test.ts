@@ -156,6 +156,31 @@ describe('第二段：只能从编号里选', () => {
     it('空 pick = 不选', () => {
         expect(parseStage2('<pick></pick><confidence>low</confidence>').picks).toEqual([]);
     });
+
+    /**
+     * 【2026-11-01】第二段还要给"这道题具体考到哪几个点"。
+     *
+     * 为什么：只选到"节"的话，落库落的是**节节点**，比单段式的知识点粗一级 ——
+     * 同一个节下的「小数减法」和「数位对齐」会被算成一个桶，复习统计就糊了。
+     */
+    it('能解析出知识点（| 分隔，最多 3 个）', () => {
+        const r = parseStage2(
+            '<pick>5</pick><kps>小数减法 | 数位对齐</kps><confidence>high</confidence>',
+        );
+        expect(r.picks).toEqual([5]);
+        expect(r.kps).toEqual(['小数减法', '数位对齐']);
+    });
+
+    it('知识点留空是合法的（只给节，落库退到节节点）', () => {
+        const r = parseStage2('<pick>5</pick><kps></kps><confidence>medium</confidence>');
+        expect(r.kps).toEqual([]);
+    });
+
+    it('老格式（压根没有 kps 段）也不报错', () => {
+        const r = parseStage2('<pick>5</pick><confidence>low</confidence>');
+        expect(r.kps).toEqual([]);
+        expect(r.picks).toEqual([5]);
+    });
 });
 
 describe('距离', () => {

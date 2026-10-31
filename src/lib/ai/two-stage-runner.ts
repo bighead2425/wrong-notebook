@@ -121,15 +121,40 @@ export async function runStage1(params: {
         gradeSemester: params.gradeSemester,
     });
 
-    const r = await chatCompletions({
-        system,
-        user: [
-            { type: 'text', text: '请分析这道题目图片。' },
-            { type: 'image_url', image_url: { url: params.imageDataUrl } },
-        ],
-    });
+    const user = [
+        { type: 'text', text: '请分析这道题目图片。' },
+        { type: 'image_url', image_url: { url: params.imageDataUrl } },
+    ];
 
-    return { ...parseStage1(r.text), promptTokens: r.promptTokens };
+    let r = await chatCompletions({ system, user });
+    let parsed = parseStage1(r.text);
+
+    /**
+     * 【2026-11-01】**只在"输出里没有 `<keywords>` 这一段"时重试一次。**
+     *
+     * 两种情况要分开：
+     *   · 明确写了 `<keywords>UNMATCHED</keywords>` → 接受，这是有效信息
+     *     （这题确实没有现成的节名可挂），逼它编词只会往检索里灌噪音；
+     *   · 压根没有这一段 → 模型偷懒或被截断，重试一次。
+     *
+     * 只重试一次：第二次还不给，说明它就是不打算给，再打下去只是浪费钱。
+     * 没有关键词也能继续 —— 候选会退到"当前册全册"，第二段照样能选（实测过）。
+     */
+    if (!parsed.keywordsPresent) {
+        logger.info('两段式：第一段没输出 keywords 段，重试一次');
+        try {
+            r = await chatCompletions({ system, user });
+            const retried = parseStage1(r.text);
+            /* 重试用更好的结果，但原文仍以能解析出字段的那次为准 */
+            if (retried.keywordsPresent || (!parsed.subject && retried.subject)) {
+                parsed = retried;
+            }
+        } catch (e) {
+            logger.warn({ err: String(e) }, '两段式：第一段重试失败，用第一次的结果继续');
+        }
+    }
+
+    return { ...parsed, promptTokens: r.promptTokens };
 }
 
 const SUBJECT_KEY: Record<string, string> = {
@@ -151,6 +176,8 @@ export async function runStage2(params: {
     template?: string | null;
 }): Promise<{
     picks: number[];
+    /** 该题具体考到的知识点（对应 picks[0] 那个节下的条目）；可能为空 */
+    kps: string[];
     confidence: 'high' | 'medium' | 'low';
     reason: string | null;
     candidates: ReturnType<typeof buildCandidates>;
@@ -164,7 +191,7 @@ export async function runStage2(params: {
     });
 
     if (candidates.length === 0) {
-        return { picks: [], confidence: 'low', reason: '没有候选', candidates, promptTokens: 0 };
+        return { picks: [], kps: [], confidence: 'low', reason: '没有候选', candidates, promptTokens: 0 };
     }
 
     const system = buildStage2Prompt({
@@ -276,20 +303,84 @@ export async function relocateItem(itemId: string): Promise<void> {
                     return cur?.name ?? null;
                 };
 
+                /**
+                 * 把「节」翻成库里的节点。
+                 *
+                 * 【2026-11-01 修】之前只落 `name === e.section` 那个节点，
+                 * 也就是**节节点** —— 比单段式的知识点粗一级，而且
+                 * 「节」和「同名知识点」都存在时，`find` 取到哪个取决于数据库顺序。
+                 *
+                 * 现在：先找节节点，再在**它的子节点**里按第二段给的 kps 挑知识点。
+                 * 挑到就落叶子；挑不到（或模型没给）就落节节点 —— 不会比原来差。
+                 */
+                let kpIndex = 0;
                 for (const e of chosen) {
-                    const hit = allTags.find(
+                    /* 严格按坐标找"节"：名字 + 册 + 父节点是章 */
+                    const sectionNode = allTags.find(
                         (t) => t.name === e.section
                             && rootOf(t.id) === e.book
                             && nameOf(t.parentId) === e.chapter,
-                    ) ?? allTags.find((t) => t.name === e.section && rootOf(t.id) === e.book);
-                    if (hit) tagIds.push(hit.id);
-                    resolution.push({
-                        name: e.section,
-                        book: e.book,
-                        section: e.chapter,
-                        tagId: hit?.id ?? null,
-                        matchedBy: hit ? 'path' : 'none',
-                    });
+                    );
+
+                    if (!sectionNode) {
+                        /**
+                         * 没有同名的"节"节点。两种可能：
+                         *   a) 词表里这个节只有叶节点、没有独立的节节点；
+                         *   b) 坐标对不上（模型写错了章/册）。
+                         * 前者能救：按名字 + 册找一个，落它自己。
+                         */
+                        const loose = allTags.find(
+                            (t) => t.name === e.section && rootOf(t.id) === e.book,
+                        );
+                        if (loose) {
+                            tagIds.push(loose.id);
+                            resolution.push({
+                                name: loose.name, book: e.book, section: e.chapter,
+                                tagId: loose.id, granularity: 'point', matchedBy: 'nearby',
+                            });
+                        } else {
+                            resolution.push({
+                                name: e.section, book: e.book, section: e.chapter,
+                                tagId: null, granularity: 'none', matchedBy: 'none',
+                            });
+                        }
+                        kpIndex += 1;
+                        continue;
+                    }
+
+                    /* kps 只对应第一个编号（模型的输出格式就是这么约定的） */
+                    const wantKps = kpIndex === 0 ? r.kps : [];
+                    kpIndex += 1;
+
+                    const children = allTags.filter((t) => t.parentId === sectionNode.id);
+                    const landed: { id: string; name: string }[] = [];
+                    for (const k of wantKps) {
+                        const kn = normalizeTagName(k);
+                        const child = children.find(
+                            (c) => c.name === k || normalizeTagName(c.name) === kn,
+                        );
+                        if (child && !landed.some((x) => x.id === child.id)) {
+                            landed.push({ id: child.id, name: child.name });
+                        }
+                    }
+
+                    if (landed.length > 0) {
+                        for (const l of landed) {
+                            tagIds.push(l.id);
+                            resolution.push({
+                                name: l.name, book: e.book, section: e.chapter,
+                                tagId: l.id, granularity: 'point', matchedBy: 'path',
+                            });
+                        }
+                    } else {
+                        /* 没给点 / 给的点对不上 → 落节本身，并如实标出粒度 */
+                        tagIds.push(sectionNode.id);
+                        resolution.push({
+                            name: sectionNode.name, book: e.book, section: e.chapter,
+                            tagId: sectionNode.id, granularity: 'section', matchedBy: 'path',
+                            ...(wantKps.length > 0 ? { unmatchedKps: wantKps } : {}),
+                        });
+                    }
                 }
 
                 await prisma.errorItem.update({

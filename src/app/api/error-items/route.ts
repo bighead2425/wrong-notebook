@@ -11,7 +11,7 @@ import { buildResolverIndex, resolveTagRefs, type ResolvedTag } from "@/lib/tag-
 import type { TagRef } from "@/lib/ai/tag-ref";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { getAppConfig } from "@/lib/config";
-import { relocateItem } from "@/lib/ai/two-stage-runner";
+import { enqueueRelocate } from "@/lib/ai/relocate-service";
 import { normalizeMistakeCategory } from "@/lib/mistake-category";
 import {
     MANAGE_TYPE_DEFAULT,
@@ -349,15 +349,22 @@ export async function POST(req: Request) {
                      *   · 关键词暂存一列，第二段跑完立刻清空（中间数据，不积累）；
                      *   · 标签先不写（第一段本来就没选），等第二段落。
                      * 开关关着时，这两列都是 undefined，行为与以前完全一致。
+                     *
+                     * ⚠️ **用户在审核页自己选过标签 ⇒ 直接 done，不再归位。**
+                     *    两段式下第一段不给标签，所以 `tagConnections` 非空基本就等于
+                     *    "人已经动手了"。这时候再让第二段跑一遍，会用机器的结果覆盖人的选择 ——
+                     *    人比机器可靠，这种覆盖是倒退。
                      */
                     ...(twoStageEnabled
-                        ? {
-                            tagStatus: 'pending',
-                            stage1Keywords:
-                                Array.isArray(keywords) && keywords.length > 0
-                                    ? JSON.stringify(keywords.slice(0, 3))
-                                    : null,
-                        }
+                        ? tagConnections.length > 0
+                            ? { tagStatus: 'done' }
+                            : {
+                                tagStatus: 'pending',
+                                stage1Keywords:
+                                    Array.isArray(keywords) && keywords.length > 0
+                                        ? JSON.stringify(keywords.slice(0, 3))
+                                        : null,
+                            }
                         : {}),
                     gradeSemester: finalGradeSemester,
                     paperLevel: paperLevel,
@@ -414,14 +421,13 @@ export async function POST(req: Request) {
              * 【2026-11-01 两段式】保存之后才跑第二段 —— 用户定的顺序：
              *   第一段全跑完 → 审核页 → 保存 → 这道题的第二段才开始。
              *
-             * ⚠️ **fire-and-forget**：不 await、不阻塞响应。
-             *    第二段要几十秒，如果等它，用户点保存要转圈。
-             *    失败会自己把 tagStatus 写成 'failed'，详情页给"重新归位"按钮。
+             *   · **串行**：按用户要求"一个一个来"，服务端同一时刻只跑一道（见 lib/ai/relocate-queue.ts）。
+             *     批量保存 20 道不会同时打 20 个请求 —— 那只会一起撞限流。
+             *   · 不 await、不阻塞响应：第二段要几十秒，等它的话点保存要转圈。
+             *     失败会自己把 tagStatus 写成 'failed'，详情页给"重新归位"按钮。
              */
-            if (twoStageEnabled) {
-                void relocateItem(errorItem.id).catch((e) => {
-                    logger.warn({ errorItemId: errorItem.id, err: String(e) }, '两段式：后台归位启动失败');
-                });
+            if (twoStageEnabled && tagConnections.length === 0) {
+                enqueueRelocate(errorItem.id);
             }
 
             // 注：按用户要求，保存错题时**不再自动导出**到 Obsidian（避免每次保存都写盘）。
