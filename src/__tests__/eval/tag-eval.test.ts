@@ -46,29 +46,60 @@ function loadAi(): AiConf {
     if (!inst?.apiKey) throw new Error('配置里没有可用的 apiKey');
     return {
         base: inst.baseUrl.replace(/\/$/, ''),
-        model: inst.model,
+        /**
+         * 可以用 TAG_EVAL_MODEL 临时换一个模型名**去试**，
+         * 而不动线上配置（线上正在用哪个模型，是他的事）。
+         */
+        model: process.env.TAG_EVAL_MODEL || inst.model,
         key: inst.apiKey,
         template: c.prompts?.analyze,
     };
 }
 
 async function callModel(ai: AiConf, system: string, userText: string): Promise<string> {
-    const res = await fetch(`${ai.base}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ai.key}` },
-        body: JSON.stringify({
-            model: ai.model,
-            messages: [
-                { role: 'system', content: system },
-                { role: 'user', content: userText },
-            ],
-            temperature: 0,
-            max_tokens: 2500,
-        }),
-    });
-    if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 300)}`);
-    const data = await res.json();
-    return data.choices?.[0]?.message?.content ?? '';
+    /**
+     * 429 要退避重试，不能直接判失败 ——
+     * 商汤的限流是"每分钟 N 次"，退 20 秒基本都能过。
+     * （顺带这正是线上该做的事：限流不是错，是"等一下再来"。）
+     */
+    const maxTry = Number(process.env.TAG_EVAL_TRY || 3);
+    let lastErr = '';
+    for (let attempt = 1; attempt <= maxTry; attempt++) {
+        try {
+            const res = await fetch(`${ai.base}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ai.key}` },
+                body: JSON.stringify({
+                    model: ai.model,
+                    messages: [
+                        { role: 'system', content: system },
+                        { role: 'user', content: userText },
+                    ],
+                    temperature: 0,
+                    max_tokens: 2500,
+                }),
+            });
+            if (res.status === 429) {
+                const body = (await res.text()).slice(0, 200);
+                lastErr = `429 ${body}`;
+                if (attempt < maxTry) {
+                    await new Promise((r) => setTimeout(r, 20000 * attempt));
+                    continue;
+                }
+                throw new Error(lastErr);
+            }
+            if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 300)}`);
+            const data = await res.json();
+            const content = data.choices?.[0]?.message?.content ?? '';
+            if (!content.trim()) throw new Error('模型返回了空内容');
+            return content;
+        } catch (e) {
+            lastErr = e instanceof Error ? e.message : String(e);
+            if (attempt >= maxTry) break;
+            await new Promise((r) => setTimeout(r, 20000 * attempt));
+        }
+    }
+    throw new Error(lastErr);
 }
 
 function extractTag(text: string, tag: string): string | null {
@@ -116,7 +147,21 @@ describe('标签判别 · 离线评测', () => {
         const cases = ONLY ? CASES.filter((c) => ONLY.split(',').includes(c.id)) : CASES;
         const rows: Row[] = [];
 
+        /**
+         * 【2026-10-31】请求之间的间隔。
+         *
+         * 商汤的 deepseek-flash 配额很紧：连续请求会立刻 429
+         * （"inference exceeds tpm/rpm limit"）。间隔给够，它才跑得动。
+         */
+        const gapMs = Number(process.env.TAG_EVAL_GAP || 0);
+        if (gapMs > 0) {
+            console.log(`每题间隔 ${gapMs}ms（应对限流）`);
+        }
+
         for (const c of cases) {
+            if (gapMs > 0 && rows.length > 0) {
+                await new Promise((r) => setTimeout(r, gapMs));
+            }
             const t0 = Date.now();
             try {
                 /**
