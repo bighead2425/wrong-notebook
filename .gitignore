@@ -72,3 +72,8 @@ upload_test_output*.txt
 
 # 打样产物（会包含真实题目的渲染结果，不得提交）
 /scripts/print-sample/out/
+
+# 词表重建的指纹文件（本地重建脚本生成，线上放在数据卷里）
+# 提交它会让容器以为"词表已同步"而跳过重建
+prisma/.tags_hash
+*.tags_hash
