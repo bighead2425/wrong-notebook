@@ -58,6 +58,37 @@ export interface Stage1Result {
     raw: string;
 }
 
+/**
+ * 第一段的完整 system prompt。
+ *
+ * 特意**不走** `generateAnalyzePrompt`：那条路在「有学科但没给清单」时会掉进
+ * "五科平铺"的兜底分支，白送几万字。第一段根本不需要清单。
+ */
+export function buildStage1Prompt(params: {
+    template: string;
+    gradeSemester?: string | null;
+    language?: 'zh' | 'en';
+}): string {
+    const { template, gradeSemester, language = 'zh' } = params;
+    let t = buildStage1Template(template);
+
+    const gradeLine = gradeSemester
+        ? `学生当前在读：**${gradeSemester}**。判断学段/年级时以此为基准，但**不要**因为她读这一册就把明显属于别的册的内容硬塞进来。`
+        : '';
+    const langLine =
+        language === 'zh'
+            ? "IMPORTANT: For the 'analysis' field, use Simplified Chinese. For 'questionText' and 'answerText', YOU MUST USE THE SAME LANGUAGE AS THE ORIGINAL QUESTION."
+            : 'Please ensure all text fields are in English.';
+
+    t = t
+        .replace(/\{\{grade_instruction\}\}/g, gradeLine)
+        .replace(/\{\{language_instruction\}\}/g, langLine)
+        /* 其余占位符（难度、上一题、页码等）第一段用不到，清空即可 */
+        .replace(/\{\{[a-z_]+\}\}/g, '');
+
+    return t;
+}
+
 function pickTag(text: string, tag: string): string | null {
     const m = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'i'));
     return m ? m[1].trim() : null;
