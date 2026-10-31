@@ -5,7 +5,7 @@
  * 给少了会把正常的题逼成 UNMATCHED。两头都是错的，所以要钉住。
  */
 import { describe, expect, it } from 'vitest';
-import { GRADE_TO_TOPNODE, topNodeNamesUpTo } from '@/lib/ai/tag-scope';
+import { GRADE_TO_TOPNODE, topNodeNamesForSubject, topNodeNamesUpTo } from '@/lib/ai/tag-scope';
 
 describe('topNodeNamesUpTo · 小学只给"当前年级 + 上一学年"', () => {
     it('★ 五年级 ⇒ 四下、五上、五下（不含一~三，也不含六年级）', () => {
@@ -57,5 +57,38 @@ describe('GRADE_TO_TOPNODE · 小学习表必须是一册一个节点', () => {
         const primary = [1, 2, 3, 4, 5, 6].flatMap((g) => GRADE_TO_TOPNODE[g]);
         expect(primary).toHaveLength(12);
         expect(new Set(primary).size).toBe(12);
+    });
+});
+
+describe('topNodeNamesForSubject · 两类学科两套口径', () => {
+    it('★ 链条型（数学）五年级 ⇒ 四下到五下（按册，含上一学年）', () => {
+        expect(topNodeNamesForSubject('math', 5)).toEqual([
+            '四年级上', '四年级下', '五年级上', '五年级下',
+        ]);
+    });
+
+    it('★ 能力型（语文）五年级 ⇒ 只给「小学」一个学段', () => {
+        expect(topNodeNamesForSubject('chinese', 5)).toEqual(['小学']);
+    });
+
+    it('能力型（英语）八年级 ⇒ 初中；高二 ⇒ 高中', () => {
+        expect(topNodeNamesForSubject('english', 8)).toEqual(['初中']);
+        expect(topNodeNamesForSubject('english', 11)).toEqual(['高中']);
+    });
+
+    it('政史地同样按学段（历史：八年级 ⇒ 初中）', () => {
+        expect(topNodeNamesForSubject('history', 8)).toEqual(['初中']);
+        expect(topNodeNamesForSubject('geography', 11)).toEqual(['高中']);
+        expect(topNodeNamesForSubject('politics', 5)).toEqual(['小学']);
+    });
+
+    it('年级未知 ⇒ 三个学段全给（能力型），不能返回空', () => {
+        expect(topNodeNamesForSubject('chinese', null)).toEqual(['小学', '初中', '高中']);
+    });
+
+    it('未登记的学科默认按册处理（不会因为漏登记就一条都不给）', () => {
+        expect(topNodeNamesForSubject('unknown-subject', 5)).toEqual([
+            '四年级上', '四年级下', '五年级上', '五年级下',
+        ]);
     });
 });

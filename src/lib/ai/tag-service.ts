@@ -5,7 +5,7 @@
 
 import { prisma } from '@/lib/prisma';
 import { createLogger } from '@/lib/logger';
-import { topNodeNamesUpTo } from './tag-scope';
+import { topNodeNamesForSubject, topNodeNamesUpTo } from './tag-scope';
 
 const logger = createLogger('ai:tag-service');
 
@@ -150,9 +150,15 @@ export async function getTagTree(subject: string, grade: number | null): Promise
             if (t.parentId) childCount.set(t.parentId, (childCount.get(t.parentId) || 0) + 1);
         }
 
-        /* 顶层（年级）过滤：数学按年级累进；其他学科不按年级（保持原行为） */
-        const wantedTops = subject === 'math' ? new Set(topNodeNamesUpTo(grade)) : null;
-        const roots = all.filter((t) => t.parentId === null && (!wantedTops || wantedTops.has(t.name)));
+        /**
+         * 顶层过滤：**每个学科都有自己的口径**（见 `tag-scope.ts` 的 SUBJECT_SCOPE）。
+         *
+         * 【2026-10-31】原来只有数学过滤，其他学科 `wantedTops` 是 null ⇒ 全给。
+         * 于是五年级的语文题会看到高三的"文言文翻译"—— 这正是"AI 标签乱"的一个真源头：
+         * 不是模型乱选，是清单里混着别的学段。
+         */
+        const wantedTops = new Set(topNodeNamesForSubject(subject, grade));
+        const roots = all.filter((t) => t.parentId === null && wantedTops.has(t.name));
         if (roots.length === 0) return [];
 
         /* 收集这些根的全部后代 */

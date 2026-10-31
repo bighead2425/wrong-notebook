@@ -4,6 +4,7 @@ import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateReanswerP
 import { getAppConfig } from '../config';
 import { safeParseParsedQuestion } from './schema';
 import { getMathTagsFromDB, getTagsFromDB, getTagTree } from './tag-service';
+import { SUBJECT_KEY_BY_NAME } from './tag-scope';
 import { splitKnowledgePoints } from './knowledge-split';
 import { normalizeMistakeCategory } from '../mistake-category';
 import { createLogger } from '../logger';
@@ -179,7 +180,13 @@ export class AzureOpenAIProvider implements AIService {
          * 【2026-10-30】结构化的数学标签树（按单元分组）。
          * 只有数学走这条路；其他学科没有小学数据，保持平铺，避免建出一棵空树。
          */
-        const tagTree = (subject === '数学' || !subject) ? await getTagTree('math', grade ?? null) : [];
+        /**
+         * 【2026-10-31】不再只给数学拉树。
+         * 语文/英语/政史地改成"按学段分组"之后，它们也需要树 ——
+         * 否则提示词退回平铺，AI 又会看到别的学段的条目。
+         */
+        const subjectKey = subject ? (SUBJECT_KEY_BY_NAME[subject] ?? 'math') : 'math';
+        const tagTree = await getTagTree(subjectKey, grade ?? null);
 
         const systemPrompt = generateAnalyzePrompt(language, grade, subject, {
             customTemplate: config.prompts?.analyze,

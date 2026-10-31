@@ -440,26 +440,24 @@ export function generateAnalyzePrompt(
   // 根据科目决定显示哪些标签（节省 token，提高准确性）
   let tagsSection = "";
 
-  if (subject === '数学') {
-    /**
-     * 【2026-10-30】优先用**按单元分组**的清单。
-     *
-     * 平铺时 AI 看不出「平行四边形的面积」属于「多边形的面积」，只能按字面相似度猜；
-     * 分组后它先在单元层定位，再在单元内选点。这是"标签能挂对父节点"的前提。
-     * 没有树时退回平铺，保证旧调用不炸。
-     */
-    const tree = options?.tagTree;
-    if (tree && tree.length > 0) {
-      tagsSection = `**数学知识点（按单元分组）**
+  /**
+   * 【2026-10-31】分组清单对**所有学科**生效（原先只有数学）。
+   * 语文/英语/政史地改成「学段 → 板块 → 考点」之后，同样要让 AI 先定位板块、再选考点，
+   * 否则它还是在一长串名字里按字面相似度猜。
+   */
+  const tree = options?.tagTree;
+
+  if (tree && tree.length > 0) {
+    tagsSection = `**${subject || '数学'}知识点（按单元/板块分组）**
 
 ${renderTagTree(tree)}
 
 **选择规则**：
-- 先判断这题属于哪个单元（■ 开头的行），再**只在该单元下列出的知识点里选**，1–3 个；
+- 先判断这题属于哪个单元/板块（■ 开头的行），再**只在该行下列出的知识点里选**，1–3 个；
 - **必须逐字使用上面出现的名字**，不要改写、不要加括号补充、不要合并；
 - 如果都不合适，knowledge_points 只写 UNMATCHED，并在 mistake_analysis 里用一句话说明它实际考了什么；
 - **不要勉强选一个最像的** —— 选错比不选更糟。`;
-    } else {
+  } else if (subject === '数学') {
       tagsSection = `**数学标签 (Math Tags):**
 使用人教版课程大纲中的**精确标签名称**，可选标签如下：
 ${mathTagsString}
@@ -467,7 +465,6 @@ ${mathTagsString}
 **重要提示**：
 - 必须从上述列表中选择精确匹配的标签
 - 每题最多 5 个标签`;
-    }
   } else if (subject === '物理') {
     tagsSection = `**物理标签 (Physics Tags):**
 使用课程大纲中的**精确标签名称**，可选标签如下：
@@ -500,8 +497,16 @@ ${englishTagsString}
 **重要提示**：
 - 必须从上述列表中选择精确匹配的标签
 - 每题最多 5 个标签`;
+  } else if (['语文', '历史', '地理', '政治'].includes(subject) && (!tree || tree.length === 0)) {
+    /**
+     * 【2026-10-31】这些学科改成"按学段建"之后，会出现"这个学段还没建"的情况
+     * （例：小学没有历史课）。这时**宁可让它说不知道**，也不能退回去把
+     * 其他学科的标签倒给它 —— 那正是之前"AI 乱编标签"的根源之一。
+     */
+    tagsSection = `**本学科在当前学段暂时没有知识点清单。**
+knowledge_points 只写 UNMATCHED，并在 mistake_analysis 里用一句话说明它实际考了什么。
+**严禁**自己发明标签名。`;
   } else {
-    // 未知科目：显示所有标签让 AI 判断
     tagsSection = `**数学标签 (Math Tags):**
 ${mathTagsString}
 

@@ -56,3 +56,74 @@ export function topNodeNamesUpTo(grade: number | null): string[] {
     }
     return names;
 }
+
+/**
+ * 学科 → 中文名对照（provider 里拿到的是中文名，查数据用的是英文 key）
+ */
+export const SUBJECT_KEY_BY_NAME: Record<string, string> = {
+    数学: 'math',
+    物理: 'physics',
+    化学: 'chemistry',
+    生物: 'biology',
+    语文: 'chinese',
+    英语: 'english',
+    历史: 'history',
+    地理: 'geography',
+    政治: 'politics',
+};
+
+/**
+ * 取数口径：按「册」还是按「学段」。
+ *
+ * 【2026-10-31】九个学科的词表分家之后，取数不能再一刀切：
+ *
+ * · **链条型（数理化生）**：前面的章节是后面的地基，教材一册一册往下发。
+ *   按册/年级取，且只给"当前年级 + 上一学年"，逼近她眼前正在学的东西。
+ *
+ * · **能力型/板块型（语文、英语、政史地）**：知识不是沿册垒起来的 ——
+ *   语文的"病句修改"、历史的"中国近代史"从第一天起就叫这个名字，到高考还是它。
+ *   所以顶层用**学段**（小学 / 初中 / 高中），同一条目在不同学段取不同深度。
+ *
+ * 混用会出两种错：链条型按学段给，会丢掉"上一册"这个依赖；
+ * 能力型按册给，会把同一条能力重复建十几遍，而且一改教材就全废。
+ */
+export type ScopeKind = 'grade' | 'stage';
+
+export const SUBJECT_SCOPE: Record<string, ScopeKind> = {
+    math: 'grade',
+    physics: 'grade',
+    chemistry: 'grade',
+    biology: 'grade',
+    chinese: 'stage',
+    english: 'stage',
+    history: 'stage',
+    geography: 'stage',
+    politics: 'stage',
+};
+
+export type StageName = '小学' | '初中' | '高中';
+
+/** 年级号 → 学段（1–6 小学 / 7–9 初中 / 10–12 高中） */
+export function stageOf(grade: number | null): StageName | null {
+    if (!grade) return null;
+    if (grade <= 6) return '小学';
+    if (grade <= 9) return '初中';
+    return '高中';
+}
+
+/**
+ * 某学科、某年级，这次该给 AI 看哪几个顶层节点。
+ *
+ * - 链条型：交给 `topNodeNamesUpTo`（小学＝当前年级+上一学年，中学＝累进）
+ * - 能力型：只给当前学段；年级未知时三个学段都给
+ */
+export function topNodeNamesForSubject(subject: string, grade: number | null): string[] {
+    const scope = SUBJECT_SCOPE[subject] ?? 'grade';
+
+    if (scope === 'stage') {
+        const stage = stageOf(grade);
+        return stage ? [stage] : ['小学', '初中', '高中'];
+    }
+
+    return topNodeNamesUpTo(grade);
+}
