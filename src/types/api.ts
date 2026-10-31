@@ -225,6 +225,11 @@ export interface AppConfig {
     timeouts?: {
         analyze?: number; // 毫秒
     };
+    /** 【2026-11-01 两段式】总开关；关着 = 走原来的单段逻辑 */
+    twoStage?: {
+        enabled?: boolean;
+        maxRetries?: number;
+    };
     /**
      * 【custom-v30】扫描收件箱：根目录由 Docker 挂载决定，这里只存根下的相对子路径
      *

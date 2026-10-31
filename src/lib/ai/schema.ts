@@ -46,6 +46,13 @@ export const ParsedQuestionSchema = z.object({
      * `normalizeMistakeCategory`，非法值降级为 null（宁缺勿错）。
      */
     mistakeCategory: z.string().optional(),
+    /**
+     * 【2026-11-01 两段式】第一段给的 3 个考点短语。
+     *
+     * 只走 analyze 的第一段；保存时随请求带上，落进 `stage1Keywords`，
+     * 第二段用完即清。走单段时这个字段为空，不影响任何已有逻辑。
+     */
+    keywords: z.array(z.string()).optional(),
     requiresImage: z.boolean().optional().default(false), // 题目是否依赖图片（如几何题）
 });
 

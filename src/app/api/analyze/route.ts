@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAIService } from "@/lib/ai";
+import { getAppConfig } from "@/lib/config";
+import { runStage1 } from "@/lib/ai/two-stage-runner";
+import { extractField } from "@/lib/ai/two-stage";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { calculateGradeNumber, gradeTermToNumber } from "@/lib/knowledge-tags";
@@ -121,8 +124,46 @@ export async function POST(req: Request) {
         const subjectChinese = subjectName ? subjectNameMapping[subjectName] : null;
 
         logger.info({ userGrade, userGradeSemester, subject: subjectChinese }, 'Calling AI service for image analysis');
-        const aiService = getAIService();
-        const analysisResult = await aiService.analyzeImage(imageBase64, mimeType, language, userGrade, subjectChinese, userGradeSemester);
+
+        /**
+         * 【2026-11-01 两段式】**开关关着时，这里和以前一模一样。**
+         *
+         * 打开后只跑"第一段"：看图转录 + 判断学科 + 给 3 个考点短语，
+         * **不选知识点**（清单不送，省掉两千多 token）。
+         * 标签在保存之后由后台第二段补（见 `lib/ai/two-stage-runner.ts`）。
+         */
+        const cfg = getAppConfig();
+        let analysisResult: Awaited<ReturnType<ReturnType<typeof getAIService>['analyzeImage']>> & {
+            keywords?: string[];
+        };
+
+        if (cfg.twoStage?.enabled) {
+            const s1 = await runStage1({
+                imageDataUrl: `data:${mimeType};base64,${imageBase64}`,
+                gradeSemester: userGradeSemester,
+                template: cfg.prompts?.analyze,
+            });
+            const subjectCn = s1.subject || subjectChinese || '其他';
+            analysisResult = {
+                questionText: extractField(s1.raw, 'question_text') || '',
+                answerText: extractField(s1.raw, 'answer_text') || '',
+                analysis: extractField(s1.raw, 'analysis') || '',
+                /* 第一段不判"学生错没错"，这几项给保守默认值，与单段口径一致 */
+                wrongAnswerText: '',
+                mistakeAnalysis: extractField(s1.raw, 'mistake_analysis') || '',
+                mistakeStatus: 'unknown',
+                requiresImage: false,
+                mistakeCategory: extractField(s1.raw, 'mistake_category') || undefined,
+                subject: subjectCn,
+                knowledgePoints: [],
+                knowledgeRefs: [],
+                keywords: s1.keywords,
+            } as unknown as typeof analysisResult;
+            logger.info({ keywords: s1.keywords, subject: subjectCn }, '两段式：第一段完成');
+        } else {
+            const aiService = getAIService();
+            analysisResult = await aiService.analyzeImage(imageBase64, mimeType, language, userGrade, subjectChinese, userGradeSemester);
+        }
 
         logger.debug({
             knowledgePointsCount: analysisResult.knowledgePoints?.length,

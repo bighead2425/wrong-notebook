@@ -89,7 +89,9 @@ export const REAL_CASES: RealCase[] = [
         source: 'YW20261008001',
         subject: '英语',
         book: '小学',
-        section: '阅读与表达',
+        section: '短文',
+        /* 新词表里"阅读"章下分「短文 / 对话」，判断题属短文 */
+        altSections: ['对话'],
         kps: ['短文阅读'],
         note:
             '⚠️ 英语阅读判断 True/False（瓢虫短文），学生圈错 2 题，第 8 题手写句子对。' +

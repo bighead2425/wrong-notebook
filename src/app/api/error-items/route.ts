@@ -10,6 +10,8 @@ import { pickRandomEmoji } from "@/lib/emoji-mark";
 import { buildResolverIndex, resolveTagRefs, type ResolvedTag } from "@/lib/tag-resolve";
 import type { TagRef } from "@/lib/ai/tag-ref";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
+import { getAppConfig } from "@/lib/config";
+import { relocateItem } from "@/lib/ai/two-stage-runner";
 import { normalizeMistakeCategory } from "@/lib/mistake-category";
 import {
     MANAGE_TYPE_DEFAULT,
@@ -46,6 +48,8 @@ export async function POST(req: Request) {
              */
             knowledgeRefs,
             bookReason,
+            /** 【2026-11-01 两段式】第一段给的 3 个考点短语（开关打开时才有） */
+            keywords,
             originalImageUrl,
             notebookId,
             gradeSemester,
@@ -65,6 +69,9 @@ export async function POST(req: Request) {
              */
             parentId,
         } = body;
+
+        /** 【2026-11-01 两段式】开关关着时，本文件的所有新增逻辑都不生效 */
+        const twoStageEnabled = getAppConfig().twoStage?.enabled === true;
 
         /**
          * 【M1】框坐标（净版涂白 / 题图裁切的依据）。
@@ -336,6 +343,22 @@ export async function POST(req: Request) {
                         typeof bookReason === 'string' && bookReason.trim()
                             ? bookReason.trim()
                             : null,
+                    /**
+                     * 【2026-11-01 两段式】开关打开时：
+                     *   · 先把状态标成 pending（前端据此显示"正在归位…"）；
+                     *   · 关键词暂存一列，第二段跑完立刻清空（中间数据，不积累）；
+                     *   · 标签先不写（第一段本来就没选），等第二段落。
+                     * 开关关着时，这两列都是 undefined，行为与以前完全一致。
+                     */
+                    ...(twoStageEnabled
+                        ? {
+                            tagStatus: 'pending',
+                            stage1Keywords:
+                                Array.isArray(keywords) && keywords.length > 0
+                                    ? JSON.stringify(keywords.slice(0, 3))
+                                    : null,
+                        }
+                        : {}),
                     gradeSemester: finalGradeSemester,
                     paperLevel: paperLevel,
                     // 【2026-09-28】错因（受控枚举）+ 错题等级 + 来源
@@ -386,6 +409,20 @@ export async function POST(req: Request) {
             });
 
             logger.info({ errorItemId: errorItem.id, tagsCount: errorItem.tags?.length || 0 }, 'ErrorItem created successfully');
+
+            /**
+             * 【2026-11-01 两段式】保存之后才跑第二段 —— 用户定的顺序：
+             *   第一段全跑完 → 审核页 → 保存 → 这道题的第二段才开始。
+             *
+             * ⚠️ **fire-and-forget**：不 await、不阻塞响应。
+             *    第二段要几十秒，如果等它，用户点保存要转圈。
+             *    失败会自己把 tagStatus 写成 'failed'，详情页给"重新归位"按钮。
+             */
+            if (twoStageEnabled) {
+                void relocateItem(errorItem.id).catch((e) => {
+                    logger.warn({ errorItemId: errorItem.id, err: String(e) }, '两段式：后台归位启动失败');
+                });
+            }
 
             // 注：按用户要求，保存错题时**不再自动导出**到 Obsidian（避免每次保存都写盘）。
             //     需要导出时走错题详情页的「导出到 ob」按钮，即 /api/error-items/[id]/export-obsidian。

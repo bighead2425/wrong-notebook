@@ -59,6 +59,20 @@ export interface AppConfig {
         analyze?: number; // 毫秒
     };
     /**
+     * 【2026-11-01 两段式】总开关。
+     *
+     * **默认关闭** —— 关着的时候，analyze 走原来的单段逻辑，行为和现在完全一样。
+     * 打开后：第一段只转录+给考点短语，保存后台跑第二段归位。
+     *
+     * 为什么必须有个开关：两段式是一次大改，出问题时能一键退回，
+     * 不用为了回滚再发一次版。
+     */
+    twoStage?: {
+        enabled?: boolean;
+        /** 第二段失败自动重试次数（默认 2；仍失败就标成"未归位"，等人点重试） */
+        maxRetries?: number;
+    };
+    /**
      * 【custom-v30】扫描收件箱
      *
      * 只存**根目录下的相对子路径**（如 "scan2wrong"），绝对路径不在这里 ——
@@ -184,6 +198,11 @@ const DEFAULT_CONFIG: AppConfig = {
     },
     timeouts: {
         analyze: 180000,
+        /* 两段式默认关闭：关着 = 走原来的单段逻辑 */
+    },
+    twoStage: {
+        enabled: false,
+        maxRetries: 2,
     },
     scanInbox: {
         // 沿用既有约定：老用户升级后不用做任何设置就是这个名字
@@ -226,6 +245,7 @@ export function getAppConfig(): AppConfig {
                 prompts: { ...DEFAULT_CONFIG.prompts, ...userConfig.prompts },
                 timeouts: { ...DEFAULT_CONFIG.timeouts, ...userConfig.timeouts },
                 scanInbox: { ...DEFAULT_CONFIG.scanInbox, ...userConfig.scanInbox },
+                twoStage: { ...DEFAULT_CONFIG.twoStage, ...userConfig.twoStage },
             };
         } catch (error) {
             logger.error({ error }, 'Failed to read config file');
@@ -248,6 +268,7 @@ export function updateAppConfig(newConfig: Partial<AppConfig>) {
         azure: { ...currentConfig.azure, ...newConfig.azure },
         prompts: { ...currentConfig.prompts, ...newConfig.prompts },
         timeouts: { ...currentConfig.timeouts, ...newConfig.timeouts },
+        twoStage: { ...currentConfig.twoStage, ...newConfig.twoStage },
         scanInbox: { ...currentConfig.scanInbox, ...newConfig.scanInbox },
         /* 【2026-10-28】必须深合并：普通用户保存设置时只会回传 desktop/mobile，
            浅合并会把管理员填的 serverUrl 一起冲掉。 */

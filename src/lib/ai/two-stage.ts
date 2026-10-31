@@ -94,6 +94,11 @@ function pickTag(text: string, tag: string): string | null {
     return m ? m[1].trim() : null;
 }
 
+/** 给外部（analyze 路由）取字段用 —— 和上面同一个正则口径 */
+export function extractField(text: string, tag: string): string | null {
+    return pickTag(text, tag);
+}
+
 /** 解析第一段输出 */
 export function parseStage1(raw: string): Stage1Result {
     const kwRaw = pickTag(raw, 'keywords') || '';
