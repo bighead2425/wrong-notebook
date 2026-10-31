@@ -19,7 +19,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import { prisma } from '@/lib/prisma';
-import { buildCandidates, renderCandidates, type ScoredSection } from '@/lib/tag-index';
+import { buildCandidates, type ScoredSection } from '@/lib/tag-index';
 import {
     buildStage1Prompt, parseStage1,
     buildStage2Prompt, parseStage2, composeCaseText,
@@ -97,8 +97,15 @@ describe('两段式评测', () => {
         const rows: Record<string, unknown>[] = [];
 
         for (const c of REAL_CASES) {
+            /* 支持 TAG_EVAL_ONLY 只跑几道：撞限流时不用从头再来 */
+            const only = (process.env.TAG_EVAL_ONLY || '').split(',').map((s) => s.trim()).filter(Boolean);
+            if (only.length > 0 && !only.includes(c.source)) continue;
+
             const item = await prisma.errorItem.findFirst({ where: { source: c.source } });
             if (!item?.originalImageUrl) { console.log(c.source, '无图跳过'); continue; }
+
+            /* 单道失败不能让整轮评测挂掉 —— 限流是常态，记一行继续下一道 */
+            try {
 
             /* ① 第一段 */
             const s1 = await chat(ai, stage1Sys, [
@@ -149,6 +156,21 @@ describe('两段式评测', () => {
                     && (!wantBook || bookKeyOf(e!.book) === wantBook),
             );
 
+            /**
+             * 【2026-11-01】新增 `<kps>` 之后要盯两件事：
+             *   ① 它给的考点名，**是不是真的在候选的考点列表里**（逐字照抄的要求守没守）；
+             *   ② 它给的是不是"这题真正考的那几个点"（这个只能人看，评测只记下来）。
+             * ① 是硬约束：编出来的名字在库里匹配不到，会静默退到节节点，粒度就丢了。
+             *
+             * ⚠️ 必须拿**所有选中的候选**去校验，不能只看第一个 ——
+             *    一道题选了两处（如"数位"+"大小比较"），第二个节里的点会被误判成编造。
+             */
+            const allKpNames = chosen.flatMap((e) => e!.tags);
+            const kpsValid = picked.kps.filter(
+                (k) => allKpNames.some((t) => t === k || t.includes(k) || k.includes(t)),
+            );
+            const kpsFake = picked.kps.filter((k) => !kpsValid.includes(k));
+
             rows.push({
                 source: c.source,
                 subjectCn,
@@ -156,6 +178,8 @@ describe('两段式评测', () => {
                 candidateCount: cands.length,
                 recall,
                 picks: picked.picks,
+                kps: picked.kps,
+                kpsFake,
                 confidence: picked.confidence,
                 chosen: chosen.map((e) => `${e!.book} › ${e!.section}`),
                 want: `${c.book} › ${c.section}`,
@@ -166,8 +190,13 @@ describe('两段式评测', () => {
 
             const last = rows[rows.length - 1] as Record<string, unknown>;
             console.log(
-                `${c.source} | 关键词=${(parsed.keywords || []).join('/')} | 候选${cands.length} | 召回${recall ? '✓' : '✗'} | 选中=${(last.chosen as string[]).join(' ; ') || '（空）'} | 命中${hit ? '✓' : '✗'} | ${Math.round((last.ms as number) / 1000)}s`,
+                `${c.source} | 关键词=${(parsed.keywords || []).join('/')} | 候选${cands.length} | 召回${recall ? '✓' : '✗'} | 选中=${(last.chosen as string[]).join(' ; ') || '（空）'} | 点=${picked.kps.join('+') || '（空）'}${kpsFake.length ? ` ⚠️编造:${kpsFake.join(',')}` : ''} | 命中${hit ? '✓' : '✗'} | ${Math.round((last.ms as number) / 1000)}s`,
             );
+            } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                console.log(`${c.source} | 失败：${msg.slice(0, 120)}`);
+                rows.push({ source: c.source, error: msg, hit: false, recall: false });
+            }
         }
 
         fs.writeFileSync('C:/Users/user/.workbuddy/tmp-eval/rows-two-stage.json', JSON.stringify(rows, null, 2), 'utf8');

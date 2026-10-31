@@ -44,9 +44,9 @@ export function buildStage1Template(template: string): string {
 输出格式（放在最后，一次写清）：
 
 <keywords>短语1 | 短语2 | 短语3</keywords>
-<grade_guess>这道题通常出现在几年级（如"三年级下"；判断不了就写 UNKNOWN）</grade_guess>
 
-⚠️ grade_guess 只是**参考线索**，宁可写 UNKNOWN 也不要硬猜。`;
+⚠️ **不要猜这道题是几年级的。** 你不知道她用的是哪个版本、哪一册，
+猜错了会把她引到错误的册上去。年级由系统按"这题落在哪一册"自己算。`;
 
     return `${t.trim()}\n\n${keywordsBlock}\n`;
 }

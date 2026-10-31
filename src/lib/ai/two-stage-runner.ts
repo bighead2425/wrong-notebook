@@ -24,6 +24,7 @@ import {
 } from './two-stage';
 import { normalizeTagName } from './tag-ref';
 import { bookKeyOf } from './tag-scope';
+import { normalizeGradeBook, bookFromNotebook } from '../grade-book';
 import { DEFAULT_ANALYZE_TEMPLATE } from './prompts';
 
 interface EndpointConf {
@@ -60,11 +61,23 @@ async function chatCompletions(params: {
     user: unknown;
     maxTokens?: number;
     retries?: number;
+    /** 单次请求的超时（毫秒）。不设的话网络卡住会**永久**挂着 */
+    timeoutMs?: number;
 }): Promise<{ text: string; promptTokens: number; completionTokens: number }> {
     const ep = resolveEndpoint();
     if (!ep) throw new Error('没有可用的 AI 配置');
 
-    const { system, user, maxTokens = 8192, retries = 3 } = params;
+    /**
+     * 【2026-11-01】**必须有超时。**
+     *
+     * 第二段现在跑在串行队列里（一次只有一道）。如果某次 fetch 因为网络抖动
+     * 或服务端不响应而永远不返回，**整条队列就停摆** —— 后面的题全都卡在
+     * "正在归位…"，而且不会有任何报错。这比单个请求失败严重得多。
+     *
+     * 取值：第一段带图，实测最慢约 130 秒（正常 30–70 秒），给 150 秒；
+     * 第二段纯文字，正常 5–20 秒，给 90 秒。到点就 abort，走重试。
+     */
+    const { system, user, maxTokens = 8192, retries = 3, timeoutMs = 150000 } = params;
     let lastErr = '';
 
     for (let attempt = 1; attempt <= retries; attempt++) {
@@ -80,6 +93,7 @@ async function chatCompletions(params: {
                     ],
                     max_tokens: maxTokens,
                 }),
+                signal: AbortSignal.timeout(timeoutMs),
             });
 
             if (res.status === 429) {
@@ -101,7 +115,8 @@ async function chatCompletions(params: {
                 completionTokens: d.usage?.completion_tokens ?? 0,
             };
         } catch (e) {
-            lastErr = e instanceof Error ? e.message : String(e);
+            const aborted = e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError');
+            lastErr = aborted ? `请求超时（${Math.round(timeoutMs / 1000)}s）` : (e instanceof Error ? e.message : String(e));
             if (attempt >= retries) break;
             await new Promise((r) => setTimeout(r, 15000 * attempt));
         }
@@ -126,7 +141,7 @@ export async function runStage1(params: {
         { type: 'image_url', image_url: { url: params.imageDataUrl } },
     ];
 
-    let r = await chatCompletions({ system, user });
+    let r = await chatCompletions({ system, user, retries: 2, timeoutMs: 150000 });
     let parsed = parseStage1(r.text);
 
     /**
@@ -143,7 +158,7 @@ export async function runStage1(params: {
     if (!parsed.keywordsPresent) {
         logger.info('两段式：第一段没输出 keywords 段，重试一次');
         try {
-            r = await chatCompletions({ system, user });
+            r = await chatCompletions({ system, user, retries: 2, timeoutMs: 150000 });
             const retried = parseStage1(r.text);
             /* 重试用更好的结果，但原文仍以能解析出字段的那次为准 */
             if (retried.keywordsPresent || (!parsed.subject && retried.subject)) {
@@ -202,7 +217,8 @@ export async function runStage2(params: {
         template: params.template || cfg.prompts?.stage2,
     });
 
-    const r = await chatCompletions({ system, user: '请按格式回答。', maxTokens: 800 });
+    /* 第二段是纯文字、输出短：90 秒没回就是出问题了，重试 2 次（外层还有一层重试） */
+    const r = await chatCompletions({ system, user: '请按格式回答。', maxTokens: 800, timeoutMs: 90000, retries: 2 });
     return { ...parseStage2(r.text), candidates, promptTokens: r.promptTokens };
 }
 
@@ -235,6 +251,13 @@ export async function relocateItem(itemId: string): Promise<void> {
          * 当前"位置"：
          *   · 理科（数理化生）→ 具体册，如「五年级上」
          *   · 文科五科 → 学段，如「小学 / 初中 / 高中」
+         *
+         * 【2026-11-01】**册名要先归一，而且本子比题目记录可靠。**
+         *   线上库的 `gradeSemester` 有 7 种写法（'五年级/上学期'、'五年级'、
+         *   'Grade 6, 1st Semester'…），词表只认 '五年级上' 这种；
+         *   认不出 ⇒ 当前册全册一个都进不了候选，只能靠关键词撞运气。
+         *   而本子是**按册建的**（"小五上数学"），比保存时按主页年级填的字段准。
+         *   实例：大雁塔那道记的是"六年级上"，实际录在"五年级上"的本子里。
          */
         const stageOfGrade = (g: string | null | undefined): string | null => {
             if (!g) return null;
@@ -243,9 +266,11 @@ export async function relocateItem(itemId: string): Promise<void> {
             if (/^高/.test(g)) return '高中';
             return null;
         };
+        const notebookBook = bookFromNotebook(item.notebook?.grade, item.notebook?.semester);
+        const itemBook = normalizeGradeBook(item.gradeSemester);
         const currentBook = isStageScopeSubject(subjectKey)
             ? (stageOfGrade(item.gradeSemester) ?? stageOfGrade(item.notebook?.grade ?? null) ?? '小学')
-            : (item.gradeSemester || null);
+            : (notebookBook ?? itemBook);
 
         /* 第一段的关键词：存在 stage1Keywords 里（中间数据），第二段用完即清 */
         let keywords: string[] = [];
@@ -276,6 +301,15 @@ export async function relocateItem(itemId: string): Promise<void> {
                 });
 
                 if (r.picks.length === 0) {
+                    /**
+                     * 【2026-11-01】没有候选 = 这道题**没有任何可选项**（比如没挂本子、
+                     * 学科是 other、或该学科词表为空）。这不是"模型这次没选好"，
+                     * 重试多少次都是同一个结果 —— 立刻放弃，别白等 5+10 秒。
+                     */
+                    if (r.candidates.length === 0) {
+                        lastErr = new Error('没有候选可选项（学科未知或词表为空）');
+                        break;
+                    }
                     lastErr = new Error('第二段没有选出任何位置');
                     continue;
                 }
@@ -383,18 +417,38 @@ export async function relocateItem(itemId: string): Promise<void> {
                     }
                 }
 
-                await prisma.errorItem.update({
-                    where: { id: itemId },
+                /**
+                 * 【2026-11-01】先**原子地抢状态**，再写标签。
+                 *
+                 * 为什么不能直接 update：第二段要跑几十秒，这期间用户完全可能在
+                 * 详情页手选了标签（那条路会把 tagStatus 改成 'done'）。
+                 * 直接 update 就会把人选的覆盖掉。
+                 *
+                 * `updateMany` 带 `tagStatus: 'pending'` 条件 ⇒ 只有状态还是 pending
+                 * 才写得进去；count=0 说明人已经介入，这次结果作废。
+                 * （Prisma 的 updateMany 不支持嵌套关系，所以标签要第二步单独写。）
+                 */
+                const claim = await prisma.errorItem.updateMany({
+                    where: { id: itemId, tagStatus: 'pending' },
                     data: {
                         tagStatus: 'done',
                         tagResolution: JSON.stringify(resolution),
                         /* 中间数据用完即清：用户要求"完成后删去，不再积累" */
                         stage1Keywords: null,
-                        ...(tagIds.length > 0
-                            ? { tags: { set: tagIds.map((id) => ({ id })) } }
-                            : {}),
                     },
                 });
+
+                if (claim.count === 0) {
+                    logger.info({ itemId }, '两段式：人已介入，本次归位结果作废');
+                    return;
+                }
+
+                if (tagIds.length > 0) {
+                    await prisma.errorItem.update({
+                        where: { id: itemId },
+                        data: { tags: { set: tagIds.map((id) => ({ id })) } },
+                    });
+                }
                 logger.info({ itemId, picks: r.picks, confidence: r.confidence }, '两段式：归位完成');
                 return;
             } catch (e) {

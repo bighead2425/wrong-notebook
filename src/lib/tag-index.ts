@@ -212,8 +212,35 @@ export function buildCandidates(subject: string, opts: BuildOptions): ScoredSect
 
     /* 2. 关键词命中的节，只带最近的几册 */
     const found = searchByKeywords(keywords, index).filter((s) => !seen.has(keyOf(s.entry)));
+
+    /**
+     * 【2026-11-01】**命中了某一节 ⇒ 把它同章的其他节也带上。**
+     *
+     * 理由是实测过的：关键词说的是"列方程解决问题"，而题目实际考的是
+     * 同一单元里的"解方程"或"等式的性质"。只带命中的那一节，同章的正确项
+     * 就根本没进候选 —— 第二段再聪明也选不出来（它不允许发明）。
+     *
+     * 为什么扩到「章」而不是「整册」：
+     *   · 整册是用户最初的设计（"三下整册也送过去"），但那样候选会翻倍；
+     *   · 一道题落点几乎总在同一单元内，扩到章就够，每章也就 2–5 节。
+     *
+     * 扩展进来的节 score=0，排序在命中节之后 —— 候选超上限时先被截掉的是它们。
+     */
+    const hitChapters = new Set(found.map((s) => `${s.entry.book}|${s.entry.chapter}`));
+    const expanded: ScoredSection[] = [...found];
+    if (hitChapters.size > 0) {
+        const taken = new Set(expanded.map((s) => keyOf(s.entry)));
+        for (const entry of index) {
+            if (!hitChapters.has(`${entry.book}|${entry.chapter}`)) continue;
+            const k = keyOf(entry);
+            if (seen.has(k) || taken.has(k)) continue;
+            taken.add(k);
+            expanded.push({ entry, score: 0, distance: 0, hits: [] });
+        }
+    }
+
     const byBook = new Map<string, ScoredSection[]>();
-    for (const s of found) {
+    for (const s of expanded) {
         const list = byBook.get(s.entry.book) ?? [];
         list.push(s);
         byBook.set(s.entry.book, list);
@@ -227,7 +254,7 @@ export function buildCandidates(subject: string, opts: BuildOptions): ScoredSect
         .sort((a, b) => (currentOrder === null ? a.order - b.order : bookDistance(a.order, currentOrder) - bookDistance(b.order, currentOrder)));
 
     for (const { list } of bookRank.slice(0, maxBooksFromKeywords)) {
-        for (const s of list.slice(0, 8)) {
+        for (const s of list.slice(0, 12)) {
             s.distance = currentOrder === null ? 0 : bookDistance(s.entry.bookOrder, currentOrder);
             chosen.push(s);
             seen.add(keyOf(s.entry));

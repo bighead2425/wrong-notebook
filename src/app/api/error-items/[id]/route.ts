@@ -746,6 +746,14 @@ export async function PUT(
                     connect: tagConnections,
                 };
                 updateData.knowledgePoints = JSON.stringify(resolved.map((r) => r.name));
+                /**
+                 * 【2026-11-01 两段式】**人在详情页改过标签 ⇒ 不再归位。**
+                 *
+                 * 否则会出现这个竞态：题还是 'pending'，用户手动选好了标签，
+                 * 几秒后第二段跑完，用 `tags: { set }` 把人选的覆盖掉 ——
+                 * 人比机器可靠，这种覆盖是倒退。
+                 */
+                updateData.tagStatus = 'done';
             } else if (refs.length > 0) {
                 logger.warn({ id, unmatchedTags, subjectKey }, 'No tag resolved; keep existing tags untouched');
             }

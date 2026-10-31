@@ -30,13 +30,20 @@ describe('第一段：不吐知识点，只吐考点短语', () => {
         expect(tpl).not.toContain('<kp ');
     });
 
-    it('有 keywords 输出要求，且提醒"宁可写 UNKNOWN"', () => {
+    it('有 keywords 输出要求，但**不再**要它猜年级', () => {
         expect(tpl).toContain('<keywords>');
-        expect(tpl).toContain('<grade_guess>');
-        expect(tpl).toContain('UNKNOWN');
+        expect(tpl).toContain('UNMATCHED');
+        /**
+         * 【2026-11-01】用户明确否定了"让 AI 判年级"：
+         *   主页本来就有她的年级；而模型判得不准（大雁塔那道判成"五年级下"，
+         *   实际是四年级下），猜错反而把她引到错误的册上。
+         * 年级改由「这题落在哪一册」自己算出来，不再问模型。
+         */
+        expect(tpl).not.toContain('<grade_guess>');
+        expect(tpl).toContain('不要猜这道题是几年级');
     });
 
-    it('解析第一段输出', () => {
+    it('解析第一段输出（老输出里的 grade_guess 仍能解析，只是不再要求）', () => {
         const r = parseStage1(`<subject>数学</subject>
 <keywords>质量单位换算 | 复名数互化 | 长度单位</keywords>
 <grade_guess>三年级下</grade_guess>`);
@@ -100,6 +107,40 @@ describe('候选：当前册全册 + 命中节，按距离排序', () => {
             (c) => c.entry.book === '四年级下' && c.entry.section.includes('方程'),
         );
         expect(hit).toBeTruthy();
+    });
+
+    /**
+     * 【2026-11-01】命中了某一节，就把它**同章的其他节**也带上。
+     *
+     * 实测踩到的：关键词说"列方程解决问题"，题目实际考的是同一单元里的
+     * "解方程" —— 只带命中的那一节，同一章的正确项根本没进候选，第二段选不出来。
+     * 扩到「章」而不是「整册」，是因为一道题的落点几乎总在同一单元内。
+     */
+    it('命中一节 ⇒ 同章其他节一起进候选', () => {
+        const cands = buildCandidates('math', {
+            currentBook: '五年级上',
+            keywords: ['列方程解决问题'],
+        });
+        const book4 = cands.filter((c) => c.entry.book === '四年级下');
+        /* 「认识方程」这一章下不止一个节 */
+        const chapters = new Set(book4.map((c) => c.entry.chapter));
+        expect(chapters.size).toBeGreaterThan(0);
+        const inSameChapter = book4.filter(
+            (c) => c.entry.chapter === '第五单元 认识方程',
+        );
+        expect(inSameChapter.length).toBeGreaterThan(1);
+    });
+
+    it('扩展不会挤掉命中的那一节（它排在同章扩展项之前）', () => {
+        const cands = buildCandidates('math', {
+            currentBook: '五年级上',
+            keywords: ['列方程解决问题'],
+        });
+        const book4 = cands.filter((c) => c.entry.book === '四年级下');
+        const hitIdx = book4.findIndex((c) => c.entry.section === '列方程解决问题');
+        expect(hitIdx).toBeGreaterThanOrEqual(0);
+        /* 命中项 score>0，同章扩展项 score=0 ⇒ 命中项必须排在前面 */
+        expect(book4[0].score).toBeGreaterThanOrEqual(book4[hitIdx].score);
     });
 
     it('候选有上限，不会退化成几百个', () => {
