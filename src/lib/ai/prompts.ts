@@ -440,18 +440,33 @@ export function getMathTagsForGrade(
  * 同一单元内的重复知识点也去重（A/B 两个年级可能都列了同一个点）。
  */
 function renderTagTree(branches: TagBranch[]): string {
-  const merged = new Map<string, string[]>();
+  type Group = { book?: string; chapter?: string; unit: string; points: string[] };
+  const merged = new Map<string, Group>();
+
   for (const b of branches) {
-    const list = merged.get(b.unit) ?? [];
-    for (const pt of b.points) {
-      if (!list.includes(pt)) list.push(pt);
+    /**
+     * 【2026-10-31】**key 必须带册。**
+     *
+     * 原来只用 `b.unit`（节名）当 key —— 而「三角形内角和」在四年级下和五年级上
+     * 各有一节，于是两册的知识点被**合并成一行**，AI 看到的是"一个不存在的单元"。
+     * 这也解释了什么它有时候会把五上的题标成四下的点：清单本身把两册混在了一起。
+     */
+    const key = `${b.book ?? ''}|${b.chapter ?? ''}|${b.unit}`;
+    const g = merged.get(key);
+    if (g) {
+      for (const pt of b.points) {
+        if (!g.points.includes(pt)) g.points.push(pt);
+      }
+    } else {
+      merged.set(key, { book: b.book, chapter: b.chapter, unit: b.unit, points: [...b.points] });
     }
-    merged.set(b.unit, list);
   }
+
   const lines: string[] = [];
-  for (const [unit, points] of merged) {
-    lines.push(`■ ${unit}`);
-    lines.push(`    ${points.join(' / ')}`);
+  for (const g of merged.values()) {
+    const head = [g.book, g.chapter, g.unit].filter(Boolean).join(' · ');
+    lines.push(`■ ${head}`);
+    lines.push(`    ${g.points.join(' / ')}`);
   }
   return lines.join('\n');
 }
@@ -505,7 +520,9 @@ export function generateAnalyzePrompt(
 ${renderTagTree(tree)}
 
 **选择规则**：
-- 先判断这题属于哪个单元/板块（■ 开头的行），再**只在该行下列出的知识点里选**，1–3 个；
+- ■ 开头的行是**位置**，格式为「册 · 章 · 节」（有的学科只有「学段 · 板块」）。
+  **先定位到一行**，再只在该行下列出的知识点里选，1–3 个；
+- <kp> 的 book / chapter / section **就照这一行的三段逐字抄**，不要自己判断属于哪一册；
 - **必须逐字使用上面出现的名字**，不要改写、不要加括号补充、不要合并；
 - 如果都不合适，knowledge_points 只写 UNMATCHED，并在 mistake_analysis 里用一句话说明它实际考了什么；
 - **不要勉强选一个最像的** —— 选错比不选更糟。`;

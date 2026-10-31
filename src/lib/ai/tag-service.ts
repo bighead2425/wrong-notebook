@@ -16,6 +16,11 @@ const logger = createLogger('ai:tag-service');
  * 而不是把几百个名字平铺成一长串（那样 AI 只能按字面猜）。
  */
 export interface TagBranch {
+    /** 册 / 学段（如「五年级上」「小学」）—— 让 AI 抄，而不是靠它记教材 */
+    book?: string;
+    /** 章（如「第五单元 多边形的面积」）；只有三层结构的学科为空 */
+    chapter?: string;
+    /** 节 / 板块（如「平行四边形的面积」） */
     unit: string;
     points: string[];
 }
@@ -189,9 +194,31 @@ export async function getTagTree(subject: string, grade: number | null): Promise
             }
         }
 
+        /* 每个节点的顶层祖先（册 / 学段）—— 渲染清单时要把册名给 AI 看 */
+        const rootNameOf = new Map<string, string>();
+        const rootOrderOf = new Map<string, number>();
+        for (const t of all) {
+            let cur = t;
+            const guard = new Set<string>();
+            while (cur.parentId && !guard.has(cur.id)) {
+                guard.add(cur.id);
+                const up = byId.get(cur.parentId);
+                if (!up) break;
+                cur = up;
+            }
+            rootNameOf.set(t.id, cur.name);
+            rootOrderOf.set(t.id, cur.order ?? 9999);
+        }
+
         /* 叶子挂到「它的父节点」这个单元下 */
         const branches = new Map<string, TagBranch>();
-        const unitMeta = new Map<string, { order: number }>();
+        /**
+         * 排序键必须是「册 → 章 → 节」三层。
+         *
+         * 只按节自己的 order 排，四年级下和五年级上的节会**交错**出现
+         * （两边都是从 1 开始编号），模型读清单时册次就是断的。
+         */
+        const unitMeta = new Map<string, { book: number; chapter: number; section: number }>();
         for (const t of all) {
             if (!inScope.has(t.id)) continue;
             if ((childCount.get(t.id) || 0) > 0) continue;
@@ -199,16 +226,33 @@ export async function getTagTree(subject: string, grade: number | null): Promise
             const parent = t.parentId ? byId.get(t.parentId) : null;
             const key = parent?.id ?? '__orphan__';
             const unit = parent?.name ?? '未分单元';
+            const book = rootNameOf.get(t.id);
+
+            /**
+             * 章 = 节的父节点，但**只有当它不是根的时候才有意义**。
+             * 语文/英语/政史地是「学段 → 板块 → 考点」三层，硬套会得出
+             * chapter === book 这种废话。
+             */
+            const chapterNode = parent?.parentId ? byId.get(parent.parentId) : null;
+            const chapter = chapterNode && chapterNode.name !== book ? chapterNode.name : undefined;
 
             if (!branches.has(key)) {
-                branches.set(key, { unit, points: [] });
-                unitMeta.set(key, { order: parent?.order ?? 9999 });
+                branches.set(key, { book, chapter, unit, points: [] });
+                unitMeta.set(key, {
+                    book: rootOrderOf.get(t.id) ?? 9999,
+                    chapter: chapterNode?.order ?? 9999,
+                    section: parent?.order ?? 9999,
+                });
             }
             branches.get(key)!.points.push(t.name);
         }
 
         return [...branches.entries()]
-            .sort((a, b) => (unitMeta.get(a[0])?.order ?? 9999) - (unitMeta.get(b[0])?.order ?? 9999))
+            .sort((a, b) => {
+                const ma = unitMeta.get(a[0])!;
+                const mb = unitMeta.get(b[0])!;
+                return ma.book - mb.book || ma.chapter - mb.chapter || ma.section - mb.section;
+            })
             .map(([, v]) => v);
     } catch (error) {
         logger.error({ error }, 'getTagTree error');
