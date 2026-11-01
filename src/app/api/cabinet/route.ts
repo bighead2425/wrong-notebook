@@ -112,7 +112,11 @@ export async function GET(req: Request) {
                      * 不是 `ErrorItem.knowledgePoints` 那列（已 `[DEPRECATED]`）。
                      * ⚠️ 只取统计用得到的两列；**别在这里顺手加别的 include**（会拖慢列表）。
                      */
-                    tags: { select: { name: true, subject: true } },
+                    /**
+                     * 【2026-11-01】带上 id —— 内阁页的「薄弱知识点」要能**点进去看题**
+                     * （/by-tag/[id]）。名字会串（跨学科/跨册同名），必须用 id。
+                     */
+                    tags: { select: { id: true, name: true, subject: true } },
                     /** 【2026-10-13 底账】学科只在 Notebook 上（题自己不存）⇒ 连本子一起取 */
                     notebook: { select: { subject: true } },
                 },
@@ -163,7 +167,7 @@ export async function GET(req: Request) {
             /** 【2026-10-13 底账】错因 */
             mistakeCategory: it.mistakeCategory,
             /** 【2026-10-15 真真】知识点（多对多）—— 知识点统计的唯一输入 */
-            tags: it.tags.map((t) => ({ name: t.name, subject: t.subject })),
+            tags: it.tags.map((t) => ({ id: t.id, name: t.name, subject: t.subject })),
         }));
 
         // 日积月累 → 纯逻辑输入（记下它被编进过哪些卷）

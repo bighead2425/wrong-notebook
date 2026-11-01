@@ -51,7 +51,7 @@ import { reviewStatusOf } from './review-status';
 export interface KnowledgeStatItem {
     id: string;
     /** 知识点（`KnowledgeTag`）：`name` 必填，`subject` 缺失时按"未知学科"处理 */
-    tags?: { name: string; subject?: string | null }[] | null;
+    tags?: { id?: string; name: string; subject?: string | null }[] | null;
     /** 错因（`MistakeCategory` 之一），没打就是 null */
     mistakeCategory?: string | null;
     /** 0 新 / 1 复练中 / 2 已掌握（四分法的「已掌握」＝ 2） */
@@ -78,6 +78,12 @@ export interface KnowledgeSummary {
     name: string;
     /** 学科（`KnowledgeTag.subject`）：该知识点下**第一个非空**的值；都没有则 null */
     subject: string | null;
+    /**
+     * 【2026-11-01】这个知识点的**标签节点 id**（该桶里第一个带 id 的）。
+     * 给「薄弱知识点 → 点进去看题」（/by-tag/[id]）用；
+     * 没有就 null，前端不渲染链接。老数据没带 id ⇒ 会是 null，属于正常退化。
+     */
+    tagId: string | null;
     /** 这个知识点下有几道题（去重后的题数） */
     count: number;
     /** 其中已掌握（`masteryLevel === 2`） */
@@ -117,6 +123,8 @@ function bucketKey(name: string, subject: string | null): string {
 interface Bucket {
     name: string;
     subject: string | null;
+    /** 【2026-11-01】该桶第一个带 id 的标签节点 —— 给「点进去看题」用（null = 没带 id） */
+    tagId: string | null;
     /** 这个知识点下的题 id —— 顺带保证"同一题只算一次"（输入若有重复 id 也不虚增） */
     ids: Set<string>;
     mastered: number;
@@ -152,7 +160,7 @@ export function buildKnowledgeStats(
          * 都只是"这道题没有可用知识点"，不该让整个统计崩掉。
          */
         const seenInItem = new Set<string>();
-        const owned: { name: string; subject: string | null }[] = [];
+        const owned: { name: string; subject: string | null; id?: string }[] = [];
         for (const t of it.tags ?? []) {
             const name = (t?.name ?? '').trim();
             if (!name) continue;
@@ -160,18 +168,19 @@ export function buildKnowledgeStats(
             const key = bucketKey(name, subject);
             if (seenInItem.has(key)) continue;
             seenInItem.add(key);
-            owned.push({ name, subject });
+            owned.push({ name, subject, id: (t as { id?: string }).id });
         }
         /** 没有知识点 ⇒ 这一题不进任何统计（**也不算错**，静默跳过） */
         if (owned.length === 0) continue;
 
-        for (const { name, subject } of owned) {
+        for (const { name, subject, id } of owned) {
             const key = bucketKey(name, subject);
             let b = buckets.get(key);
             if (!b) {
                 b = {
                     name,
                     subject,
+                    tagId: id ?? null,
                     ids: new Set<string>(),
                     mastered: 0,
                     urgent: 0,
@@ -182,6 +191,8 @@ export function buildKnowledgeStats(
                 };
                 buckets.set(key, b);
             }
+            /* 第一个带 id 的赢 —— 后面同名的（若有）不再覆盖 */
+            if (!b.tagId && id) b.tagId = id;
             // 一道题对一个知识点只贡献一次
             if (b.ids.has(it.id)) continue;
             b.ids.add(it.id);
@@ -209,6 +220,7 @@ export function buildKnowledgeStats(
         return {
             name: b.name,
             subject: b.subject,
+            tagId: b.tagId,
             count: all,
             mastered: b.mastered,
             urgent: b.urgent,

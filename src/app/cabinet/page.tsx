@@ -93,6 +93,21 @@ interface CabinetResponse {
     }[];
     /** 【2026-10-20 真真】形状搬进 `components/cabinet/task-board.tsx`（与 /tasks 共用） */
     tasks: CabinetTasks;
+    /**
+     * 【2026-11-01】薄弱知识点（按知识点聚合的题数 / 紧迫数 / 覆盖率）。
+     * 数据在 `lib/knowledge-stats.ts` 算了很多个月，这是它第一次有地方显示。
+     * `tagId` 非空时整行可点 → /by-tag/[id] 看这一类的题。
+     */
+    knowledgeStats?: {
+        name: string;
+        subject: string | null;
+        tagId: string | null;
+        count: number;
+        mastered: number;
+        urgent: number;
+        noEvidence: number;
+        coverage: { have: number; all: number; pct: number };
+    }[];
 }
 
 /* ============================ 小件 ============================ */
@@ -261,6 +276,75 @@ export default function CabinetPage() {
                                     hint={`${L("复习中", "Reviewing")} ${data.overview.byMastery.reviewing}`}
                                 />
                             </div>
+
+                            {/* 薄弱知识点 —— 【2026-11-01】标签准了之后这块才真正有意义。
+                                数据是 lib/knowledge-stats.ts 算的（按知识点聚合：几道、几道该练、
+                                几道一次都没练过），以前算了没地方看。点一行 → /by-tag/[id] 看题。 */}
+                            {data.knowledgeStats && data.knowledgeStats.length > 0 && (
+                                <Card>
+                                    <CardHeader>
+                                        <CardTitle className="text-base">
+                                            {L("薄弱知识点", "Weak knowledge points")}
+                                        </CardTitle>
+                                        <p className="text-xs text-muted-foreground">
+                                            {L(
+                                                "按她做错的题聚合（已掌握的不算弱点）；点一个看这一类的题。",
+                                                "Aggregated from her wrong answers; click one to see its questions.",
+                                            )}
+                                        </p>
+                                    </CardHeader>
+                                    <CardContent>
+                                        <div className="space-y-2">
+                                            {data.knowledgeStats
+                                                .filter((k) => k.count > k.mastered)
+                                                .slice(0, 8)
+                                                .map((k) => {
+                                                    const body = (
+                                                        <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 hover:bg-accent/50 transition-colors">
+                                                            <div className="min-w-0">
+                                                                <p className="text-sm font-medium truncate">
+                                                                    {k.name}
+                                                                    {k.subject && (
+                                                                        <span className="ml-2 text-xs text-muted-foreground font-normal">
+                                                                            {k.subject}
+                                                                        </span>
+                                                                    )}
+                                                                </p>
+                                                                <p className="text-xs text-muted-foreground">
+                                                                    {k.count - k.mastered} 道还没掌握
+                                                                    {k.urgent > 0 && (
+                                                                        <span className="text-destructive">
+                                                                            　· {k.urgent} 道今天该练
+                                                                        </span>
+                                                                    )}
+                                                                    {k.noEvidence > 0 && (
+                                                                        <span>
+                                                                            　· {k.noEvidence} 道一次都没练过
+                                                                        </span>
+                                                                    )}
+                                                                </p>
+                                                            </div>
+                                                            <span className="text-xs text-muted-foreground shrink-0">
+                                                                {k.count} 题
+                                                            </span>
+                                                        </div>
+                                                    );
+                                                    return k.tagId ? (
+                                                        <Link
+                                                            key={`${k.subject ?? "?"}|${k.name}`}
+                                                            href={`/by-tag/${k.tagId}`}
+                                                            className="block"
+                                                        >
+                                                            {body}
+                                                        </Link>
+                                                    ) : (
+                                                        <div key={`${k.subject ?? "?"}|${k.name}`}>{body}</div>
+                                                    );
+                                                })}
+                                        </div>
+                                    </CardContent>
+                                </Card>
+                            )}
 
                             {/* 全局构成 */}
                             <Card>

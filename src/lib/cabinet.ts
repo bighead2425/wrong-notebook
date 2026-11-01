@@ -82,7 +82,11 @@ export interface CabinetQuestion {
      * ⚠️ 真源是**多对多关系 `tags`**，不是 `ErrorItem.knowledgePoints` 那列（那列已 `[DEPRECATED]`）。
      * 可选：老调用方（测试）不传 ⇒ 这道题不进任何知识点统计，**不会算错**。
      */
-    tags?: { name: string; subject?: string | null }[] | null;
+    /**
+     * 【2026-11-01】带 id —— 「薄弱知识点」要点进 /by-tag/[id] 看题，
+     * 名字会串（跨学科/跨册同名），跳转必须用 id。
+     */
+    tags?: { id?: string; name: string; subject?: string | null }[] | null;
 }
 
 /** 【2026-10-13】"今天先练哪几道"的一条 —— 由复练结果算出来（不落库，见 review-status.ts） */
