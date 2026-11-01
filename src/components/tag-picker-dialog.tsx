@@ -82,13 +82,28 @@ export function TagPickerDialog({ open, onOpenChange, onPick, defaultSubject }: 
         }
     }, []);
 
-    /** 每次打开：清掉上一次的选择，并把当前学科自动展开 */
+    /**
+     * 每次打开：**清掉上一次的缓存与选择**，并把当前学科自动展开。
+     *
+     * ⚠️⚠️【2026-11-01 空空特别交代】**不要缓存**。
+     *   他原话："如果标准标签库的内容改变了，那么相应的这个树形结构也应该随之变化，
+     *           也就是每次打开这个树形结构的时候，都是现去取值的，不是一成不变的。"
+     *
+     * 所以这里**必须 `setTrees({})`**：关掉再打开 = 重新拉一遍。
+     * 上一版写的是 `if (trees[key] === undefined) load()` —— 那是"拉过一次就不再拉"，
+     * 标签库在别处改过之后这里会一直是旧的。**别把它"优化"回去。**
+     *
+     * 代价：每次打开多一次请求（只有一个学科，几百 KB 量级），换来"永远是最新的"。
+     */
     useEffect(() => {
         if (!open) return;
         setPicked(null);
+        setTrees({});
         if (defaultSubject && SUBJECTS.some((s) => s.key === defaultSubject)) {
             setExpanded(new Set([`subject-${defaultSubject}`]));
-            if (trees[defaultSubject] === undefined) void loadSubject(defaultSubject);
+            void loadSubject(defaultSubject);
+        } else {
+            setExpanded(new Set());
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在"打开"这一刻做一次
     }, [open]);
