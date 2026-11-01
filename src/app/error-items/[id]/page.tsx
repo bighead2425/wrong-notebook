@@ -6,11 +6,12 @@ import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X, Sparkles, Loader2, Printer, ChevronLeft, ChevronRight, Unlink, ArrowUp, RotateCcw, Link2Off, Home } from "lucide-react";
+import { ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X, Sparkles, Loader2, Printer, ChevronLeft, ChevronRight, Unlink, ArrowUp, RotateCcw, Link2Off, Home, Library } from "lucide-react";
 import Link from "next/link";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { MdEditor } from "@/components/md-editor";
 import { TagInput } from "@/components/tag-input";
+import { TagPickerDialog } from "@/components/tag-picker-dialog";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiClient } from "@/lib/api-client";
 import {
@@ -269,6 +270,13 @@ export default function ErrorDetailPage() {
     const [relocating, setRelocating] = useState(false);
     /** 【2026-10-19 空空第 2 条】右上角「举一反三」现在是一扇门（练习 / 扫码关联 / 拍照新增） */
     const [practiceOpen, setPracticeOpen] = useState(false);
+    /**
+     * 【2026-11-01 真真】「从标准标签库选」对话框。
+     * 空空："这些知识点都是散装的，没有逻辑性……我需要像标准标签库一样的呈现，
+     *        能够找对科目、年级、学期、单元，最终找准那个标签。"
+     * ⇒ 编辑态在「保存 / 取消」右边加一个按钮，点开树形选择。
+     */
+    const [tagPickerOpen, setTagPickerOpen] = useState(false);
 
     /**
      * 【2026-10-20 第 3 条】**从主页「举一反三」扫码进来的**：
@@ -1426,6 +1434,11 @@ export default function ErrorDetailPage() {
                                                     <X className="h-4 w-4 mr-1" />
                                                     {t.common?.cancel || 'Cancel'}
                                                 </Button>
+                                                {/* 【2026-11-01】从标准标签库逐级挑 —— 补上下拉"散装 300 条"找不到路的缺口 */}
+                                                <Button size="sm" variant="outline" onClick={() => setTagPickerOpen(true)}>
+                                                    <Library className="h-4 w-4 mr-1" />
+                                                    {L("从标签库选", "Pick from library")}
+                                                </Button>
                                             </div>
                                         </div>
                                     ) : (
@@ -2074,6 +2087,21 @@ export default function ErrorDetailPage() {
                 itemId={item.id}
                 itemNo={item.source || item.id}
                 notebookId={item.notebookId}
+            />
+
+            {/**
+             * 【2026-11-01 真真】「从标准标签库选知识点」—— 树形逐级挑。
+             * 与 `/tags` 页「标准标签」同一套数据（`/api/tags?subject=`），
+             * 只是搬进对话框，选中的叶子直接回填到「新增标签」里。
+             */}
+            <TagPickerDialog
+                open={tagPickerOpen}
+                onOpenChange={setTagPickerOpen}
+                defaultSubject={item.notebook?.subject || undefined}
+                onPick={(name) => {
+                    /** 已存在就不重复加（`TagInput` 内部也是这个规矩） */
+                    if (!tagsInput.includes(name)) setTagsInput([...tagsInput, name]);
+                }}
             />
         </main >
     );
