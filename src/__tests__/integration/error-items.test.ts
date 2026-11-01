@@ -1133,7 +1133,12 @@ describe('/api/error-items', () => {
             expect(mocks.mockPrismaErrorItem.findMany).toHaveBeenCalledWith(
                 expect.objectContaining({
                     where: expect.objectContaining({
-                        knowledgePoints: { contains: '一元一次方程' },
+                        /**
+                         * 【2026-11-01 改】按知识点筛选改成查**标签关系**。
+                         * 原来钉的是 `knowledgePoints: { contains }` —— 那是已废弃的列，
+                         * 两段式归位只写关系不写它 ⇒ 开关一打开就一道也筛不出来。
+                         */
+                        tags: { some: { name: '一元一次方程' } },
                     }),
                 })
             );

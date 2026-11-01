@@ -37,6 +37,22 @@ vi.mock('@/lib/ai', () => ({
     getAIService: vi.fn(() => mocks.mockAIService),
 }));
 
+/**
+ * 【2026-11-01】**这个文件测的是"单段"那条链路。**
+ *
+ * 两段式在 11-01 改成默认开启，而它不走 `getAIService`（直接向端点发请求），
+ * 测试环境没有 apiKey ⇒ 全部挂在"没有可用的 AI 配置"上。
+ * 这里把开关显式关掉，让这些用例继续测它们该测的东西；
+ * 两段式自己的行为在 `__tests__/unit/ai/two-stage.test.ts` 里测。
+ */
+vi.mock('@/lib/config', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/lib/config')>();
+    return {
+        ...actual,
+        getAppConfig: () => ({ ...actual.getAppConfig(), twoStage: { enabled: false, maxRetries: 2 } }),
+    };
+});
+
 // Mock next-auth
 vi.mock('next-auth', () => ({
     getServerSession: vi.fn(() => Promise.resolve(mocks.mockSession)),

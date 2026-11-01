@@ -23,7 +23,8 @@ export async function POST(req: Request) {
 
         const items = await prisma.errorItem.findMany({
             where: { userId: user.id },
-            include: { notebook: true },
+            /* 【2026-11-01】标签关系一起取 —— 导出要用，不能读那列废弃的 */
+            include: { notebook: true, tags: true },
         });
 
         let succeeded = 0;
@@ -39,7 +40,7 @@ export async function POST(req: Request) {
                 questionNo,
                 subjectName: item.notebook?.displayName || "",
                 gradeSemester: item.gradeSemester || "",
-                tags: parseTags(item.knowledgePoints),
+                tags: item.tags.length > 0 ? item.tags.map((t) => t.name) : parseTags(item.knowledgePoints),
                 questionText: item.questionText,
                 originalImageUrl: item.originalImageUrl,
                 analysis: item.analysis,

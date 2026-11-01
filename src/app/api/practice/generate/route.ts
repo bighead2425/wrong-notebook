@@ -21,18 +21,31 @@ export async function POST(req: Request) {
 
         const errorItemWithSubject = await prisma.errorItem.findUnique({
             where: { id: errorItemId },
-            include: { notebook: true }
+            /* 【2026-11-01】把标签关系一起取 —— 知识点的真源是 `tags`，不是那列废弃的 */
+            include: { notebook: true, tags: true }
         });
 
         if (!errorItemWithSubject) {
             return notFound("Item not found");
         }
 
-        let tags: string[] = [];
-        try {
-            tags = JSON.parse(errorItemWithSubject.knowledgePoints || "[]");
-        } catch (e) {
-            tags = [];
+        /**
+         * 【2026-11-01 修】**知识点要读 `tags` 关系，不是 `knowledgePoints` 那一列。**
+         *
+         * 那列在 schema 里早已标 `[DEPRECATED]`，`knowledge-stats.ts`、`cabinet.ts`、
+         * `error-item-card.tsx` 都已经换成读关系了 —— 只有这里还留着。
+         * 后果很具体：两段式归位只写关系、不写废弃列，所以开关一打开，
+         * "举一反三"拿到的知识点永远是空数组，生成的相似题失去方向。
+         */
+        let tags: string[] = (errorItemWithSubject.tags ?? []).map((t) => t.name);
+
+        /* 兜底：老数据可能只有那列（关系还没建） */
+        if (tags.length === 0) {
+            try {
+                tags = JSON.parse(errorItemWithSubject.knowledgePoints || "[]");
+            } catch {
+                tags = [];
+            }
         }
 
         const aiService = getAIService();

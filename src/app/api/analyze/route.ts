@@ -174,7 +174,12 @@ export async function POST(req: Request) {
         }, 'AI returned knowledge points');
 
         // AI 现在从数据库获取标签列表，返回的标签已经是标准化的，不需要额外处理
-        if (!analysisResult.knowledgePoints || analysisResult.knowledgePoints.length === 0) {
+        /**
+         * 【2026-11-01】两段式下**本来就不该有知识点**（第一段只给考点短语），
+         * 这里再报 warn 就是纯噪音 —— 会让人以为每次分析都出了问题。
+         */
+        const twoStageOn = cfg.twoStage?.enabled === true;
+        if (!twoStageOn && (!analysisResult.knowledgePoints || analysisResult.knowledgePoints.length === 0)) {
             logger.warn('Knowledge points is empty or null');
         }
 

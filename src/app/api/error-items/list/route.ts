@@ -269,6 +269,13 @@ export async function GET(req: Request) {
                     { analysis: { contains: query } },
                     { wrongAnswerText: { contains: query } },
                     { mistakeAnalysis: { contains: query } },
+                    /**
+                     * 【2026-11-01 修】知识点要搜**标签关系**，不是 `knowledgePoints` 那一列。
+                     * 那列已 `[DEPRECATED]`，两段式归位也不写它 ⇒ 开关一打开，
+                     * 按标签搜就永远搜不到（他会在列表里搜"单位换算"然后发现没结果）。
+                     */
+                    { tags: { some: { name: { contains: query } } } },
+                    /* 老数据兜底：关系还没建、只有那列 */
                     { knowledgePoints: { contains: query } },
                 ]
             });
@@ -365,8 +372,16 @@ export async function GET(req: Request) {
         if (tag && !chapter) {
             // 只有在没有 chapter 筛选时才按 tag 过滤
             // 因为 chapter 筛选已经更精确了
-            whereClause.knowledgePoints = {
-                contains: tag,
+            /**
+             * 【2026-11-01 修】筛知识点要查**标签关系**。
+             * 原来查 `knowledgePoints`（已废弃的列），两段式下那列是空的
+             * ⇒ 按知识点筛选会一道都筛不出来。
+             * 两条分支（有没有 chapter）现在都走关系，口径一致。
+             */
+            whereClause.tags = {
+                some: {
+                    name: tag
+                }
             };
         } else if (tag && chapter) {
             // 如果同时有 chapter 和 tag，优先用 tag 进一步过滤
