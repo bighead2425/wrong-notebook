@@ -1399,12 +1399,20 @@ export default function ErrorDetailPage() {
 
                                     {isEditingTags ? (
                                         <div className="space-y-3">
+                                            {/**
+                                             * 【2026-11-01 真真】`autoFocus` 是修空空那条"没有可选择的途径"。
+                                             * 标准标签库那 300 条是靠 `onFocus` 才去拉的；
+                                             * 而点「编辑」只是把只读换成输入框，**输入框不会自己获得焦点**
+                                             * ⇒ 她看到提示却看不到下拉，还得"再点一下输入框"（没人告诉她）。
+                                             * 自动聚焦 ⇒ onFocus 立刻触发 ⇒ 标签库直接铺开。
+                                             */}
                                             <TagInput
                                                 value={tagsInput}
                                                 onChange={setTagsInput}
                                                 placeholder={t.editor?.tagsPlaceholder || 'Enter or select knowledge tags...'}
                                                 subject={item.notebook?.subject || undefined}
                                                 gradeStage={educationStage}
+                                                autoFocus
                                             />
                                             <p className="text-xs text-muted-foreground">
                                                 {t.editor?.tagsHint || '💡 Select from standard or custom tags'}

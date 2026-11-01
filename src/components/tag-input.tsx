@@ -15,9 +15,21 @@ interface TagInputProps {
     enterHint?: string;
     subject?: string; // 新增：用于过滤标签建议的学科
     gradeStage?: string; // 新增：用于过滤标签建议的学段 (primary, junior_high, senior_high)
+    /**
+     * 【2026-11-01 真真】挂载后**自动聚焦输入框**。
+     *
+     * 空空报："提示我『输入时会显示标签建议，支持从标准标签库选择』，
+     *          但我怎么从标准标签库中选择呢，没有可选择的途径啊。"
+     *
+     * 真因：那 300 条标准标签是**靠 `onFocus` 才去拉的**（见下面 Input 的 onFocus），
+     *      而"点编辑"只是把只读态换成输入框，**输入框并不会自己获得焦点**
+     *      ⇒ 她看到提示却看不到下拉，必须"再点一下输入框"才出来 —— 这一步没人告诉她。
+     * ⇒ 编辑态一出现就自动聚焦，onFocus 自然触发，标签库直接铺开。
+     */
+    autoFocus?: boolean;
 }
 
-export function TagInput({ value = [], onChange, placeholder = "Enter tags...", className = "", enterHint, subject, gradeStage }: TagInputProps) {
+export function TagInput({ value = [], onChange, placeholder = "Enter tags...", className = "", enterHint, subject, gradeStage, autoFocus }: TagInputProps) {
     const [input, setInput] = useState("");
     const [suggestions, setSuggestions] = useState<string[]>([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
@@ -134,6 +146,7 @@ export function TagInput({ value = [], onChange, placeholder = "Enter tags...", 
                 <Input
                     ref={inputRef}
                     type="text"
+                    autoFocus={autoFocus}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={handleKeyDown}
