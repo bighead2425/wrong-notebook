@@ -655,14 +655,26 @@ export function SettingsDialog({
     /**
      * 【2026-11-01 两段式】总开关。
      *
-     * 关闭（默认）= 和以前完全一样：拍照 → 一次分析 → 直接出标签。
+     * 关闭 = 和以前完全一样：拍照 → 一次分析 → 直接出标签。
      * 打开 = 拍照只做转录+考点短语（快、省 token），标签在保存后由后台补。
+     *
+     * 【2026-11-01】**改了就存，不等"保存"按钮。**
+     *   他今天在 v148 上切了这个下拉框、以为开了，其实没点保存 ——
+     *   配置里压根没有 twoStage 这个键，6 道题全走了单段。
+     *   开关这种"一改就有后果"的设置，不该依赖页面底部那个保存按钮。
+     *   失败才提示（成功保持安静，否则每次切换都弹一个框）。
      */
-    const updateTwoStage = (enabled: boolean) => {
-        setConfig(prev => ({
-            ...prev,
-            twoStage: { ...prev.twoStage, enabled },
-        }));
+    const updateTwoStage = async (enabled: boolean) => {
+        const next = { ...config, twoStage: { ...config.twoStage, enabled } };
+        setConfig(next);
+        try {
+            await apiClient.post("/api/settings", next);
+        } catch (error) {
+            frontendLogger.error('[SettingsDialog]', 'Failed to save twoStage switch', {
+                error: error instanceof Error ? error.message : String(error),
+            });
+            alert('开关没能保存，请点下面的保存按钮再试一次');
+        }
     };
 
     // 测试 AI 连接
@@ -1558,12 +1570,13 @@ export function SettingsDialog({
                                     拍照只做转录和「考点短语」，标签在保存后由后台补 ——
                                     拍照更快、更省，标签晚几秒出现。
                                     关掉就回到以前：一次就把标签也选好，但实测 6 道真题里 4 道落不上。
+                                    <span className="text-foreground">这一项改了就生效，不用再点下面的保存。</span>
                                 </p>
                             </div>
                             <select
                                 className="h-9 rounded-md border bg-background px-2 text-sm"
                                 value={config.twoStage?.enabled ? 'on' : 'off'}
-                                onChange={(e) => updateTwoStage(e.target.value === 'on')}
+                                onChange={(e) => void updateTwoStage(e.target.value === 'on')}
                             >
                                 <option value="off">关闭（用旧的单段）</option>
                                 <option value="on">开启</option>
