@@ -180,9 +180,16 @@ export function PendingTargets({ onShoot, onPickFiles, onOpenInbox }: Props) {
                              * 【他追加的要求】**emoji + 卷号，卷号可点**。
                              * 落点是 `/scan?vol=…` —— 那个页面就是"每道题后面一个圆圈标对错"，
                              * 而且 `back` 带回这里，标完按返回能接着录下一份。
+                             *
+                             * ⚠️⚠️【2026-11-01 真真】**必须带页码 `-01`**。
+                             * `/scan?vol=` 走的是 `lib/volume-code.ts` 的 `parsePageCode()`，
+                             * 它的正则是 `/^(.+)-(\d{1,3})$/` —— **至少要"卷号-页码"**。
+                             * 只给裸卷号 ⇒ 解析返回 null ⇒ `/api/review-volumes/lookup` 回 400
+                             * ⇒ 前端 catch ⇒ 显示"没找到这份卷（纸上的卷号在库里查不到）"。
+                             * 空空 2026-10-20 报的就是这个（他猜是 emoji 被算进卷号了 —— 不是）。
                              */}
                             <Link
-                                href={`/scan?vol=${encodeURIComponent(v.volumeNo)}&back=${encodeURIComponent("/recover")}`}
+                                href={`/scan?vol=${encodeURIComponent(`${v.volumeNo}-01`)}&back=${encodeURIComponent("/recover")}`}
                                 className="flex min-w-0 items-center gap-1.5 font-mono text-sm underline decoration-dotted hover:text-primary"
                                 title={L("打开这一卷，直接在网页上标对错", "Open this volume to mark on screen")}
                             >
