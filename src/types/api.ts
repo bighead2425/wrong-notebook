@@ -226,6 +226,7 @@ export interface AppConfig {
         analyze?: number; // 毫秒
     };
     /** 【2026-11-01 两段式】总开关；关着 = 走原来的单段逻辑 */
+    /** 【2026-11-01】两段式：默认开启（关掉 = 回到以前的单段，一次出标签） */
     twoStage?: {
         enabled?: boolean;
         maxRetries?: number;

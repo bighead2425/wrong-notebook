@@ -1334,14 +1334,17 @@ export default function ErrorDetailPage() {
                                     </div>
 
                                     {/*
-                                      * 【2026-11-01 两段式】标签在保存后由后台补，
-                                      * 这期间要让人知道"它在算"，而不是"怎么是空的"。
-                                      * 归位失败也给一句实话 + 一个自己重试的入口。
+                                      * 【2026-11-01 两段式】三种情况都给一个"自动归位"入口：
+                                      *   · failed  —— 试过但失败了
+                                      *   · pending —— 正在排队（只显示状态，不给按钮）
+                                      *   · 没有状态且有题但没标签 —— **上线前录的老题**，
+                                      *     或者录的时候开关还没打开。它们不会自动进队列，
+                                      *     不给入口就永远补不上。
                                       */}
                                     {item.tagStatus === 'pending' && (
                                         <p className="text-xs text-muted-foreground flex items-center gap-1.5">
                                             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
-                                            正在归位标签…（几秒后自动刷新）
+                                            正在归位标签…（排队中，几秒后自动刷新）
                                         </p>
                                     )}
                                     {item.tagStatus === 'failed' && (
@@ -1357,6 +1360,22 @@ export default function ErrorDetailPage() {
                                                 className="h-7 text-xs"
                                             >
                                                 {relocating ? '正在排队…' : '重新归位'}
+                                            </Button>
+                                        </div>
+                                    )}
+                                    {!item.tagStatus && (item.tags?.length ?? 0) === 0 && (
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <p className="text-xs text-muted-foreground">
+                                                这道题还没有标签。
+                                            </p>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={handleRelocate}
+                                                disabled={relocating}
+                                                className="h-7 text-xs"
+                                            >
+                                                {relocating ? '正在排队…' : '让 AI 归位'}
                                             </Button>
                                         </div>
                                     )}

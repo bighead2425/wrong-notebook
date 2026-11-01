@@ -1550,13 +1550,14 @@ export function SettingsDialog({
 
                     {/* Prompts Tab */}
                     <TabsContent value="prompts" className="space-y-4 py-4">
-                        {/* 【2026-11-01】两段式总开关 —— 关着时行为与以前完全一致 */}
+                        {/* 【2026-11-01】两段式总开关 —— 默认开启；关掉 = 回到以前的单段 */}
                         <div className="flex items-center justify-between gap-3 rounded-md border p-3">
                             <div className="space-y-1">
-                                <p className="text-sm font-medium">两段式分析</p>
+                                <p className="text-sm font-medium">两段式分析（默认开启）</p>
                                 <p className="text-xs text-muted-foreground">
-                                    打开后：拍照只做转录和「考点短语」，标签在保存后由后台补。
-                                    拍照会更快、更省，标签晚几秒出现。
+                                    拍照只做转录和「考点短语」，标签在保存后由后台补 ——
+                                    拍照更快、更省，标签晚几秒出现。
+                                    关掉就回到以前：一次就把标签也选好，但实测 6 道真题里 4 道落不上。
                                 </p>
                             </div>
                             <select
@@ -1564,7 +1565,7 @@ export function SettingsDialog({
                                 value={config.twoStage?.enabled ? 'on' : 'off'}
                                 onChange={(e) => updateTwoStage(e.target.value === 'on')}
                             >
-                                <option value="off">关闭（当前行为）</option>
+                                <option value="off">关闭（用旧的单段）</option>
                                 <option value="on">开启</option>
                             </select>
                         </div>
