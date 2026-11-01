@@ -19,6 +19,7 @@ import { maybeSettleDaily, normalizeTodayKey } from "@/lib/daily-settle";
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MIN_PAGE_SIZE } from "@/lib/constants/pagination";
 // 【2026-10-16】列表返回哪些标量字段（唯一出处；默认不含题图）—— 见该文件头的性能说明
 import { LIST_ITEM_SCALARS } from "@/lib/constants/error-item-list-fields";
+import { collectSubtreeIds } from "@/lib/tag-path";
 
 const logger = createLogger('api:error-items:list');
 
@@ -32,6 +33,17 @@ export async function GET(req: Request) {
     const mastery = searchParams.get("mastery");
     const timeRange = searchParams.get("timeRange");
     const tag = searchParams.get("tag");
+    /**
+     * 【2026-11-01】**按标签 id 筛**（比按名字可靠）。
+     *
+     * 名字会串：「计算」「阅读理解」这类名字在不同学科/不同册下都存在，
+     * 按 `name` 筛会把别人的题也带进来。详情页/标签页点了某个节点，
+     * 拿得到它的 id，就该按 id 精确查。
+     * `includeChildren=1` 时连它的**所有后代**一起 —— 点「单位换算与复名数」
+     * 应该把「长度单位换算」「质量单位换算」下的题都算上，而不是只有直接挂在这个节上的。
+     */
+    const tagId = searchParams.get("tagId");
+    const includeChildren = searchParams.get("includeChildren") === "1";
     // 四分法（H2 / 5.3）：
     //   scope=main(默认) 主库：deletedAt=null 且 masteryLevel<2 且 所属本 archiveStatus != archived
     //   scope=archived   学期归档：deletedAt=null 且 所属本 archiveStatus = archived
@@ -369,7 +381,15 @@ export async function GET(req: Request) {
         }
 
         // Tag filter (第三级筛选：具体知识点)
-        if (tag && !chapter) {
+        if (tagId) {
+            /**
+             * 按**节点 id** 筛（详情页/标签页点进来用的就是这条）。
+             * `includeChildren=1` ⇒ 连整棵子树一起 —— 点一个"节"时，
+             * 题其实挂在它下面的知识点上，不带上子树就等于查了个空。
+             */
+            const ids = await collectSubtreeIds(tagId, includeChildren);
+            whereClause.tags = { some: { id: { in: ids } } };
+        } else if (tag && !chapter) {
             // 只有在没有 chapter 筛选时才按 tag 过滤
             // 因为 chapter 筛选已经更精确了
             /**

@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Link from "next/link";
-import { TrendingUp, Plus, Trash2, ChevronDown, ChevronRight, House, Loader2 } from "lucide-react";
+import { TrendingUp, Plus, Trash2, ChevronDown, ChevronRight, House, Loader2, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
 import { Input } from "@/components/ui/input";
@@ -128,6 +128,16 @@ export default function TagsPage() {
 
     // 展开状态
     const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
+    /**
+     * 【2026-11-01】「换教材怎么改」说明书（skill）。
+     *
+     * 他要的是"把说明书放进产品里"：升年级 / 换教材时要重新校准词表，
+     * 但那件事不一定由同一个 AI 来做 —— 所以把作业流程写成一份能带走的文档，
+     * 点这里就能看、能下载。
+     * 文件本体在 `public/skills/curriculum-calibration.md`（会打进镜像）。
+     */
+    const [skillOpen, setSkillOpen] = useState(false);
+    const [skillText, setSkillText] = useState<string>('');
 
     // 获取标签树
     const fetchTags = useCallback(async (subject: SubjectKey) => {
@@ -256,15 +266,26 @@ export default function TagsPage() {
         const paddingLeft = depth * 16;
 
         if (!hasChildren) {
-            // 叶子节点 - 显示为 Badge
+            /**
+             * 【2026-11-01】叶子（知识点）**可点** —— 点进去看"这个知识点她错了哪些题"。
+             * 以前只是个死标签，管理页只能增删，看不到题。
+             */
             return (
-                <Badge key={node.id} variant="outline" className="cursor-default hover:bg-accent" style={{ marginLeft: isLeafContext ? 0 : paddingLeft }}>
-                    {node.name}
-                    {(() => {
-                        const stat = stats.find(s => s.tag === node.name);
-                        return stat ? <span className="ml-1 text-xs text-muted-foreground">({stat.count})</span> : null;
-                    })()}
-                </Badge>
+                <Link
+                    key={node.id}
+                    href={`/by-tag/${node.id}`}
+                    className="inline-block"
+                    style={{ marginLeft: isLeafContext ? 0 : paddingLeft }}
+                    title="看这个知识点的所有题"
+                >
+                    <Badge variant="outline" className="cursor-pointer hover:bg-accent">
+                        {node.name}
+                        {(() => {
+                            const stat = stats.find(s => s.tag === node.name);
+                            return stat ? <span className="ml-1 text-xs text-muted-foreground">({stat.count})</span> : null;
+                        })()}
+                    </Badge>
+                </Link>
             );
         }
 
@@ -287,6 +308,14 @@ export default function TagsPage() {
                         {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                         <span className="font-medium text-sm">{node.name}</span>
                         <span className="text-xs text-muted-foreground">({visibleChildren.length})</span>
+                        {/* 【2026-11-01】这一层（册/章/节）也能点进去看题 —— 题挂在下面的知识点上，按子树查 */}
+                        <Link
+                            href={`/by-tag/${node.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-xs text-primary hover:underline ml-1"
+                        >
+                            看题
+                        </Link>
                     </div>
                 </div>
             );
@@ -305,6 +334,14 @@ export default function TagsPage() {
                     {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                     <span className="font-medium text-sm">{node.name}</span>
                     <span className="text-xs text-muted-foreground">({visibleChildren.length})</span>
+                        {/* 【2026-11-01】这一层（册/章/节）也能点进去看题 —— 题挂在下面的知识点上，按子树查 */}
+                        <Link
+                            href={`/by-tag/${node.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-xs text-primary hover:underline ml-1"
+                        >
+                            看题
+                        </Link>
                 </div>
                 {isExpanded && (
                     allChildrenAreLeaves ? (
@@ -593,6 +630,18 @@ export default function TagsPage() {
         );
     };
 
+    /** 打开说明书：第一次点才去取文件（几 KB，取过就留着） */
+    const openSkill = async () => {
+        setSkillOpen(true);
+        if (skillText) return;
+        try {
+            const res = await fetch('/skills/curriculum-calibration.md');
+            setSkillText(res.ok ? await res.text() : '说明书读取失败，可以点「下载」直接拿文件。');
+        } catch {
+            setSkillText('说明书读取失败，可以点「下载」直接拿文件。');
+        }
+    };
+
     return (
         <div className="container mx-auto px-4 py-8 max-w-6xl">
             <div className="flex items-center gap-4 mb-6">
@@ -603,7 +652,12 @@ export default function TagsPage() {
                         {t.tags?.subtitle || "View and manage knowledge point tags"}
                     </p>
                 </div>
-                <div className="ml-auto flex items-center">
+                <div className="ml-auto flex items-center gap-2">
+                    {/* 【2026-11-01】升年级/换教材时怎么改词表 —— 说明书放进产品里，能看能带走 */}
+                    <Button variant="outline" size="sm" onClick={() => void openSkill()}>
+                        <BookOpen className="h-4 w-4 mr-1" />
+                        换教材怎么改
+                    </Button>
                     <Link href="/">
                         <Button variant="ghost" size="icon">
                             <House className="h-5 w-5" />
@@ -627,6 +681,45 @@ export default function TagsPage() {
                 <TabsContent value="pending">{renderPending()}</TabsContent>
                 <TabsContent value="stats">{renderStats()}</TabsContent>
             </Tabs>
+
+            {/* 【2026-11-01】说明书弹层：能看、能下载带走 */}
+            {skillOpen && (
+                <div
+                    className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+                    onClick={() => setSkillOpen(false)}
+                >
+                    <div
+                        className="bg-background rounded-lg w-full max-w-3xl max-h-[85vh] flex flex-col shadow-xl"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between gap-3 p-4 border-b">
+                            <div>
+                                <h3 className="font-semibold">换教材 / 升年级时，怎么校准知识点词表</h3>
+                                <p className="text-xs text-muted-foreground mt-0.5">
+                                    给接手的人（或 AI）看的作业流程；也可以下载下来带走
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                                <a href="/skills/curriculum-calibration.md" download="教材目录校准.md">
+                                    <Button size="sm" variant="outline">下载</Button>
+                                </a>
+                                <Button size="sm" variant="ghost" onClick={() => setSkillOpen(false)}>
+                                    关闭
+                                </Button>
+                            </div>
+                        </div>
+                        <div className="p-4 overflow-auto">
+                            {skillText ? (
+                                <pre className="text-xs whitespace-pre-wrap break-words font-mono leading-relaxed">
+                                    {skillText}
+                                </pre>
+                            ) : (
+                                <p className="text-sm text-muted-foreground">正在读取…</p>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

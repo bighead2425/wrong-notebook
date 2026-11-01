@@ -33,6 +33,7 @@ import { RestoreSettings } from "@/components/settings/restore-settings";
 import { ScanInboxSettings } from "@/components/settings/scan-inbox-settings";
 import { DEFAULT_PAPER_CONFIG, DEFAULT_PAPER_ID, type PaperId } from "@/lib/paper";
 import { DEFAULT_PRINT_ROUTE, DEFAULT_PRINT_SERVER, type PrintRoute } from "@/lib/print-route";
+import { UpdateButton } from "@/components/update-button";
 
 import { MessageSquareText, Info, ExternalLink, Github, ScrollText } from "lucide-react";
 const MAX_OPENAI_INSTANCES = 10;
@@ -1878,6 +1879,13 @@ export function SettingsDialog({
                             <div className="flex items-center space-x-2 text-sm text-muted-foreground border px-4 py-2 rounded-full bg-background">
                                 <Info className="h-4 w-4" />
                                 <span>{t.settings?.about?.version || "Version"}: {versionLabel}</span>
+                                {/**
+                                 * 【2026-11-01】**软件内手动更新**。
+                                 *
+                                 * watchtower 本来就在 5 分钟一轮地拉新镜像；这里只是"不想等"时
+                                 * 点一下立刻触发。没配令牌会提示怎么配，不会静默失败。
+                                 */}
+                                <UpdateButton />
                             </div>
 
                             {/**

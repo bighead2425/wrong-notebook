@@ -91,3 +91,47 @@ export async function decorateTagPaths<T extends TagLike>(
 
     return tags.map((t) => ({ ...t, path: pathOf(t.id) }));
 }
+
+/**
+ * 取一个标签的**整棵子树 id**（含它自己）。
+ *
+ * 为什么需要：点「单位换算与复名数」这个**节**时，用户想看的是这一节下
+ * 所有知识点上的题（长度单位换算 / 质量单位换算 / 单名数复名数互化…），
+ * 而不是"只直接挂在这个节节点上的题"——后者通常是 0 道。
+ *
+ * `includeChildren=false` 时只返回它自己（精确筛单个知识点）。
+ */
+export async function collectSubtreeIds(
+    rootId: string,
+    includeChildren: boolean,
+): Promise<string[]> {
+    if (!includeChildren) return [rootId];
+
+    let all: { id: string; parentId: string | null }[];
+    try {
+        all = await prisma.knowledgeTag.findMany({ select: { id: true, parentId: true } });
+    } catch (e) {
+        logger.warn({ err: String(e) }, '标签子树：读词表失败，退化成只查它自己');
+        return [rootId];
+    }
+
+    const childrenOf = new Map<string, string[]>();
+    for (const t of all) {
+        if (!t.parentId) continue;
+        const arr = childrenOf.get(t.parentId) ?? [];
+        arr.push(t.id);
+        childrenOf.set(t.parentId, arr);
+    }
+
+    const out: string[] = [];
+    const stack = [rootId];
+    const seen = new Set<string>();
+    while (stack.length > 0) {
+        const id = stack.pop()!;
+        if (seen.has(id)) continue;   /* 防脏数据成环 */
+        seen.add(id);
+        out.push(id);
+        for (const c of childrenOf.get(id) ?? []) stack.push(c);
+    }
+    return out;
+}

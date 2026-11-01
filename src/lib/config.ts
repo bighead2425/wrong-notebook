@@ -73,6 +73,17 @@ export interface AppConfig {
         maxRetries?: number;
     };
     /**
+     * 【2026-11-01】软件内更新：触发 watchtower 立即重建的令牌。
+     *
+     * watchtower 要在 NAS 上开启 HTTP API（`--http-api-update --http-api-token <令牌>`），
+     * 令牌两边要一致。没有这一项 ⇒ 「更新」按钮会明确提示怎么配，而不是静默失败。
+     */
+    updater?: {
+        watchtowerToken?: string;
+        /** 默认 http://watchtower:8080（同一个 compose 网络里，容器名就是主机名） */
+        watchtowerUrl?: string;
+    };
+    /**
      * 【custom-v30】扫描收件箱
      *
      * 只存**根目录下的相对子路径**（如 "scan2wrong"），绝对路径不在这里 ——

@@ -21,6 +21,12 @@ export async function GET(req: Request) {
         const session = await getServerSession(authOptions);
         const { searchParams } = new URL(req.url);
         const query = searchParams.get("q")?.toLowerCase() || "";
+        /**
+         * 【2026-11-01】返回条数。默认 30（打字筛选时够用）；
+         * **空查询（点开输入框还没打字）时前端会要 300** —— 那是把标准标签库列出来挑的场景。
+         */
+        const limitRaw = Number.parseInt(searchParams.get("limit") || "", 10);
+        const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 300) : 30;
         const subject = searchParams.get("subject") || undefined;
         const stage = searchParams.get("stage") || undefined;
 
@@ -106,7 +112,7 @@ export async function GET(req: Request) {
 
         // Secondary sorting by name match position (optional) or just name
         const finalSuggestions = suggestions
-            .slice(0, 30)
+            .slice(0, limit)
             .map(s => s.name);
 
         return NextResponse.json({

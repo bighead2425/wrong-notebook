@@ -35,10 +35,10 @@ export function TagInput({ value = [], onChange, placeholder = "Enter tags...", 
         }
     }, [input, subject, gradeStage]);
 
-    const fetchSuggestions = async (query: string) => {
+    const fetchSuggestions = async (query: string, limit = 30) => {
         try {
             // 从服务器获取标签建议（现在从数据库查询）
-            const params = new URLSearchParams({ q: query });
+            const params = new URLSearchParams({ q: query, limit: String(limit) });
             if (subject) {
                 params.append('subject', subject);
             }
@@ -53,7 +53,7 @@ export function TagInput({ value = [], onChange, placeholder = "Enter tags...", 
                 (tag) => !value.includes(tag)
             );
 
-            setSuggestions(filtered.slice(0, 20));
+            setSuggestions(filtered.slice(0, limit));
             setShowSuggestions(filtered.length > 0);
             setSelectedIndex(0);
         } catch (error) {
@@ -140,6 +140,16 @@ export function TagInput({ value = [], onChange, placeholder = "Enter tags...", 
                     onFocus={() => {
                         if (suggestions.length > 0) {
                             setShowSuggestions(true);
+                        } else if (!input.trim()) {
+                            /**
+                             * 【2026-11-01 用户要的】**点进来还没打字，就把标准标签库列出来。**
+                             *
+                             * 为什么要等 focus 才拉、而不是一进页面就拉：
+                             *   这一页可能同时有好几个输入框，默认拉会白打接口；
+                             *   而且 300 条的下拉只在"他要挑"的时候才有意义。
+                             * 空查询 + subject + stage ⇒ 服务端返回"这个学科这个学段的全部叶子"。
+                             */
+                            void fetchSuggestions('', 300);
                         }
                     }}
                     placeholder={value.length === 0 ? placeholder : ""}
@@ -151,8 +161,16 @@ export function TagInput({ value = [], onChange, placeholder = "Enter tags...", 
             {showSuggestions && suggestions.length > 0 && (
                 <div
                     ref={suggestionsRef}
-                    className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-md max-h-48 overflow-y-auto"
+                    className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-md max-h-72 overflow-y-auto"
                 >
+                    {/* 没打字时这是"标签库全表"，说一句，免得他以为是筛选结果 */}
+                    {!input.trim() && (
+                        <div className="sticky top-0 bg-popover/95 backdrop-blur px-3 py-1.5 text-xs text-muted-foreground border-b">
+                            {suggestions.length >= 300
+                                ? '标签较多，只列前 300 个 —— 直接打字可以筛'
+                                : `共 ${suggestions.length} 个可选标签`}
+                        </div>
+                    )}
                     {suggestions.map((suggestion, index) => (
                         <div
                             key={suggestion}

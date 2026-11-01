@@ -1422,11 +1422,29 @@ export default function ErrorDetailPage() {
                                         </div>
                                     ) : (
                                         <div className="flex flex-wrap gap-2">
-                                            {tags.map((tag) => (
-                                                <Badge key={tag} variant="secondary">
-                                                    {tag}
-                                                </Badge>
-                                            ))}
+                                            {/*
+                                              * 【2026-11-01】标签现在**可点** —— 点进去看"这个知识点她错了哪些题"。
+                                              * 用 `item.tags`（带 id）而不是 `tags`（只有名字）：
+                                              * 同名标签在不同学科/不同册下都可能存在，按名字跳会串。
+                                              * 老数据只有名字（关系还没建）时，退回不可点的纯展示。
+                                              */}
+                                            {(item.tags?.length ?? 0) > 0
+                                                ? item.tags.map((t) => (
+                                                    <Link key={t.id} href={`/by-tag/${t.id}`}>
+                                                        <Badge
+                                                            variant="secondary"
+                                                            className="cursor-pointer hover:bg-secondary/70"
+                                                            title="看这个知识点的所有题"
+                                                        >
+                                                            {t.name}
+                                                        </Badge>
+                                                    </Link>
+                                                ))
+                                                : tags.map((tag) => (
+                                                    <Badge key={tag} variant="secondary">
+                                                        {tag}
+                                                    </Badge>
+                                                ))}
                                         </div>
                                     )}
                                     {/*
