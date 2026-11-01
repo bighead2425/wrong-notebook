@@ -381,7 +381,7 @@ export async function relocateItem(itemId: string): Promise<void> {
                             });
                         } else {
                             resolution.push({
-                                name: e.section, book: e.book, section: e.chapter,
+                                name: e.section, book: e.book, chapter: e.chapter, section: e.section,
                                 tagId: null, granularity: 'none', matchedBy: 'none',
                             });
                         }
@@ -409,7 +409,7 @@ export async function relocateItem(itemId: string): Promise<void> {
                         for (const l of landed) {
                             tagIds.push(l.id);
                             resolution.push({
-                                name: l.name, book: e.book, section: e.chapter,
+                                name: l.name, book: e.book, chapter: e.chapter, section: e.section,
                                 tagId: l.id, granularity: 'point', matchedBy: 'path',
                             });
                         }
@@ -417,7 +417,7 @@ export async function relocateItem(itemId: string): Promise<void> {
                         /* 没给点 / 给的点对不上 → 落节本身，并如实标出粒度 */
                         tagIds.push(sectionNode.id);
                         resolution.push({
-                            name: sectionNode.name, book: e.book, section: e.chapter,
+                            name: sectionNode.name, book: e.book, chapter: e.chapter, section: e.section,
                             tagId: sectionNode.id, granularity: 'section', matchedBy: 'path',
                             ...(wantKps.length > 0 ? { unmatchedKps: wantKps } : {}),
                         });

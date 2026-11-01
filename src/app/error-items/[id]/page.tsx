@@ -65,6 +65,10 @@ import { reviewStatusOf, reviewStatusSentence } from "@/lib/review-status";
 interface KnowledgeTag {
     id: string;
     name: string;
+    /**
+     * 服务端算好的完整路径（册 › 章 › 节 › 知识点）。相邻重名已在服务端折叠。
+     */
+    path?: string;
 }
 
 interface ErrorItemDetail {
@@ -1002,12 +1006,25 @@ export default function ErrorDetailPage() {
     }
 
     /**
-     * 【2026-10-31】标签的"位置"：册 › 节。
+     * 【2026-10-31】标签的"位置"：册 › 章 › 节。
+     *
+     * 【2026-11-01 修】原来取的是 `tagResolution.section`，可那个字段在两段式写库时
+     * 存的是**章名**（`section: e.chapter`）⇒ 几道题都显示成
+     * 「五年级上 › 第一单元 小数的再认识和加减法」，看起来像全挂在同一个地方。
+     * 现在改成用服务端按节点祖先链算好的 `sectionPath`（到节为止，
+     * 因为标签名本身已经把"点"写在那儿了）。
      *
      * 用普通变量而不是 useMemo —— 这个组件在 return 之前有多处早退，
-     * hook 放早了报错、放晚了违反规则（这条坑踩过）。JSON.parse 很小，不值得缓存。
+     * hook 放早了报错、放晚了违反规则（这条坑踩过）。
      */
     const tagPathLine = (() => {
+        /* 首选：服务端按真实层级算的路径 */
+        const fromTags = (item.tags ?? [])
+            .map((t) => t.path)
+            .filter((p): p is string => !!p);
+        if (fromTags.length > 0) return [...new Set(fromTags)].join('　');
+
+        /* 兜底（老接口没给 path）：退回坐标 —— 只有册和章，比不上面的准确 */
         if (!item.tagResolution) return '';
         try {
             const arr = JSON.parse(item.tagResolution) as Array<{ book?: string; section?: string }>;

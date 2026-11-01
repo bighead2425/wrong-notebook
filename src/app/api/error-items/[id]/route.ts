@@ -43,6 +43,7 @@ import { isPreMastered, planAfterReview, planAfterUnmaster, shouldAutoMaster } f
 // 【2026-10-10】"已掌握"要过一遍题间从属关系规则（人工标记才断开关联、主题向下传播）
 import type { LinkOp } from "@/lib/item-link";
 import { applyLinkOps, applyMastery, loadLinkView, planMasteryChange } from "@/lib/item-link-store";
+import { decorateTagPaths } from "@/lib/tag-path";
 import {
     canAutoRewrite,
     normalizeManageType,
@@ -97,7 +98,16 @@ export async function GET(
          */
         const link = await loadLinkView(user.id, errorItem.id);
 
-        return NextResponse.json({ ...errorItem, link });
+        /**
+         * 【2026-11-01】给每个标签补**完整路径**（册 › 章 › 节 › 知识点）。
+         *
+         * 详情页原来自己拿 `tagResolution.section` 拼，而那个字段存的是章名 ——
+         * 于是几道题都显示成「五年级上 › 第一单元 小数的再认识和加减法」，
+         * 看起来像全挂在同一个地方。路径要按**节点自己的祖先链**算，那才是事实。
+         */
+        const tagsWithPath = await decorateTagPaths(errorItem.tags ?? []);
+
+        return NextResponse.json({ ...errorItem, tags: tagsWithPath, link });
     } catch (error) {
         logger.error({ error }, 'Error fetching item');
         return internalError("Failed to fetch error item");
