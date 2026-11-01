@@ -244,6 +244,42 @@ export function parseStage2(raw: string): Stage2Result {
     };
 }
 
+/**
+ * 解析保存时暂存的 `ErrorItem.stage1Keywords`。
+ *
+ * 这一列走过一次格式变更，**两种都要认**：
+ *   · 老：`["短语1","短语2"]` —— 只有关键词；
+ *   · 新：`{"keywords":[...],"subject":"数学"}` —— 多存了学科。
+ *
+ * 为什么要存学科：库里 20% 的题**没挂本子**，而学科只从本子上取，
+ * 于是第二段拿不到候选、归位必然失败。第一段本来就算出了学科，不该白算。
+ *
+ * 认不出就返回空（不抛错）—— 归位那条路宁可退化，不能因为一个坏 JSON 整条失败。
+ */
+export function parseStage1Payload(raw: string | null | undefined): {
+    keywords: string[];
+    subject: string | null;
+} {
+    const EMPTY = { keywords: [] as string[], subject: null as string | null };
+    if (!raw) return EMPTY;
+
+    const asStrings = (v: unknown): string[] =>
+        Array.isArray(v) ? v.filter((k): k is string => typeof k === 'string').slice(0, 3) : [];
+
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed)) return { keywords: asStrings(parsed), subject: null };
+        if (parsed && typeof parsed === 'object') {
+            const o = parsed as { keywords?: unknown; subject?: unknown };
+            const sub = typeof o.subject === 'string' && o.subject.trim() ? o.subject.trim() : null;
+            return { keywords: asStrings(o.keywords), subject: sub };
+        }
+    } catch {
+        /* 坏数据：当作没有 */
+    }
+    return EMPTY;
+}
+
 /** 把第一段的转录结果拼成第二段要读的文本（不放错因 —— 它不影响"这题考什么"） */
 export function composeCaseText(p: {
     questionText?: string | null;

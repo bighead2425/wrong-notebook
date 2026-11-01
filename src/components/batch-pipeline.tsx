@@ -242,10 +242,56 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
      */
     const [unmatchedCount, setUnmatchedCount] = useState(0);
 
+    /**
+     * 【2026-11-01 两段式】这一批里有几道题**排进了标签归位队列**。
+     *
+     * 两段式下，保存只是"题和文本入库"，标签由服务端**串行**后台补。
+     * 批量 20 道就是 20 道排队，一道约 40 秒 —— 他必须知道：
+     *   · 还有几道没补完；
+     *   · **可以关掉页面**（队列在服务端，不在浏览器里）。
+     * 不知道这两件事，他会以为标签丢了，然后手动去补，反而把自动结果覆盖掉。
+     */
+    const [relocateQueued, setRelocateQueued] = useState(0);
+    /** 队列里还剩几道（null = 还没查过） */
+    const [relocateLeft, setRelocateLeft] = useState<number | null>(null);
+
     /** 审阅时用来把 AI 认出的学科对到错题本（与单题流同一套匹配） */
     const [notebooks, setNotebooks] = useState<Notebook[]>([]);
     /** 用户点了「取消剩余」→ 循环下一轮开头就停 */
     const cancelRef = useRef(false);
+
+    /**
+     * 【2026-11-01 两段式】本批保存完，盯一下归位队列还剩几道。
+     *
+     * 只在"这一批确实有题进了队列"时才查（单段式下 relocateQueued 恒为 0，一次都不查）。
+     * 5 分钟到头就停：后台每道最多重试 2 次，一分钟都补不好的，基本是真失败了，
+     * 那时候详情页会显示"重新归位"，不该在这里无限打接口。
+     */
+    useEffect(() => {
+        if (relocateQueued === 0) return;
+        let tries = 0;
+        let timer: ReturnType<typeof setInterval> | null = null;
+
+        const tick = async () => {
+            try {
+                const s = await apiClient.get<{ idle: boolean; waiting: number; current: string | null }>(
+                    "/api/relocate-queue",
+                );
+                setRelocateLeft(s.idle ? 0 : s.waiting + (s.current ? 1 : 0));
+                if (s.idle && timer) clearInterval(timer);
+            } catch {
+                /* 查不到就先不动，下一次再试 */
+            }
+            tries += 1;
+            if (tries >= 60 && timer) clearInterval(timer);
+        };
+
+        void tick();
+        timer = setInterval(() => void tick(), 5000);
+        return () => {
+            if (timer) clearInterval(timer);
+        };
+    }, [relocateQueued]);
     const [canceling, setCanceling] = useState(false);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1052,7 +1098,13 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                 return;
             }
 
-            const res = await apiClient.post<{ id: string; duplicate?: boolean; unmatchedTags?: string[] }>("/api/error-items", {
+            const res = await apiClient.post<{
+                id: string;
+                duplicate?: boolean;
+                unmatchedTags?: string[];
+                /** 两段式：这道题排进归位队列了吗、排在第几 */
+                relocate?: { queued: boolean; position: number } | null;
+            }>("/api/error-items", {
                 ...data,
                 originalImageUrl: cur.base64 || "",
                 /* 【2026-10-31】AI 初判的错因要标 ai（否则服务端记成 human，那条指标就没分母了） */
@@ -1070,6 +1122,8 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             }
             // 【custom-v27】记下入库 id：缩略图点击时用它新开详情页
             if (res.unmatchedTags?.length) setUnmatchedCount(c => c + 1);
+            /* 两段式：这道题进了归位队列 ⇒ 完成页要告诉他还剩几道 */
+            if (res.relocate?.queued) setRelocateQueued(c => c + 1);
             setItems(prev => prev.map(x => x.id === cur.id ? { ...x, status: "saved", savedId: res.id } : x));
             setSavedCount(c => c + 1);
             // 不递增索引：当前项已变 saved，会从 readyItems 里移除，
@@ -1137,6 +1191,16 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                             {unmatchedCount > 0 && (
                                 <span className="text-amber-600">
                                     ，{`其中 ${unmatchedCount} 道有标签没能归类（可在「知识点」页补）`}
+                                </span>
+                            )}
+                            {/* 【2026-11-01 两段式】标签由服务端串行补 —— 说清还剩几道、能不能走 */}
+                            {relocateQueued > 0 && (
+                                <span className={relocateLeft === 0 ? "text-emerald-600" : "text-muted-foreground"}>
+                                    {relocateLeft === 0
+                                        ? `，其中 ${relocateQueued} 道的标签已全部补完`
+                                        : `，其中 ${relocateQueued} 道的标签正在后台补${
+                                            relocateLeft ? `（还剩 ${relocateLeft} 道）` : ''
+                                        }，可以关掉页面`}
                                 </span>
                             )}
                             {errCount > 0 && (

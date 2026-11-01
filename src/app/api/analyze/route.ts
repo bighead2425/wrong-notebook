@@ -158,6 +158,8 @@ export async function POST(req: Request) {
                 knowledgePoints: [],
                 knowledgeRefs: [],
                 keywords: s1.keywords,
+                /* 给审核页看的：标签还空着，但保存后会自动补（别手选，手选了第二段就不跑了） */
+                tagsPending: true,
             } as unknown as typeof analysisResult;
             logger.info({ keywords: s1.keywords, subject: subjectCn }, '两段式：第一段完成');
         } else {

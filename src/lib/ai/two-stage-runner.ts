@@ -20,7 +20,7 @@ import { logger } from '../logger';
 import { buildCandidates, isStageScopeSubject } from '../tag-index';
 import {
     buildStage1Prompt, parseStage1,
-    buildStage2Prompt, parseStage2, composeCaseText,
+    buildStage2Prompt, parseStage2, composeCaseText, parseStage1Payload,
 } from './two-stage';
 import { normalizeTagName } from './tag-ref';
 import { bookKeyOf } from './tag-scope';
@@ -244,7 +244,25 @@ export async function relocateItem(itemId: string): Promise<void> {
     await prisma.errorItem.update({ where: { id: itemId }, data: { tagStatus: 'pending' } });
 
     try {
-        const subjectKey = item.notebook?.subject ?? 'other';
+        /**
+         * 第一段留下的中间数据。两种格式都要认：
+         *   · 老：`["短语1","短语2"]`（纯数组）
+         *   · 新：`{"keywords":[...],"subject":"数学"}`（多存了学科）
+         */
+        const stage1 = parseStage1Payload(item.stage1Keywords);
+        const keywords = stage1.keywords;
+        const stage1Subject = stage1.subject;
+
+        /**
+         * 学科：**本子优先，本子没有就用第一段认出来的**。
+         *
+         * 库里 20% 的题没挂本子（104 道里 20 道）。原来这里直接退成 'other'
+         * ⇒ 词表查不到 ⇒ 候选为空 ⇒ 归位必然失败，那道题永远卡在"正在归位…"。
+         * 而第一段本来就算出了学科，不该白算。
+         */
+        const subjectKey = item.notebook?.subject
+            ?? (stage1Subject ? SUBJECT_KEY[stage1Subject] : undefined)
+            ?? 'other';
         const subjectCn = Object.keys(SUBJECT_KEY).find((k) => SUBJECT_KEY[k] === subjectKey) ?? '';
 
         /**
@@ -271,17 +289,6 @@ export async function relocateItem(itemId: string): Promise<void> {
         const currentBook = isStageScopeSubject(subjectKey)
             ? (stageOfGrade(item.gradeSemester) ?? stageOfGrade(item.notebook?.grade ?? null) ?? '小学')
             : (notebookBook ?? itemBook);
-
-        /* 第一段的关键词：存在 stage1Keywords 里（中间数据），第二段用完即清 */
-        let keywords: string[] = [];
-        if (item.stage1Keywords) {
-            try {
-                const parsed = JSON.parse(item.stage1Keywords);
-                if (Array.isArray(parsed)) keywords = parsed.filter((k): k is string => typeof k === 'string');
-            } catch {
-                /* 解析不了就当没有关键词，候选退到当前册/学段全量 */
-            }
-        }
 
         const caseText = composeCaseText({
             questionText: item.questionText,

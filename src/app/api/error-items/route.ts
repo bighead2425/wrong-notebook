@@ -50,6 +50,15 @@ export async function POST(req: Request) {
             bookReason,
             /** 【2026-11-01 两段式】第一段给的 3 个考点短语（开关打开时才有） */
             keywords,
+            /**
+             * 【2026-11-01 两段式】第一段认出的**学科**（中文，如"数学"）。
+             *
+             * 为什么非要存它：库里 20% 的题**没挂本子**，而学科只从本子上取，
+             * 于是第二段拿不到候选、归位必然失败。第一段本来就算出了学科，
+             * 顺手记下来，归位时就能兜住。
+             * 不落成独立列 —— 按用户要求"临时数据用完即清"，跟 keywords 放同一个 JSON。
+             */
+            subject,
             originalImageUrl,
             notebookId,
             gradeSemester,
@@ -360,10 +369,18 @@ export async function POST(req: Request) {
                             ? { tagStatus: 'done' }
                             : {
                                 tagStatus: 'pending',
-                                stage1Keywords:
-                                    Array.isArray(keywords) && keywords.length > 0
-                                        ? JSON.stringify(keywords.slice(0, 3))
-                                        : null,
+                                /**
+                                 * 中间数据（第二段跑完立刻置 null）：
+                                 *   · keywords —— 检索候选用
+                                 *   · subject  —— 没挂本子时用来定学科（否则归位必失败）
+                                 * 存成一个 JSON 而不是两个列：都是临时的，一起清。
+                                 */
+                                stage1Keywords: (() => {
+                                    const kw = Array.isArray(keywords) ? keywords.slice(0, 3) : [];
+                                    const sub = typeof subject === 'string' && subject.trim() ? subject.trim() : null;
+                                    if (kw.length === 0 && !sub) return null;
+                                    return JSON.stringify({ keywords: kw, subject: sub });
+                                })(),
                             }
                         : {}),
                     gradeSemester: finalGradeSemester,
@@ -426,15 +443,24 @@ export async function POST(req: Request) {
              *   · 不 await、不阻塞响应：第二段要几十秒，等它的话点保存要转圈。
              *     失败会自己把 tagStatus 写成 'failed'，详情页给"重新归位"按钮。
              */
+            /**
+             * 【2026-11-01 两段式】串行队列的状态，回给前端。
+             *
+             * 批量保存时这条信息很要紧：他要知道"还有几道在排队"、
+             * 以及**能不能关掉页面**（能 —— 队列在服务端跑，不在浏览器里）。
+             */
+            let relocate: { queued: boolean; position: number } | null = null;
+
             if (twoStageEnabled && tagConnections.length === 0) {
-                enqueueRelocate(errorItem.id);
+                const q = enqueueRelocate(errorItem.id);
+                relocate = { queued: q.queued, position: q.position };
             }
 
             // 注：按用户要求，保存错题时**不再自动导出**到 Obsidian（避免每次保存都写盘）。
             //     需要导出时走错题详情页的「导出到 ob」按钮，即 /api/error-items/[id]/export-obsidian。
 
             /* 把"没能归类"的标签回给前端：他看得见，才知道词表缺哪块 */
-            return NextResponse.json({ ...errorItem, unmatchedTags }, { status: 201 });
+            return NextResponse.json({ ...errorItem, unmatchedTags, relocate }, { status: 201 });
         } catch (dbError) {
             logger.error({
                 error: dbError,

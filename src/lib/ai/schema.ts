@@ -53,6 +53,16 @@ export const ParsedQuestionSchema = z.object({
      * 第二段用完即清。走单段时这个字段为空，不影响任何已有逻辑。
      */
     keywords: z.array(z.string()).optional(),
+    /**
+     * 【2026-11-01 两段式】**标签还没落，但保存后会自动补**。
+     *
+     * 只给界面用：审核页看到这个标记 + 标签栏是空的，就显示
+     * "标签会在保存后自动补，不用手选"，免得他顺手选一个 ——
+     * 一旦手选，就触发"人优先"，第二段反而不跑了。
+     *
+     * 不落库（保存时被服务端忽略），也不参与任何判定。
+     */
+    tagsPending: z.boolean().optional(),
     requiresImage: z.boolean().optional().default(false), // 题目是否依赖图片（如几何题）
 });
 

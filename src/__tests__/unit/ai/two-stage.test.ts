@@ -12,6 +12,7 @@ import {
     buildStage2Prompt,
     parseStage2,
     composeCaseText,
+    parseStage1Payload,
 } from '@/lib/ai/two-stage';
 import { DEFAULT_ANALYZE_TEMPLATE } from '@/lib/ai/prompts';
 
@@ -221,6 +222,48 @@ describe('第二段：只能从编号里选', () => {
         const r = parseStage2('<pick>5</pick><confidence>low</confidence>');
         expect(r.kps).toEqual([]);
         expect(r.picks).toEqual([5]);
+    });
+});
+
+/**
+ * 【2026-11-01】`stage1Keywords` 这一列走过一次格式变更 —— 两种都必须能读。
+ *
+ * 为什么会有第二次格式：库里 20% 的题没挂本子，学科只能从本子取 ⇒ 归位必失败。
+ * 第一段本来就算出了学科，顺手存进同一个 JSON（临时数据，第二段跑完一起清）。
+ */
+describe('第一段中间数据（stage1Keywords）的两种格式', () => {
+    it('新格式：带学科', () => {
+        const r = parseStage1Payload(
+            JSON.stringify({ keywords: ['长度单位换算', '复名数互化'], subject: '数学' }),
+        );
+        expect(r.keywords).toEqual(['长度单位换算', '复名数互化']);
+        expect(r.subject).toBe('数学');
+    });
+
+    it('老格式：纯数组（上线前存的那批）', () => {
+        const r = parseStage1Payload(JSON.stringify(['小数减法', '数位对齐']));
+        expect(r.keywords).toEqual(['小数减法', '数位对齐']);
+        expect(r.subject).toBeNull();
+    });
+
+    it('最老的：压根没这一列', () => {
+        const r = parseStage1Payload(null);
+        expect(r.keywords).toEqual([]);
+        expect(r.subject).toBeNull();
+    });
+
+    it('坏数据不抛错（宁可退化，不能让整条归位失败）', () => {
+        expect(parseStage1Payload('{不是 json').keywords).toEqual([]);
+        expect(parseStage1Payload('"字符串"').keywords).toEqual([]);
+        expect(parseStage1Payload('123').keywords).toEqual([]);
+    });
+
+    it('关键词最多 3 个、非字符串剔掉', () => {
+        const r = parseStage1Payload(
+            JSON.stringify({ keywords: ['a', 'b', 'c', 'd', 42, null], subject: '  ' }),
+        );
+        expect(r.keywords).toEqual(['a', 'b', 'c']);
+        expect(r.subject).toBeNull();   // 全是空格 = 没给
     });
 });
 

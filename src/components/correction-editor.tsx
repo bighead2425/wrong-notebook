@@ -431,9 +431,28 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                             subject={notebooks.find(n => n.id === data.notebookId)?.subject || inferSubjectFromName(data.subject || null) || undefined}
                             gradeStage={educationStage}
                         />
-                        <p className="text-xs text-muted-foreground">
-                            {t.editor.tagsHint || "💡 Tag suggestions will appear as you type"}
-                        </p>
+                        {/*
+                          * 【2026-11-01 两段式】这里必须说一句"别手选"。
+                          *
+                          * 两段式打开后，AI 第一段只转录、不选知识点，所以这个标签栏是空的。
+                          * 而这一屏正是他校对的地方 —— 看到空的，多半会顺手选一个。
+                          * 一旦选了，就触发"人优先"，保存后第二段不再归位，等于白做两段式。
+                          */}
+                        {initialData.tagsPending && data.knowledgePoints.length === 0 ? (
+                            <p className="text-xs text-amber-700 flex items-start gap-1.5">
+                                <span className="mt-1 inline-block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-amber-500" />
+                                <span>
+                                    标签会在<span className="font-medium">保存后自动补</span>，这里不用手选。
+                                    <span className="text-muted-foreground">
+                                        （手选了就不再自动归位 —— 你选的更优先）
+                                    </span>
+                                </span>
+                            </p>
+                        ) : (
+                            <p className="text-xs text-muted-foreground">
+                                {t.editor.tagsHint || "💡 Tag suggestions will appear as you type"}
+                            </p>
+                        )}
                     </div>
 
                     <div className="space-y-2">
