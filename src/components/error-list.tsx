@@ -90,6 +90,8 @@ type KnowledgeFilterChange = {
     gradeSemester?: string;
     chapter?: string;
     tag?: string | null;
+    /** 【2026-11-02】树形多选回的知识点 id（空数组 = 不筛） */
+    tagIds?: string[];
 };
 
 export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onCountChange }: ErrorListProps = {}) {
@@ -109,6 +111,11 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
     /** 【2026-09-28】原「所属卷等级」(A/B/其他) 改为**错题等级**：全部 / 深挖 / 复练 / 未定 */
     const [manageTypeFilter, setManageTypeFilter] = useState<"all" | "deep" | "review" | "undecided">("all");
     const [selectedTag, setSelectedTag] = useState<string | null>(null);
+    /**
+     * 【2026-11-02 真真】**多选知识点**（树形对话框选的 id 列表）。
+     * 与旧的 `selectedTag`（单个、按名字）并存不冲突：`hideChapterTag` 模式下只走这个。
+     */
+    const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
     const [expandedTags, setExpandedTags] = useState<Set<string>>(new Set());
     /**
      * ⭐【2026-10-15 **合并成一个**】「掌握 / 等级」筛选（`docs\14` §7.5）。
@@ -235,8 +242,13 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
         setSelectedTag(selectedTag === tag ? null : tag);
     };
 
-    const handleFilterChange = ({ gradeSemester, chapter, tag }: KnowledgeFilterChange) => {
+    const handleFilterChange = ({ gradeSemester, chapter, tag, tagIds }: KnowledgeFilterChange) => {
         if (gradeSemester !== undefined) setGradeFilter(gradeSemester);
+        /**
+         * 【2026-11-02】树形多选回填。
+         * 空数组 = 不筛（他明确要求"没选中点确定 = 全部显示"）。
+         */
+        if (tagIds !== undefined) setSelectedTagIds(tagIds);
         if (chapter !== undefined) setChapterFilter(chapter);
         // 注意：tag 可能是 undefined（表示清除），需要用 'tag' in obj 来判断是否传入了该参数
         // 但由于我们的结构是直接解构，这里改用 null 作为清除标识
@@ -416,7 +428,7 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
     };
 
     // 追踪筛选条件是否变化（用于判断是否需要重置页码）
-    const prevFiltersRef = useRef({ search, timeFilter, selectedTag, notebookId, tagId, gradeFilter, chapterFilter, manageTypeFilter, levelSelection, datePoints, dateRange });
+    const prevFiltersRef = useRef({ search, timeFilter, selectedTag, selectedTagIds, notebookId, tagId, gradeFilter, chapterFilter, manageTypeFilter, levelSelection, datePoints, dateRange });
 
     useEffect(() => {
         const prevFilters = prevFiltersRef.current;
@@ -424,6 +436,7 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
             prevFilters.search !== search ||
             prevFilters.timeFilter !== timeFilter ||
             prevFilters.selectedTag !== selectedTag ||
+            prevFilters.selectedTagIds !== selectedTagIds ||
             prevFilters.notebookId !== notebookId ||
             prevFilters.tagId !== tagId ||
             prevFilters.gradeFilter !== gradeFilter ||
@@ -435,7 +448,7 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
             JSON.stringify(prevFilters.dateRange) !== JSON.stringify(dateRange);
 
         // 更新 ref
-        prevFiltersRef.current = { search, timeFilter, selectedTag, notebookId, tagId, gradeFilter, chapterFilter, manageTypeFilter, levelSelection, datePoints, dateRange };
+        prevFiltersRef.current = { search, timeFilter, selectedTag, selectedTagIds, notebookId, tagId, gradeFilter, chapterFilter, manageTypeFilter, levelSelection, datePoints, dateRange };
 
         if (filtersChanged && page !== 1) {
             // 筛选条件变化且不在第一页，重置到第一页（会再次触发此 effect）
@@ -445,7 +458,7 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
 
         // 正常请求数据
         fetchItems();
-    }, [page, search, timeFilter, selectedTag, notebookId, tagId, gradeFilter, chapterFilter, manageTypeFilter, levelSelection, datePoints, dateRange]);
+    }, [page, search, timeFilter, selectedTag, selectedTagIds, notebookId, tagId, gradeFilter, chapterFilter, manageTypeFilter, levelSelection, datePoints, dateRange]);
 
     /**
      * 当前筛选条件 → 查询参数（**一处实现**：列表 / 导出打印 / 跨页全选 / 日历共用）。
@@ -503,6 +516,8 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
             }
         }
         if (selectedTag) params.append("tag", selectedTag);
+        /** 【2026-11-02】多选知识点 —— 前端传**叶子 id**（勾父节点时对话框已展开），后端直接 in */
+        if (selectedTagIds.length > 0) params.append("tagIds", selectedTagIds.join(","));
         if (gradeFilter) params.append("gradeSemester", gradeFilter);
         if (chapterFilter) params.append("chapter", chapterFilter); // 章节筛选
         if (manageTypeFilter !== "all") params.append("manageType", manageTypeFilter);
@@ -640,6 +655,8 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
                          * 而且第一批刚把它接过来时漏了这条，年级下拉会重新冒出来。
                          */
                         hideGrade={!!notebookId || !!tagId}
+                        /** 【2026-11-02】两个下拉换成树形多选按钮（他第 4 条） */
+                        hideChapterTag
                     />
                 </div>
                 {/* 【2026-09-30 他要求重排】原来「全部 / 深挖 / 复练 / 未定」四个按钮占一行，

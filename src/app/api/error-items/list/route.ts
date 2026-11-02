@@ -43,6 +43,16 @@ export async function GET(req: Request) {
      * 应该把「长度单位换算」「质量单位换算」下的题都算上，而不是只有直接挂在这个节上的。
      */
     const tagId = searchParams.get("tagId");
+    /**
+     * 【2026-11-02 真真】**多选知识点筛选**（`tagIds=a,b,c`）。
+     *
+     * 空空第 4 条要的是"勾单元/勾章/勾节 = 勾它下面所有知识点"。
+     * 前端在对话框里**已经把父节点展开成叶子**了（他 11-02 明确："最终传输的都是知识点"），
+     * 所以这里**不需要再展开子树**，直接 `in` 就够 —— 与单选的 `tagId` 走两条路。
+     *
+     * 语义 = **OR**（任一命中就出）："看这些知识点的题"是常识语义。
+     */
+    const tagIdsParam = searchParams.get("tagIds");
     const includeChildren = searchParams.get("includeChildren") === "1";
     // 四分法（H2 / 5.3）：
     //   scope=main(默认) 主库：deletedAt=null 且 masteryLevel<2 且 所属本 archiveStatus != archived
@@ -377,6 +387,21 @@ export async function GET(req: Request) {
                 // 章节不存在或没有子标签，应返回空结果
                 // 但为了不破坏其他条件，我们添加一个必然为假的条件
                 whereClause.id = "__IMPOSSIBLE_ID__";
+            }
+        }
+
+        /**
+         * 【2026-11-02】**多选知识点**（错题本页的「知识点检索」）。
+         * 走 `andConditions` 而不是直接赋值 `whereClause.tags` —— 顶层键会被后面的筛选整段覆盖
+         * （本文件里 `gradeSemester` 踩过这个坑，注释里写着）。
+         */
+        if (tagIdsParam) {
+            const ids = tagIdsParam
+                .split(",")
+                .map((x) => x.trim())
+                .filter(Boolean);
+            if (ids.length > 0) {
+                andConditions.push({ tags: { some: { id: { in: ids } } } });
             }
         }
 

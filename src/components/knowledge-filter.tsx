@@ -9,6 +9,9 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { apiClient } from "@/lib/api-client";
+import { Button } from "@/components/ui/button";
+import { TagPickerDialog, type PickedTag } from "@/components/tag-picker-dialog";
+import { Tag as TagIcon } from "lucide-react";
 import { inferSubjectFromName } from "@/lib/knowledge-tags";
 
 interface TagTreeNode {
@@ -25,10 +28,23 @@ interface KnowledgeFilterProps {
     subjectName?: string;
     /** 本内已锁定年级学期（一本教科书=一个本），无需再按年级筛选 */
     hideGrade?: boolean;
+    /**
+     * 【2026-11-02 真真】**不显示「章节 / 知识点」两个下拉，改成一个树形多选按钮**。
+     *
+     * 空空原话："目前是有一个章节的下拉框和一个知识点的下拉框，其实用性是比较差的，
+     *          我建议将这两个下拉框去掉……换成一个知识点检索按钮，点击这个按钮跳出一个对话框。"
+     *
+     * 为什么那两个下拉难用：章节下拉是**平铺一长串**，知识点下拉只列出当前章下面的词，
+     * 得先选对章才知道有哪些词 —— 顺序卡死，找起来是"猜两次"。
+     * 树形对话框是**一次看全**（科目→册→章→节→知识点），还能多选。
+     */
+    hideChapterTag?: boolean;
     onFilterChange: (filters: {
         gradeSemester?: string;
         chapter?: string;
         tag?: string;
+        /** 【2026-11-02】多选知识点（树形对话框选的），与 `tag` 二选一 */
+        tagIds?: string[];
     }) => void;
     className?: string;
 }
@@ -62,6 +78,7 @@ export function KnowledgeFilter({
     tag: initialTag,
     subjectName,
     hideGrade = false,
+    hideChapterTag = false,
     onFilterChange,
     className
 }: KnowledgeFilterProps) {
@@ -78,6 +95,10 @@ export function KnowledgeFilter({
 
     // 可用的年级学期选项 (根据用户信息过滤)
     const [availableGrades, setAvailableGrades] = useState<string[]>([]);
+
+    /** 【2026-11-02】树形多选：对话框开关 + 已选（`{id,name}[]`，筛选只用 id） */
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const [pickedTags, setPickedTags] = useState<PickedTag[]>([]);
 
     // Sync with props
     useEffect(() => {
@@ -256,31 +277,63 @@ export function KnowledgeFilter({
                 </Select>
             )}
 
-            <Select value={chapter} onValueChange={handleChapterChange} disabled={loading}>
-                <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="章节" />
-                </SelectTrigger>
-                <SelectContent>
-                    <SelectItem value="all">全部章节</SelectItem>
-                    {chapters.map(c => (
-                        <SelectItem key={c.id} value={c.name}>
-                            {c.name.replace(/^第\d+章\s*/, '')}
-                        </SelectItem>
-                    ))}
-                </SelectContent>
-            </Select>
+            {/**
+             * 【2026-11-02】两个下拉换成**一个树形多选按钮**（`hideChapterTag` 时）。
+             * 旧的两个下拉保留在 else 分支里 —— 万一别处还想用，不删。
+             */}
+            {hideChapterTag ? (
+                <>
+                    <Button variant="outline" size="sm" onClick={() => setPickerOpen(true)}>
+                        <TagIcon className="mr-1.5 h-3.5 w-3.5" />
+                        知识点检索
+                        {pickedTags.length > 0 && ` · ${pickedTags.length}`}
+                    </Button>
+                    <TagPickerDialog
+                        open={pickerOpen}
+                        onOpenChange={setPickerOpen}
+                        multiple
+                        /** 学科自动展开：`subjectName` 是中文名，对话框要 key（math/chinese…） */
+                        defaultSubject={subjectName ? inferSubjectFromName(subjectName) ?? undefined : undefined}
+                        initialPicked={pickedTags}
+                        onPick={(picked) => {
+                            setPickedTags(picked);
+                            /**
+                             * 不选 = 不筛（他明确要求"没有知识点被选中点击确定，意为不进行筛选，全部显示"）。
+                             * 传空数组而不是 `undefined`，让 `ErrorList` 那边能明确知道"这次是清空"。
+                             */
+                            onFilterChange({ gradeSemester, tagIds: picked.map((p) => p.id) });
+                        }}
+                    />
+                </>
+            ) : (
+                <>
+                    <Select value={chapter} onValueChange={handleChapterChange} disabled={loading}>
+                        <SelectTrigger className="w-[180px]">
+                            <SelectValue placeholder="章节" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">全部章节</SelectItem>
+                            {chapters.map(c => (
+                                <SelectItem key={c.id} value={c.name}>
+                                    {c.name.replace(/^第\d+章\s*/, '')}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
 
-            <Select value={tag} onValueChange={handleTagChange} disabled={loading}>
-                <SelectTrigger className="w-[140px]">
-                    <SelectValue placeholder="知识点" />
-                </SelectTrigger>
-                <SelectContent>
-                    <SelectItem value="all">全部知识点</SelectItem>
-                    {tags.map(t => (
-                        <SelectItem key={t} value={t}>{t}</SelectItem>
-                    ))}
-                </SelectContent>
-            </Select>
+                    <Select value={tag} onValueChange={handleTagChange} disabled={loading}>
+                        <SelectTrigger className="w-[140px]">
+                            <SelectValue placeholder="知识点" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">全部知识点</SelectItem>
+                            {tags.map(t => (
+                                <SelectItem key={t} value={t}>{t}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </>
+            )}
         </div>
     );
 }
