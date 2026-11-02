@@ -41,6 +41,7 @@ import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { apiClient } from "@/lib/api-client";
 import { ChevronDown, ChevronRight, Loader2, X } from "lucide-react";
+import { leavesOf, tagSelectionState } from "@/lib/tag-tree";
 
 /** 与 `/tags` 页同一份学科表（顺序也一致，别各写一套） */
 const SUBJECTS = [
@@ -80,12 +81,6 @@ interface Props {
     multiple?: boolean;
     /** 打开时预填的已选项（多选时回显上次选的） */
     initialPicked?: PickedTag[];
-}
-
-/** 一棵子树里所有**叶子**（题只挂在叶子上，所以三态只数叶子） */
-function leavesOf(node: TagTreeNode): TagTreeNode[] {
-    if (node.children.length === 0) return [node];
-    return node.children.flatMap(leavesOf);
 }
 
 export function TagPickerDialog({
@@ -181,12 +176,12 @@ export function TagPickerDialog({
     };
 
     /** 父节点的三态：全选 / 部分 / 无 */
-    const stateOf = (node: TagTreeNode): "all" | "some" | "none" => {
-        const leaves = leavesOf(node);
-        const hit = leaves.filter((l) => pickedIds.has(l.id)).length;
-        if (hit === 0) return "none";
-        return hit === leaves.length ? "all" : "some";
-    };
+    /**
+     * 三态判定 —— **实现在 `lib/tag-tree.ts`**，这里只是转调。
+     * 抽出去的原因：它是"勾父节点"的唯一判据，算错了界面上看不出来、只会让题数不对；
+     * 放在组件里既测不了也没法复用。`__tests__/unit/tag-tree.test.ts` 钉住了它。
+     */
+    const stateOf = (node: TagTreeNode) => tagSelectionState(node, pickedIds);
 
     /**
      * 递归画树。
