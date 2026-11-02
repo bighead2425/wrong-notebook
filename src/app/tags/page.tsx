@@ -6,12 +6,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Link from "next/link";
-import { TrendingUp, Plus, Trash2, ChevronDown, ChevronRight, House, Loader2, BookOpen } from "lucide-react";
+import { TrendingUp, Plus, Trash2, ChevronDown, ChevronRight, House, Loader2, BookOpen, Search, ChevronsUpDown, ChevronsDownUp, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiClient } from "@/lib/api-client";
+import { searchTagTree } from "@/lib/tag-tree";
 import { TagStats, TagStatsResponse } from "@/types/api";
 
 // 标签树节点类型
@@ -130,6 +131,24 @@ export default function TagsPage() {
     const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
 
     /**
+     * 【2026-11-02 真真】标准标签库的**检索**（空空第 2 条）。
+     *
+     * `searchInput` 是框里正在敲的字，`searchTerm` 是**点了搜索之后**才生效的词 ——
+     * 他明确要求"点击搜索才开始搜索"，边打边筛会把树筛得七零八落、还看不清结构。
+     */
+    const [searchInput, setSearchInput] = useState("");
+    const [searchTerm, setSearchTerm] = useState("");
+    /** 命中个数（0 命中要说一句"没找到"，否则人会以为按钮没反应） */
+    const [hitCount, setHitCount] = useState<number | null>(null);
+    /**
+     * 检索中 / 全展中。
+     *
+     * 为什么需要：这两个动作都要**先把 9 个学科的词表拉齐**（树是点开才懒加载的），
+     * 老 NAS 上是一两秒的事。不给反馈的话按钮看起来像没反应，人会连点。
+     */
+    const [busy, setBusy] = useState(false);
+
+    /**
      * 【2026-11-02 真真】**展开状态跨页保存** —— 空空第 2 条要"回到标准标签库并保持相应状态"。
      *
      * 从这一页点进 `/by-tag/[id]` 再点返回，`/tags` 是重新挂载的，
@@ -172,12 +191,21 @@ export default function TagsPage() {
     const [skillText, setSkillText] = useState<string>('');
 
     // 获取标签树
+    /**
+     * 【2026-11-02 真真】改成**回传**数据。
+     *
+     * 检索 / 全展 需要"这一学科的所有节点 id"才能一次把展开集合算出来，
+     * 而 `setTagsBySubject` 是异步的 —— 拉完立刻读 state 还是旧值。
+     * 回传一份，调用方就不必等下一次渲染。
+     */
     const fetchTags = useCallback(async (subject: SubjectKey) => {
         try {
             const data = await apiClient.get<{ tags: TagTreeNode[] }>(`/api/tags?subject=${subject}`);
             setTagsBySubject(prev => ({ ...prev, [subject]: data.tags }));
+            return data.tags;
         } catch (error) {
             console.error(`Failed to fetch ${subject} tags:`, error);
+            return null;
         }
     }, []);
 
@@ -311,7 +339,7 @@ export default function TagsPage() {
                     title="看这个知识点的所有题"
                 >
                     <Badge variant="outline" className="cursor-pointer hover:bg-accent">
-                        {node.name}
+                        {highlight(node.name)}
                         {(() => {
                             const stat = stats.find(s => s.tag === node.name);
                             return stat ? <span className="ml-1 text-xs text-muted-foreground">({stat.count})</span> : null;
@@ -338,7 +366,7 @@ export default function TagsPage() {
                         onClick={() => toggleNode(node.id)}
                     >
                         {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                        <span className="font-medium text-sm">{node.name}</span>
+                        <span className="font-medium text-sm">{highlight(node.name)}</span>
                         <span className="text-xs text-muted-foreground">({visibleChildren.length})</span>
                         {/* 【2026-11-01】这一层（册/章/节）也能点进去看题 —— 题挂在下面的知识点上，按子树查 */}
                         <Link
@@ -364,7 +392,7 @@ export default function TagsPage() {
                     onClick={() => toggleNode(node.id)}
                 >
                     {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                    <span className="font-medium text-sm">{node.name}</span>
+                    <span className="font-medium text-sm">{highlight(node.name)}</span>
                     <span className="text-xs text-muted-foreground">({visibleChildren.length})</span>
                         {/* 【2026-11-01】这一层（册/章/节）也能点进去看题 —— 题挂在下面的知识点上，按子树查 */}
                         <Link
@@ -392,10 +420,204 @@ export default function TagsPage() {
         );
     };
 
+    /* ==================== 【2026-11-02 真真】检索 / 全展 / 全收 ==================== */
+
+    /**
+     * 把还没拉过的学科补齐，回一张完整的「学科 → 树」。
+     *
+     * 为什么要这样：检索和全展都要**全学科的节点 id**才能一次算好展开集合，
+     * 而树是点开学科才懒加载的 —— 不先补齐，搜"小数乘法"只会搜到已经点开的那一科。
+     * 并行拉，9 个学科不至于串成一条长龙。
+     */
+    const ensureAllTrees = async (): Promise<Record<string, TagTreeNode[]>> => {
+        const trees: Record<string, TagTreeNode[]> = {};
+        const missing: SubjectKey[] = [];
+        for (const { key } of SUBJECTS) {
+            const cached = tagsBySubject[key];
+            if (cached) trees[key] = cached;
+            else missing.push(key);
+        }
+        const fetched = await Promise.all(
+            missing.map(async (key) => [key, await fetchTags(key)] as const),
+        );
+        for (const [key, nodes] of fetched) trees[key] = nodes ?? [];
+        return trees;
+    };
+
+    /**
+     * 关键字高亮。
+     *
+     * 只高亮**第一处** —— 词表里最长也就十来个字，命中两处的极少见；
+     * 拆多段反而把 JSX 写复杂。用 `mark` 而不是加粗：浏览器原生语义就是"标记"，
+     * 打印/读屏也认得。
+     */
+    const highlight = (text: string): React.ReactNode => {
+        if (!searchTerm) return text;
+        const idx = text.toLowerCase().indexOf(searchTerm.toLowerCase());
+        if (idx < 0) return text;
+        return (
+            <>
+                {text.slice(0, idx)}
+                <mark className="bg-amber-200 text-foreground rounded px-0.5">
+                    {text.slice(idx, idx + searchTerm.length)}
+                </mark>
+                {text.slice(idx + searchTerm.length)}
+            </>
+        );
+    };
+
+    const handleSearch = async () => {
+        const kw = searchInput.trim();
+
+        /**
+         * 【他明确要求】框里没内容就点搜索 = **不搜**，回到"全部收起"的原状。
+         * 不是"清空搜索"，是回到初始态 —— 连展开的册/章也一起收掉。
+         */
+        if (!kw) {
+            setSearchTerm("");
+            setHitCount(null);
+            setExpandedNodes({});
+            return;
+        }
+
+        setBusy(true);
+        let trees: Record<string, TagTreeNode[]>;
+        try {
+            trees = await ensureAllTrees();
+        } finally {
+            setBusy(false);
+        }
+        const next: Record<string, boolean> = {};
+        let hits = 0;
+
+        for (const { key } of SUBJECTS) {
+            /**
+             * 【2026-11-02】"展开到哪一层"的规则在 `lib/tag-tree.ts#searchTagTree` ——
+             * 它是纯函数、有单测。这里只负责把结果铺成 `expandedNodes` 的形状。
+             *
+             * 学科自己也算一层：某一科里有命中，那张 Card 就得打开，否则里面展开得再好也看不见。
+             */
+            const result = searchTagTree(trees[key] ?? [], kw);
+            hits += result.hits;
+            if (result.hits > 0) next[`subject-${key}`] = true;
+            for (const id of result.expandIds) next[id] = true;
+        }
+
+        setSearchTerm(kw);
+        setHitCount(hits);
+        setExpandedNodes(next);
+    };
+
+    /** 全展：学科 → 学段 → 年级 → 学期 → 单元 → 章 → 节 → 知识点，一层不留 */
+    const expandAll = async () => {
+        setBusy(true);
+        let trees: Record<string, TagTreeNode[]>;
+        try {
+            trees = await ensureAllTrees();
+        } finally {
+            setBusy(false);
+        }
+        const next: Record<string, boolean> = {};
+        const walk = (list: TagTreeNode[]) => {
+            for (const node of list) {
+                if ((node.children?.length ?? 0) > 0) {
+                    next[node.id] = true;
+                    walk(node.children);
+                }
+            }
+        };
+        for (const { key } of SUBJECTS) {
+            next[`subject-${key}`] = true;
+            walk(trees[key] ?? []);
+        }
+        setExpandedNodes(next);
+    };
+
+    /**
+     * 全收：一律折叠。
+     *
+     * 不动 `searchTerm` —— 收起是收起，搜索词还在框里，再点一次搜索还能回来。
+     * 清掉它等于顺手抹了人的输入，不礼貌。
+     */
+    const collapseAll = () => {
+        setExpandedNodes({});
+    };
+
     // 渲染标准标签库
     const renderStandardTags = () => {
         return (
             <>
+                {/**
+                  * 【2026-11-02 真真】检索框 + 搜索 + 全展 + 全收（空空第 2 条）。
+                  *
+                  * 为什么"点了才搜"：词表是 8 层深的树，边打边筛会让树一直抖，
+                  * 人还没打完就已经找不到自己在哪了。他自己也是这么要求的。
+                  *
+                  * 空着点搜索 = 回到全部收起的初始态（见 `handleSearch`）。
+                  */}
+                <div className="flex flex-wrap items-center gap-2 mb-4">
+                    <div className="relative flex-1 min-w-[200px] max-w-md">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                            value={searchInput}
+                            onChange={(e) => setSearchInput(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter") handleSearch();
+                                if (e.key === "Escape") {
+                                    setSearchInput("");
+                                    setSearchTerm("");
+                                    setHitCount(null);
+                                }
+                            }}
+                            placeholder="检索单元 / 章节 / 知识点…"
+                            className="h-9 pl-8 pr-8"
+                        />
+                        {searchInput && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setSearchInput("");
+                                    setSearchTerm("");
+                                    setHitCount(null);
+                                }}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                title="清空"
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                        )}
+                    </div>
+                    <Button size="sm" onClick={handleSearch} disabled={busy}>
+                        {busy ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Search className="h-4 w-4 mr-1" />}
+                        {busy ? "搜索中…" : "搜索"}
+                    </Button>
+                    <div className="flex-1" />
+                    <Button size="sm" variant="outline" onClick={expandAll} disabled={busy} title="展开所有层级，方便通读词表">
+                        <ChevronsUpDown className="h-4 w-4 mr-1" />
+                        全展
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={collapseAll} title="全部折叠回学科层">
+                        <ChevronsDownUp className="h-4 w-4 mr-1" />
+                        全收
+                    </Button>
+                </div>
+
+                {/* 搜完给个交代：命中几处 / 一处都没命中 */}
+                {searchTerm && (
+                    <div className="mb-3 text-sm">
+                        {hitCount && hitCount > 0 ? (
+                            <span className="text-muted-foreground">
+                                找到 <span className="font-medium text-foreground">{hitCount}</span> 处「
+                                <span className="font-medium text-foreground">{searchTerm}</span>」，已展开到对应层级
+                            </span>
+                        ) : (
+                            <span className="text-amber-600">
+                                没找到含「{searchTerm}」的单元 / 章节 / 知识点
+                            </span>
+                        )}
+                    </div>
+                )}
+
                 {SUBJECTS.map(({ key, name }) => {
                     const subjectName = (t.tags?.subjects as any)?.[key] || name;
                     const isExpanded = expandedNodes[`subject-${key}`];
@@ -412,7 +634,7 @@ export default function TagsPage() {
                             >
                                 <CardTitle className="text-lg flex items-center gap-2">
                                     {isExpanded ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
-                                    {subjectName}
+                                    {highlight(subjectName)}
                                 </CardTitle>
                                 <span className="text-sm text-muted-foreground">
                                     {isExpanded ? (t.common?.collapse || "Collapse") : (t.common?.expand || "Expand")}
@@ -588,7 +810,13 @@ export default function TagsPage() {
                                 return (
                                     <div key={p.name} className="space-y-2 border-t pt-3 first:border-0 first:pt-0">
                                         <div className="text-sm">
-                                            AI 写的是 <span className="font-medium">「{p.name}」</span>
+                                            {/**
+                                              * 【2026-11-02 真真】原来写死"AI 写的是"。
+                                              * 但人在详情页手打一个库里没有的词，也会落到这里 ——
+                                              * 那时它说"AI 写的"是**冤枉 AI**，还会让人以为是 AI 的锅。
+                                              * 改成中性的说法，两种来源都成立。
+                                              */}
+                                            没归类上 <span className="font-medium">「{p.name}」</span>
                                             {(p.book || p.section) && (
                                                 <span className="text-muted-foreground">
                                                     （{p.book}{p.section ? ` › ${p.section}` : ''}）

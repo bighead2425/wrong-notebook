@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { leavesOf, tagSelectionState, type TagNodeLike } from '@/lib/tag-tree';
+import { leavesOf, searchTagTree, tagSelectionState, type TagNodeLike } from '@/lib/tag-tree';
 
 /** 造一棵与截图同构的树：
  *  人教版五年级上册
@@ -118,5 +118,122 @@ describe('标签树 · 三态选中', () => {
         const tree = makeTree();
         // 混进 "mul"（非叶子）—— 不该让 mul 变成 all
         expect(tagSelectionState(find(tree, 'mul'), new Set(['mul']))).toBe('none');
+    });
+});
+
+/* ==========================================================================
+ * 【2026-11-02】检索：命中后要展开到哪一层
+ *
+ * 空空原话：
+ *   "如果检索到的，就展开到检索到的学科、年级（学段）、单元、章节、知识点，
+ *    检索到哪一层级就展开那一层级。"
+ * ========================================================================== */
+
+describe('searchTagTree', () => {
+    /** 一棵 8 层深、跟真实词表同构的树：册 → 单元 → 节 → 知识点 */
+    const book = (): TagNodeLike => ({
+        id: 'book',
+        name: '人教版五年级上册',
+        children: [
+            {
+                id: 'unit1',
+                name: '第一单元 小数的再认识和加减法',
+                children: [
+                    {
+                        id: 'mul',
+                        name: '小数乘法',
+                        children: [
+                            { id: 'a', name: '小数乘整数', children: [] },
+                            { id: 'b', name: '小数乘小数', children: [] },
+                        ],
+                    },
+                    {
+                        id: 'sub',
+                        name: '小数减法',
+                        children: [{ id: 's1', name: '小数减法的竖式', children: [] }],
+                    },
+                ],
+            },
+            { id: 'unit2', name: '第二单元 位置', children: [] },
+        ],
+    });
+
+    it('命中知识点 ⇒ 祖先一路展开到顶（否则它在折叠的册里看不见）', () => {
+        const { expandIds, hits } = searchTagTree([book()], '小数乘整数');
+        expect(hits).toBe(1);
+        // 祖先一路到顶 —— 缺任何一层，那个知识点都还是藏在折叠里
+        expect(expandIds).toContain('mul');
+        expect(expandIds).toContain('unit1');
+        expect(expandIds).toContain('book');
+        /**
+         * ⚠️ 命中的**叶子自己不进展开集合** —— 叶子没有可展开的东西，
+         *    父节点（`mul`）展开了它自然就露出来了。加进去只是往
+         *    `expandedNodes` 里塞一堆无意义的键。
+         */
+        expect(expandIds).not.toContain('a');
+    });
+
+    it('命中"节" ⇒ 展开到节为止，节下面的知识点不硬撑开', () => {
+        const { expandIds, hits } = searchTagTree([book()], '小数减法');
+        /**
+         * 节名「小数减法」+ 子节点「小数减法的竖式」都含这个词 ⇒ 2 处。
+         * 但**「小数乘法」不能出现在结果里** —— 它没命中。
+         */
+        expect(hits).toBe(2);                       // 节名 1 处 + 子节点名 1 处
+        expect(expandIds).toContain('sub');          // 节自己被展开 ⇒ 下面露出来
+        expect(expandIds).not.toContain('mul');      // 没命中的兄弟分支不许被撑开
+        expect(expandIds).not.toContain('a');
+        /**
+         * 再钉一条边界：**没命中任何东西的分支，一个都不能进展开集合**。
+         * 否则"搜一个词、整个词表全开" —— 那就不叫检索了。
+         */
+        expect(expandIds).not.toContain('unit2');
+    });
+
+    it('命中单元 ⇒ 只展开它和祖先，兄弟单元不动', () => {
+        const { expandIds, hits } = searchTagTree([book()], '第二单元');
+        expect(hits).toBe(1);
+        // 「第二单元 位置」是叶子（没挂子节点）⇒ 只有它的祖先要展开
+        expect(expandIds).toEqual(['book']);
+        expect(expandIds).not.toContain('unit1');
+    });
+
+    it('大小写不敏感（英语学科的词表是英文）', () => {
+        const tree: TagNodeLike[] = [
+            { id: 'x', name: 'Present Simple', children: [{ id: 'y', name: 'be动词', children: [] }] },
+        ];
+        const { hits, expandIds } = searchTagTree(tree, 'present');
+        expect(hits).toBe(1);
+        expect(expandIds).toContain('x');
+    });
+
+    it('关键词两边的空格不算数', () => {
+        const { hits } = searchTagTree([book()], '  位置  ');
+        expect(hits).toBe(1);
+    });
+
+    it('一个都没命中 ⇒ 空结果（界面据此说"没找到"）', () => {
+        const { expandIds, hits } = searchTagTree([book()], '微积分');
+        expect(hits).toBe(0);
+        expect(expandIds).toEqual([]);
+    });
+
+    it('空关键词 ⇒ 不搜（这是"点搜索但不填内容 = 全部收起"的依据）', () => {
+        expect(searchTagTree([book()], '')).toEqual({ expandIds: [], hits: 0 });
+        expect(searchTagTree([book()], '   ')).toEqual({ expandIds: [], hits: 0 });
+    });
+
+    it('多个学科分开算，各自只展开自己的分支', () => {
+        const math = book();
+        const chinese: TagNodeLike = {
+            id: 'cn',
+            name: '人教版五年级上册',
+            children: [{ id: 'cn1', name: '阅读理解', children: [] }],
+        };
+        const r = searchTagTree([math], '小数');
+        const r2 = searchTagTree([chinese], '小数');
+        expect(r.hits).toBeGreaterThan(0);
+        expect(r2.hits).toBe(0);
+        expect(r2.expandIds).toEqual([]);
     });
 });

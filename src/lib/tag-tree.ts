@@ -44,3 +44,54 @@ export function tagSelectionState(node: TagNodeLike, pickedIds: ReadonlySet<stri
     if (hit === 0) return "none";
     return hit === leaves.length ? "all" : "some";
 }
+
+/* ==================== 【2026-11-02】检索：命中了要展开到哪一层 ==================== */
+
+export interface TagSearchResult {
+    /** 需要展开的节点 id（命中项 + 它们的**全部祖先**） */
+    expandIds: string[];
+    /** 命中的节点数（同一个词在章名、知识点名里各出现一次就算 2） */
+    hits: number;
+}
+
+/**
+ * 在标签树里找关键字，并算出"要把哪些节点展开"。
+ *
+ * ── 空空 2026-11-02 的原话 ──────────────────────────────────
+ *   "如果检索到的，就展开到检索到的学科、年级（学段）、单元、章节、知识点，
+ *    检索到哪一层级就展开那一层级，并将关键字突出显示出来。"
+ *
+ * ── 规则 ──────────────────────────────────────────────────
+ *   · 命中项的**祖先全展开** —— 否则它在折叠的册里，根本看不见；
+ *   · 命中项**自己有子节点时也展开** —— 否则只看到"小数乘法"这一行，
+ *     看不到它下面具体是哪几个知识点，等于定位到了却停在门外；
+ *   · 命中项的**子节点不展开**（除非子节点自己也命中）—— 这就是
+ *     "检索到哪一层级就展开那一层级"，不硬撑开无关的下层。
+ *
+ * @param nodes   一个学科下的整棵树
+ * @param keyword 关键字（空/纯空格 ⇒ 不搜，返回空结果）
+ */
+export function searchTagTree<T extends TagNodeLike>(nodes: T[], keyword: string): TagSearchResult {
+    const needle = keyword.trim().toLowerCase();
+    const expand = new Set<string>();
+    let hits = 0;
+    if (!needle) return { expandIds: [], hits: 0 };
+
+    const walk = (list: T[], ancestors: string[]): boolean => {
+        let anyHit = false;
+        for (const node of list) {
+            const selfHit = node.name.toLowerCase().includes(needle);
+            const childHit = walk((node.children ?? []) as T[], [...ancestors, node.id]);
+            if (selfHit) hits += 1;
+            if (selfHit || childHit) {
+                anyHit = true;
+                for (const a of ancestors) expand.add(a);
+                if ((node.children?.length ?? 0) > 0) expand.add(node.id);
+            }
+        }
+        return anyHit;
+    };
+
+    walk(nodes, []);
+    return { expandIds: [...expand], hits };
+}
