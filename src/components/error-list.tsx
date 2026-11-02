@@ -633,8 +633,13 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
                         tag={selectedTag}
                         onFilterChange={handleFilterChange}
                         subjectName={subjectName}
-                        // 本内（notebookId 存在）已锁定年级学期，不再重复筛年级
-                        hideGrade={!!notebookId}
+                        /**
+                         * 本内（notebookId 存在）已锁定年级学期，不再重复筛年级。
+                         * 【2026-11-02】`tagId` 模式（`/by-tag` 知识点页）同理 ——
+                         * 它也是"已经限定在一个范围里看题"，再让她筛年级是多余的，
+                         * 而且第一批刚把它接过来时漏了这条，年级下拉会重新冒出来。
+                         */
+                        hideGrade={!!notebookId || !!tagId}
                     />
                 </div>
                 {/* 【2026-09-30 他要求重排】原来「全部 / 深挖 / 复练 / 未定」四个按钮占一行，

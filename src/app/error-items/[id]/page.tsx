@@ -2098,9 +2098,17 @@ export default function ErrorDetailPage() {
                 open={tagPickerOpen}
                 onOpenChange={setTagPickerOpen}
                 defaultSubject={item.notebook?.subject || undefined}
-                onPick={(name) => {
-                    /** 已存在就不重复加（`TagInput` 内部也是这个规矩） */
-                    if (!tagsInput.includes(name)) setTagsInput([...tagsInput, name]);
+                onPick={(picked) => {
+                    /**
+                     * 【2026-11-02 改】`onPick` 现在回 `{id, name}[]`（多选版）。
+                     * 详情页是**单选**用法（没传 `multiple`），所以这里通常只有 1 个；
+                     * 但写成数组处理，将来这页想改成多选也不用再动。
+                     * 已存在的不重复加（`TagInput` 内部也是这个规矩）。
+                     */
+                    setTagsInput((prev) => {
+                        const add = picked.map((p) => p.name).filter((n) => !prev.includes(n));
+                        return add.length > 0 ? [...prev, ...add] : prev;
+                    });
                 }}
             />
         </main >
