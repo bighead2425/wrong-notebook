@@ -1451,7 +1451,7 @@ export default function ErrorDetailPage() {
                                               */}
                                             {(item.tags?.length ?? 0) > 0
                                                 ? item.tags.map((t) => (
-                                                    <Link key={t.id} href={`/by-tag/${t.id}`}>
+                                                    <Link key={t.id} href={`/by-tag/${t.id}?back=${encodeURIComponent(`/error-items/${item.id}`)}`}>
                                                         <Badge
                                                             variant="secondary"
                                                             className="cursor-pointer hover:bg-secondary/70"

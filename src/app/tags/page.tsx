@@ -128,6 +128,38 @@ export default function TagsPage() {
 
     // 展开状态
     const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
+
+    /**
+     * 【2026-11-02 真真】**展开状态跨页保存** —— 空空第 2 条要"回到标准标签库并保持相应状态"。
+     *
+     * 从这一页点进 `/by-tag/[id]` 再点返回，`/tags` 是重新挂载的，
+     * 组件里的 state 会归零 ⇒ 展开的册/章全收起来，她得重新点一遍。
+     * ⇒ 用 `sessionStorage` 记住展开集合（关标签页就清，不污染长期存储）。
+     *
+     * ⚠️ 为什么用 effect 恢复而不是 `useState` 惰性初始化：
+     *    服务端渲染时没有 `window`，惰性初始化会让服务端拿到 `{}`、客户端拿到有值
+     *    ⇒ hydration 不一致（比多一次渲染糟得多）。
+     */
+    useEffect(() => {
+        try {
+            const saved = sessionStorage.getItem("tags-expanded-nodes");
+            if (saved) {
+                // eslint-disable-next-line react-hooks/set-state-in-effect -- 见上：挂载后读一次，避免 hydration 不一致
+                setExpandedNodes(JSON.parse(saved) as Record<string, boolean>);
+            }
+        } catch {
+            /* 存坏了就当没有 */
+        }
+    }, []);
+
+    /** 展开集合一变就存 —— 返回时照原样恢复 */
+    useEffect(() => {
+        try {
+            sessionStorage.setItem("tags-expanded-nodes", JSON.stringify(expandedNodes));
+        } catch {
+            /* 存不下（隐私模式）就算了，不影响主流程 */
+        }
+    }, [expandedNodes]);
     /**
      * 【2026-11-01】「换教材怎么改」说明书（skill）。
      *
@@ -273,7 +305,7 @@ export default function TagsPage() {
             return (
                 <Link
                     key={node.id}
-                    href={`/by-tag/${node.id}`}
+                    href={`/by-tag/${node.id}?back=${encodeURIComponent("/tags")}`}
                     className="inline-block"
                     style={{ marginLeft: isLeafContext ? 0 : paddingLeft }}
                     title="看这个知识点的所有题"
@@ -310,7 +342,7 @@ export default function TagsPage() {
                         <span className="text-xs text-muted-foreground">({visibleChildren.length})</span>
                         {/* 【2026-11-01】这一层（册/章/节）也能点进去看题 —— 题挂在下面的知识点上，按子树查 */}
                         <Link
-                            href={`/by-tag/${node.id}`}
+                            href={`/by-tag/${node.id}?back=${encodeURIComponent("/tags")}`}
                             onClick={(e) => e.stopPropagation()}
                             className="text-xs text-primary hover:underline ml-1"
                         >
@@ -336,7 +368,7 @@ export default function TagsPage() {
                     <span className="text-xs text-muted-foreground">({visibleChildren.length})</span>
                         {/* 【2026-11-01】这一层（册/章/节）也能点进去看题 —— 题挂在下面的知识点上，按子树查 */}
                         <Link
-                            href={`/by-tag/${node.id}`}
+                            href={`/by-tag/${node.id}?back=${encodeURIComponent("/tags")}`}
                             onClick={(e) => e.stopPropagation()}
                             className="text-xs text-primary hover:underline ml-1"
                         >

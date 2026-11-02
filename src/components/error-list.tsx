@@ -63,6 +63,19 @@ const TIME_RANGE_OPTIONS: readonly [Exclude<TimeFilter, "all" | "other">, string
 
 interface ErrorListProps {
     notebookId?: string;
+    /**
+     * 【2026-11-02 真真】按**知识点**筛 —— 给 `/by-tag/[id]` 用。
+     *
+     * 空空第 3 条："这个标签页能不能设计成功能和进入错题本页面基本一致呢，
+     *             也就是如果我点击了个标签，就像是临时建了个错题本。"
+     *
+     * ⇒ 不另写一套，直接复用本组件：传 `tagId` 而不是 `notebookId`，
+     *   多选 / 删除选中 / 筛选 / 等级 / 关联 / 分页 **全部自动具备**，
+     *   而且以后错题本页加功能，这里也跟着有（不会两边越走越远）。
+     */
+    tagId?: string;
+    /** 带上整棵子树 —— 点"节/章"时题挂在下面更深的知识点上，不带就等于查了个空 */
+    includeChildren?: boolean;
     subjectName?: string;
     /**
      * 【2026-09-30】把两个数报上去，给页面头部那句
@@ -79,7 +92,7 @@ type KnowledgeFilterChange = {
     tag?: string | null;
 };
 
-export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListProps = {}) {
+export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onCountChange }: ErrorListProps = {}) {
     const [items, setItems] = useState<ErrorItem[]>([]);
     const [, setLoading] = useState(true);
     const [search, setSearch] = useState("");
@@ -403,7 +416,7 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
     };
 
     // 追踪筛选条件是否变化（用于判断是否需要重置页码）
-    const prevFiltersRef = useRef({ search, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, levelSelection, datePoints, dateRange });
+    const prevFiltersRef = useRef({ search, timeFilter, selectedTag, notebookId, tagId, gradeFilter, chapterFilter, manageTypeFilter, levelSelection, datePoints, dateRange });
 
     useEffect(() => {
         const prevFilters = prevFiltersRef.current;
@@ -412,6 +425,7 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
             prevFilters.timeFilter !== timeFilter ||
             prevFilters.selectedTag !== selectedTag ||
             prevFilters.notebookId !== notebookId ||
+            prevFilters.tagId !== tagId ||
             prevFilters.gradeFilter !== gradeFilter ||
             prevFilters.chapterFilter !== chapterFilter ||
             prevFilters.manageTypeFilter !== manageTypeFilter ||
@@ -421,7 +435,7 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
             JSON.stringify(prevFilters.dateRange) !== JSON.stringify(dateRange);
 
         // 更新 ref
-        prevFiltersRef.current = { search, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, levelSelection, datePoints, dateRange };
+        prevFiltersRef.current = { search, timeFilter, selectedTag, notebookId, tagId, gradeFilter, chapterFilter, manageTypeFilter, levelSelection, datePoints, dateRange };
 
         if (filtersChanged && page !== 1) {
             // 筛选条件变化且不在第一页，重置到第一页（会再次触发此 effect）
@@ -431,7 +445,7 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
 
         // 正常请求数据
         fetchItems();
-    }, [page, search, timeFilter, selectedTag, notebookId, gradeFilter, chapterFilter, manageTypeFilter, levelSelection, datePoints, dateRange]);
+    }, [page, search, timeFilter, selectedTag, notebookId, tagId, gradeFilter, chapterFilter, manageTypeFilter, levelSelection, datePoints, dateRange]);
 
     /**
      * 当前筛选条件 → 查询参数（**一处实现**：列表 / 导出打印 / 跨页全选 / 日历共用）。
@@ -457,6 +471,11 @@ export function ErrorList({ notebookId, subjectName, onCountChange }: ErrorListP
          */
         params.append("today", dayKey(new Date()));
         if (notebookId) params.append("notebookId", notebookId);
+        /** 【2026-11-02】知识点模式（`/by-tag`）—— 与 notebookId 互斥使用，同时传也不会错（AND） */
+        if (tagId) {
+            params.append("tagId", tagId);
+            if (includeChildren) params.append("includeChildren", "1");
+        }
         if (search) params.append("query", search);
         /**
          * ⭐【2026-10-15】「掌握 / 等级」合并筛选 —— 全选 = 没筛，一个参数都不传。
