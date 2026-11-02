@@ -265,6 +265,20 @@ export default function ErrorDetailPage() {
     const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
     const [isEditingTags, setIsEditingTags] = useState(false);
     const [tagsInput, setTagsInput] = useState<string[]>([]);
+    /**
+     * 【2026-11-02 真真】**标签名 → 库里的节点 id**。
+     *
+     * 为什么需要它：`tagsInput` 只有名字，而保存时后端只能"按名字猜"。
+     * 词表里「小数减法」在四年级下、五年级上各有一个 ⇒ 唯一同名不成立 ⇒ 放弃
+     * ⇒ 人明明点选了，保存完标签没变（空空 11-02 报的那个 bug）。
+     *
+     * 人手点选时**本来就有 id**（`item.tags[].id` / 树形对话框回的 `{id,name}`），
+     * 之前只把名字抄进 `tagsInput`、id 扔了 —— 这是信息丢失，不是能力不足。
+     * 现在存下来，保存时一起送，后端认 id 不再猜。
+     *
+     * 手打的词没有 id ⇒ 仍走名字解析（解析不上会回 `unmatchedTags` 提示）。
+     */
+    const [tagIdsByName, setTagIdsByName] = useState<Record<string, string>>({});
     const [exportState, setExportState] = useState<"idle" | "doing" | "ok" | "err">("idle");
     /** 【2026-11-01 两段式】手动重新归位：failed 之后的第二次机会 */
     const [relocating, setRelocating] = useState(false);
@@ -649,11 +663,20 @@ export default function ErrorDetailPage() {
 
     const startEditingTags = () => {
         if (item) {
+            /**
+             * 【2026-11-02 真真】进编辑态时**顺手记下 name → id**。
+             *
+             * 这里是最值钱的一处：`item.tags` 本身就带 id，只是以前只抄了名字。
+             * 有了这张表，哪怕她只删一个标签就保存，其余的也不会因为"同名多个"而丢掉。
+             */
+            const ids: Record<string, string> = {};
+
             // 优先使用新的 tags 关联
             if (item.tags && item.tags.length > 0) {
+                for (const t of item.tags) ids[t.name] = t.id;
                 setTagsInput(item.tags.map(t => t.name));
             } else if (item.knowledgePoints) {
-                // 回退到旧的 knowledgePoints 字段
+                // 回退到旧的 knowledgePoints 字段（只有名字，没有 id）
                 try {
                     const tags = JSON.parse(item.knowledgePoints);
                     setTagsInput(tags);
@@ -663,19 +686,57 @@ export default function ErrorDetailPage() {
             } else {
                 setTagsInput([]);
             }
+            setTagIdsByName(ids);
             setIsEditingTags(true);
         }
     };
 
     const saveTagsHandler = async () => {
         try {
-            // 直接传递标签名称数组，后端会处理关联
-            await apiClient.put(`/api/error-items/${item?.id}`, {
-                knowledgePoints: tagsInput, // 后端接收数组
+            /**
+             * 【2026-11-02 真真】**保存时带上 id，别让后端按名字猜。**
+             *
+             * 原来只送 `knowledgePoints`（名字数组），后端走 `legacy` 分支，
+             * 规则是"全库唯一同名才认" —— 像「小数减法」这种跨册重名的词
+             * 一条都认不出来，于是 `tags` 一个都不更新，人看到的还是旧标签。
+             *
+             * 现在：有 id 的送 id（`matchedBy: 'human'`，直接认）；
+             * 手打的没有 id，照旧送名字让后端尽力解析。
+             */
+            const refs = tagsInput.map((name) =>
+                tagIdsByName[name]
+                    ? { name, tagId: tagIdsByName[name] }
+                    : { name, legacy: true as const },
+            );
+
+            const res = await apiClient.put<{ unmatchedTags?: string[] }>(`/api/error-items/${item?.id}`, {
+                knowledgePoints: tagsInput,
+                knowledgeRefs: refs,
+                /**
+                 * 清空所有标签是一个**明确的意图**，得让后端知道。
+                 * 否则它会把"空数组"和"解析全失败"当成一回事，两种都保留原标签 ——
+                 * 那就变成"标签删不掉了"。
+                 */
+                ...(tagsInput.length === 0 ? { clearTags: true } : {}),
             });
 
             setIsEditingTags(false);
             await fetchItem(params.id as string);
+
+            /**
+             * 【2026-11-02】**没归类的词必须说出来。**
+             * 之前这个响应体里的 `unmatchedTags` 前端根本没读 ——
+             * 表现就是"点了保存、看起来成功了、标签却没变"，人只能自己发现。
+             */
+            const missed = res?.unmatchedTags ?? [];
+            if (missed.length > 0) {
+                alert(
+                    L(
+                        `有 ${missed.length} 个标签在标准标签库里找不到，没存上：\n${missed.join('、')}\n\n请改用「从标签库选」，或确认这个说法在库里存在。`,
+                        `${missed.length} tag(s) could not be matched and were not saved://n${missed.join(', ')}`,
+                    ),
+                );
+            }
             // 【2026-09-29】成功不再弹窗（同上）：编辑态关闭、标签即刷新，本身就是反馈
         } catch (error) {
             console.error("[Frontend] Error updating:", error);
@@ -2105,6 +2166,12 @@ export default function ErrorDetailPage() {
                      * 但写成数组处理，将来这页想改成多选也不用再动。
                      * 已存在的不重复加（`TagInput` 内部也是这个规矩）。
                      */
+                    /** 【2026-11-02】把 id 一起记下来 —— 保存时靠它，不靠名字猜 */
+                    setTagIdsByName((prev) => {
+                        const next = { ...prev };
+                        for (const p of picked) next[p.name] = p.id;
+                        return next;
+                    });
                     setTagsInput((prev) => {
                         const add = picked.map((p) => p.name).filter((n) => !prev.includes(n));
                         return add.length > 0 ? [...prev, ...add] : prev;

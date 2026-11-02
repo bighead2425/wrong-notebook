@@ -138,6 +138,14 @@ export async function PUT(
             knowledgePoints, gradeSemester, paperLevel, questionText, answerText, analysis,
             /* 【2026-10-31】标签坐标（册/章/节/名）与偏离判据；旧调用方不传也能工作 */
             knowledgeRefs, bookReason,
+            /**
+             * 【2026-11-02 真真】"我要把这道题的标签**全删掉**"。
+             *
+             * 为什么必须单独给一个信号：下面那段刻意做成"解析不出就保留原标签"，
+             * 于是"空数组"和"解析全失败"长得一模一样 —— 两种都保留 ⇒ 标签删不掉了。
+             * 由前端明确表态，服务端才敢清。
+             */
+            clearTags,
             notebookId, wrongAnswerText, mistakeAnalysis, mistakeStatus,
             // 【custom-v28】批量里「重新分析已录入的题」时会带上新图（很可能重新裁过）。
             // 旧实现不收这个字段 —— 于是题目文本换成新的、原图还是旧的，图文对不上。
@@ -698,7 +706,22 @@ export async function PUT(
          * 树越改越平，人还完全不知道。
          */
         const unmatchedTags: string[] = [];
-        if (knowledgePoints !== undefined || knowledgeRefs !== undefined) {
+
+        /**
+         * 【2026-11-02 真真】**人主动清空**（`clearTags: true`）。
+         *
+         * 与"解析失败"分开处理 —— 后者保留原标签是保护，前者是人的明确意图。
+         * 三条一起清：关系表、兼容用的名字 JSON、解析快照。
+         * `tagStatus` 置 done：清空也是"已处理"，不该再挂进待归类队列。
+         */
+        if (clearTags === true) {
+            updateData.tags = { set: [] };
+            updateData.knowledgePoints = JSON.stringify([]);
+            updateData.tagResolution = JSON.stringify([]);
+            updateData.tagStatus = 'done';
+        }
+
+        if (clearTags !== true && (knowledgePoints !== undefined || knowledgeRefs !== undefined)) {
             const tagNames: string[] = Array.isArray(knowledgePoints)
                 ? knowledgePoints
                 : typeof knowledgePoints === 'string'

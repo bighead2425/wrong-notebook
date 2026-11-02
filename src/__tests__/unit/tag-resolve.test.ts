@@ -127,3 +127,62 @@ describe('resolveOne · 高三只有一册', () => {
         expect(r.tagId).toBe('tG');
     });
 });
+
+/* ==========================================================================
+ * 【2026-11-02 真真】人点选的节点 —— 带 id 就直接认
+ *
+ * 空空的现场：
+ *   详情页只有「小数的大小比较」→ 点编辑 → 从标签库选「小数减法」→ 确定
+ *   → 框里两个标签都在 → 点保存 → **还是只有「小数的大小比较」**。
+ *
+ * 真因：保存只送名字。`legacy` 分支的规矩是"全库唯一同名才认"，
+ *      而「小数减法」在四年级下、五年级上各有一个 ⇒ 两个都不认 ⇒ 一个都没挂上。
+ *      顺带 `tagStatus` 也没置 done ⇒ 这道题还掉进了「待归类」队列。
+ * ========================================================================== */
+describe('resolveOne · human（人点选，带 tagId）', () => {
+    /** 「轴对称图形」在五年级上、三年级下各一个 —— 典型的跨册重名 */
+    it('同名两个 + 不带 id ⇒ 认不出来（这就是旧行为，必须能复现）', () => {
+        const r = resolve({ name: '轴对称图形' });
+        expect(r.tagId).toBeNull();
+        expect(r.matchedBy).toBe('none');
+    });
+
+    it('同名两个 + 带 id ⇒ 直接认，不多问', () => {
+        const r = resolve({ name: '轴对称图形', tagId: 't3' });
+        expect(r.tagId).toBe('t3');           // 三年级下那个，不是默认的第一个
+        expect(r.matchedBy).toBe('human');
+    });
+
+    it('带 id 时不看名字 —— 人点的是哪个就是哪个', () => {
+        // 名字写得不一样（比如带了括号注），id 对就认
+        const r = resolve({ name: '轴对称图形（三下）', tagId: 't3' });
+        expect(r.tagId).toBe('t3');
+        // 返回的 name 用**库里的真名**，这样落库的 knowledgePoints 是干净的
+        expect(r.name).toBe('轴对称图形');
+    });
+
+    it('id 在库里查不到 ⇒ 不硬认，继续按名字尽力而为', () => {
+        const r = resolve({ name: '独一份的知识点', tagId: 'deleted-node-id' });
+        expect(r.tagId).toBe('tOnly');        // 名字唯一 ⇒ legacy 兜住
+        expect(r.matchedBy).toBe('legacy');
+    });
+
+    it('id 查不到且名字也对不上 ⇒ none（宁可不归类，也不乱挂）', () => {
+        const r = resolve({ name: '库里没有这个词', tagId: 'deleted-node-id' });
+        expect(r.tagId).toBeNull();
+        expect(r.matchedBy).toBe('none');
+    });
+
+    it('★ 一次两条（一道题原来的 + 新加的），各按各的 id 挂上', () => {
+        const rs = resolveTagRefs(
+            [
+                { name: '轴对称图形', tagId: 't1' },   // 五年级上（原有）
+                { name: '轴对称图形', tagId: 't3' },   // 三年级下（新加，重名）
+            ],
+            index,
+            TAGS,
+        );
+        expect(rs.map((r) => r.tagId)).toEqual(['t1', 't3']);
+        expect(rs.every((r) => r.matchedBy === 'human')).toBe(true);
+    });
+});

@@ -93,6 +93,24 @@ export function resolveOne(ref: TagRef, index: ResolverIndex, tags: FlatTag[]): 
         matchedBy: 'none',
     };
 
+    /**
+     * 【2026-11-02 真真】**带了 id 就直接认，不猜名字。**
+     *
+     * `matchedBy: 'human'` —— 和 `api/tags/pending/resolve` 里人点选的口径一致。
+     *
+     * 这条必须排在所有名字匹配**之前**：名字匹配的每一级降级都是在"猜"，
+     * 而带 id 是"确定"。反过来会让人的选择被降级规则覆盖（这就是这次 bug 的形态）。
+     *
+     * ⚠️ id 在库里查不到（节点被删了）时**往下走**，不直接判 none ——
+     *    名字可能还对得上，交给后面的降级去尽力而为。
+     */
+    if (ref.tagId) {
+        const hit = index.byId.get(ref.tagId);
+        if (hit) {
+            return { ...base, name: hit.name, tagId: hit.id, matchedBy: 'human' };
+        }
+    }
+
     const wantName = normalizeTagName(ref.name);
     const sameNameAll = tags.filter(
         (t) => t.name === ref.name || normalizeTagName(t.name) === wantName,
