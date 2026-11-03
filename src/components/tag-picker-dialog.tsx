@@ -38,10 +38,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { apiClient } from "@/lib/api-client";
-import { ChevronDown, ChevronRight, Loader2, X } from "lucide-react";
-import { leavesOf, tagSelectionState } from "@/lib/tag-tree";
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Loader2, Search, X } from "lucide-react";
+import { leavesOf, searchTagTree, tagSelectionState } from "@/lib/tag-tree";
 
 /** 与 `/tags` 页同一份学科表（顺序也一致，别各写一套） */
 const SUBJECTS = [
@@ -101,14 +102,41 @@ export function TagPickerDialog({
     /** 选中的叶子：id → {id, name}（顺序即点击顺序，chips 按这个排） */
     const [picked, setPicked] = useState<PickedTag[]>([]);
 
-    const loadSubject = useCallback(async (key: string) => {
+    /**
+     * 【2026-11-03 真真】**检索 / 全展 / 全收**（空空要的，与标签管理页同一套手感）。
+     *
+     * 他原话："在进入错题本页，点击知识点检索，打开按知识点筛这个页面中，我也想要这几个功能。
+     *         在错题详情页，点开知识点的编辑，再点击从标签库选……我也想要这三个功能。"
+     *
+     * 两处用的是**同一个组件**，所以只改这一处，两边同时有。
+     *
+     * `searchInput` 是框里正在敲的字，`searchTerm` 是**点了搜索之后**才生效的词 ——
+     * 跟他上次的要求一致：边打边筛会让树一直抖，人还没打完就找不到自己在哪了。
+     */
+    const [searchInput, setSearchInput] = useState("");
+    const [searchTerm, setSearchTerm] = useState("");
+    /** 命中个数（0 命中要说一句"没找到"，否则人会以为按钮没反应） */
+    const [hitCount, setHitCount] = useState<number | null>(null);
+    /** 搜索 / 全展时正在拉 9 个学科的词表，按钮上给个转圈 */
+    const [busy, setBusy] = useState(false);
+
+    /**
+     * 拉一个学科的词表。
+     *
+     * 【2026-11-03】改成**回传节点**：检索 / 全展要一次性算出整棵树的展开集合，
+     * 而 `setTrees` 是异步的 —— 拉完立刻读 state 还是旧值。
+     */
+    const loadSubject = useCallback(async (key: string): Promise<TagTreeNode[]> => {
         setTrees((prev) => (prev[key] === undefined ? { ...prev, [key]: null } : prev));
         try {
             const data = await apiClient.get<{ tags: TagTreeNode[] }>(`/api/tags?subject=${key}`);
-            setTrees((prev) => ({ ...prev, [key]: data.tags || [] }));
+            const nodes = data.tags || [];
+            setTrees((prev) => ({ ...prev, [key]: nodes }));
+            return nodes;
         } catch (e) {
             console.error(`Failed to load ${key} tags:`, e);
             setTrees((prev) => ({ ...prev, [key]: [] }));
+            return [];
         }
     }, []);
 
@@ -126,6 +154,10 @@ export function TagPickerDialog({
         if (!open) return;
         setPicked(initialPicked ?? []);
         setTrees({});
+        // 【2026-11-03】检索状态也跟着清 —— 上次搜的词不该带到这一次
+        setSearchInput("");
+        setSearchTerm("");
+        setHitCount(null);
         if (defaultSubject && SUBJECTS.some((s) => s.key === defaultSubject)) {
             setExpanded(new Set([`subject-${defaultSubject}`]));
             void loadSubject(defaultSubject);
@@ -183,6 +215,130 @@ export function TagPickerDialog({
      */
     const stateOf = (node: TagTreeNode) => tagSelectionState(node, pickedIds);
 
+    /* ============ 【2026-11-03 真真】检索 / 全展 / 全收 ============ */
+
+    /**
+     * 把还没拉过的学科补齐，回一张完整的「学科 → 树」。
+     *
+     * 为什么要这样：树是"点开学段才加载"的，不补齐就只会搜到已经点开的那一科 ——
+     * 人在数学里搜"阅读理解"永远搜不到语文那一条。
+     * 并行拉，9 个学科不至于串成一条长龙。
+     */
+    async function ensureAllTrees(): Promise<Record<string, TagTreeNode[]>> {
+        const out: Record<string, TagTreeNode[]> = {};
+        const missing: string[] = [];
+        for (const sub of SUBJECTS) {
+            const cached = trees[sub.key];
+            if (Array.isArray(cached)) out[sub.key] = cached;
+            else missing.push(sub.key);
+        }
+        const loaded = await Promise.all(
+            missing.map(async (key) => [key, await loadSubject(key)] as const),
+        );
+        for (const [key, nodes] of loaded) out[key] = nodes;
+        return out;
+    }
+
+    /**
+     * 关键字高亮。
+     *
+     * 只高亮**第一处** —— 词表里最长也就十来个字，命中两处的极少见；用 `mark`
+     * 而不是加粗：浏览器原生语义就是"标记"，读屏也认得。
+     */
+    const highlight = (text: string): React.ReactNode => {
+        if (!searchTerm) return text;
+        const idx = text.toLowerCase().indexOf(searchTerm.toLowerCase());
+        if (idx < 0) return text;
+        return (
+            <>
+                {text.slice(0, idx)}
+                <mark className="bg-amber-200 text-foreground rounded px-0.5">
+                    {text.slice(idx, idx + searchTerm.length)}
+                </mark>
+                {text.slice(idx + searchTerm.length)}
+            </>
+        );
+    };
+
+    const handleSearch = async () => {
+        const kw = searchInput.trim();
+
+        /**
+         * 【他明确要求】框里没内容就点搜索 = **不搜**，回到"全部收起"的原状。
+         * 在对话框里这一点更重要：全展开的话 8 层树会把 50vh 的框撑爆。
+         */
+        if (!kw) {
+            setSearchTerm("");
+            setHitCount(null);
+            setExpanded(new Set());
+            return;
+        }
+
+        setBusy(true);
+        let all: Record<string, TagTreeNode[]>;
+        try {
+            all = await ensureAllTrees();
+        } finally {
+            setBusy(false);
+        }
+
+        const next = new Set<string>();
+        let hits = 0;
+
+        for (const sub of SUBJECTS) {
+            /**
+             * "展开到哪一层"的规则在 `lib/tag-tree.ts#searchTagTree` —— 纯函数、有单测。
+             * 这里只负责把结果铺成 `expanded`（Set）的形状。
+             *
+             * 学科自己也算一层：某一科里有命中，那个学科的折叠块就得打开，
+             * 否则里面展开得再好也看不见。
+             */
+            const result = searchTagTree(all[sub.key] ?? [], kw);
+            hits += result.hits;
+            if (result.hits > 0) next.add(`subject-${sub.key}`);
+            for (const id of result.expandIds) next.add(id);
+        }
+
+        setSearchTerm(kw);
+        setHitCount(hits);
+        setExpanded(next);
+    };
+
+    /** 全展：学科 → 学段 → 年级 → 学期 → 单元 → 章 → 节 → 知识点，一层不留 */
+    const expandAll = async () => {
+        setBusy(true);
+        let all: Record<string, TagTreeNode[]>;
+        try {
+            all = await ensureAllTrees();
+        } finally {
+            setBusy(false);
+        }
+        const next = new Set<string>();
+        const walk = (list: TagTreeNode[]) => {
+            for (const node of list) {
+                if (node.children.length > 0) {
+                    next.add(node.id);
+                    walk(node.children);
+                }
+            }
+        };
+        for (const sub of SUBJECTS) {
+            next.add(`subject-${sub.key}`);
+            walk(all[sub.key] ?? []);
+        }
+        setExpanded(next);
+    };
+
+    /**
+     * 全收：一律折叠。
+     *
+     * 不动 `searchTerm` —— 收起是收起，搜索词还在框里，再点一次搜索还能回来。
+     * 清掉它等于顺手抹了人的输入。
+     */
+    const collapseAll = () => {
+        setExpanded(new Set());
+    };
+
     /**
      * 递归画树。
      * 中间层：左边是**三态复选框**（点了全选子树），右边箭头+名字（点了展开/收起）。
@@ -218,7 +374,7 @@ export function TagPickerDialog({
                         onClick={() => clickLeaf(node)}
                         className={`flex-1 py-1 text-left ${active && multiple ? "font-medium text-primary" : ""}`}
                     >
-                        {node.name}
+                        {highlight(node.name)}
                     </button>
                 </div>
             );
@@ -251,7 +407,7 @@ export function TagPickerDialog({
                         ) : (
                             <ChevronRight className="h-3.5 w-3.5 shrink-0" />
                         )}
-                        <span className={depth === 0 ? "font-medium" : ""}>{node.name}</span>
+                        <span className={depth === 0 ? "font-medium" : ""}>{highlight(node.name)}</span>
                     </button>
                 </div>
                 {isOpen && <div>{node.children.map((c) => renderNode(c, depth + 1))}</div>}
@@ -261,7 +417,14 @@ export function TagPickerDialog({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-2xl">
+            {/**
+              * 【2026-11-03】加 `max-h` / `overflow-y-auto`。
+              *
+              * 加了检索工具栏以后内容变高（标题 + 说明 + 工具栏 + 命中提示 + 已选区
+              * + 50vh 树 + 底部按钮），小屏或缩放 125% 时会撑出可视区 ——
+              * 而 `DialogContent` 原本没有高度上限，超出部分**滚不到**。
+              */}
+            <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle className="text-base">
                         {multiple
@@ -281,6 +444,98 @@ export function TagPickerDialog({
                               "Drill down: subject → book → chapter → section → point. Then press OK.",
                           )}
                 </p>
+
+                {/**
+                  * 【2026-11-03 真真】检索框 + 搜索 + 全展 + 全收。
+                  *
+                  * 与标签管理页**同一套手感**（他说"我觉得功能非常实用，我也想要这几个功能"）：
+                  * 点了才搜、空着点搜索 = 全部收起、关键字黄底高亮。
+                  *
+                  * 这里比管理页更需要它 —— 对话框只有 50vh 高，靠手点 8 层树找
+                  * "小数减法"要翻半天，还容易点错册。
+                  */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                    <div className="relative min-w-[150px] flex-1">
+                        <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                            value={searchInput}
+                            onChange={(e) => setSearchInput(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter") handleSearch();
+                                if (e.key === "Escape") {
+                                    setSearchInput("");
+                                    setSearchTerm("");
+                                    setHitCount(null);
+                                }
+                            }}
+                            placeholder={L("检索单元 / 章节 / 知识点…", "Search unit / chapter / point…")}
+                            className="h-8 pl-7 pr-7 text-sm"
+                        />
+                        {searchInput && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setSearchInput("");
+                                    setSearchTerm("");
+                                    setHitCount(null);
+                                }}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                title={L("清空", "Clear")}
+                            >
+                                <X className="h-3.5 w-3.5" />
+                            </button>
+                        )}
+                    </div>
+                    <Button size="sm" onClick={handleSearch} disabled={busy}>
+                        {busy ? (
+                            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                            <Search className="mr-1 h-3.5 w-3.5" />
+                        )}
+                        {busy ? L("搜索中…", "Searching…") : L("搜索", "Search")}
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={expandAll}
+                        disabled={busy}
+                        title={L("展开所有层级，方便通读词表", "Expand every level")}
+                    >
+                        <ChevronsUpDown className="mr-1 h-3.5 w-3.5" />
+                        {L("全展", "Expand all")}
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={collapseAll}
+                        title={L("全部折叠回学科层", "Collapse to subjects")}
+                    >
+                        <ChevronsDownUp className="mr-1 h-3.5 w-3.5" />
+                        {L("全收", "Collapse all")}
+                    </Button>
+                </div>
+
+                {/* 搜完给个交代：命中几处 / 一处都没命中 */}
+                {searchTerm && (
+                    <div className="text-xs">
+                        {hitCount && hitCount > 0 ? (
+                            <span className="text-muted-foreground">
+                                {L("找到 ", "Found ")}
+                                <span className="font-medium text-foreground">{hitCount}</span>
+                                {L(" 处「", " match(es) for \"")}
+                                <span className="font-medium text-foreground">{searchTerm}</span>
+                                {L("」，已展开到对应层级", "\", expanded to that level")}
+                            </span>
+                        ) : (
+                            <span className="text-amber-600">
+                                {L(
+                                    `没找到含「${searchTerm}」的单元 / 章节 / 知识点`,
+                                    `No unit / chapter / point contains "${searchTerm}"`,
+                                )}
+                            </span>
+                        )}
+                    </div>
+                )}
 
                 {/* 【第 5 条】已选区：每个带一个叉，点叉等于取消这一项 */}
                 {multiple && picked.length > 0 && (
@@ -323,7 +578,7 @@ export function TagPickerDialog({
                                     }}
                                 >
                                     {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                                    {s.name}
+                                    {highlight(s.name)}
                                 </button>
                                 {isOpen && (
                                     <div className="pb-2">
