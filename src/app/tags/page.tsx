@@ -116,7 +116,14 @@ export default function TagsPage() {
                     .filter((it) => it.pending.length > 0),
             );
         } catch (e) {
+            /**
+             * 【2026-11-04 审计 A6】**失败必须让人看见。**
+             *
+             * 原来只有 `console.error`：他点候选、页面毫无反应，只能反复点，
+             * 还以为是自己点歪了。这类"点了没反应"比报错更让人困惑。
+             */
             console.error('Failed to resolve pending tag', e);
+            alert(`「${name}」没能归类上。\n\n${e instanceof Error ? e.message : '请稍后再试'}`);
         }
     };
 
