@@ -111,9 +111,13 @@ export async function GET(req: Request) {
         }
 
         // Secondary sorting by name match position (optional) or just name
+        /**
+         * 【2026-11-04 审计 A1】**带上 id 一起返回。**
+         * 只回名字 ⇒ 下拉里选中的标签保存时只能按名字猜，跨册重名必废。
+         */
         const finalSuggestions = suggestions
             .slice(0, limit)
-            .map(s => s.name);
+            .map((s) => ({ id: s.id, name: s.name }));
 
         return NextResponse.json({
             suggestions: finalSuggestions,

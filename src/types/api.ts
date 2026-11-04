@@ -277,7 +277,15 @@ export interface TagStatsResponse {
 }
 
 export interface TagSuggestionsResponse {
-    suggestions: string[];
+    /**
+     * 【2026-11-04 审计 A1】**带上 id**。
+     *
+     * 原来只回名字 ⇒ 输入框下拉里点中的标签，保存时只能按名字猜；
+     * 「小数减法」这种跨册重名的一猜就废（真真 11-02 只修了「从标签库选」那条路，
+     * 这条更常用的漏了 —— 他第二天用出来的正是漏的那条）。
+     */
+    suggestions: { id: string; name: string }[];
+    total?: number;
 }
 
 export interface AdminUser extends UserProfile {

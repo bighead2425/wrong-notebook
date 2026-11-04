@@ -16,26 +16,46 @@ interface TagInputProps {
     subject?: string; // 新增：用于过滤标签建议的学科
     gradeStage?: string; // 新增：用于过滤标签建议的学段 (primary, junior_high, senior_high)
     /**
-     * 【2026-11-01 真真】挂载后**自动聚焦输入框**。
+     * 【2026-11-04 审计 A1】选中**库里的**标签时回调，带上它的 id。
      *
-     * 空空报："提示我『输入时会显示标签建议，支持从标准标签库选择』，
-     *          但我怎么从标准标签库中选择呢，没有可选择的途径啊。"
+     * 为什么需要：只回名字的话，保存时只能按名字猜；
+     * 「小数减法」这种**跨册重名**的一猜就废（真真 11-02 只修了「从标签库选」那条路，
+     * 输入框下拉这条更常用的漏了 —— 他第二天用出来的正是漏的那条）。
      *
-     * 真因：那 300 条标准标签是**靠 `onFocus` 才去拉的**（见下面 Input 的 onFocus），
-     *      而"点编辑"只是把只读态换成输入框，**输入框并不会自己获得焦点**
-     *      ⇒ 她看到提示却看不到下拉，必须"再点一下输入框"才出来 —— 这一步没人告诉她。
-     * ⇒ 编辑态一出现就自动聚焦，onFocus 自然触发，标签库直接铺开。
+     * `onChange` 保持 `string[]` 不变：调用方大多只关心名字，
+     * 需要 id 的（详情页保存）再接这个回调，两边都不用改签名。
      */
+    onPick?: (tag: { id: string; name: string }) => void;
+    /** 挂载后自动聚焦输入框（详情页"点编辑就光标已就位"，真真 11-01 加的） */
     autoFocus?: boolean;
 }
 
-export function TagInput({ value = [], onChange, placeholder = "Enter tags...", className = "", enterHint, subject, gradeStage, autoFocus }: TagInputProps) {
+interface TagOption {
+    id: string;
+    name: string;
+}
+
+export function TagInput({
+    value = [],
+    onChange,
+    placeholder = "Enter tags...",
+    className = "",
+    enterHint,
+    subject,
+    gradeStage,
+    onPick,
+    autoFocus,
+}: TagInputProps) {
     const [input, setInput] = useState("");
-    const [suggestions, setSuggestions] = useState<string[]>([]);
+    const [suggestions, setSuggestions] = useState<TagOption[]>([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
     const [selectedIndex, setSelectedIndex] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
     const suggestionsRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (autoFocus) inputRef.current?.focus();
+    }, [autoFocus]);
 
     // 获取标签建议
     useEffect(() => {
@@ -58,11 +78,12 @@ export function TagInput({ value = [], onChange, placeholder = "Enter tags...", 
                 params.append('stage', gradeStage);
             }
             const data = await apiClient.get<TagSuggestionsResponse>(`/api/tags/suggestions?${params.toString()}`);
+            /** 【A1】现在是 `{id,name}[]`，带 id 才能在保存时精确定位 */
             const serverSuggestions = data.suggestions || [];
 
             // 过滤已选中的标签
             const filtered = serverSuggestions.filter(
-                (tag) => !value.includes(tag)
+                (t) => !value.includes(t.name)
             );
 
             setSuggestions(filtered.slice(0, limit));
@@ -73,14 +94,27 @@ export function TagInput({ value = [], onChange, placeholder = "Enter tags...", 
         }
     };
 
-    const addTag = (tag: string) => {
-        if (tag.trim() && !value.includes(tag.trim())) {
-            onChange([...value, tag.trim()]);
-            setInput("");
-            setSuggestions([]);
-            setShowSuggestions(false);
-            setSelectedIndex(0);
-        }
+    /** 选中一个**库里已有的**标签（带 id） */
+    const addTag = (opt: TagOption) => {
+        const name = opt.name.trim();
+        if (!name || value.includes(name)) return;
+        onChange([...value, name]);
+        if (opt.id) onPick?.({ id: opt.id, name });
+        setInput("");
+        setSuggestions([]);
+        setShowSuggestions(false);
+        setSelectedIndex(0);
+    };
+
+    /** 手打出来的新词：库里没有，只有名字（保存时按名字建/匹配，行为与以前一致） */
+    const addRaw = (text: string) => {
+        const name = text.trim();
+        if (!name || value.includes(name)) return;
+        onChange([...value, name]);
+        setInput("");
+        setSuggestions([]);
+        setShowSuggestions(false);
+        setSelectedIndex(0);
     };
 
     const removeTag = (tagToRemove: string) => {
@@ -93,7 +127,7 @@ export function TagInput({ value = [], onChange, placeholder = "Enter tags...", 
             if (selectedIndex >= 0 && suggestions[selectedIndex]) {
                 addTag(suggestions[selectedIndex]);
             } else if (input.trim()) {
-                addTag(input);
+                addRaw(input);
             }
         } else if (e.key === "ArrowDown") {
             e.preventDefault();
@@ -146,7 +180,6 @@ export function TagInput({ value = [], onChange, placeholder = "Enter tags...", 
                 <Input
                     ref={inputRef}
                     type="text"
-                    autoFocus={autoFocus}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={handleKeyDown}
@@ -186,13 +219,13 @@ export function TagInput({ value = [], onChange, placeholder = "Enter tags...", 
                     )}
                     {suggestions.map((suggestion, index) => (
                         <div
-                            key={suggestion}
+                            key={suggestion.id || suggestion.name}
                             className={`px-3 py-2 cursor-pointer hover:bg-accent ${index === selectedIndex ? "bg-accent" : ""
                                 }`}
                             onClick={() => addTag(suggestion)}
                             onMouseEnter={() => setSelectedIndex(index)}
                         >
-                            {suggestion}
+                            {suggestion.name}
                         </div>
                     ))}
                 </div>

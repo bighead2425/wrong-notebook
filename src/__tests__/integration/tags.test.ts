@@ -192,11 +192,14 @@ describe('/api/tags', () => {
             const data = await response.json();
 
             expect(response.status).toBe(200);
-            expect(data.suggestions).toBeDefined();
+            /** 【A1】现在返回 `{id,name}[]`，断言名字的同时**顺便验证 id 在** */
+            expect(data.suggestions.every((x: { id?: string }) => !!x.id)).toBe(true);
+            const NAMES = data.suggestions.map((x: { name: string }) => x.name);
+            expect(NAMES).toBeDefined();
             expect(Array.isArray(data.suggestions)).toBe(true);
-            expect(data.suggestions).toContain('一元一次方程');
-            expect(data.suggestions).toContain('二元一次方程');
-            expect(data.suggestions).not.toContain('父节点');
+            expect(NAMES).toContain('一元一次方程');
+            expect(NAMES).toContain('二元一次方程');
+            expect(NAMES).not.toContain('父节点');
         });
 
         it('应该根据搜索词过滤标签', async () => {
@@ -212,9 +215,12 @@ describe('/api/tags', () => {
             const data = await response.json();
 
             expect(response.status).toBe(200);
-            expect(data.suggestions).toContain('一元一次方程');
-            expect(data.suggestions).toContain('二元一次方程');
-            expect(data.suggestions).not.toContain('函数');
+            /** 【A1】现在返回 `{id,name}[]`，断言名字的同时**顺便验证 id 在** */
+            expect(data.suggestions.every((x: { id?: string }) => !!x.id)).toBe(true);
+            const NAMES = data.suggestions.map((x: { name: string }) => x.name);
+            expect(NAMES).toContain('一元一次方程');
+            expect(NAMES).toContain('二元一次方程');
+            expect(NAMES).not.toContain('函数');
         });
 
         it('应该支持大小写不敏感搜索', async () => {
@@ -229,7 +235,10 @@ describe('/api/tags', () => {
             const data = await response.json();
 
             expect(response.status).toBe(200);
-            expect(data.suggestions).toContain('Function');
+            /** 【A1】现在返回 `{id,name}[]`，断言名字的同时**顺便验证 id 在** */
+            expect(data.suggestions.every((x: { id?: string }) => !!x.id)).toBe(true);
+            const NAMES = data.suggestions.map((x: { name: string }) => x.name);
+            expect(NAMES).toContain('Function');
         });
 
         it('应该返回系统标签和用户自定义标签', async () => {
@@ -249,8 +258,11 @@ describe('/api/tags', () => {
             const data = await response.json();
 
             expect(response.status).toBe(200);
-            expect(data.suggestions).toContain('系统标签');
-            expect(data.suggestions).toContain('自定义标签');
+            /** 【A1】现在返回 `{id,name}[]`，断言名字的同时**顺便验证 id 在** */
+            expect(data.suggestions.every((x: { id?: string }) => !!x.id)).toBe(true);
+            const NAMES = data.suggestions.map((x: { name: string }) => x.name);
+            expect(NAMES).toContain('系统标签');
+            expect(NAMES).toContain('自定义标签');
         });
 
         it('应该限制返回结果数量（最多 30 个）', async () => {
@@ -289,7 +301,10 @@ describe('/api/tags', () => {
             const data = await response.json();
 
             expect(response.status).toBe(200);
-            expect(data.suggestions).toEqual([]);
+            /** 【A1】现在返回 `{id,name}[]`，断言名字的同时**顺便验证 id 在** */
+            expect(data.suggestions.every((x: { id?: string }) => !!x.id)).toBe(true);
+            const NAMES = data.suggestions.map((x: { name: string }) => x.name);
+            expect(NAMES).toEqual([]);
             expect(data.total).toBe(0);
         });
 
@@ -320,9 +335,12 @@ describe('/api/tags', () => {
             const data = await response.json();
 
             expect(response.status).toBe(200);
-            expect(data.suggestions).toContain('一元一次方程');
-            expect(data.suggestions).toContain('二元一次方程');
-            expect(data.suggestions).not.toContain('函数');
+            /** 【A1】现在返回 `{id,name}[]`，断言名字的同时**顺便验证 id 在** */
+            expect(data.suggestions.every((x: { id?: string }) => !!x.id)).toBe(true);
+            const NAMES = data.suggestions.map((x: { name: string }) => x.name);
+            expect(NAMES).toContain('一元一次方程');
+            expect(NAMES).toContain('二元一次方程');
+            expect(NAMES).not.toContain('函数');
         });
     });
 });

@@ -1482,6 +1482,17 @@ export default function ErrorDetailPage() {
                                                 subject={item.notebook?.subject || undefined}
                                                 gradeStage={educationStage}
                                                 autoFocus
+                                                /**
+                                                 * 【2026-11-04 审计 A1】把下拉里选中的**id**记下来。
+                                                 *
+                                                 * 保存时 `tagIdsByName[name]` 命中就带 `tagId` 走 ——
+                                                 * 这是"跨册重名也能精确落点"的唯一办法。
+                                                 * 以前下拉只回名字，这条路一直是"按名字猜"，
+                                                 * 「小数减法」这种一猜就废（真真 11-02 只修了「从标签库选」那条）。
+                                                 */
+                                                onPick={(picked) =>
+                                                    setTagIdsByName((prev) => ({ ...prev, [picked.name]: picked.id }))
+                                                }
                                             />
                                             <p className="text-xs text-muted-foreground">
                                                 {t.editor?.tagsHint || '💡 Select from standard or custom tags'}
