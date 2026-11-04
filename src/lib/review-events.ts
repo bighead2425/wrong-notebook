@@ -137,10 +137,19 @@ export async function recordReviewEvent(args: {
      *   同一道题 + 同一天 + 同一张卷 + 同一个结果 ⇒ 视为同一条。
      *   纸张回录本来就是一个判断标一次，不存在"同天同卷同题错两次"。
      *
-     * ⚠️ **只在带 `volumeId` 时去重**：手动录结果的场景没有卷，
-     *    那里"今天又错了一次"是真实的第二次，不能被吞。
+     * ⚠️ **只在「纸张回录」时去重**（`review_paper` / `imitate_paper` 且带卷）。
+     *
+     *    为什么不能只看 `volumeId`：详情页也会带卷号（从卷里点进来的题），
+     *    而详情页上"同一天对同一道题连判两次错"是**真实的两次**（她真的又做了一遍）
+     *    —— 按"带卷就去重"会把它吞掉。这个错误是我第一版写宽了，
+     *    集成测试 `★ 传了 reviewEvent ⇒ 落一条流水` 当场抓住（create 变成 0 次）。
+     *
+     *    纸张回录才符合"一次判断只标一次"：同一张纸上同一道题不会标两遍。
      */
-    if (args.volumeId) {
+    const isPaperRecovery =
+        args.volumeId != null && (args.source === 'review_paper' || args.source === 'imitate_paper');
+
+    if (isPaperRecovery) {
         const dup = await prisma.reviewEvent.findFirst({
             where: {
                 userId: args.userId,
