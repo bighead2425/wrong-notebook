@@ -124,6 +124,36 @@ export async function recordReviewEvent(args: {
     /** 来源（见 `lib/review-event-source.ts`）；不传 = 这条是"老数据补的"由调用方显式给 */
     source?: string | null;
 }): Promise<void> {
+    /**
+     * 【2026-11-04 审计 C5】**带卷的结果要幂等** —— 否则回录重试会把同一道题算两遍。
+     *
+     * ── 为什么必须在这里做 ──────────────────────────────────────
+     *   回录页原来是"先写卷行标记、后写流水"。流水一失败，
+     *   卷已经算"已回录"，**下次再也不会提醒**（那道题的结果就静默丢了）。
+     *   修法是换顺序（先流水、后标记），但这么一来"标记失败 → 用户重试"
+     *   会再写一遍流水 ⇒ 同一道题多错一次，紧迫度被拉高、间隔被缩短。
+     *
+     * ── 判定口径 ────────────────────────────────────────────────
+     *   同一道题 + 同一天 + 同一张卷 + 同一个结果 ⇒ 视为同一条。
+     *   纸张回录本来就是一个判断标一次，不存在"同天同卷同题错两次"。
+     *
+     * ⚠️ **只在带 `volumeId` 时去重**：手动录结果的场景没有卷，
+     *    那里"今天又错了一次"是真实的第二次，不能被吞。
+     */
+    if (args.volumeId) {
+        const dup = await prisma.reviewEvent.findFirst({
+            where: {
+                userId: args.userId,
+                errorItemId: args.errorItemId,
+                occurredOn: args.occurredOn,
+                volumeId: args.volumeId,
+                outcome: args.outcome,
+            },
+            select: { id: true },
+        });
+        if (dup) return;
+    }
+
     await prisma.reviewEvent.create({
         data: {
             userId: args.userId,

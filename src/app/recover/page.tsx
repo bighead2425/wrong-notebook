@@ -638,13 +638,20 @@ export default function RecoverPage() {
             const skipped = card.rows.length - writes.length;
             patchReview(id, (c) => ({ ...c, saving: true }));
             try {
+                /**
+                 * 【2026-11-04 审计 C5】**顺序反过来了：先写流水，后写卷行标记。**
+                 *
+                 * 原来是「先标记 → 后流水」，流水一失败，卷已经算"已回录"，
+                 * **下次再也不会提醒**（那道题的结果就静默丢了）。
+                 *
+                 * 换过来之后：
+                 *   · 流水失败 ⇒ 标记没写 ⇒ 下次照样提醒他补（不会丢）
+                 *   · 标记失败 ⇒ 流水已写 ⇒ 重试时后端**按"同卷+同天+同题+同结果"去重**，
+                 *     不会重复计（`recordReviewEvent` 里做了）
+                 * 前者是"可以补"，后者是"不会双计" —— 两条都堵住了。
+                 */
                 for (const w of writes) {
-                    // ① 卷行标记（"这张纸上我标了什么"）
-                    await apiClient.patch(`/api/review-volumes/${card.volumeId}`, {
-                        markItemId: w.rowId,
-                        markState: w.markState,
-                    });
-                    // ② 这道题的复习结果 —— **只能写流水**（口径与扫码页完全一致）
+                    // ① 这道题的复习结果 —— **只能写流水**（口径与扫码页完全一致）
                     if (w.writesOutcome && w.errorItemId) {
                         await apiClient.put(`/api/error-items/${w.errorItemId}`, {
                             /**
@@ -667,6 +674,11 @@ export default function RecoverPage() {
                             }),
                         });
                     }
+                    // ② 卷行标记（"这张纸上我标了什么"）—— 最后写，写失败只是少个记号
+                    await apiClient.patch(`/api/review-volumes/${card.volumeId}`, {
+                        markItemId: w.rowId,
+                        markState: w.markState,
+                    });
                 }
                 patchReview(id, (c) => ({ ...c, saving: false, state: { k: "saved", written: writes.length, skipped } }));
             } catch (err) {
