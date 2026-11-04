@@ -125,7 +125,8 @@ export function PracticeStats() {
                         <TrendingUp className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">{stats.activityStats.filter(d => d.total > 0).length}</div>
+                        {/* 【C3】真·活跃天数（按天去重）；老接口没有这个字段时退回 0，不显示一个假数 */}
+                        <div className="text-2xl font-bold">{stats.activeDays ?? 0}</div>
                     </CardContent>
                 </Card>
             </div>

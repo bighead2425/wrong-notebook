@@ -87,7 +87,18 @@ export async function GET(req: Request) {
             where: { userId, isCorrect: true }
         });
 
+        /**
+         * 【2026-11-04 审计 C3】**活跃天数按天去重**。
+         *
+         * `chartData` 是**按月**的（6 个点），拿它数"有活动的月份数"最多是 6 ——
+         * 那个数字没有信息量。他真正想知道的是"她一共练了多少天"（习惯养成）。
+         */
+        const activeDays = new Set(
+            activityStats.map((r) => format(r.createdAt, 'yyyy-MM-dd')),
+        ).size;
+
         return NextResponse.json({
+            activeDays,
             subjectStats: subjectStats.map(s => ({ name: s.subject || 'Unknown', value: s._count.id })),
             activityStats: chartData,
             difficultyStats: difficultyStats.map(s => ({ name: s.difficulty || 'Unknown', value: s._count.id })),

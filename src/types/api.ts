@@ -261,6 +261,14 @@ export interface AnalyticsData {
 }
 
 export interface PracticeStatsData {
+    /**
+     * 【2026-11-04 审计 C3】近 6 个月的**活跃天数**（按天去重）。
+     *
+     * 原来那个数字是 `activityStats.filter(d => d.total > 0).length`，
+     * 而 `activityStats` 是**按月**的（最多 6 个点）⇒ 那个"活跃天数"最多只能显示 6，
+     * 等于一个永远不会超过 6 的数 —— 看不出"她一共坚持了多少天"。
+     */
+    activeDays?: number;
     subjectStats: { name: string; value: number }[];
     activityStats: { date: string; total: number; correct: number;[key: string]: number | string }[];
     difficultyStats: { name: string; value: number }[];
