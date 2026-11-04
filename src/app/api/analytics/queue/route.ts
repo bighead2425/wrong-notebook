@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { internalError, unauthorized } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { reviewStatusOf, type ReviewStatus } from "@/lib/review-status";
+import { earliestOpenDueKey, dueKeyFor, dueKeyFromHistory } from "@/lib/review-due";
 import { countEventsByDay } from "@/lib/review-events";
 import { subjectLabel } from "@/lib/notebook-fields";
 
@@ -37,24 +38,89 @@ export async function GET() {
         const items = await prisma.errorItem.findMany({
             where: { userId, deletedAt: null },
             select: {
+                id: true,
                 reviewOutcomes: true,
+                /** 【2026-11-04 审计 C2】「今天该练」要排除已掌握（手工标 2 的与 retired 不是一回事） */
+                masteryLevel: true,
                 notebook: { select: { subject: true } },
             },
         });
 
         const today = new Date();
 
+        /**
+         * 【2026-11-04 审计 P0-2】**到期日要读落库的排程，不能现算。**
+         *
+         * `reviewStatusOf().nextDueKey` 是"今天 + 间隔"（间隔最小 1 天）⇒ 永远 ≥ 明天
+         * ⇒ 下面那句 `k < todayKey` 永远不成立 ⇒ 「逾期」恒为 0、预测图是个假图。
+         * 真正的到期日保存在 `ReviewSchedule.scheduledFor`，**写下那一刻就固定**。
+         */
+        const openSchedules = items.length
+            ? await prisma.reviewSchedule.findMany({
+                where: { errorItemId: { in: items.map((i) => i.id) }, completedAt: null },
+                select: { errorItemId: true, scheduledFor: true },
+            })
+            : [];
+        const scheduledDueByItem = earliestOpenDueKey(openSchedules);
+
+        /**
+         * 【2026-11-04 P0-2 补】**每题最后一次真实复习是哪天。**
+         *
+         * 真机库验过：`ReviewSchedule` 只有 2 条（他几乎不走"详情页保存"那条路），
+         * 光靠排程表等于没修 —— 而 `ReviewEvent` 有 129 条。
+         * `occurredOn` 存的是本地日键（客户端算好），不受容器 UTC 影响，比 createdAt 可靠。
+         */
+        const lastEvents = items.length
+            ? await prisma.reviewEvent.groupBy({
+                by: ["errorItemId"],
+                where: { userId, errorItemId: { in: items.map((i) => i.id) } },
+                _max: { occurredOn: true },
+            })
+            : [];
+        const lastEventOnByItem = new Map<string, string | null>(
+            lastEvents.map((e) => [e.errorItemId, e._max.occurredOn ?? null]),
+        );
+
         /** 每道题算一次状态；后面三张图都从这一份结果派生 */
-        const rows = items.map((it) => ({
-            status: reviewStatusOf(it.reviewOutcomes, today),
-            subject: it.notebook?.subject ? subjectLabel(it.notebook.subject) : subjectLabel(null),
-        }));
+        const rows = items.map((it) => {
+            const status = reviewStatusOf(it.reviewOutcomes, today);
+            return {
+                status,
+                /** 【2026-11-04 审计 C2】已掌握：与 `overview.ts` / `cabinet.ts` 同一条线（=== 2） */
+                isMastered: it.masteryLevel === 2,
+                subject: it.notebook?.subject ? subjectLabel(it.notebook.subject) : subjectLabel(null),
+                /**
+                 * 判逾期、画预测都用它 —— 三层兜底，**越靠前越是事实**：
+                 *   ① 最后一次真实复习的日期 + 该等级的间隔（最准）
+                 *   ② 排程表里那条未完成的 `scheduledFor`（存了但没练过）
+                 *   ③ 今天 + 间隔（新题，从没练过，从今天开始排 —— 不算逾期）
+                 */
+                dueKey:
+                    dueKeyFromHistory(lastEventOnByItem.get(it.id), status.intervalDays)
+                    ?? dueKeyFor(scheduledDueByItem.get(it.id), status.nextDueKey),
+            };
+        });
 
         // ── ① 该练队列：按紧迫度分档 ──────────────────────────────
         /** 5 = 新录入 / 连错 ≥2；4 = 错过一次；3 = 对一次；2 = 连对两次；1 = 连对三次 */
         const bucketOf = (s: ReviewStatus): number => (s.state === "retired" ? 0 : s.urgency);
         const counts = new Map<number, number>();
+        let masteredCount = 0;
         for (const r of rows) {
+            /**
+             * 【2026-11-04 审计 C2】**已掌握的不进"该练"分档。**
+             *
+             * 与 `overview.ts` 的 `!isMastered && urgency >= 阈值` 对齐 ——
+             * 原来这里只看 urgency，于是一道手工标了"已掌握"、但复习记录还停在
+             * "错过一次"的题，会被同时算进「已掌握」和「今天该练」，两个数打架。
+             *
+             * 注意"已掌握"有两种来路：① 连对四次 → `state === 'retired'`；
+             * ② 人工标的 `masteryLevel === 2`。两种都归到 retired 那一栏。
+             */
+            if (r.isMastered || r.status.state === "retired") {
+                masteredCount += 1;
+                continue;
+            }
             const k = bucketOf(r.status);
             counts.set(k, (counts.get(k) ?? 0) + 1);
         }
@@ -62,7 +128,7 @@ export async function GET() {
             urgency: u,
             count: counts.get(u) ?? 0,
         }));
-        const retired = counts.get(0) ?? 0;
+        const retired = masteredCount;
 
         /** 今天该练 = 紧迫度 ≥ 4。阈值与 `lib/overview.ts` 的 OVERVIEW_URGENT_THRESHOLD 同一条线。 */
         const dueToday = buckets.filter((b) => b.urgency >= 4).reduce((n, b) => n + b.count, 0);
@@ -95,7 +161,7 @@ export async function GET() {
         const forecast: { date: string; count: number }[] = [];
         const keyToCount = new Map<string, number>();
         for (const r of rows) {
-            const k = r.status.nextDueKey;
+            const k = r.dueKey;   // 【P0-2】读落库排程，不再用 nextDueKey（那是"今天+间隔"）
             if (!k) continue; // 已退休的没有下次
             keyToCount.set(k, (keyToCount.get(k) ?? 0) + 1);
         }
@@ -110,7 +176,8 @@ export async function GET() {
         const todayKey = format(today, "yyyy-MM-dd");
         let overdue = 0;
         for (const r of rows) {
-            const k = r.status.nextDueKey;
+            const k = r.dueKey;
+            /** 【P0-2】这条现在真的会命中了 —— 到期日来自 scheduledFor，会过期 */
             if (k && k < todayKey) overdue += 1;
         }
 

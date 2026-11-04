@@ -75,8 +75,12 @@ describe('/api/tags', () => {
             await GET_STATS();
 
             expect(mocks.mockPrismaErrorItem.findMany).toHaveBeenCalledWith({
-                where: { userId: 'user-123' },
-                select: { knowledgePoints: true },
+                /* 【2026-11-04 审计 A4】统计改读 `tags` 关系；同时排除回收箱 */
+                where: expect.objectContaining({ userId: 'user-123' }),
+                select: expect.objectContaining({
+                    knowledgePoints: true,
+                    tags: { select: { name: true } },
+                }),
             });
         });
 

@@ -26,6 +26,7 @@
 import { addDays, dayKey, parseDayKey } from './calendar-grid';
 import {
     normalizeReviewOutcomes,
+    normalizeRecentOutcomes,
 } from './review-outcomes';
 import { normalizeManageType } from './manage-type';
 // 【2026-10-13】⑦「今天先练这几道」用状态机算紧迫度（规则只在那一个模块里）
@@ -238,6 +239,15 @@ export function dueReviewItems(
 
     for (const q of questions) {
         if ((Number(q.printCount) || 0) <= 0) continue;
+        /**
+         * 【2026-11-04 审计 C1】**已掌握的题不再进"该练"。**
+         *
+         * 原来这里不排除 `masteryLevel === 2`：一道题被标"已掌握"之后，
+         * 只要等级倒数到期，仍然会出现在任务卡里 —— 那块永远清不完，
+         * 而且和他看到的"已掌握 N 道"自相矛盾。
+         * 判据与 `overview.ts`「今天该练」同一条线：**已掌握的不算**。
+         */
+        if (Number(q.masteryLevel) === 2) continue;
 
         const countdown = Number(q.levelCountdown);
         // 老题可能没这个数（`levelCountdown` 是 2026-10-15 才加的列）⇒ 交给别的块（待打印 / 今天先练）
@@ -476,6 +486,16 @@ export interface UpgradeSuggestion {
  *       并补了单测把这条钉住。若他要求"未定一律不提示"，改这里 + 改那条单测即可。
  * ⚠️ 只数 `planned` 三格、**不重复数 `last`** —— `last` 常常就是计划内那一次同步过来的，
  *    两处都数会把同一件事算两遍（见 review-outcomes.ts 规矩①）。
+ *
+ * 【2026-11-04 修，审计 P0-1】**上面这条"只数 planned"的规矩，正是这一页恒空的原因。**
+ *   写入侧早改成 `serializeRecentOutcomes()`，存的是 `{"recent":[...]}`；
+ *   而 `normalizeReviewOutcomes(...).planned` 对 `recent` 形状恒为 null
+ *   ⇒ `wrongCount` 永远是 0 ⇒ 达不到阈值 2 ⇒ 「建议深挖」整页空白，
+ *   点「留级」还会记下"当时错了 0 次"。
+ *
+ *   改用 `normalizeRecentOutcomes()` —— 它**自己也认老形状**（内部展开 legacy），
+ *   所以历史数据不会丢。语义也更对：原来数的是"计划内错了几次"（假设），
+ *   现在数的是"最近 4 次实际错了几个"（事实），这才是"该不该深挖"的依据。
  */
 export function upgradeSuggestions(
     questions: readonly CabinetQuestion[],
@@ -484,8 +504,8 @@ export function upgradeSuggestions(
     const out: UpgradeSuggestion[] = [];
     for (const q of questions) {
         if (normalizeManageType(q.manageType) === 'deep') continue;
-        const planned = normalizeReviewOutcomes(q.reviewOutcomes).planned;
-        const wrongCount = planned.filter((v) => v === 'wrong').length;
+        const recent = normalizeRecentOutcomes(q.reviewOutcomes);
+        const wrongCount = recent.filter((v) => v === 'wrong').length;
         if (wrongCount < options.suggestUpgradeMinWrong) continue;
         /**
          * 【2026-10-20 第 6 条】她点过「留级」的，只要**错得不比当时多**就不再提示。

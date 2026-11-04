@@ -126,6 +126,14 @@ export interface ReviewStatus {
     urgency: 1 | 2 | 3 | 4 | 5;
     /** 建议下次复练的日期（`YYYY-MM-DD`，按**今天**起算）；`null` = 退休，不再排 */
     nextDueKey: string | null;
+    /**
+     * 【2026-11-04 审计 P0-2】这个等级对应的**间隔天数**（`LEVEL_INTERVAL_DAYS` 的取值）；退休为 null。
+     *
+     * 为什么把它暴露出来：判"逾期"不能拿 `nextDueKey`（那是"今天+间隔"，永远 ≥ 明天），
+     * 正确算法是 **最后一次真实复习的日期 + 这个间隔**。
+     * 间隔表只有这一处，别让调用方自己去查表 —— 那必然分叉。
+     */
+    intervalDays: number | null;
     /** 一并记过几次结果（**证据条数** —— 显示判断时要把它一起亮出来，别让人以为很准） */
     evidenceCount: number;
 }
@@ -219,6 +227,7 @@ export function reviewStatusOf(outcomes: unknown, today: Date = new Date()): Rev
         wrongStreak,
         urgency,
         nextDueKey: offset === null || offset === undefined ? null : addDays(dayKey(today), offset),
+        intervalDays: offset === null || offset === undefined ? null : offset,
         evidenceCount: events.length,
     };
 }

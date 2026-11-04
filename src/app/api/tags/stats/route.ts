@@ -40,10 +40,18 @@ export async function GET() {
         }
 
         // 只统计当前用户的题
+        /**
+         * 【2026-11-04 审计 A4】**读 `tags` 关系，不是那列已废弃的 `knowledgePoints`。**
+         *
+         * 两段式归位只写关系、不写那列 ⇒ 原来这些题在这里恒为 0，
+         * 标签树上的 `(N)` 计数跟着全错（他看到的"这个词有 5 道题"是假的）。
+         * 那列还带着读一次，只为兼容"关系还没建"的老数据。
+         */
         const errorItems = await prisma.errorItem.findMany({
-            where: { userId: user.id },
+            where: { userId: user.id, deletedAt: null },
             select: {
                 knowledgePoints: true,
+                tags: { select: { name: true } },
             },
         });
 
@@ -51,6 +59,16 @@ export async function GET() {
         const tagStats: Record<string, number> = {};
 
         errorItems.forEach((item) => {
+            /* 首选：标签关系（真源）。`?.` 是给"老测试 mock 没给这一列"兜底 */
+            const rel = item.tags ?? [];
+            if (rel.length > 0) {
+                rel.forEach((t) => {
+                    const name = (t.name ?? "").trim();
+                    if (name) tagStats[name] = (tagStats[name] || 0) + 1;
+                });
+                return;
+            }
+            /* 兜底：老数据只有那一列 */
             if (item.knowledgePoints) {
                 try {
                     const tags = JSON.parse(item.knowledgePoints);

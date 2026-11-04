@@ -238,6 +238,33 @@ describe('⑥ 建议升为深挖', () => {
     const withOutcomes = (id: string, manageType: string | null, planned: (string | null)[]) =>
         q({ id, manageType, printCount: 1, lastPrintedAt: new Date(2026, 8, 1), reviewOutcomes: { planned, last: null } });
 
+    /**
+     * ★★ 2026-11-04 补（审计 P0-1 的回归钉）
+     *
+     * 写入侧从 10 月起就改成 `{"recent":[…4 条]}` 了，但这里一直数旧的 `planned` ——
+     * 新数据下 `planned` 恒为 null ⇒ **「建议深挖」整页空白了好几个版本**，
+     * 而且点「留级」还会存下"当时错了 0 次"。
+     *
+     * 这条测试用**新形状**造数据。如果哪天有人又改回读 `planned`，它会立刻红。
+     */
+    const withRecent = (id: string, manageType: string | null, recent: string[]) =>
+        q({ id, manageType, printCount: 1, lastPrintedAt: new Date(2026, 8, 1), reviewOutcomes: { recent } });
+
+    it('新形状 recent：错 2 次 ⇒ 进建议（P0-1 回归）', () => {
+        const res = upgradeSuggestions([withRecent('1', 'review', ['wrong', 'wrong'])]);
+        expect(res).toHaveLength(1);
+        expect(res[0].wrongCount).toBe(2);
+    });
+
+    it('新形状 recent：只错 1 次 ⇒ 不进建议', () => {
+        expect(upgradeSuggestions([withRecent('1', 'review', ['right', 'wrong'])])).toEqual([]);
+    });
+
+    it('新形状 recent：错 1 次 + 连对 3 次（共 4 条）⇒ 只数错的', () => {
+        const res = upgradeSuggestions([withRecent('1', 'review', ['wrong', 'wrong', 'right', 'right'])]);
+        expect(res[0]?.wrongCount).toBe(2);
+    });
+
     it('不是深挖 + 计划复习错 2 次 ⇒ 进建议', () => {
         const res = upgradeSuggestions([withOutcomes('1', 'review', ['wrong', 'wrong', null])]);
         expect(res).toHaveLength(1);

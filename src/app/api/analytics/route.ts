@@ -34,11 +34,18 @@ export async function GET(req: Request) {
         });
 
         // 2. Mastered Count
+        /**
+         * 【2026-11-04 审计 C2】**必须等于 2，不能 `gt: 0`。**
+         *
+         * 四分法是 0 = 新 / 1 = 复练中 / 2 = 已掌握。
+         * 原来这里写 `gt 0`，把"复练中"也算成掌握 ⇒ 掌握率虚高，
+         * 而且和首页、内阁的"已掌握"永远对不上（那两处用的是 `=== 2`）。
+         */
         const masteredCount = await prisma.errorItem.count({
             where: {
                 userId,
                 deletedAt: null,
-                masteryLevel: { gt: 0 }
+                masteryLevel: 2
             }
         });
 
