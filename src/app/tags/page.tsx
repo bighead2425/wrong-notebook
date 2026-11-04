@@ -300,12 +300,33 @@ export default function TagsPage() {
 
     // 删除自定义标签
     const handleRemoveCustomTag = async (tagId: string, tagName: string, subject: SubjectKey) => {
-        if (!confirm((t.tags?.custom?.deleteConfirm || "Are you sure you want to delete tag \"{tag}\"?").replace("{tag}", tagName))) {
-            return;
+        /**
+         * 【2026-11-04 审计 A5】**删之前先看有多少道题在用。**
+         *
+         * 原来一句 confirm 就删：题上这个标签直接消失，没有任何痕迹；
+         * 自定义标签底下要是挂着子节点，还会被抬成根节点。
+         * 用列表接口拿 `total`（`scope=all` 连已掌握/归档的也算上），
+         * 把"几道题会失去它"摆在他面前再让他决定。
+         */
+        let usedBy = 0;
+        try {
+            const probe = await apiClient.get<{ total: number }>(
+                `/api/error-items/list?tagId=${encodeURIComponent(tagId)}&pageSize=1&scope=all`,
+            );
+            usedBy = probe.total ?? 0;
+        } catch {
+            /* 查不到就当 0 —— 不能因为查引用失败就卡住删除 */
         }
 
+        const question = usedBy > 0
+            ? `有 ${usedBy} 道题在用「${tagName}」。\n\n删了之后这些题会失去这个标签，且无法恢复。确定删除？`
+            : (t.tags?.custom?.deleteConfirm || "Are you sure you want to delete tag \"{tag}\"?").replace("{tag}", tagName);
+
+        if (!confirm(question)) return;
+
         try {
-            await apiClient.delete(`/api/tags?id=${tagId}`);
+            /* force=1 = "人已经看见了数量，确认要删"（后端拿它区分"没传"） */
+            await apiClient.delete(`/api/tags?id=${tagId}${usedBy > 0 ? "&force=1" : ""}`);
             await fetchCustomTags();
             await fetchTags(subject);
         } catch (error) {

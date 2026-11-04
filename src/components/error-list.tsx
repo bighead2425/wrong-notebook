@@ -238,7 +238,25 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
         router.push(withBack(`/print-preview?${params.toString()}`));
     };
 
-    const handleTagClick = (tag: string) => {
+    /**
+     * 点卡片上的标签 ⇒ 筛同类的题。
+     *
+     * 【2026-11-04 审计 A3】**优先按 id**。
+     * 原来只认名字（`?tag=`），「计算」「阅读理解」这类跨学科/跨册同名的词
+     * 会把别册的题也筛进来 —— 他看到的"这个知识点有 20 道"里有一半不是。
+     * 有 id 走 `tagIds`（OR 语义，按 id），没有（老数据）才退回名字。
+     *
+     * 两个口径不能同时生效（后端是 AND，会互相掐）⇒ 切到一边时清掉另一边。
+     */
+    const handleTagClick = (tag: string, tagId?: string) => {
+        if (tagId) {
+            setSelectedTag(null);
+            setSelectedTagIds((prev) =>
+                prev.includes(tagId) ? prev.filter((x) => x !== tagId) : [...prev, tagId],
+            );
+            return;
+        }
+        setSelectedTagIds([]);
         setSelectedTag(selectedTag === tag ? null : tag);
     };
 
@@ -657,6 +675,12 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
                         hideGrade={!!notebookId || !!tagId}
                         /** 【2026-11-02】两个下拉换成树形多选按钮（他第 4 条） */
                         hideChapterTag
+                        /**
+                         * 【2026-11-04 审计 A2】`/by-tag` 页不显示「知识点检索」——
+                         * 页面本身已经限定在一个知识点里，再从**全学科**勾会筛到范围外，
+                         * 结果空列表，看起来像"这个标签下没题"。
+                         */
+                        hideTagFilter={!!tagId}
                     />
                 </div>
                 {/* 【2026-09-30 他要求重排】原来「全部 / 深挖 / 复练 / 未定」四个按钮占一行，
@@ -785,9 +809,9 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
                         onTrash={(e) => trashItem(item.id, e)}
                         onDeepDivePrint={(e) => openDeepDivePrint(item.id, e)}
                         onToggleTagsExpanded={(e) => toggleTagsExpanded(item.id, e)}
-                        onTagClick={(tag, e) => {
+                        onTagClick={(tag, e, tagId) => {
                             e.preventDefault();
-                            handleTagClick(tag);
+                            handleTagClick(tag, tagId);
                         }}
                     />
                 ))}

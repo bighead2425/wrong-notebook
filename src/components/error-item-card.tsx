@@ -85,7 +85,12 @@ export interface ErrorItemCardProps {
     /** 标签：展开态与点击（列表页用来筛选题；扫码页不传 = 纯展示） */
     tagsExpanded?: boolean;
     onToggleTagsExpanded?: (e: ReactMouseEvent) => void;
-    onTagClick?: (tag: string, e: ReactMouseEvent) => void;
+    /**
+     * 点标签 ⇒ 筛同类的题。
+     * 【2026-11-04 审计 A3】第三个参数带出**节点 id**：调用方有 id 就按 id 筛，
+     * 没有（老数据）才退回名字。名字会串，id 不会。
+     */
+    onTagClick?: (tag: string, e: ReactMouseEvent, tagId?: string) => void;
     /** 当前选中的标签（高亮用）；不传 = 不高亮 */
     selectedTag?: string | null;
 
@@ -148,8 +153,19 @@ export function ErrorItemCard({
 
     // 优先使用 tags 关联，回退到 knowledgePoints
     let tags: string[] = [];
+    /**
+     * 【2026-11-04 审计 A3】名字 → id。
+     *
+     * 点标签筛题时**必须按 id**：「计算」「阅读理解」这类名字跨学科/跨册都有，
+     * 按名字会把别册的题也筛进来（`?tag=` 走的就是名字）。
+     * 老数据只有名字（关系没建）时查不到 id，退回按名字筛 —— 行为与以前一致。
+     */
+    const tagIdByName = new Map<string, string>();
     if (item.tags && item.tags.length > 0) {
         tags = item.tags.map((tag) => tag.name);
+        for (const t of item.tags) {
+            if (t.id) tagIdByName.set(t.name, t.id);
+        }
     } else {
         try {
             tags = JSON.parse(item.knowledgePoints || "[]");
@@ -319,7 +335,7 @@ export function ErrorItemCard({
                                     onClick={
                                         selectMode || !onTagClick
                                             ? undefined
-                                            : (e) => onTagClick(tag, e)
+                                            : (e) => onTagClick(tag, e, tagIdByName.get(tag))
                                     }
                                 >
                                     {tag}

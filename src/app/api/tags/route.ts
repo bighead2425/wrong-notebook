@@ -210,11 +210,30 @@ export async function DELETE(request: NextRequest) {
             return NextResponse.json({ error: 'Tag not found or not deletable' }, { status: 404 });
         }
 
+        /**
+         * 【2026-11-04 审计 A5】**删之前先告诉它有多少道题在用。**
+         *
+         * 原来一点就删：题上这个标签直接消失（`onDelete: SetNull` 只是清外键，
+         * 那道题从此"少了一个知识点"，没有任何痕迹）；子节点还会被抬成根节点。
+         * 现在：有题在用且没带 `force=1` ⇒ 回 409 + 数量，前端确认后再带 force 重发。
+         * 带 force 是"人已经看见了，确认要删"的显式信号 —— 与"没传"必须能区分。
+         */
+        const usedBy = await prisma.errorItem.count({
+            where: { tags: { some: { id: tagId } } },
+        });
+        const force = searchParams.get('force') === '1';
+        if (usedBy > 0 && !force) {
+            return NextResponse.json(
+                { code: 'TAG_IN_USE', usedBy, message: `有 ${usedBy} 道题在用这个标签` },
+                { status: 409 },
+            );
+        }
+
         await prisma.knowledgeTag.delete({
             where: { id: tagId },
         });
 
-        return NextResponse.json({ success: true });
+        return NextResponse.json({ success: true, detachedFrom: usedBy });
 
     } catch (error) {
         logger.error({ error }, 'Error deleting tag');

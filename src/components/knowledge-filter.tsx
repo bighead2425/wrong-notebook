@@ -39,6 +39,15 @@ interface KnowledgeFilterProps {
      * 树形对话框是**一次看全**（科目→册→章→节→知识点），还能多选。
      */
     hideChapterTag?: boolean;
+    /**
+     * 【2026-11-04 审计 A2】**连"知识点检索"按钮也不显示。**
+     *
+     * 用在 `/by-tag/[id]` 那一页：它本身已经限定在"某个知识点的题"里了，
+     * 再让她从**全学科**里勾一个 —— 勾到范围外的，结果就是空列表，
+     * 她会以为"这个标签下没题"（实际是筛到外面去了）。
+     * 页面级范围与用户级筛选在这里不该叠在一起。
+     */
+    hideTagFilter?: boolean;
     onFilterChange: (filters: {
         gradeSemester?: string;
         chapter?: string;
@@ -79,6 +88,7 @@ export function KnowledgeFilter({
     subjectName,
     hideGrade = false,
     hideChapterTag = false,
+    hideTagFilter = false,
     onFilterChange,
     className
 }: KnowledgeFilterProps) {
@@ -281,7 +291,7 @@ export function KnowledgeFilter({
              * 【2026-11-02】两个下拉换成**一个树形多选按钮**（`hideChapterTag` 时）。
              * 旧的两个下拉保留在 else 分支里 —— 万一别处还想用，不删。
              */}
-            {hideChapterTag ? (
+            {hideTagFilter ? null : hideChapterTag ? (
                 <>
                     <Button variant="outline" size="sm" onClick={() => setPickerOpen(true)}>
                         <TagIcon className="mr-1.5 h-3.5 w-3.5" />
