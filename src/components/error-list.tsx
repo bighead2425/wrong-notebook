@@ -837,6 +837,15 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
                     <ErrorItemCard
                         key={item.id}
                         item={item}
+                        /**
+                         * 【2026-11-04 审计 D1】**进详情要带 back。**
+                         *
+                         * 卡片默认 href 是 `/error-items/${id}`（不带来源）⇒
+                         * 从 `/by-tag/x` 点题进去，返回会落到错题本，
+                         * 前面那两个页面的 `?back=` 白写了。
+                         * `withBack` 取当前地址，所以 `/notebooks` 和 `/by-tag` 两边都对。
+                         */
+                        href={withBack(`/error-items/${item.id}`)}
                         /** 【2026-10-10】主题深红 / 附题绿的角标 —— 角色是列表接口算好的 */
                         linkRole={item.linkRole}
                         selectMode={isSelectMode}

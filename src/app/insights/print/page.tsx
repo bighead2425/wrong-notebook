@@ -336,7 +336,12 @@ function PrintWorkspace({ volId }: { volId: string }) {
                 现在积累纸·打印页面左右又顶在左右边上了"）——与日积月累页同一个包裹。 */}
             <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-3 px-4 py-3 md:px-8 lg:flex-row">
                 {listOpen && (
-                    <aside className="w-full shrink-0 lg:w-[300px]" {...leftSwipe}>
+                    {/*
+                      * 【2026-11-04 审计 E2】**左栏必须 no-print。**
+                      * 它本来只是屏幕上的控制面板（选哪几条、开不开放图片），
+                      * 但打印时它排在内容前面 ⇒ **纸上第一页印的是整页卷列表**。
+                      */}
+                    <aside className="no-print w-full shrink-0 lg:w-[300px]" {...leftSwipe}>
                         <div className="flex max-h-[76vh] flex-col gap-2 overflow-y-auto rounded-md border bg-background p-2">
                             {loading ? (
                                 <div className="flex items-center justify-center py-10 text-muted-foreground">

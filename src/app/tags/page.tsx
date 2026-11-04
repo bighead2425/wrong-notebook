@@ -955,7 +955,13 @@ export default function TagsPage() {
             </div>
 
             <Tabs defaultValue="standard" className="w-full">
-                <TabsList className="grid w-full grid-cols-4 mb-6">
+                {/*
+                  * 【2026-11-04 审计 E1】**手机上 4 列等分会被压成 82px，内容区只剩 58px**，
+                  * 「待归类 (12)」直接压字。这里不改成 2 列，而是**允许横向滚动**——
+                  * 手机上手指一划就能看全，比挤成两行好看。
+                  */}
+                <div className="-mx-4 mb-6 overflow-x-auto px-4">
+                    <TabsList className="grid w-max min-w-full grid-cols-4">
                     <TabsTrigger value="standard">{t.tags?.tabs?.standard || "Standard Tags"}</TabsTrigger>
                     <TabsTrigger value="custom">{t.tags?.tabs?.custom || "Custom Tags"}</TabsTrigger>
                     <TabsTrigger value="pending">
@@ -963,6 +969,7 @@ export default function TagsPage() {
                     </TabsTrigger>
                     <TabsTrigger value="stats">{t.tags?.tabs?.stats || "Usage Statistics"}</TabsTrigger>
                 </TabsList>
+                </div>
 
                 <TabsContent value="standard" className="space-y-4">{renderStandardTags()}</TabsContent>
                 <TabsContent value="custom">{renderCustomTags()}</TabsContent>

@@ -30,6 +30,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Printer, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/lib/api-client";
+import { withBack } from "@/lib/back";
 import { ErrorList } from "@/components/error-list";
 import { useLanguage } from "@/contexts/LanguageContext";
 
@@ -101,7 +102,8 @@ export default function ByTagPage() {
          * 所以 `tagId + includeChildren` 在那边照样生效。
          * 不在这一页另做一套"勾选 + 组卷"——那是组卷页的事，两处各写一遍必然走样。
          */
-        router.push(`/print-preview?tagId=${encodeURIComponent(tag.id)}&includeChildren=1`);
+        /* 【2026-11-04 审计 D2】带 back —— 否则打印完按返回会落到 /notebooks */
+        router.push(withBack(`/print-preview?tagId=${encodeURIComponent(tag.id)}&includeChildren=1`));
     };
 
     return (

@@ -23,7 +23,7 @@
  * 下一轮复习就不知道该补哪一块。顺序定了，合并就是确定性的，不需要人再判。
  *
  * ⚠️ 本模块的值存在 `ErrorItem.mistakeCategory` 这一列，**刻意与 errorType 分开**：
- * `errorType` 是外部导入透传的英文自由文本（api/import、openclaw/batch-upload 会写），
+ * `errorType` 是外部导入透传的英文自由文本（api/import 会写），
  * 语义不受控；只有本模块的值才是受控枚举。
  */
 
