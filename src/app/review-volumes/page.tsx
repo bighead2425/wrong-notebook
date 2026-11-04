@@ -53,6 +53,7 @@ import {
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api-client";
 import { useBackHref } from "@/lib/back";
+import { resolveVolumeSnapshot } from "@/lib/volume-snapshot";
 import type { ErrorItem, PaginatedResponse } from "@/types/api";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { whenImagesDecoded, whenImagesSettled } from "@/lib/print-image-readiness";
@@ -945,9 +946,19 @@ export default function ReviewVolumesPage() {
                               pageIndex: r.pageIndex,
                               columnIndex: r.columnIndex,
                               seqInColumn: r.seqInColumn,
-                              itemNo: item?.source ?? row?.itemNo ?? null,
-                              questionText: (item?.questionText || item?.ocrText || row?.questionText) ?? null,
-                              manageType: item?.manageType ?? row?.manageType ?? null,
+                              /**
+                                      * 【2026-11-04 审计 C4】**快照优先，题库现值只是兜底。**
+                                      *
+                                      * 原来写反了：只要题现在有内容，就拿**现在**的覆盖快照。
+                                      * 后果是她只调一下留白、点"更新组卷"，卷里的题干就被刷成
+                                      * 现值（可能后来被 OCR 修正过、被 AI 改过）——
+                                      * **补印出来的纸和已经发出去的那张对不上**，
+                                      * 而纸上那份才是"她做过题、划过勾"的凭证。
+                                      *
+                                      * 定盘星：卷内必须存快照，页归属只认快照。
+                                      * 现值只在"这一行还没有快照"（新建行）时才用。
+                                      */
+                                      ...resolveVolumeSnapshot(row, item),
                               /** 主题那一行（左栏）没有"留白行数"这个东西，原样回写别乱改 */
                               blankLines: r.columnIndex === 0 ? (row?.blankLines ?? 0) : blankValueOf(r.key),
                               figureScale: figureScaleOf(r.key),
@@ -964,9 +975,19 @@ export default function ReviewVolumesPage() {
                                       pageIndex: pi + 1,
                                       columnIndex: ci,
                                       seqInColumn: bi + 1,
-                                      itemNo: item?.source ?? row?.itemNo ?? null,
-                                      questionText: (item?.questionText || item?.ocrText || row?.questionText) ?? null,
-                                      manageType: item?.manageType ?? row?.manageType ?? null,
+                                      /**
+                                      * 【2026-11-04 审计 C4】**快照优先，题库现值只是兜底。**
+                                      *
+                                      * 原来写反了：只要题现在有内容，就拿**现在**的覆盖快照。
+                                      * 后果是她只调一下留白、点"更新组卷"，卷里的题干就被刷成
+                                      * 现值（可能后来被 OCR 修正过、被 AI 改过）——
+                                      * **补印出来的纸和已经发出去的那张对不上**，
+                                      * 而纸上那份才是"她做过题、划过勾"的凭证。
+                                      *
+                                      * 定盘星：卷内必须存快照，页归属只认快照。
+                                      * 现值只在"这一行还没有快照"（新建行）时才用。
+                                      */
+                                      ...resolveVolumeSnapshot(row, item),
                                       blankLines: blankValueOf(b.key),
                                       figureScale: figureScaleOf(b.key),
                                   };
