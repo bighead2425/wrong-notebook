@@ -335,12 +335,12 @@ function PrintWorkspace({ volId }: { volId: string }) {
             {/* ⚠️ 内容**居中限宽**（他："日积月累页面的上面就比较合适，
                 现在积累纸·打印页面左右又顶在左右边上了"）——与日积月累页同一个包裹。 */}
             <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-3 px-4 py-3 md:px-8 lg:flex-row">
+                {/* 【2026-11-04 审计 E2】**左栏必须 no-print。**
+                    它本来只是屏幕上的控制面板（选哪几条、开不开放图片），
+                    但打印时它排在内容前面 ⇒ **纸上第一页印的是整页卷列表**。
+                    ⚠️ 注释要写在这个位置：`{listOpen && (` 里面只能有一个表达式，
+                       塞注释进去会破坏 JSX 结构（本行上一版就是这么坏的）。 */}
                 {listOpen && (
-                    {/*
-                      * 【2026-11-04 审计 E2】**左栏必须 no-print。**
-                      * 它本来只是屏幕上的控制面板（选哪几条、开不开放图片），
-                      * 但打印时它排在内容前面 ⇒ **纸上第一页印的是整页卷列表**。
-                      */}
                     <aside className="no-print w-full shrink-0 lg:w-[300px]" {...leftSwipe}>
                         <div className="flex max-h-[76vh] flex-col gap-2 overflow-y-auto rounded-md border bg-background p-2">
                             {loading ? (

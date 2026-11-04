@@ -1,11 +1,12 @@
 "use client";
 import { withBack } from "@/lib/back";
+import { TagPickerDialog } from "@/components/tag-picker-dialog";
 
 import { useEffect, useState, useRef, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Clock, ChevronDown, Printer, ListChecks, Trash2, X, Plus, Link2, Loader2 } from "lucide-react";
+import { Search, Clock, ChevronDown, Printer, ListChecks, Trash2, X, Plus, Link2, Loader2, Tags } from "lucide-react";
 import {
     Dialog,
     DialogContent,
@@ -116,6 +117,17 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
      * 与旧的 `selectedTag`（单个、按名字）并存不冲突：`hideChapterTag` 模式下只走这个。
      */
     const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+    /**
+     * 【2026-11-04】**批量改标签**（他点了要的功能）。
+     *
+     * 多选后一次给 N 道题加/删同一个标签。
+     * 只做「加 / 删」不做「覆盖」：覆盖会把原来的标签全抹掉、且没法撤销。
+     */
+    const [batchTagOpen, setBatchTagOpen] = useState(false);
+    const [batchTagMode, setBatchTagMode] = useState<"add" | "remove">("add");
+    const [batchPickerOpen, setBatchPickerOpen] = useState(false);
+    const [batchPicked, setBatchPicked] = useState<{ id: string; name: string }[]>([]);
+    const [batchSaving, setBatchSaving] = useState(false);
     const [expandedTags, setExpandedTags] = useState<Set<string>>(new Set());
     /**
      * ⭐【2026-10-15 **合并成一个**】「掌握 / 等级」筛选（`docs\14` §7.5）。
@@ -323,6 +335,35 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
 
     /** 清除：一键把所有选中状态抹掉（他要求在「取消」左边，蓝色字） */
     const clearSelection = () => setSelectedIds(new Set());
+
+    /**
+     * 【2026-11-04】**批量改标签：提交**。
+     *
+     * 只发「加」或「删」中的一个方向 —— 接口也拒"同一个标签既加又删"。
+     * 成功后清空选择并重新取数（让标签立刻反映在卡片上）。
+     */
+    const submitBatchTags = async () => {
+        if (batchPicked.length === 0 || batchSaving) return;
+        const tagIds = batchPicked.map((t) => t.id);
+        const names = batchPicked.map((t) => t.name).join("、");
+        const isAdd = batchTagMode === "add";
+        setBatchSaving(true);
+        try {
+            const res = await apiClient.post<{ updated: number }>("/api/error-items/batch-tags", {
+                ids: [...selectedIds],
+                ...(isAdd ? { add: tagIds } : { remove: tagIds }),
+            });
+            setBatchTagOpen(false);
+            setBatchPicked([]);
+            clearSelection();
+            await fetchItems();
+            alert(isAdd ? `已给 ${res.updated} 道题加上「${names}」` : `已从 ${res.updated} 道题去掉「${names}」`);
+        } catch (e) {
+            alert(e instanceof Error ? e.message : "批量改标签失败");
+        } finally {
+            setBatchSaving(false);
+        }
+    };
 
     /**
      * 【2026-09-29】列表页**单题删除**（他要求：不进详情页也能删某一道）。
@@ -912,6 +953,20 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
                                 <X className="mr-2 h-4 w-4" />
                                 {t.notebook?.cancelSelect || "取消"}
                             </Button>
+                            {/* 【2026-11-04】**批量改标签** —— 他点的功能。
+                                改标签原来只能一题一题进详情页，挂错册要点几十次。 */}
+                            <Button
+                                variant="outline"
+                                onClick={() => {
+                                    setBatchPicked([]);
+                                    setBatchTagMode("add");
+                                    setBatchTagOpen(true);
+                                }}
+                                disabled={selectedIds.size === 0}
+                            >
+                                <Tags className="mr-2 h-4 w-4" />
+                                {L("改标签", "Edit tags")}
+                            </Button>
                             <Button
                                 variant="destructive"
                                 onClick={handleBatchDelete}
@@ -924,6 +979,82 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
                     </div>
                 </div>
             )}
+
+            {/* 【2026-11-04】**批量改标签**对话框。
+                只给「加 / 删」，不给「覆盖」—— 覆盖会抹掉原有标签且无法撤销。 */}
+            <Dialog open={batchTagOpen} onOpenChange={setBatchTagOpen}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>
+                            给选中的 {selectedIds.size} 道题改标签
+                        </DialogTitle>
+                        <DialogDescription>
+                            {batchTagMode === "add"
+                                ? "选中的标签会加到这 N 道题上，它们原有的标签不动。"
+                                : "选中的标签会从这 N 道题上移除，其他标签不动。"}
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-3">
+                        <div className="flex gap-2">
+                            <Button
+                                size="sm"
+                                variant={batchTagMode === "add" ? "default" : "outline"}
+                                onClick={() => setBatchTagMode("add")}
+                            >
+                                加上
+                            </Button>
+                            <Button
+                                size="sm"
+                                variant={batchTagMode === "remove" ? "default" : "outline"}
+                                onClick={() => setBatchTagMode("remove")}
+                            >
+                                去掉
+                            </Button>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 rounded-md border p-2 min-h-[44px]">
+                            {batchPicked.map((t) => (
+                                <Badge key={t.id} variant="secondary" className="flex items-center gap-1">
+                                    {t.name}
+                                    <button
+                                        type="button"
+                                        className="hover:text-destructive"
+                                        onClick={() => setBatchPicked((prev) => prev.filter((x) => x.id !== t.id))}
+                                    >
+                                        <X className="h-3 w-3" />
+                                    </button>
+                                </Badge>
+                            ))}
+                            <Button size="sm" variant="outline" onClick={() => setBatchPickerOpen(true)}>
+                                <Plus className="mr-1 h-3.5 w-3.5" />
+                                选择标签
+                            </Button>
+                        </div>
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="ghost" onClick={() => setBatchTagOpen(false)} disabled={batchSaving}>
+                            取消
+                        </Button>
+                        <Button
+                            onClick={() => void submitBatchTags()}
+                            disabled={batchPicked.length === 0 || batchSaving}
+                        >
+                            {batchSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                            确定
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <TagPickerDialog
+                open={batchPickerOpen}
+                onOpenChange={setBatchPickerOpen}
+                multiple
+                initialPicked={batchPicked}
+                onPick={(picked) => setBatchPicked(picked)}
+            />
 
             {/* 【2026-10-10】「建立关联」对话框：选一道当主题，其余挂到它下面。
                 ⚠️ 主题**只能从本页看得见的题里选**（跨页选中的那些照样会被挂上，
