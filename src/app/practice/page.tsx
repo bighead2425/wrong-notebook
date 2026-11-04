@@ -133,7 +133,7 @@ function PracticeContent() {
     }
 
     return (
-        <div className="max-w-3xl mx-auto space-y-8">
+        <div className="mx-auto max-w-3xl space-y-8 px-4 py-4">
             <div className="flex justify-between items-center mb-4">
                 {/* 【2026-10-25 路由审计】原来 router.back()：刷新过或直接打开就退站外。
                     改成认入口带来的 back，没有才回主页。 */}
@@ -162,9 +162,9 @@ function PracticeContent() {
 
                 {!question && (
                     <div className="flex flex-col items-center gap-4">
-                        <div className="flex items-center gap-2 bg-muted/50 p-2 rounded-lg">
+                        <div className="flex flex-wrap items-center gap-2 bg-muted/50 p-2 rounded-lg">
                             <span className="text-sm font-medium text-muted-foreground">{t.practice.difficulty?.label || "Difficulty"}:</span>
-                            <div className="flex gap-1">
+                            <div className="flex flex-wrap gap-1">
                                 {[
                                     { value: "easy", label: t.practice.difficulty?.easy || "Easy", color: "bg-green-100 text-green-700 hover:bg-green-200" },
                                     { value: "medium", label: t.practice.difficulty?.medium || "Medium", color: "bg-blue-100 text-blue-700 hover:bg-blue-200" },

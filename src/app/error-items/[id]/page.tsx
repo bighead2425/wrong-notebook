@@ -1581,11 +1581,11 @@ export default function ErrorDetailPage() {
 
                                     <div className="space-y-2.5 text-sm">
                                         {/* 我的错题本：改即存（挪本） */}
-                                        <div className="flex justify-between items-center gap-3">
+                                        <div className="flex flex-wrap justify-between items-center gap-3">
                                             <span className="text-muted-foreground whitespace-nowrap">
                                                 {t.notebooks?.title || 'Notebook'}:
                                             </span>
-                                            <div className="w-[200px] shrink-0">
+                                            <div className="w-[200px] max-w-full shrink-0">
                                                 <NotebookSelector
                                                     value={item.notebookId || undefined}
                                                     onChange={(val) => patchMetadata({ notebookId: val || null })}
@@ -1594,7 +1594,7 @@ export default function ErrorDetailPage() {
                                         </div>
 
                                         {/* 年级/学期：固定清单下拉；旧数据里清单外的值会作为「原值」补在最后 */}
-                                        <div className="flex justify-between items-center gap-3">
+                                        <div className="flex flex-wrap justify-between items-center gap-3">
                                             <span className="text-muted-foreground whitespace-nowrap">
                                                 {t.filter.grade}:
                                             </span>
@@ -1604,7 +1604,7 @@ export default function ErrorDetailPage() {
                                                     patchMetadata({ gradeSemester: v === "__none__" ? null : v })
                                                 }
                                             >
-                                                <SelectTrigger className="w-[160px] h-8">
+                                                <SelectTrigger className="w-[160px] h-8 max-w-full">
                                                     <SelectValue />
                                                 </SelectTrigger>
                                                 <SelectContent>
@@ -1632,13 +1632,13 @@ export default function ErrorDetailPage() {
                                               ⇒ 没打错因时下拉显示的是占位文案（灰字），不是一个可选项。
                                             ⚠️ 三个**组标题**改成黑体、**顶格**（他说的是"改黑体字顶格"）：
                                               SelectLabel 默认有缩进（pl-8），这里 pl-0 顶到最左。 */}
-                                        <div className="flex justify-between items-center gap-3">
+                                        <div className="flex flex-wrap justify-between items-center gap-3">
                                             <span className="text-muted-foreground whitespace-nowrap">错因:</span>
                                             <Select
                                                 value={normalizeMistakeCategory(item.mistakeCategory) ?? ""}
                                                 onValueChange={(v) => patchMetadata({ mistakeCategory: v })}
                                             >
-                                                <SelectTrigger className="w-[160px] h-8">
+                                                <SelectTrigger className="w-[160px] h-8 max-w-full">
                                                     <SelectValue placeholder="未打错因" />
                                                 </SelectTrigger>
                                                 <SelectContent>
@@ -1674,7 +1674,7 @@ export default function ErrorDetailPage() {
                                             选项顺序 = 深挖 → 复练 → 未定（未定挪到最后），
                                             并且**深挖暗红、复练深绿**（色值取自 MANAGE_TYPE_SCREEN_COLOR，
                                             与列表卡片右下角那个小标签同一处取色）。改即落定（manual），服务端留痕。 */}
-                                        <div className="flex justify-between items-center gap-3">
+                                        <div className="flex flex-wrap justify-between items-center gap-3">
                                             <span className="text-muted-foreground whitespace-nowrap">类型:</span>
                                             <Select
                                                 value={item.manageType || "__undecided__"}
@@ -1682,7 +1682,7 @@ export default function ErrorDetailPage() {
                                                     patchMetadata({ manageType: v === "__undecided__" ? null : v })
                                                 }
                                             >
-                                                <SelectTrigger className="w-[160px] h-8">
+                                                <SelectTrigger className="w-[160px] h-8 max-w-full">
                                                     <SelectValue />
                                                 </SelectTrigger>
                                                 <SelectContent>
