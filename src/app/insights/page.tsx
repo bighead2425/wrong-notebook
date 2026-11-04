@@ -41,6 +41,7 @@ import {
 import { BackButton } from '@/components/ui/back-button';
 import { MdEditor } from '@/components/md-editor';
 import { apiClient } from '@/lib/api-client';
+import { withBack } from "@/lib/back";
 import { useLanguage } from '@/contexts/LanguageContext';
 import { processImageFile } from '@/lib/image-utils';
 import { GRADE_SEMESTER_OPTIONS } from '@/lib/grade-semester-options';
@@ -1130,7 +1131,8 @@ export default function InsightsPage() {
                     {/* 【2026-10-13】回**录入页**的入口 —— 他要的那条环："进门就录入，
                         从录入到管理和打印，管理返回录入" ⇒ 管理页必须能再回去写。
                         （页内的「新建」保留：那是"顺手记一条"，不动位置。） */}
-                    <Link href="/insights/write">
+                    {/* 【2026-11-04 审计 D3】带 back —— 否则从写页返回直接回主页 */}
+                    <Link href={withBack("/insights/write")}>
                         <Button variant="outline" size="sm" title={L('去录入页（进门就写的那一页）', 'Go to the writing page')}>
                             <PenLine className="h-4 w-4 sm:mr-1.5" />
                             <span className="hidden sm:inline">{L('去写', 'Write')}</span>

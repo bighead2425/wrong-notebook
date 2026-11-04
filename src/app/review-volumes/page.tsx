@@ -52,6 +52,7 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api-client";
+import { useBackHref } from "@/lib/back";
 import type { ErrorItem, PaginatedResponse } from "@/types/api";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { whenImagesDecoded, whenImagesSettled } from "@/lib/print-image-readiness";
@@ -181,6 +182,12 @@ export default function ReviewVolumesPage() {
      * 只能问完他、再由我们**自己** `router.push`。
      */
     const router = useRouter();
+    /**
+     * 【2026-11-04 审计 D4】返回落点**认 `?back=`**。
+     * 原来脏拦截（有未保存改动）里写死 `router.push("/")` ——
+     * 从别处带着 back 进来，一按返回还是回主页。
+     */
+    const backHref = useBackHref("/");
 
     // ---------- 左栏：卷列表 ----------
     const [volumes, setVolumes] = useState<VolumeSummary[]>([]);
@@ -1276,7 +1283,7 @@ export default function ReviewVolumesPage() {
                             if (!dirty) return;
                             e.preventDefault();
                             e.stopPropagation();
-                            void leaveThen("返回", "Go back", () => router.push("/"));
+                            void leaveThen("返回", "Go back", () => router.push(backHref));
                         }}
                     >
                         <BackButton fallbackUrl="/" className="shrink-0" />

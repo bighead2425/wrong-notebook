@@ -1573,7 +1573,8 @@ function PrintPreviewContent() {
                                 if (!leaveDirty) return;
                                 e.preventDefault();
                                 e.stopPropagation();
-                                void leaveThen("返回", "Go back", () => router.push("/notebooks"));
+                                /* 【D4】尊重 ?back=，别把返回落点写死 */
+                                void leaveThen("返回", "Go back", () => router.push(backHref));
                             }}
                         >
                             <BackButton fallbackUrl="/notebooks" />

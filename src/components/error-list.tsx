@@ -144,6 +144,19 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
     // 分页状态
     const [page, setPage] = useState(1);
     const [pageSize] = useState(DEFAULT_PAGE_SIZE);
+    /**
+     * 【2026-11-04 审计 D5】**筛选与页码要记得住。**
+     *
+     * 原来它们只在内存里：进详情页看一眼再返回，筛选清零、页码回 1、滚动到顶 ——
+     * 他实际是"点进去确认一道题，再回来接着看"这种用法，每次都要重设一遍。
+     *
+     * 存 **sessionStorage**（关标签页就清），按"这一屏是谁"分 key：
+     * `/notebooks/abc` 和 `/by-tag/xyz` 各存各的，不会串。
+     *
+     * `restoredRef` 的作用见下面那个 effect —— 首帧先别查，等筛装置回来。
+     */
+    const storageKey = `wn:errorlist:${notebookId ?? ""}|${tagId ?? ""}`;
+    const restoredRef = useRef(false);
     const [total, setTotal] = useState(0);
     const [totalPages, setTotalPages] = useState(0);
     // 多选模式状态
@@ -490,6 +503,12 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
     const prevFiltersRef = useRef({ search, timeFilter, selectedTag, selectedTagIds, notebookId, tagId, gradeFilter, chapterFilter, manageTypeFilter, levelSelection, datePoints, dateRange });
 
     useEffect(() => {
+        /**
+         * 【D5】**首帧先别查** —— 等下面那个"恢复筛选"的 effect 先把筛装置回去。
+         * 否则会先用默认条件白查一次、再带着恢复的条件查第二次（闪一下 + 多一次请求）。
+         */
+        if (!restoredRef.current) return;
+
         const prevFilters = prevFiltersRef.current;
         const filtersChanged =
             prevFilters.search !== search ||
@@ -518,6 +537,77 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
         // 正常请求数据
         fetchItems();
     }, [page, search, timeFilter, selectedTag, selectedTagIds, notebookId, tagId, gradeFilter, chapterFilter, manageTypeFilter, levelSelection, datePoints, dateRange]);
+
+    /**
+     * 【2026-11-04 审计 D5】**把上次的筛选装回来**（挂载时读一次）。
+     *
+     * ⚠️ 为什么用 effect 而不是 `useState` 惰性初始化：
+     *    服务端渲染时没有 `window` —— 惰性初始化会让服务端拿到"空"、客户端拿到"有值"，
+     *    hydration 不一致（比多一次渲染糟得多）。这条与 `/tags` 存展开状态是同一个理由。
+     *
+     * ⚠️ 这个 effect 必须写在**上面那个取数 effect 之后**：
+     *    React 按定义顺序跑 effect ⇒ 先 set 状态、再让下一次渲染带着恢复后的条件去查。
+     *    写在前面的话，取数那次跑的还是首帧的默认值。
+     */
+    useEffect(() => {
+        let anyRestored = false;
+        try {
+            const raw = sessionStorage.getItem(storageKey);
+            if (raw) {
+                const s = JSON.parse(raw) as Record<string, unknown>;
+                anyRestored = true;
+                /* 每项都验一下类型：存坏了就当没存，绝不把坏数据灌进状态 */
+                if (typeof s.search === "string") setSearch(s.search);
+                if (typeof s.timeFilter === "string") setTimeFilter(s.timeFilter as TimeFilter);
+                if (Array.isArray(s.datePoints)) setDatePoints(s.datePoints.filter((x): x is string => typeof x === "string"));
+                if (s.dateRange === null || (typeof s.dateRange === "object" && s.dateRange !== null)) {
+                    setDateRange(s.dateRange as { from: string; to: string } | null);
+                }
+                if (typeof s.gradeFilter === "string") setGradeFilter(s.gradeFilter);
+                if (typeof s.chapterFilter === "string") setChapterFilter(s.chapterFilter);
+                if (typeof s.manageTypeFilter === "string") {
+                    setManageTypeFilter(s.manageTypeFilter as "all" | "deep" | "review" | "undecided");
+                }
+                if (s.selectedTag === null || typeof s.selectedTag === "string") {
+                    setSelectedTag(s.selectedTag as string | null);
+                }
+                if (Array.isArray(s.selectedTagIds)) {
+                    setSelectedTagIds(s.selectedTagIds.filter((x): x is string => typeof x === "string"));
+                }
+                if (Array.isArray(s.levelSelection)) {
+                    setLevelSelection(s.levelSelection.filter((x): x is string => typeof x === "string"));
+                }
+                if (typeof s.page === "number" && s.page >= 1) setPage(Math.floor(s.page));
+            }
+        } catch {
+            /* 存档坏了就当没有，别因为一份脏 JSON 让列表打不开 */
+        }
+        restoredRef.current = true;
+        /**
+         * 存档为空（第一次来 / 关过标签页）时，上面那个取数 effect 被 skip 了、
+         * 也没有任何 setState 触发重渲染 ⇒ **必须主动查一次**，否则列表永远是空的。
+         * 有存档时不查：setState 会把取数 effect 重新跑一遍（带恢复后的条件）。
+         */
+        if (!anyRestored) void fetchItems();
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- 见上：挂载后读一次，避免 hydration 不一致
+    }, []);
+
+    /** 【D5】把当前筛选/页码记下来（关标签页就清，不污染长期存储） */
+    useEffect(() => {
+        if (!restoredRef.current) return;   // 恢复之前别写，否则会用默认值覆盖存档
+        try {
+            sessionStorage.setItem(
+                storageKey,
+                JSON.stringify({
+                    search, timeFilter, datePoints, dateRange,
+                    gradeFilter, chapterFilter, manageTypeFilter,
+                    selectedTag, selectedTagIds, levelSelection, page,
+                }),
+            );
+        } catch {
+            /* 存不下（隐私模式/配额满）不影响使用 */
+        }
+    }, [storageKey, search, timeFilter, datePoints, dateRange, gradeFilter, chapterFilter, manageTypeFilter, selectedTag, selectedTagIds, levelSelection, page]);
 
     /**
      * 当前筛选条件 → 查询参数（**一处实现**：列表 / 导出打印 / 跨页全选 / 日历共用）。
