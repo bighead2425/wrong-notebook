@@ -363,16 +363,28 @@ export default function ErrorDetailPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在换题时初始化，见上
     }, [item?.id]);
 
+    /**
+     * 【2026-11-04 审计 B5】**详情页也要防"旧响应覆盖新题"。**
+     *
+     * 现象：快速点"下一题"，A 的响应比 B 的晚到 ⇒ 地址栏是 B、内容是 A，
+     * 而且这时候保存，改的是 **A**（不是他以为的 B）。数据被改在不该改的题上。
+     * 每次取数领一个号，回来对不上号就整份丢掉。
+     */
+    const fetchSeqRef = useRef(0);
+
     const fetchItem = async (id: string) => {
+        const seq = ++fetchSeqRef.current;
         try {
             const data = await apiClient.get<ErrorItemDetail>(`/api/error-items/${id}`);
+            if (seq !== fetchSeqRef.current) return;
             setItem(data);
         } catch (error) {
+            if (seq !== fetchSeqRef.current) return;
             console.error(error);
             alert(t.common?.messages?.loadFailed || 'Failed to load item');
             router.push("/notebooks");
         } finally {
-            setLoading(false);
+            if (seq === fetchSeqRef.current) setLoading(false);
         }
     };
 

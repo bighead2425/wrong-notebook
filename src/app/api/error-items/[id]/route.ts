@@ -963,19 +963,41 @@ export async function DELETE(
             return forbidden("Not authorized to delete this item");
         }
 
+        /**
+         * 【2026-11-04 审计 B4】**删一道"主题"题时，把它下面的附题解绑。**
+         *
+         * 外键指望不上：软删本来就不触发；硬删在 SQLite 里也不生效
+         * （本项目的迁移是纯 ADD COLUMN，不落外键约束 —— schema 注释里写明
+         * "要由规则显式做"，但一直没做）。
+         * 不解绑 ⇒ 附题只剩个 `parentId` 指向已删的父题：列表仍显示绿角标，
+         * 详情页找不到主卡也没有"解除关联"按钮，**那几道题永久卡死**。
+         */
+        const detachChildren = async () =>
+            prisma.errorItem.updateMany({
+                where: { parentId: id },
+                data: { parentId: null },
+            });
+
         if (hard) {
+            await detachChildren();
             await prisma.errorItem.delete({ where: { id } });
             logger.info({ id }, 'Error item permanently deleted');
             return NextResponse.json({ id, permanent: true });
         }
 
+        const detach = await detachChildren();
         const updated = await prisma.errorItem.update({
             where: { id },
             data: { deletedAt: new Date() },
         });
 
-        logger.info({ id, alreadyInTrash: !!errorItem.deletedAt }, 'Error item moved to trash');
-        return NextResponse.json({ id, deletedAt: updated.deletedAt, permanent: false });
+        logger.info({ id, alreadyInTrash: !!errorItem.deletedAt, detachedChildren: detach.count }, 'Error item moved to trash');
+        return NextResponse.json({
+            id,
+            deletedAt: updated.deletedAt,
+            permanent: false,
+            detachedChildren: detach.count,
+        });
     } catch (error) {
         logger.error({ error }, 'Error deleting item');
         return internalError("Failed to delete error item");

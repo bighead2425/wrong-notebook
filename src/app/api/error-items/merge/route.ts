@@ -180,6 +180,21 @@ export async function POST(req: Request) {
         });
 
         // ==== 原题软删进回收箱（可还原，不是彻底删）====
+        /**
+         * 【2026-11-04 审计 B4】先把"挂在这些原题下面的附题"**转到新题**上。
+         *
+         * 这里和"删除"不一样：合并的语义是"几道题变成一道"，
+         * 原题要是主题，它的附题理应跟着新题走，而不是变成孤题。
+         * 不处理的话，附题的 `parentId` 指向已软删的原题 ⇒ 列表仍显示绿角标、
+         * 详情页找不到主卡，**永久卡死**（软删不触发外键，SQLite 迁移也不落约束）。
+         *
+         * 新题是刚 create 出来的孤题，转挂不会产生第二层。
+         */
+        await prisma.errorItem.updateMany({
+            where: { parentId: { in: ids } },
+            data: { parentId: merged.id },
+        });
+
         await prisma.errorItem.updateMany({
             where: { id: { in: ids } },
             data: { deletedAt: new Date() },

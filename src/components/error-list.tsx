@@ -96,7 +96,7 @@ type KnowledgeFilterChange = {
 
 export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onCountChange }: ErrorListProps = {}) {
     const [items, setItems] = useState<ErrorItem[]>([]);
-    const [, setLoading] = useState(true);
+    const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");
     const [timeFilter, setTimeFilter] = useState<TimeFilter>("all");
     /** 日历选的结果：绿点（若干天）或蓝色区间（一段）—— 二者不会同时存在 */
@@ -547,7 +547,17 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
         return params;
     }
 
+    /**
+     * 【2026-11-04 审计 B1】**请求序号 —— 防"旧响应覆盖新结果"。**
+     *
+     * 现象：连续输入搜索词、或快速切页时，先发的请求可能**后到**，
+     * `setItems` 一执行，第 1 页就显示成第 3 页的题。
+     * 每次请求领一个号，回来时对不上号就整份丢掉。
+     */
+    const reqSeqRef = useRef(0);
+
     const fetchItems = async () => {
+        const seq = ++reqSeqRef.current;
         setLoading(true);
         try {
             const params = buildFilterParams();
@@ -556,6 +566,22 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
             params.append("pageSize", pageSize.toString());
 
             const response = await apiClient.get<PaginatedResponse<ErrorItem> & { notebookTotal?: number | null }>(`/api/error-items/list?${params.toString()}`);
+
+            /* 【B1】这份响应已经过期（后面又发过请求）⇒ 一个字都别写 */
+            if (seq !== reqSeqRef.current) return;
+
+            /**
+             * 【2026-11-04 审计 B2】**删到最后一页空了就自动往回退。**
+             *
+             * 原来停在空页：「Showing 37-36 of 36」，也没空态，她以为数据没了。
+             * 退到最后一个有内容的页；`totalPages` 为 0（全删光）就留在第 1 页看空态。
+             */
+            const tp = response.totalPages;
+            if (tp >= 1 && page > tp) {
+                setPage(tp);
+                return;   // setPage 会触发重新取数，这一份先不渲染
+            }
+
             setItems(response.items);
             setTotal(response.total);
             setTotalPages(response.totalPages);
@@ -563,9 +589,10 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
             // 报给页头那句「共 XX 道错题，当前选中 YY 道题」
             onCountChange?.({ total: response.total, notebookTotal: nbTotal });
         } catch (error) {
+            if (seq !== reqSeqRef.current) return;
             console.error(error);
         } finally {
-            setLoading(false);
+            if (seq === reqSeqRef.current) setLoading(false);
         }
     };
 
@@ -786,6 +813,19 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
                         {selectedTag}
                         <span className="ml-1 text-xs">×</span>
                     </Badge>
+                </div>
+            )}
+
+            {/**
+             * 【2026-11-04 审计 B2】**空列表要说一句话。**
+             * 原来这里就是一片空白：删到最后一页空了、或者筛选条件太窄，
+             * 界面什么都没说，她分不清"没题"和"没加载出来"。
+             */}
+            {!loading && filteredItems.length === 0 && (
+                <div className="rounded-lg border border-dashed py-16 text-center text-sm text-muted-foreground">
+                    {hasActiveFilter || search
+                        ? L("没有符合条件的题 —— 试试放宽筛选条件", "No matches — try relaxing the filters")
+                        : L("这里还没有题", "No questions here yet")}
                 </div>
             )}
 

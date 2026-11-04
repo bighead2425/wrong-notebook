@@ -586,10 +586,36 @@ export async function GET(req: Request) {
             : [];
         const hasChildren = new Set(kidRows.map((r) => r.parentId as string));
 
+        /**
+         * 【2026-11-04 审计 B4】**父题已经被删的，不该再显示成"附题"。**
+         *
+         * 原来只看 `it.parentId` 有没有值 ⇒ 父题进了回收箱，附题照样带绿角标，
+         * 点进去却找不到主卡（`loadLinkView` 查父题时带 `deletedAt: null`）。
+         * 现在补一次"父题还在不在"。
+         *
+         * 根子上的修法是删除时就把附题解绑（已改 `[id]` / `batch-delete` / `merge`），
+         * 这里是为了兜住**改之前留下的历史数据**。
+         */
+        const parentIdsOfPage = [
+            ...new Set(errorItems.map((it) => it.parentId).filter((x): x is string => !!x)),
+        ];
+        const aliveParents = parentIdsOfPage.length
+            ? await prisma.errorItem.findMany({
+                where: { id: { in: parentIdsOfPage }, userId: user.id, deletedAt: null },
+                select: { id: true },
+            })
+            : [];
+        const aliveParentSet = new Set(aliveParents.map((r) => r.id));
+
         return NextResponse.json({
             items: errorItems.map((it) => ({
                 ...it,
-                linkRole: it.parentId ? "child" : hasChildren.has(it.id) ? "root" : "lone",
+                linkRole:
+                    it.parentId && aliveParentSet.has(it.parentId)
+                        ? "child"
+                        : hasChildren.has(it.id)
+                            ? "root"
+                            : "lone",
             })),
             total,
             page,
