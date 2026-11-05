@@ -29,7 +29,11 @@ export type ErrorItemCardData = {
     id: string;
     questionText?: string | null;
     knowledgePoints?: string | null;
-    tags?: { id: string; name: string }[];
+    /**
+     * 标签。`isSystem` 由列表接口的 `tags: true` 带出来（Prisma 全字段）——
+     * `false` = 自建（词表里找不到的），卡片上标紫色。
+     */
+    tags?: { id: string; name: string; isSystem?: boolean }[];
     masteryLevel: number;
     createdAt: string | Date;
     mistakeCategory?: string | null;
@@ -174,10 +178,18 @@ export function ErrorItemCard({
      * 老数据只有名字（关系没建）时查不到 id，退回按名字筛 —— 行为与以前一致。
      */
     const tagIdByName = new Map<string, string>();
+    /**
+     * 【2026-11-05 空空】**自建标签 = 词表里找不到的**，卡片上标紫色。
+     *
+     * 老数据（只有 `knowledgePoints` 那串名字、关系没建）查不到 `isSystem` ⇒ 一律不标，
+     * 免得把"不知道"当成"自建"，满屏紫。
+     */
+    const customTagNames = new Set<string>();
     if (item.tags && item.tags.length > 0) {
         tags = item.tags.map((tag) => tag.name);
         for (const t of item.tags) {
             if (t.id) tagIdByName.set(t.name, t.id);
+            if (t.isSystem === false) customTagNames.add(t.name);
         }
     } else {
         try {
@@ -347,11 +359,13 @@ export function ErrorItemCard({
                                  * 有 id 就按 id 判（不会跨册误亮），老数据才退回按名字。
                                  */
                                 const isActive = id ? isTagActive(activeTagIds, id) : selectedTag === tag;
+                                /** 自建标签（词表里找不到的）—— 紫色；正在筛选时深底优先，不叠加 */
+                                const isCustom = !isActive && customTagNames.has(tag);
                                 return (
                                 <Badge
                                     key={tag}
                                     variant={isActive ? "default" : "outline"}
-                                    className={`text-xs transition-all ${isActive ? "shadow-sm ring-2 ring-primary/30" : ""} ${selectMode || !onTagClick ? "" : "cursor-pointer hover:bg-primary/10"}`}
+                                    className={`text-xs transition-all ${isActive ? "shadow-sm ring-2 ring-primary/30" : ""} ${isCustom ? "!border-violet-400 !bg-violet-50 !text-violet-700" : ""} ${selectMode || !onTagClick ? "" : "cursor-pointer hover:bg-primary/10"}`}
                                     /* 多选模式下标签不再响应点击：此时点卡片任意处＝切换选中，
                                        标签要是还能筛选题，就会出现"点一下同时干了两件事"的歧义 */
                                     onClick={

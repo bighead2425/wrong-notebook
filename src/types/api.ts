@@ -13,6 +13,18 @@ export interface PaginatedResponse<T> {
 export interface Tag {
     id: string;
     name: string;
+    /**
+     * 【2026-11-05 空空】**是不是教材词表里的节点**。
+     *
+     * 他的规则（一句话）：
+     *   · `true` = 词表标签 ⇒ 已经归类，灰色空心，不用再想
+     *   · `false` = 自建标签 ⇒ **词表里找不到的**，标紫色 —— 它是一个"待办"：
+     *     要么补进词表（变灰），要么确认它就是超纲（保持标记）
+     *
+     * ⚠️ 不区分"自建但大纲内"和"自建且超纲" ——
+     *    那样会让他每次看到一个自建标签都要多判断一层，反而不知道该不该改词表。
+     */
+    isSystem?: boolean;
     category: string;
     subject: string;
     subcategory?: string | null;
