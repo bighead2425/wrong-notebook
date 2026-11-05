@@ -303,6 +303,27 @@ export default function ErrorDetailPage() {
         const qs = new URLSearchParams(window.location.search);
         if (qs.get("practice") === "1") setPracticeOpen(true);
     }, []);
+
+    /**
+     * 【2026-11-05 空空】**这一屏是从哪来的 —— 切"上一题/下一题"时要原样带过去。**
+     *
+     * 原来切题只 push `/error-items/<新id>`，把 `?back=` 丢了。
+     * 后果：从 `/by-tag/x` 点进来、连看五道，一按返回落到错题本（默认兜底），
+     * 而不是回那个标签页 —— 他昨天刚为这个"来回跳"提过需求。
+     *
+     * 用 ref 不用 state：它只给点击那一刻用，不该触发重渲染；
+     * 也用不着 setState-in-effect 那条豁免。
+     */
+    const backTargetRef = useRef<string | null>(null);
+    useEffect(() => {
+        backTargetRef.current = new URLSearchParams(window.location.search).get("back");
+    }, []);
+
+    /** 切到另一道题时，把当前这一层的 `back` 带过去（没有就不带，兜底目标不变） */
+    const siblingHref = (id: string) => {
+        const b = backTargetRef.current;
+        return b ? `/error-items/${id}?back=${encodeURIComponent(b)}` : `/error-items/${id}`;
+    };
     // 需求六：「AI 重新分析」——用原图重跑 AI，进审核页，确认保存才覆盖
     const [reanalyzeData, setReanalyzeData] = useState<ParsedQuestion | null>(null);
     const [isReanalyzing, setIsReanalyzing] = useState(false);
@@ -1154,7 +1175,7 @@ export default function ErrorDetailPage() {
                                     size="icon-sm"
                                     disabled={!prevItemId}
                                     title={L('上一题', 'Previous question')}
-                                    onClick={() => prevItemId && router.push(`/error-items/${prevItemId}`)}
+                                    onClick={() => prevItemId && router.push(siblingHref(prevItemId))}
                                 >
                                     <ChevronLeft className="h-3.5 w-3.5" />
                                 </Button>
@@ -1163,7 +1184,7 @@ export default function ErrorDetailPage() {
                                     size="icon-sm"
                                     disabled={!nextItemId}
                                     title={L('下一题', 'Next question')}
-                                    onClick={() => nextItemId && router.push(`/error-items/${nextItemId}`)}
+                                    onClick={() => nextItemId && router.push(siblingHref(nextItemId))}
                                 >
                                     <ChevronRight className="h-3.5 w-3.5" />
                                 </Button>
@@ -1327,8 +1348,21 @@ export default function ErrorDetailPage() {
                                         <button
                                             type="button"
                                             onClick={() =>
+                                                /**
+                                                 * 【2026-11-05 空空】**带 back**。
+                                                 *
+                                                 * 原来只 push 目标地址 → 组卷页没有 `?back=`，
+                                                 * 它的返回键只能落到兜底的 `/`（主页）。
+                                                 * 而他实际是"在详情页看到这道题出现在哪些卷里，
+                                                 * 看一眼就回来"，回主页等于把他扔出去了。
+                                                 *
+                                                 * `withBack` 会把**当前这一屏**（含它自己的 back）
+                                                 * 编码进去 ⇒ 从卷页返回能一层层退回来。
+                                                 */
                                                 router.push(
-                                                    `/review-volumes?hasItem=${encodeURIComponent(item.id)}`,
+                                                    withBack(
+                                                        `/review-volumes?hasItem=${encodeURIComponent(item.id)}`,
+                                                    ),
                                                 )
                                             }
                                             title={L(
