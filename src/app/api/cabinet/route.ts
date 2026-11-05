@@ -188,7 +188,22 @@ export async function GET(req: Request) {
                 kind: v.kind,
                 emojiMark: v.emojiMark ?? null,
                 createdAt: v.createdAt,
-                items: v.items.map((it) => ({ markState: it.markState })),
+                /**
+                 * 【2026-11-05 审计 R2-2】**`errorItem` 必须一起传下去。**
+                 *
+                 * 上面 147 行已经 `select` 了 `errorItem: { userId, deletedAt, masteryLevel }`，
+                 * 原来这里只留 `markState` ⇒ 规则层 `canStillMark`（`cabinet.ts:447`）看到
+                 * `it.errorItem === undefined`，按"调用方没给数据 ⇒ 放行"处理
+                 * ⇒ **每一行都被当成"还能标"**。
+                 *
+                 * 实测（生产库）：全部卷虚报 **548 行，正确只有 200 行**；
+                 * 模仿卷/积累卷整卷 35 行全在虚报（它们的行根本没有 `errorItemId`）——
+                 * 那些卷的"待回录"数字永远清不完。
+                 *
+                 * 这正是 `cabinet.ts:427-438` 注释里记着的那次真机 bug 的复现路径：
+                 * **规则层修好了，取数侧又把修复喂丢了。**
+                 */
+                items: v.items.map((it) => ({ markState: it.markState, errorItem: it.errorItem })),
             }));
 
         /**

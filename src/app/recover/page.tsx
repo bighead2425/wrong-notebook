@@ -650,10 +650,12 @@ export default function RecoverPage() {
                  *     不会重复计（`recordReviewEvent` 里做了）
                  * 前者是"可以补"，后者是"不会双计" —— 两条都堵住了。
                  */
+                /** 【2026-11-05 审计 R2-6】哪几行"流水没写进去"——这些行不能打勾 */
+                let notRecorded = 0;
                 for (const w of writes) {
                     // ① 这道题的复习结果 —— **只能写流水**（口径与扫码页完全一致）
                     if (w.writesOutcome && w.errorItemId) {
-                        await apiClient.put(`/api/error-items/${w.errorItemId}`, {
+                        const r = await apiClient.put<{ reviewEventFailed?: boolean }>(`/api/error-items/${w.errorItemId}`, {
                             /**
                              * 【2026-10-16 如如】改成**只写流水**（`docs\18` §4.3 / §六）。
                              * 原来这里还发一份 `reviewOutcomes` 整包覆盖 —— 那条路
@@ -673,6 +675,15 @@ export default function RecoverPage() {
                                 source: paperSourceForKind(null),
                             }),
                         });
+                        /**
+                         * 流水没写进去 ⇒ **跳过这一行的卷行标记**。
+                         * 打了勾就意味着"这题回录过了、下次不用提醒"，
+                         * 而结果其实没进系统 —— 那正是 C5 修掉的那种静默丢失的另一种形态。
+                         */
+                        if (r?.reviewEventFailed) {
+                            notRecorded += 1;
+                            continue;
+                        }
                     }
                     // ② 卷行标记（"这张纸上我标了什么"）—— 最后写，写失败只是少个记号
                     await apiClient.patch(`/api/review-volumes/${card.volumeId}`, {
@@ -680,7 +691,19 @@ export default function RecoverPage() {
                         markState: w.markState,
                     });
                 }
-                patchReview(id, (c) => ({ ...c, saving: false, state: { k: "saved", written: writes.length, skipped } }));
+                if (notRecorded > 0) {
+                    alert(
+                        L(
+                            `有 ${notRecorded} 条结果没记上（库忙或连接中断），这几行仍算"没回录"，请再存一次。`,
+                            `${notRecorded} result(s) were not saved. Those rows still count as unrecovered — please save again.`,
+                        ),
+                    );
+                }
+                patchReview(id, (c) => ({
+                    ...c,
+                    saving: false,
+                    state: { k: "saved", written: writes.length - notRecorded, skipped: skipped + notRecorded },
+                }));
             } catch (err) {
                 patchReview(id, (c) => ({ ...c, saving: false }));
                 alert(L("保存失败，请重试。", "Save failed, please retry."));

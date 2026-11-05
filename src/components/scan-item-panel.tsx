@@ -157,9 +157,16 @@ export function ScanItemPanel({
         if (!item) return;
         setReviewBusy(true);
         try {
-            const updated = await apiClient.put<Partial<ErrorItem>>(`/api/error-items/${item.id}`, {
-                reviewEvent: body,
-            });
+            const updated = await apiClient.put<Partial<ErrorItem> & { reviewEventFailed?: boolean }>(
+                `/api/error-items/${item.id}`,
+                { reviewEvent: body },
+            );
+            /** 【2026-11-05 审计 R2-6】结果没进流水 ⇒ 必须让扫码的人知道（否则以为记上了） */
+            if (updated.reviewEventFailed) {
+                alert(t.common?.messages?.updateFailed || "This result was not saved. Please try again.");
+                fetchItem();
+                return;
+            }
             setItem((prev) =>
                 prev
                     ? {

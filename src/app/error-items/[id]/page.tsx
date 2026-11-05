@@ -816,9 +816,27 @@ export default function ErrorDetailPage() {
         if (!item) return;
         setReviewBusy(true);
         try {
-            const updated = await apiClient.put<Partial<ErrorItemDetail>>(`/api/error-items/${item.id}`, {
-                reviewEvent: body,
-            });
+            const updated = await apiClient.put<Partial<ErrorItemDetail> & { reviewEventFailed?: boolean }>(
+                `/api/error-items/${item.id}`,
+                { reviewEvent: body },
+            );
+            /**
+             * 【2026-11-05 审计 R2-6】**结果没进流水要说出来。**
+             *
+             * 服务端现在会在流水写失败时回这个标志（而不是静默 200）。
+             * 不说的话，界面上的圈跳过去了、其实没记上，家长以为孩子这次结果已入账。
+             * 不阻塞"改题"那条路（备注/标签照常存），只提示重试这一次。
+             */
+            if (updated.reviewEventFailed) {
+                alert(
+                    L(
+                        "这次结果没记上（库忙或连接中断）。请再点一次。",
+                        "This result was not saved. Please tap it again.",
+                    ),
+                );
+                void fetchItem(item.id);
+                return;
+            }
             setItem((prev) =>
                 prev
                     ? {

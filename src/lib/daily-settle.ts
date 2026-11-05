@@ -110,7 +110,7 @@ export async function maybeSettleDaily(userId: string, todayKey?: string): Promi
 
         // 上次结算日：没有记录 ⇒ 首次，把"今天"当基准（减数 = 0，只做初始化）
         const lastKey = state?.lastSettledOn ?? today;
-        const daysElapsed = daysBetween(lastKey, today);
+        let daysElapsed = daysBetween(lastKey, today);
 
         // 今天已经结算过 ⇒ 直接返回（绝大多数请求走这条，开销只有一次查询）
         if (state && daysElapsed <= 0) {
@@ -142,6 +142,46 @@ export async function maybeSettleDaily(userId: string, todayKey?: string): Promi
             }
         }
         lockTaken = true;
+
+        /**
+         * 【2026-11-05 审计 P0-2】**拿到锁之后必须重读一次结算日。**
+         *
+         * ── 原来漏了这一步 ──────────────────────────────────────────
+         *   109 行的 `findUnique` 是在**拿锁之前**读的；
+         *   122-133 才拿锁。两个页面同时打开时：
+         *     B 读完 `lastSettledOn`（比如 5 天前）→ 被挂起；
+         *     A 跑完整轮，把 `lastSettledOn` 写成今天、并释放锁；
+         *     B 恢复，`updateMany` 依然成功（锁已释放）⇒ 用 **5 天前**的
+         *     `lastSettledOn` 再推 5 天。
+         *
+         * ── 后果 ────────────────────────────────────────────────────
+         *   全库每道题的倒数多扣 5 天、等级整体偏急；
+         *   `lastSettledOn` 写的是同一个今天 ⇒ 第二天只补 1 天，
+         *   多扣的量**永久残留**，不报错、日志无异常。
+         *
+         * ── 修法 ────────────────────────────────────────────────────
+         *   拿锁后重读，重算；`<= 0` 说明别人已经结算过 ⇒ 清锁按"今天已结算"返回。
+         */
+        /**
+         * ⚠️ **只在"本来就有状态行"时重读**。
+         *    首次（`state` 为 null）那条路，create 时就把 `lastSettledOn` 写成了今天
+         *    （意思是"基准日 = 今天，减数为 0，只做初始化"），重读会得到 `daysElapsed = 0`
+         *    ⇒ 被误判成"别人已经结算过" ⇒ **初始化一行都不做**。
+         *    首次并发本来就有主键唯一挡着，不需要这一步。
+         */
+        if (state) {
+            const fresh = await prisma.dailySettle.findUnique({
+                where: { userId },
+                select: { lastSettledOn: true },
+            });
+            daysElapsed = daysBetween(fresh?.lastSettledOn ?? today, today);
+            if (daysElapsed <= 0) {
+                await prisma.dailySettle.update({ where: { userId }, data: { runningSince: null } });
+                lockTaken = false;
+                logger.info({ userId }, 'Daily settle skipped — settled by a concurrent run');
+                return { ran: false, reason: 'already-settled-today', initialized: 0, advanced: 0 };
+            }
+        }
 
         // ---- 硬要求 ③：只取"未掌握 + 本未归档"的题 ----
         // 已在 SQL 里排掉两类冻结（已掌握、归档本），`planSettlement` 内部再兜一层

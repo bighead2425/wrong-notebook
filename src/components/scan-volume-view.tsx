@@ -493,16 +493,29 @@ export function ScanVolumeView({
                  *   ① 提示他"先去把「会」点掉"；② **不再同步卷行的 markState**
                  *      （记录都没写进去，卷行就不该记成"对/错"，否则纸面标记与流水打架）。
                  */
-                const res = await apiClient.put<{ reviewEventIgnored?: 'mastered' }>(
-                    `/api/error-items/${item.id}`,
-                    { reviewEvent: body },
-                );
+                const res = await apiClient.put<{
+                    reviewEventIgnored?: 'mastered';
+                    reviewEventFailed?: boolean;
+                }>(`/api/error-items/${item.id}`, { reviewEvent: body });
                 await fetchVolumeMarks(volume.id);
                 if (res?.reviewEventIgnored === 'mastered') {
                     setSaveError(
                         L(
                             '这道题标着「已掌握」，所以这次对错没记上 —— 想录，先点左边的「会」取消已掌握',
                             'This question is marked as mastered, so the result was not saved. Tap "会" to unmark it first.',
+                        ),
+                    );
+                    return;
+                }
+                /**
+                 * 【2026-11-05 审计 R2-6】流水没写进去 ⇒ 卷行也不该记成"对/错"，
+                 * 否则纸面标记与流水打架（同一道题，纸上写了、系统里没有）。
+                 */
+                if (res?.reviewEventFailed) {
+                    setSaveError(
+                        L(
+                            '这次结果没记上（库忙或连接中断），请再标一次',
+                            'This result was not saved. Please mark it again.',
                         ),
                     );
                     return;

@@ -803,7 +803,18 @@ describe('/api/error-items', () => {
             expect(mocks.mockPrismaReviewEvent.create).not.toHaveBeenCalled();
         });
 
-        it('★ 流水写失败**不许**连带让"改题"失败（与留痕同一条规矩）', async () => {
+        /**
+         * 【2026-11-05 审计 R2-6】**这条的判据变了：200 还不够，必须回标记。**
+         *
+         * 原来只断言 200（"改题不能被流水失败拖垮"）。但那样一来，
+         * 服务端静默吞掉流水失败、界面照样显示成功，**结果就永久丢了**——
+         * 这正是 R2-6 报的问题。
+         *
+         * 现在的规矩：**改题照常成功（不拖垮主路径），但响应必须带
+         * `reviewEventFailed: true`**，让前端明确提示"这次结果没记上，请重试"。
+         * ⇒ 两个断言缺一不可：少第一个是"拖垮用户"，少第二个是"静默丢失"。
+         */
+        it('★ 流水写失败：改题照常成功（200），但**必须回 reviewEventFailed**', async () => {
             mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(itemWith(null));
             mocks.mockPrismaErrorItem.update.mockResolvedValue(itemWith('{}'));
             mocks.mockPrismaReviewEvent.create.mockRejectedValueOnce(new Error('db down'));
@@ -814,6 +825,8 @@ describe('/api/error-items', () => {
             });
 
             expect(res.status).toBe(200);
+            const body = (await res.json()) as { reviewEventFailed?: boolean };
+            expect(body.reviewEventFailed).toBe(true);
         });
     });
 

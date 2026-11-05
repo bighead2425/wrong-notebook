@@ -197,6 +197,39 @@ export async function PATCH(request: Request, ctx: Ctx) {
         const pageCount = resolvePageCount(raw.pageCount, items);
 
         /**
+         * 【2026-11-05 审计 R2-1】**整批替换之前，把"这一卷上发生过的事"捞回来。**
+         *
+         * ── 问题 ────────────────────────────────────────────────────
+         *   保存走的是 `deleteMany` + `create`（整批替换），而前端 payload 只回传
+         *   版式与内容快照，**没有 `markState`** ⇒ 只要家长在管理页调一下留白、
+         *   点「更新组卷」，这一卷上"她做过哪些、标了对错"的记录**全部归零**，
+         *   扫码页的灰圈复活、待回录卷重新冒出来。
+         *
+         * ── 为什么在服务端回填，而不是让前端传 ────────────────────────
+         *   前端传就得记住"每次新增编辑入口都要带上它"——`insights/print` 已经是
+         *   第二个调用方了，第三个还会漏。服务端手里本来就有旧行，捞一次最稳。
+         *
+         * ── 为什么按题/积累条目匹配，不按 seqInVolume ──────────────────
+         *   `seqInVolume` 是"第几个"，调版面就会变；而"哪道题 / 哪条积累"是身份。
+         *   换掉一道题 ⇒ 匹配不上 ⇒ `markState` 落 null（新题本来就没标过，正确）。
+         */
+        const oldRows = await prisma.reviewVolumeItem.findMany({
+            where: { volumeId: id },
+            select: { errorItemId: true, insightId: true, markState: true },
+        });
+        const rowKey = (r: { errorItemId: string | null; insightId: string | null }) =>
+            r.errorItemId ? `e:${r.errorItemId}` : r.insightId ? `i:${r.insightId}` : null;
+        const markByKey = new Map<string, string | null>();
+        for (const r of oldRows) {
+            const k = rowKey(r);
+            if (k) markByKey.set(k, r.markState);
+        }
+        const itemsWithMarks = items.map((it) => {
+            const k = rowKey(it);
+            return { ...it, markState: k ? (markByKey.get(k) ?? null) : null };
+        });
+
+        /**
          * 条目**整批替换**（先清后建）放在一个事务里：
          * 卷是印出去的凭证，最怕"清掉了但没建上"这种半成品状态。
          */
@@ -211,7 +244,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
                     ...(hasTitle ? { title: normalizeVolumeTitle(raw.title) } : {}),
                     gradeSemester:
                         typeof raw.gradeSemester === "string" ? raw.gradeSemester : existing.gradeSemester,
-                    items: { create: items },
+                    items: { create: itemsWithMarks },
                 },
                 select: {
                     id: true,

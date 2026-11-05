@@ -289,6 +289,18 @@ export async function PUT(
          *    不该因为"复习结果被忽略"整条失败。⇒ 用响应里的标记让前端说一句话。
          */
         let reviewEventIgnored: 'mastered' | null = null;
+        /**
+         * 【2026-11-05 审计 R2-6】**流水写失败要回给前端，不能再吞。**
+         *
+         * 原来 catch 只记日志、接口照 200 —— 界面「保存成功」，结果没进流水，
+         * 而且没有自愈路径（下次点圈是新的一条）。
+         *
+         * ⚠️ 但**不能因此让"改题"失败**：改备注/改标签是主路径，
+         *    不能因为库忙就不让存（这条规矩在 `createMany` 留痕那里已经立过）。
+         *    ⇒ 折中：主更新照常完成，响应带 `reviewEventFailed: true`，
+         *      由前端明确提示"这次结果没记上，请重试"。
+         */
+        let reviewEventFailed = false;
         if (reviewEvent !== undefined && reviewEvent !== null) {
             const ev = parseReviewEventInput(reviewEvent);
             if (!ev) {
@@ -421,9 +433,30 @@ export async function PUT(
                     } catch (error) {
                         logger.error({ error, id }, 'Failed to reschedule review');
                     }
-                } catch (error) {
-                    logger.error({ error, id }, 'Failed to write review event / derive outcomes');
-                }
+                    } catch (error) {
+                        logger.error({ error, id }, 'Failed to write review event / derive outcomes');
+                        /**
+                         * 【2026-11-05 审计 R2-6】不再静默 —— 但也不拖垮"改题"。
+                         *
+                         * 这条分支里四件事：①补老流水 ②写/改/删流水 ③派生缓存 ④倒数与等级。
+                         * 任一失败 ⇒ 置标志，由响应告诉前端"结果没记上"。
+                         *
+                         * ⚠️ ③④ 失败时 `updateData` 可能已被**部分赋值**（写了 reviewOutcomes
+                         *    却没写 levelCountdown）—— 这个组合本身就是脏的。所以置了标志之后，
+                         *    **下面落库前要把派生缓存那部分从 `updateData` 里撤掉**，
+                         *    宁可让界面上的圈回到旧状态（用户重试即可），也不要落半套。
+                         */
+                        reviewEventFailed = true;
+                        /**
+                         * ③④ 只要有一项没落，`updateData` 里就可能是**半套**：
+                         * 比如 `reviewOutcomes` 写了、`levelCountdown` 没写。
+                         * 这种组合落进库，比"整块不写"更糟（圈显示新状态、等级还是旧的）。
+                         * ⇒ 整块撤掉，让界面回到点击前，用户重试即可。
+                         */
+                        delete updateData.reviewOutcomes;
+                        delete updateData.levelCountdown;
+                        delete updateData.attention;
+                    }
             }
         }
 
@@ -853,6 +886,7 @@ export async function PUT(
             ...(unmatchedTags.length ? { unmatchedTags } : {}),
             ...(linkNote ? { linkNote } : {}),
             ...(reviewEventIgnored ? { reviewEventIgnored } : {}),
+            ...(reviewEventFailed ? { reviewEventFailed } : {}),
         });
     } catch (error) {
         logger.error({ error }, 'Error updating item');
