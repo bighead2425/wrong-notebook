@@ -1,5 +1,6 @@
 "use client";
 import { withBack } from "@/lib/back";
+import { toggleFilterTag } from "@/lib/tag-filter";
 import { TagPickerDialog } from "@/components/tag-picker-dialog";
 
 import { useEffect, useState, useRef, useMemo } from "react";
@@ -276,9 +277,12 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
     const handleTagClick = (tag: string, tagId?: string) => {
         if (tagId) {
             setSelectedTag(null);
-            setSelectedTagIds((prev) =>
-                prev.includes(tagId) ? prev.filter((x) => x !== tagId) : [...prev, tagId],
-            );
+            /**
+             * 【2026-11-05 空空】8 条交互归结成一句：**在筛就摘掉、不在筛就加进来**。
+             * 规则本身在 `lib/tag-filter.ts`（有单测），这里只负责落状态。
+             * 「只剩一个时点它 = 退出筛选」是这条规则的**推论**，不用单独写。
+             */
+            setSelectedTagIds((prev) => toggleFilterTag(prev, tagId));
             return;
         }
         setSelectedTagIds([]);
@@ -977,6 +981,8 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
                          * `withBack` 取当前地址，所以 `/notebooks` 和 `/by-tag` 两边都对。
                          */
                         href={withBack(`/error-items/${item.id}`)}
+                        /** 【2026-11-05 空空】正在筛选的标签 ⇒ 卡片上这些标签反色显示 */
+                        activeTagIds={selectedTagIds}
                         /** 【2026-10-10】主题深红 / 附题绿的角标 —— 角色是列表接口算好的 */
                         linkRole={item.linkRole}
                         selectMode={isSelectMode}

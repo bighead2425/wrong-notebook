@@ -16,6 +16,7 @@ import {
     needsDeepPrintNudge,
 } from "@/lib/manage-type";
 import { getMistakeCategoryLabel, normalizeMistakeCategory } from "@/lib/mistake-category";
+import { isTagActive } from "@/lib/tag-filter";
 import { attentionFullName, attentionLevelOf } from "@/lib/attention-level";
 // 【2026-10-15】判"预掌握"（等级1 + 倒数0）—— 判据的唯一出处，别在组件里重写
 import { isPreMastered } from "@/lib/level-settle";
@@ -93,6 +94,17 @@ export interface ErrorItemCardProps {
     onTagClick?: (tag: string, e: ReactMouseEvent, tagId?: string) => void;
     /** 当前选中的标签（高亮用）；不传 = 不高亮 */
     selectedTag?: string | null;
+    /**
+     * 【2026-11-05 空空】**正在筛选中的标签 id** —— 这些标签在卡片上要"反色"。
+     *
+     * 他要的效果（原话）："筛选出来的题目，相应的筛选标签能够反色显示……意为
+     * 现在是筛选状态，且当前呈现的题筛选的标签是什么。"
+     *
+     * 为什么用 id 不用名字：「小数减法」五上五下都有，按名字会把别册的也点亮。
+     * 「反色」落到样式上 = `variant="default"`（实心深底）+ 一圈 ring，
+     * 与旁边 outline 的空心标签一眼分得开。
+     */
+    activeTagIds?: string[];
 
     /**
      * 【2026-10-10】这道题在**题间从属关系**里的角色（主题 / 附题 / 孤题）。
@@ -116,6 +128,7 @@ export function ErrorItemCard({
     onToggleTagsExpanded,
     onTagClick,
     selectedTag = null,
+    activeTagIds = [],
     linkRole = null,
 }: ErrorItemCardProps) {
     const { t, language } = useLanguage();
@@ -325,11 +338,20 @@ export function ErrorItemCard({
                             )}
                         </div>
                         <div className="flex flex-wrap gap-2 mt-3">
-                            {(tagsExpanded ? tags : tags.slice(0, 3)).map((tag: string) => (
+                            {/* 【2026-11-05】筛选状态下**全部展开** —— 否则被筛中的第 4 个标签藏在"展开"后面，
+                                他看不到它亮着，会以为没筛上（他第 2 条："所有选中标签都予以特殊显示"） */}
+                            {(tagsExpanded || activeTagIds.length > 0 ? tags : tags.slice(0, 3)).map((tag: string) => {
+                                const id = tagIdByName.get(tag);
+                                /**
+                                 * 【2026-11-05 空空】**正在筛这个标签 ⇒ 反色**。
+                                 * 有 id 就按 id 判（不会跨册误亮），老数据才退回按名字。
+                                 */
+                                const isActive = id ? isTagActive(activeTagIds, id) : selectedTag === tag;
+                                return (
                                 <Badge
                                     key={tag}
-                                    variant={selectedTag === tag ? "default" : "outline"}
-                                    className={`text-xs transition-colors ${selectMode || !onTagClick ? "" : "cursor-pointer hover:bg-primary/10"}`}
+                                    variant={isActive ? "default" : "outline"}
+                                    className={`text-xs transition-all ${isActive ? "shadow-sm ring-2 ring-primary/30" : ""} ${selectMode || !onTagClick ? "" : "cursor-pointer hover:bg-primary/10"}`}
                                     /* 多选模式下标签不再响应点击：此时点卡片任意处＝切换选中，
                                        标签要是还能筛选题，就会出现"点一下同时干了两件事"的歧义 */
                                     onClick={
@@ -340,8 +362,10 @@ export function ErrorItemCard({
                                 >
                                     {tag}
                                 </Badge>
-                            ))}
-                            {tags.length > 3 && (
+                                );
+                            })}
+                            {/* 筛选时已全部展开，"展开/收起"就没意义了 */}
+                            {tags.length > 3 && activeTagIds.length === 0 && (
                                 <Badge
                                     variant="secondary"
                                     className={`text-xs transition-colors ${selectMode || !onToggleTagsExpanded ? "" : "cursor-pointer hover:bg-secondary/80"}`}
