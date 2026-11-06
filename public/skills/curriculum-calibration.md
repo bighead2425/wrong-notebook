@@ -109,8 +109,9 @@ npx tsc --noEmit --incremental false -p tsconfig.json
 ./node_modules/.bin/vitest run \
   src/__tests__/unit/tag-resolve.test.ts \
   src/__tests__/unit/tag-resolve-regression.test.ts \
+  src/__tests__/unit/tag-path.test.ts \
+  src/__tests__/unit/tag-tree.test.ts \
   src/__tests__/unit/ai/tag-scope.test.ts \
-  src/__tests__/unit/ai/tree-stage.test.ts \
   --pool=threads --testTimeout=90000
 
 # ③ lint 门禁（只拦新增）

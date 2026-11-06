@@ -54,6 +54,15 @@ describe('/api/tags', () => {
      * 所以这一组每条都要先"登录"，并额外钉两条：401、以及 where 里必须带 userId。
      */
     describe('GET /api/tags/stats (标签统计)', () => {
+        beforeEach(() => {
+            /**
+             * 【2026-11-06】统计接口现在会**额外查一次标签表**——
+             * 为了拿到 `subject` 和"册/学段"（沿 parentId 爬到根）。
+             * 不设默认值的话它返回 undefined，`new Map(undefined.map(...))` 直接 500。
+             */
+            mocks.mockPrismaKnowledgeTag.findMany.mockResolvedValue([]);
+        });
+
         const loginAs = (id = 'user-123') => {
             mocks.mockGetServerSession.mockResolvedValue({
                 user: { email: 'u@example.com' },
@@ -79,7 +88,7 @@ describe('/api/tags', () => {
                 where: expect.objectContaining({ userId: 'user-123' }),
                 select: expect.objectContaining({
                     knowledgePoints: true,
-                    tags: { select: { name: true } },
+                    tags: { select: { id: true, name: true } },
                 }),
             });
         });
@@ -123,11 +132,11 @@ describe('/api/tags', () => {
 
             expect(response.status).toBe(200);
 
-            const equationStat = data.stats.find((s: any) => s.tag === '一元一次方程');
+            const equationStat = data.stats.find((s: any) => s.name === '一元一次方程');
             expect(equationStat).toBeDefined();
             expect(equationStat.count).toBe(3);
 
-            const functionStat = data.stats.find((s: any) => s.tag === '函数');
+            const functionStat = data.stats.find((s: any) => s.name === '函数');
             expect(functionStat).toBeDefined();
             expect(functionStat.count).toBe(1);
         });
@@ -159,7 +168,7 @@ describe('/api/tags', () => {
             expect(response.status).toBe(200);
             // 应该只统计有效的标签
             expect(data.stats.length).toBe(1);
-            expect(data.stats[0].tag).toBe('有效标签');
+            expect(data.stats[0].name).toBe('有效标签');
         });
     });
 

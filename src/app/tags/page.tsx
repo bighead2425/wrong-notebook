@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { TagUsageStats } from "@/components/tag-usage-stats";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -369,7 +370,15 @@ export default function TagsPage() {
                     <Badge variant="outline" className="cursor-pointer hover:bg-accent">
                         {highlight(node.name)}
                         {(() => {
-                            const stat = stats.find(s => s.tag === node.name);
+                            /**
+                             * 【2026-11-06】**按 id 找，不按名字。**
+                             * 名字会串（「小数减法」五上五下都有、数学物理都有「计算」）——
+                             * 这是说明书 §4 坑 2 记着的那件事，这里就是漏网的一处。
+                             * 老数据没有 id 时才退回按名字（那时也确实没有更好的办法）。
+                             */
+                            const stat =
+                                stats.find((s) => s.id === node.id) ??
+                                stats.find((s) => !s.id && s.name === node.name);
                             return stat ? <span className="ml-1 text-xs text-muted-foreground">({stat.count})</span> : null;
                         })()}
                     </Badge>
@@ -890,32 +899,24 @@ export default function TagsPage() {
         );
     };
 
-    // 渲染统计
+    /**
+     * 渲染统计。
+     *
+     * 【2026-11-06 空空】原来这里是「top20 横条列表」，现在整块交给 `TagUsageStats`：
+     * 全量排行 + 五种分组看法 + 每条可点进题。
+     * 分工：**页面只管取数**（`/api/tags/stats`），展示与排序全在组件里——
+     * 以后换排行口径只改一处，不会再出现"页面里 slice(0,20)"这种把数据砍掉的地方。
+     */
     const renderStats = () => {
         if (loading) return <div className="text-center py-8">{t.tags?.stats?.loading || "Loading..."}</div>;
-        if (stats.length === 0) return <div className="text-center py-8 text-muted-foreground">{t.tags?.stats?.empty || "No tag usage records yet"}</div>;
-        const maxCount = stats[0]?.count || 1;
-        return (
-            <Card>
-                <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="h-5 w-5" />{t.tags?.stats?.frequency || "Tag Usage Frequency (Top 20)"}</CardTitle></CardHeader>
-                <CardContent className="space-y-3">
-                    {stats.slice(0, 20).map((stat) => {
-                        const percentage = (stat.count / maxCount) * 100;
-                        return (
-                            <div key={stat.tag} className="space-y-1">
-                                <div className="flex justify-between items-center text-sm">
-                                    <span className="font-medium">{stat.tag}</span>
-                                    <span className="text-muted-foreground">{stat.count} {t.tags?.stats?.count || "times"}</span>
-                                </div>
-                                <div className="h-2 bg-muted rounded-full overflow-hidden">
-                                    <div className="h-full bg-primary transition-all" style={{ width: `${percentage}%` }} />
-                                </div>
-                            </div>
-                        );
-                    })}
-                </CardContent>
-            </Card>
-        );
+        if (stats.length === 0) {
+            return (
+                <div className="text-center py-8 text-muted-foreground">
+                    {t.tags?.stats?.empty || "No tag usage records yet"}
+                </div>
+            );
+        }
+        return <TagUsageStats stats={stats} />;
     };
 
     /** 打开说明书：第一次点才去取文件（几 KB，取过就留着） */

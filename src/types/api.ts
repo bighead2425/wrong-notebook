@@ -287,8 +287,23 @@ export interface PracticeStatsData {
     overallStats: { total: number; correct: number; rate: string };
 }
 
+/**
+ * 【2026-11-06 空空】**使用统计要能按年级/学科分组排行，所以一条记录得知道"它是谁、在哪、属哪科"。**
+ *
+ * 原来的形状只有 `{ tag, count }`（名字 + 次数），既点不进题（没有 id），
+ * 也分不了组（没有册和学科）—— 这就是为什么它只能做一个 top20 的列表。
+ */
 export interface TagStats {
-    tag: string;
+    /** 标签 id —— 点一下跳到 `/by-tag/<id>` 看这个标签下的题 */
+    id: string | null;
+    /** 标签名（展示用；老数据没有 id 时只有它） */
+    name: string;
+    /** 学科：math / chinese / english / physics / chemistry / biology / history / geography / politics */
+    subject: string | null;
+    /** 册或学段（标签树的根节点名）：数学是"五年级上"，语文/英语/政史地是"小学/初中/高中" */
+    stage: string | null;
+    /** 词表标签 = true；自建 = false；老数据无从判断 = null */
+    isSystem: boolean | null;
     count: number;
 }
 

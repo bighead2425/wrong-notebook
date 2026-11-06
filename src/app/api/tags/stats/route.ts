@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
 import { internalError, unauthorized } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import type { TagStats } from "@/types/api";
 
 const logger = createLogger('api:tags:stats');
 
@@ -47,37 +48,85 @@ export async function GET() {
          * 标签树上的 `(N)` 计数跟着全错（他看到的"这个词有 5 道题"是假的）。
          * 那列还带着读一次，只为兼容"关系还没建"的老数据。
          */
-        const errorItems = await prisma.errorItem.findMany({
-            where: { userId: user.id, deletedAt: null },
-            select: {
-                knowledgePoints: true,
-                tags: { select: { name: true } },
-            },
-        });
+        /**
+         * 【2026-11-06 空空】**使用统计要支持按年级/学科分组排行，所以这一版取的东西多了三样。**
+         *
+         * 原来只 `select: { tags: { select: { name: true } } }` —— 名字是对的，
+         * 但**没有 id**（点不进题）、**没有学科**（分不了组）、**没有册**（排不了年级）。
+         * 这就是为什么它一直只能做一个 top20 的名字列表。
+         *
+         * `stage` 的取法：沿 `parentId` 爬到**根节点**，根的名字就是"册"或"学段"——
+         * 数学/物理/化学/生物按册（"五年级上"），语文/英语/政史地按学段（"小学/初中/高中"），
+         * 与 `src/lib/tag-data/*.ts` 的结构一致。
+         */
+        const [errorItems, allTags] = await Promise.all([
+            prisma.errorItem.findMany({
+                where: { userId: user.id, deletedAt: null },
+                select: {
+                    knowledgePoints: true,
+                    tags: { select: { id: true, name: true } },
+                },
+            }),
+            prisma.knowledgeTag.findMany({
+                where: { OR: [{ isSystem: true }, { userId: user.id }] },
+                select: { id: true, name: true, subject: true, parentId: true, isSystem: true },
+            }),
+        ]);
 
-        // 统计标签使用频率
-        const tagStats: Record<string, number> = {};
+        const tagById = new Map(allTags.map((t) => [t.id, t]));
+        /** 爬到根：根名 = 册 / 学段。加层数上限，防脏数据成环。 */
+        const rootNameOf = (id: string): string | null => {
+            let cur = tagById.get(id);
+            let guard = 0;
+            while (cur?.parentId && guard++ < 12) {
+                const parent = tagById.get(cur.parentId);
+                if (!parent) break;
+                cur = parent;
+            }
+            return cur?.name ?? null;
+        };
+
+        /** key：有 id 用 id；老数据（只有名字串）用 `name:` 前缀，避免和真 id 撞 */
+        const acc = new Map<string, TagStats>();
 
         errorItems.forEach((item) => {
-            /* 首选：标签关系（真源）。`?.` 是给"老测试 mock 没给这一列"兜底 */
             const rel = item.tags ?? [];
             if (rel.length > 0) {
-                rel.forEach((t) => {
+                for (const t of rel) {
                     const name = (t.name ?? "").trim();
-                    if (name) tagStats[name] = (tagStats[name] || 0) + 1;
-                });
+                    if (!name) continue;
+                    const meta = tagById.get(t.id);
+                    const cur =
+                        acc.get(t.id) ??
+                        {
+                            id: t.id,
+                            name,
+                            subject: meta?.subject ?? null,
+                            stage: rootNameOf(t.id),
+                            isSystem: meta?.isSystem ?? null,
+                            count: 0,
+                        };
+                    cur.count += 1;
+                    acc.set(t.id, cur);
+                }
                 return;
             }
-            /* 兜底：老数据只有那一列 */
+            /* 兜底：老数据只有那列名字串（关系还没建）⇒ 没有 id、没有册、没有学科 */
             if (item.knowledgePoints) {
                 try {
-                    const tags = JSON.parse(item.knowledgePoints);
-                    if (Array.isArray(tags)) {
-                        tags.forEach((tag: string) => {
-                            if (tag && typeof tag === 'string') {
-                                tagStats[tag] = (tagStats[tag] || 0) + 1;
-                            }
-                        });
+                    const parsed = JSON.parse(item.knowledgePoints);
+                    if (Array.isArray(parsed)) {
+                        for (const tag of parsed) {
+                            if (!tag || typeof tag !== "string") continue;
+                            const name = tag.trim();
+                            if (!name) continue;
+                            const key = `name:${name}`;
+                            const cur =
+                                acc.get(key) ??
+                                { id: null, name, subject: null, stage: null, isSystem: null, count: 0 };
+                            cur.count += 1;
+                            acc.set(key, cur);
+                        }
                     }
                 } catch {
                     logger.warn({ knowledgePoints: item.knowledgePoints }, 'Failed to parse knowledgePoints for item');
@@ -85,15 +134,18 @@ export async function GET() {
             }
         });
 
-        // 转换为数组并按使用次数排序
-        const sortedStats = Object.entries(tagStats)
-            .map(([tag, count]) => ({ tag, count }))
-            .sort((a, b) => b.count - a.count);
+        /**
+         * 只保留"真的挂了题"的标签（他明确说的：没有题的标签没必要排行），
+         * 次数从高到低；同次数按名字排，保证每次刷新顺序稳定。
+         */
+        const stats = [...acc.values()]
+            .filter((s) => s.count > 0)
+            .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-Hans-CN"));
 
         return NextResponse.json({
-            stats: sortedStats,
+            stats,
             total: errorItems.length,
-            uniqueTags: sortedStats.length,
+            uniqueTags: stats.length,
         });
     } catch (error) {
         logger.error({ error }, 'Error getting tag stats');
