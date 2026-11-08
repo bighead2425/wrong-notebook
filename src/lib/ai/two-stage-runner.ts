@@ -129,6 +129,16 @@ export async function runStage1(params: {
     imageDataUrl: string;
     gradeSemester?: string | null;
     template?: string | null;
+    /**
+     * 【2026-11-08 空空】**单次请求超时，由调用方传设置页那个值。**
+     *
+     * 原来这里写死 150 秒，而前端 `apiClient` 等的是设置里的值（默认 180）——
+     * 于是**后端 150 秒就断、开始重试，前端等到 180 秒也放弃**。
+     * 用户把设置调到 300 秒完全没用：两头都用不上。
+     *
+     * 不传时才落回 150 秒（第一段带图，实测正常 30–70 秒，150 是兜底）。
+     */
+    timeoutMs?: number;
 }): Promise<ReturnType<typeof parseStage1> & { promptTokens: number }> {
     const cfg = getAppConfig();
     const system = buildStage1Prompt({
@@ -141,7 +151,8 @@ export async function runStage1(params: {
         { type: 'image_url', image_url: { url: params.imageDataUrl } },
     ];
 
-    let r = await chatCompletions({ system, user, retries: 2, timeoutMs: 150000 });
+    const t = params.timeoutMs && params.timeoutMs > 0 ? params.timeoutMs : 150000;
+    let r = await chatCompletions({ system, user, retries: 2, timeoutMs: t });
     let parsed = parseStage1(r.text);
 
     /**
@@ -158,7 +169,7 @@ export async function runStage1(params: {
     if (!parsed.keywordsPresent) {
         logger.info('两段式：第一段没输出 keywords 段，重试一次');
         try {
-            r = await chatCompletions({ system, user, retries: 2, timeoutMs: 150000 });
+            r = await chatCompletions({ system, user, retries: 2, timeoutMs: t });
             const retried = parseStage1(r.text);
             /* 重试用更好的结果，但原文仍以能解析出字段的那次为准 */
             if (retried.keywordsPresent || (!parsed.subject && retried.subject)) {

@@ -142,6 +142,8 @@ export async function POST(req: Request) {
                 imageDataUrl: `data:${mimeType};base64,${imageBase64}`,
                 gradeSemester: userGradeSemester,
                 template: cfg.prompts?.analyze,
+                /* 【2026-11-08】用设置页那个超时，不再让后端固定 150 秒 */
+                timeoutMs: cfg.timeouts?.analyze,
             });
             const subjectCn = s1.subject || subjectChinese || '其他';
             analysisResult = {
