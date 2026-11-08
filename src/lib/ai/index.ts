@@ -18,7 +18,11 @@ export function getAIService(): AIService {
     if (provider === "openai") {
         const activeConfig = getActiveOpenAIConfig();
         logger.info({ activeInstance: activeConfig?.name }, 'Using OpenAI Provider');
-        return new OpenAIProvider(activeConfig);
+        /**
+         * 【2026-11-08】把设置页的「AI 分析超时」传给 provider。
+         * 不传的话 provider 用自己的 180 秒 —— 前端调多长都没用。
+         */
+        return new OpenAIProvider({ ...activeConfig, timeoutMs: config.timeouts?.analyze });
     } else if (provider === "azure") {
         logger.info({ deployment: config.azure?.deploymentName }, 'Using Azure OpenAI Provider');
         return new AzureOpenAIProvider(config.azure);

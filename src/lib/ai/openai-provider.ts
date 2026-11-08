@@ -34,6 +34,8 @@ export class OpenAIProvider implements AIService {
     private baseURL: string;
     private apiKey: string;
     private isLongCat: boolean;
+    /** 单次请求超时。设置页给了就用它，没给才落到 180 秒兜底 */
+    private timeoutMs: number;
 
     constructor(config?: AIConfig) {
         const apiKey = config?.apiKey;
@@ -43,11 +45,14 @@ export class OpenAIProvider implements AIService {
             throw new Error("AI_AUTH_ERROR: OPENAI_API_KEY is required for OpenAI provider");
         }
 
+        this.timeoutMs =
+            typeof config?.timeoutMs === "number" && config.timeoutMs > 0 ? config.timeoutMs : AI_TIMEOUT_MS;
+
         this.openai = new OpenAI({
             apiKey: apiKey,
             baseURL: baseURL || undefined,
             /* 超时与下面裸 fetch 那条保持一致（见 AI_TIMEOUT_MS 的注释） */
-            timeout: AI_TIMEOUT_MS,
+            timeout: this.timeoutMs,
             maxRetries: 0,
             defaultHeaders: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -309,7 +314,7 @@ export class OpenAIProvider implements AIService {
 
                 /* 【2026-10-29】裸 fetch 同样要超时，否则模型端挂住 = 服务端请求挂住 */
                 const controller = new AbortController();
-                const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+                const timer = setTimeout(() => controller.abort(), this.timeoutMs);
                 let res: Response;
                 try {
                     res = await fetch(`${this.baseURL}/chat/completions`, {
