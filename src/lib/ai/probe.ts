@@ -195,7 +195,15 @@ export async function probeModel(input: ProbeInput): Promise<ModelCapabilities> 
     }
 
     /* ⑤ 最大输出上限 —— 从大到小试，第一个不报错的就是它能接的 */
-    for (const v of [65536, 32768, 16384, 8192]) {
+    /**
+     * 【2026-11-09 空空】**从 131072 起试。**
+     *
+     * 设置页现在最大给到 131072，探测却从 65536 起 —— 那样选了大值会显示
+     * "上限约 65536"，看起来像是填错了。两边必须对齐。
+     *
+     * 每档只发一个 2 token 的请求，**不会真的生成那么多字**，成本可忽略。
+     */
+    for (const v of [131072, 65536, 32768, 16384, 8192]) {
         const probe = await postChat(
             input,
             { messages: [{ role: 'user', content: '1' }], max_tokens: v },

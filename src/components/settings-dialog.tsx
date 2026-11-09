@@ -1463,6 +1463,8 @@ export function SettingsDialog({
                                                             <option value={8192}>8192（默认）</option>
                                                             <option value={16384}>16384（推荐）</option>
                                                             <option value={32768}>32768（宽裕）</option>
+                                                            <option value={65536}>65536（超长）</option>
+                                                            <option value={131072}>131072（极大）</option>
                                                         </select>
                                                         <p className="text-[10px] text-muted-foreground">
                                                             {getSelectedInstance()?.capabilities?.maxOutput
