@@ -1453,7 +1453,7 @@ export function SettingsDialog({
                                                     <div className="space-y-1">
                                                         <Label className="text-xs">最大输出长度</Label>
                                                         <select
-                                                            value={getSelectedInstance()?.maxTokens ?? 8192}
+                                                            value={getSelectedInstance()?.maxTokens ?? 16384}
                                                             onChange={(e) =>
                                                                 updateOpenAIInstance('maxTokens', Number(e.target.value))
                                                             }

@@ -81,8 +81,19 @@ export class OpenAIProvider implements AIService {
          * 注意：`max_tokens` 超过模型硬上限会**直接 400**（不是截断），
          * 所以探测时会把上限问出来，前端负责收窄。
          */
+        /**
+         * 【2026-11-09 空空】**默认 16384 —— 8192 对"会思考"的模型经常不够。**
+         *
+         * 实测：那道面积题输出 1251–1721 字（约 2000 token），
+         * 但模型先思考时 reasoning 会额外吃掉几千，8192 就紧了。
+         * 16384 给两边都留够余量，且**不额外花钱**（按实际 token 计费）。
+         *
+         * ⚠️ 个别模型上限很小（`glm-4v-flash` 只 1024），超了会 400。
+         *    这类请在设置页点一次「测试连接」——探测会把上限问出来并显示，
+         *    再按提示调小即可。
+         */
         this.maxTokens =
-            typeof config?.maxTokens === 'number' && config.maxTokens > 0 ? config.maxTokens : 8192;
+            typeof config?.maxTokens === 'number' && config.maxTokens > 0 ? config.maxTokens : 16384;
         this.reasoningEffort = config?.reasoningEffort;
 
         logger.info({
