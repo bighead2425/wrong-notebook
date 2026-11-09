@@ -36,6 +36,13 @@ export class OpenAIProvider implements AIService {
     private isLongCat: boolean;
     /** 单次请求超时。设置页给了就用它，没给才落到 180 秒兜底 */
     private timeoutMs: number;
+    /** 能力探测结果（可空）。空 = 按老路子发，不带任何厂商私有参数 */
+    private capabilities?: {
+        image: boolean;
+        reasoning: boolean;
+        thinkingOff: boolean;
+        effortLevels: string[];
+    };
 
     constructor(config?: AIConfig) {
         const apiKey = config?.apiKey;
@@ -63,6 +70,8 @@ export class OpenAIProvider implements AIService {
         this.baseURL = baseURL || 'https://api.openai.com/v1';
         this.apiKey = apiKey;
         this.isLongCat = this.baseURL.includes('longcat.chat');
+        /* 【2026-11-09】探测出来的能力，决定请求里带不带 thinking / reasoning_effort */
+        this.capabilities = config?.capabilities;
 
         logger.info({
             provider: 'OpenAI',
@@ -70,6 +79,25 @@ export class OpenAIProvider implements AIService {
             baseURL: this.baseURL,
             apiKeyPrefix: apiKey.substring(0, 8) + '...'
         }, 'AI Provider initialized');
+    }
+
+    /**
+     * 【2026-11-09 空空】**按探测出来的能力决定带什么参数。**
+     *
+     * 这一晚的教训：不同厂商对"思考"是三套完全不同的机制 ——
+     *   · DeepSeek 系：`thinking: {type:'disabled'}` 能彻底关
+     *   · GLM-5 系：**关不掉**，只能 `reasoning_effort:'low'` 让它少想
+     *   · 小米/商汤：两个参数都不认，乱发会直接 400
+     *
+     * 所以：**没探测过就一个都不带**（保守），探到了才按能力发。
+     */
+    private thinkingParams(): Record<string, unknown> {
+        const cap = this.capabilities;
+        if (!cap || !cap.reasoning) return {};
+        if (cap.thinkingOff) return { thinking: { type: 'disabled' } };
+        if (cap.effortLevels.includes('low')) return { reasoning_effort: 'low' };
+        if (cap.effortLevels.length > 0) return { reasoning_effort: cap.effortLevels[0] };
+        return {};
     }
 
     private adaptMessagesForLongCat(messages: Array<{ role: string; content: any }>): Array<{ role: string; content: any }> {
@@ -328,6 +356,7 @@ export class OpenAIProvider implements AIService {
                             model: this.model,
                             messages,
                             max_tokens: 8192,
+                            ...this.thinkingParams(),
                         }),
                     });
                 } finally {

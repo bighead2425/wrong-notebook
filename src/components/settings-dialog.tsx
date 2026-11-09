@@ -112,6 +112,13 @@ export function SettingsDialog({
         success: boolean;
         textSupport: boolean;
         visionSupport: boolean;
+        /** 【2026-11-09】探测出来的能力（能不能关思考 / 有哪些档），测试连接时顺带探 */
+        capabilities?: {
+            image: boolean;
+            reasoning: boolean;
+            thinkingOff: boolean;
+            effortLevels: string[];
+        };
         textError?: string;
         visionError?: string;
         modelInfo?: string;
@@ -684,8 +691,11 @@ export function SettingsDialog({
         setTestResult(null);
         try {
             let requestBody: Record<string, unknown>;
+            /* 【2026-11-09】探测要用到"当前这个实例"的 key/baseUrl/model，先提到分支外面 */
+            let activeInstance: ReturnType<typeof getSelectedInstance> | undefined;
             if (config.aiProvider === 'openai') {
                 const instance = getSelectedInstance();
+                activeInstance = instance;
                 if (!instance?.apiKey) {
                     setTestResult({ success: false, textSupport: false, visionSupport: false, textError: t.settings?.ai?.validationApiKeyRequired || 'API Key is required' });
                     setTesting(false);
@@ -738,7 +748,59 @@ export function SettingsDialog({
                 textError?: string;
                 visionError?: string;
                 modelInfo?: string;
+                /** 下面会由 /api/ai/probe 填上 */
+                capabilities?: {
+                    image: boolean;
+                    reasoning: boolean;
+                    thinkingOff: boolean;
+                    effortLevels: string[];
+                };
             }>('/api/ai/test', requestBody);
+
+            /**
+             * 【2026-11-09 空空】**测完顺带问一遍"这模型能干什么"。**
+             *
+             * 为什么不再让用户点第二次：他配 key 只配一次，
+             * 但"能不能关思考、有哪些档位"决定后面每次请求发什么参数 ——
+             * 缺了这步，就会重演"GLM 想太久把 token 烧光"。
+             *
+             * ⚠️ 探测失败不影响连接测试的结论（有的厂商不认这些参数），
+             *    只是没有能力信息，请求时会退回"什么都不带"的老路子。
+             */
+            if (response.success && activeInstance) {
+                try {
+                    const probe = await apiClient.post<{
+                        capabilities: {
+                            image: boolean;
+                            reasoning: boolean;
+                            thinkingOff: boolean;
+                            effortLevels: string[];
+                        };
+                    }>('/api/ai/probe', {
+                        apiKey: activeInstance.apiKey,
+                        baseUrl: activeInstance.baseUrl,
+                        model: activeInstance.model,
+                        listModels: false,
+                    });
+                    response.capabilities = probe.capabilities;
+                    /* 写回当前实例 —— 这样用户点「保存」时它跟着一起存进配置 */
+                    setConfig((prev) => ({
+                        ...prev,
+                        openai: {
+                            ...prev.openai,
+                            instances: (prev.openai?.instances ?? []).map((inst) =>
+                                inst.id === activeInstance.id
+                                    ? { ...inst, capabilities: probe.capabilities }
+                                    : inst,
+                            ),
+                        },
+                    }));
+                } catch (probeErr) {
+                    frontendLogger.warn('[SettingsDialog]', '能力探测失败（不影响连接测试）', {
+                        error: probeErr instanceof Error ? probeErr.message : String(probeErr),
+                    });
+                }
+            }
 
             setTestResult(response);
         } catch (error) {
@@ -1545,6 +1607,36 @@ export function SettingsDialog({
                                                             }</span>
                                                         )}
                                                     </div>
+                                                    {testResult.capabilities && (
+                                                        <>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-muted-foreground">会不会先思考:</span>
+                                                                {testResult.capabilities.reasoning ? (
+                                                                    <span className="text-amber-600">会（回答前先想）</span>
+                                                                ) : (
+                                                                    <span className="text-green-600">不会（直接答）</span>
+                                                                )}
+                                                            </div>
+                                                            {testResult.capabilities.reasoning && (
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="text-muted-foreground">能否关掉思考:</span>
+                                                                    {testResult.capabilities.thinkingOff ? (
+                                                                        <span className="text-green-600">能（请求时自动关）</span>
+                                                                    ) : testResult.capabilities.effortLevels.length > 0 ? (
+                                                                        <span className="text-amber-600">
+                                                                            不能，但可限档：{testResult.capabilities.effortLevels.join(' / ')}
+                                                                            （自动取最低）
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span className="text-red-600">不能，且无法限制 —— 想多久不受控</span>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                            <p className="text-muted-foreground/60 text-[10px] pl-1">
+                                                                能力已写入本实例，点「保存」后生效
+                                                            </p>
+                                                        </>
+                                                    )}
                                                     <p className="text-muted-foreground/60 text-[10px] pl-1">* 由于网络问题，可能测试结果不准确</p>
                                                 </div>
                                             )}

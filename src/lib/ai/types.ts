@@ -35,6 +35,20 @@ export interface AIConfig {
      * 举一反三（要输出好几道题的完整解析）就是这么超时的。
      */
     timeoutMs?: number;
+
+    /**
+     * 【2026-11-09 空空】**探测出来的能力，决定这次请求带什么参数。**
+     *
+     * 由 `/api/ai/probe` 现场问厂商得到，存进实例配置。
+     * 有这个字段就按它下发（能限档就带 `reasoning_effort`、能关就带 `thinking`）；
+     * 没有就不带——**不认识参数的老厂商不该被我们搞崩**。
+     */
+    capabilities?: {
+        image: boolean;
+        reasoning: boolean;
+        thinkingOff: boolean;
+        effortLevels: string[];
+    };
     // Azure OpenAI 特有字段
     azureDeployment?: string;   // Azure 部署名称
     azureApiVersion?: string;   // API 版本 (如 2024-02-15-preview)
