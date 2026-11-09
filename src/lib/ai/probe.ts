@@ -33,7 +33,14 @@ export interface ModelCapabilities {
     thinkingOff: boolean;
     /** 能限制的思考档位；空数组 = 不支持 reasoning_effort */
     effortLevels: string[];
-    /** 探测时测到的最小可用 max_tokens（探测用 64，不代表上限） */
+    /**
+     * 试出来的**最大可接受 `max_tokens`**。
+     *
+     * 为什么必须探：超过模型硬上限时厂商返回的是 **400 报错**（不是静默截断），
+     * 设置页把这个值填进"最大输出"，用户就没法填出一个必然失败的数。
+     * 探测只发几个 token 的请求，**不会因为这些上限值真的生成那么多字**。
+     */
+    maxOutput: number;
     probedAt: string;
     /** 探测过程中的关键错误，留给设置页显示 */
     notes: string[];
@@ -101,6 +108,7 @@ export async function probeModel(input: ProbeInput): Promise<ModelCapabilities> 
         reasoning: false,
         thinkingOff: false,
         effortLevels: [],
+        maxOutput: 8192,
         probedAt: new Date().toISOString(),
         notes,
     };
@@ -183,6 +191,24 @@ export async function probeModel(input: ProbeInput): Promise<ModelCapabilities> 
         }
         if (caps.effortLevels.length === 0 && !caps.thinkingOff) {
             notes.push('既关不掉、也限不了 —— 这个模型"想多久"完全不受控');
+        }
+    }
+
+    /* ⑤ 最大输出上限 —— 从大到小试，第一个不报错的就是它能接的 */
+    for (const v of [65536, 32768, 16384, 8192]) {
+        const probe = await postChat(
+            input,
+            { messages: [{ role: 'user', content: '1' }], max_tokens: v },
+            timeoutMs,
+        );
+        if (probe.ok) {
+            caps.maxOutput = v;
+            break;
+        }
+        /* 只认"参数非法/超限"这类报错；网络问题不改变结论，直接留默认值 */
+        if (!/max_tokens|maximum|too large|invalid|1024|4096/i.test(probe.error)) {
+            notes.push(`上限探测中断：${probe.error.slice(0, 80)}`);
+            break;
         }
     }
 

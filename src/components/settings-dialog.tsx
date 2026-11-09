@@ -577,7 +577,8 @@ export function SettingsDialog({
     };
 
     // 更新当前选中的 OpenAI 实例属性
-    const updateOpenAIInstance = (key: keyof OpenAIInstance, value: string) => {
+    /* 【2026-11-09】value 可能是数字（maxTokens），不能只收 string */
+    const updateOpenAIInstance = (key: keyof OpenAIInstance, value: string | number | undefined) => {
         const instances = config.openai?.instances || [];
         const activeId = selectedInstanceId || config.openai?.activeInstanceId;
         const updatedInstances = instances.map(instance =>
@@ -1436,6 +1437,62 @@ export function SettingsDialog({
                                                     currentModel={getSelectedInstance()?.model}
                                                     onModelChange={(model) => updateOpenAIInstance('model', model)}
                                                 />
+
+                                                {/**
+                                                 * 【2026-11-09 空空】**最大输出长度 + 思考强度。**
+                                                 *
+                                                 * 这两项原来都写死在代码里（8192 / 无限制），
+                                                 * 结果就是"会思考的模型把额度全花在思考上，输出为空"。
+                                                 * 现在交给用户按自己孩子的学段调：
+                                                 *   · 小学：输出 8192 够用，思考关掉或最低档
+                                                 *   · 初高中：输出调到 16384+，思考放回高
+                                                 *
+                                                 * 上限按探测结果收窄 —— 超了厂商会直接 400。
+                                                 */}
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <div className="space-y-1">
+                                                        <Label className="text-xs">最大输出长度</Label>
+                                                        <select
+                                                            value={getSelectedInstance()?.maxTokens ?? 8192}
+                                                            onChange={(e) =>
+                                                                updateOpenAIInstance('maxTokens', Number(e.target.value))
+                                                            }
+                                                            className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+                                                        >
+                                                            <option value={4096}>4096（短解析）</option>
+                                                            <option value={8192}>8192（默认）</option>
+                                                            <option value={16384}>16384（推荐）</option>
+                                                            <option value={32768}>32768（宽裕）</option>
+                                                        </select>
+                                                        <p className="text-[10px] text-muted-foreground">
+                                                            {getSelectedInstance()?.capabilities?.maxOutput
+                                                                ? `这个模型上限约 ${getSelectedInstance()?.capabilities?.maxOutput}`
+                                                                : '点「测试连接」可探出模型上限'}
+                                                        </p>
+                                                    </div>
+                                                    <div className="space-y-1">
+                                                        <Label className="text-xs">思考强度</Label>
+                                                        <select
+                                                            value={getSelectedInstance()?.reasoningEffort ?? ''}
+                                                            onChange={(e) =>
+                                                                updateOpenAIInstance(
+                                                                    'reasoningEffort',
+                                                                    e.target.value || undefined,
+                                                                )
+                                                            }
+                                                            className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+                                                        >
+                                                            <option value="">自动（按探测结果）</option>
+                                                            <option value="off">关闭（最快）</option>
+                                                            <option value="low">低</option>
+                                                            <option value="high">高</option>
+                                                            <option value="max">最高</option>
+                                                        </select>
+                                                        <p className="text-[10px] text-muted-foreground">
+                                                            小学的题建议「关闭」或「低」；初高中再调高
+                                                        </p>
+                                                    </div>
+                                                </div>
                                             </div>
                                         )}
                                     </div>

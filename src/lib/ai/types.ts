@@ -43,6 +43,23 @@ export interface AIConfig {
      * 有这个字段就按它下发（能限档就带 `reasoning_effort`、能关就带 `thinking`）；
      * 没有就不带——**不认识参数的老厂商不该被我们搞崩**。
      */
+    /**
+     * 【2026-11-09 空空】**最大输出长度（token），设置页可调。**
+     *
+     * 原来是硬编码 8192，对"会思考"的模型不够 —— reasoning 会先吃掉一大截，
+     * 轮到输出时就没额度了，表现为 `content` 空。
+     */
+    maxTokens?: number;
+
+    /**
+     * 思考强度。留空 = 按探测出来的能力自动决定（能关就关、关不掉取 low）。
+     *
+     * 小学阶段的题（一两步计算 + 模式识别）**不需要深度推理**：
+     * 实测 `glm-5.3-flash` 用 low 档 24 秒就能出正确答案与完整解析，
+     * 而默认无限制时要 198 秒甚至想空。所以这里允许显式压到最低。
+     */
+    reasoningEffort?: 'off' | 'low' | 'high' | 'max';
+
     capabilities?: {
         image: boolean;
         reasoning: boolean;

@@ -196,6 +196,21 @@ export interface OpenAIInstance {
     apiKey: string;
     baseUrl: string;
     model: string;
+    /**
+     * 【2026-11-09 空空】**最大输出长度（token）。**
+     * 超过模型硬上限会直接 400，所以设置页会按探测到的 `capabilities.maxOutput` 收窄。
+     */
+    maxTokens?: number;
+    /** 思考强度。留空 = 按探测结果自动取最省的 */
+    reasoningEffort?: 'off' | 'low' | 'high' | 'max';
+    /** 探测出来的能力（测试连接时写入） */
+    capabilities?: {
+        image: boolean;
+        reasoning: boolean;
+        thinkingOff: boolean;
+        effortLevels: string[];
+        maxOutput?: number;
+    };
 }
 
 export interface AppConfig {

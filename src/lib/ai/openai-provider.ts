@@ -36,6 +36,10 @@ export class OpenAIProvider implements AIService {
     private isLongCat: boolean;
     /** 单次请求超时。设置页给了就用它，没给才落到 180 秒兜底 */
     private timeoutMs: number;
+    /** 最大输出长度。设置页给了就用它，没给才落 8192 */
+    private maxTokens: number;
+    /** 用户手选的思考强度；留空 = 按探测结果自动决定 */
+    private reasoningEffort?: 'off' | 'low' | 'high' | 'max';
     /** 能力探测结果（可空）。空 = 按老路子发，不带任何厂商私有参数 */
     private capabilities?: {
         image: boolean;
@@ -72,6 +76,14 @@ export class OpenAIProvider implements AIService {
         this.isLongCat = this.baseURL.includes('longcat.chat');
         /* 【2026-11-09】探测出来的能力，决定请求里带不带 thinking / reasoning_effort */
         this.capabilities = config?.capabilities;
+        /**
+         * 【2026-11-09】输出长度与思考强度都可配。
+         * 注意：`max_tokens` 超过模型硬上限会**直接 400**（不是截断），
+         * 所以探测时会把上限问出来，前端负责收窄。
+         */
+        this.maxTokens =
+            typeof config?.maxTokens === 'number' && config.maxTokens > 0 ? config.maxTokens : 8192;
+        this.reasoningEffort = config?.reasoningEffort;
 
         logger.info({
             provider: 'OpenAI',
@@ -94,6 +106,21 @@ export class OpenAIProvider implements AIService {
     private thinkingParams(): Record<string, unknown> {
         const cap = this.capabilities;
         if (!cap || !cap.reasoning) return {};
+
+        /**
+         * ① **用户在设置里手选的优先。**
+         *    他说"小学题不用深想"，那就压到最低；将来上初中想开，也能调回来。
+         *    但**只发模型认的**——不认的参数会让请求直接 400。
+         */
+        const wanted = this.reasoningEffort;
+        if (wanted === 'off' && cap.thinkingOff) {
+            return { thinking: { type: 'disabled' } };
+        }
+        if (wanted && wanted !== 'off' && cap.effortLevels.includes(wanted)) {
+            return { reasoning_effort: wanted };
+        }
+
+        /* ② 没手选（或手选的档它不认）⇒ 按能力取最省的 */
         if (cap.thinkingOff) return { thinking: { type: 'disabled' } };
         if (cap.effortLevels.includes('low')) return { reasoning_effort: 'low' };
         if (cap.effortLevels.length > 0) return { reasoning_effort: cap.effortLevels[0] };
@@ -316,7 +343,7 @@ export class OpenAIProvider implements AIService {
                         ],
                     },
                 ],
-                max_tokens: 8192,
+                max_tokens: this.maxTokens,
             };
 
             logger.box('📤 API Request (发送给 AI 的原始请求)', JSON.stringify(requestParamsForLog, null, 2));
@@ -355,7 +382,7 @@ export class OpenAIProvider implements AIService {
                         body: JSON.stringify({
                             model: this.model,
                             messages,
-                            max_tokens: 8192,
+                            max_tokens: this.maxTokens,
                             ...this.thinkingParams(),
                         }),
                     });
@@ -391,7 +418,7 @@ export class OpenAIProvider implements AIService {
                         },
                     ],
                     // response_format: { type: "json_object" }, // Removing to improve compatibility with 3rd party providers
-                    max_tokens: 8192,
+                    max_tokens: this.maxTokens,
                 });
             }
 
@@ -451,7 +478,7 @@ export class OpenAIProvider implements AIService {
                     { role: "user", content: userPrompt },
                 ],
                 // response_format: { type: "json_object" }, // Removing to improve compatibility with 3rd party providers
-                max_tokens: 8192,
+                max_tokens: this.maxTokens,
             });
 
             const text = response.choices[0]?.message?.content || "";
@@ -511,7 +538,7 @@ export class OpenAIProvider implements AIService {
                     { role: "system", content: prompt.substring(0, 200) + "..." },
                     { role: "user", content: typeof userContent === 'string' ? userContent : "[包含图片的多模态消息]" }
                 ],
-                max_tokens: 8192
+                max_tokens: this.maxTokens
             };
             logger.debug({ requestParams }, 'Request parameters');
 
@@ -521,7 +548,7 @@ export class OpenAIProvider implements AIService {
                     { role: "system", content: prompt },
                     { role: "user", content: userContent }
                 ],
-                max_tokens: 8192,
+                max_tokens: this.maxTokens,
             });
 
             logger.debug({ response: JSON.stringify(response) }, 'Full API response');
