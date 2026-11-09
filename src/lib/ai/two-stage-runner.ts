@@ -139,6 +139,14 @@ export async function runStage1(params: {
      * 不传时才落回 150 秒（第一段带图，实测正常 30–70 秒，150 是兜底）。
      */
     timeoutMs?: number;
+    /**
+     * 【2026-11-09 空空】**最大输出长度，由调用方从实例配置里取。**
+     *
+     * 这里原来没这个参数，`chatCompletions` 用默认 8192 ——
+     * 也就是说**设置页那个「最大输出长度」对两段式这条路完全不生效**。
+     * 推理模型把 8192 全花在 reasoning 上、`content` 为空，就是这么来的。
+     */
+    maxTokens?: number;
 }): Promise<ReturnType<typeof parseStage1> & { promptTokens: number }> {
     const cfg = getAppConfig();
     const system = buildStage1Prompt({
@@ -152,7 +160,8 @@ export async function runStage1(params: {
     ];
 
     const t = params.timeoutMs && params.timeoutMs > 0 ? params.timeoutMs : 150000;
-    let r = await chatCompletions({ system, user, retries: 2, timeoutMs: t });
+    const mt = params.maxTokens && params.maxTokens > 0 ? params.maxTokens : 16384;
+    let r = await chatCompletions({ system, user, retries: 2, timeoutMs: t, maxTokens: mt });
     let parsed = parseStage1(r.text);
 
     /**
@@ -169,7 +178,7 @@ export async function runStage1(params: {
     if (!parsed.keywordsPresent) {
         logger.info('两段式：第一段没输出 keywords 段，重试一次');
         try {
-            r = await chatCompletions({ system, user, retries: 2, timeoutMs: t });
+            r = await chatCompletions({ system, user, retries: 2, timeoutMs: t, maxTokens: mt });
             const retried = parseStage1(r.text);
             /* 重试用更好的结果，但原文仍以能解析出字段的那次为准 */
             if (retried.keywordsPresent || (!parsed.subject && retried.subject)) {

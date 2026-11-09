@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAIService } from "@/lib/ai";
-import { getAppConfig } from "@/lib/config";
+import { getActiveOpenAIConfig, getAppConfig } from "@/lib/config";
 import { runStage1 } from "@/lib/ai/two-stage-runner";
 import { extractField } from "@/lib/ai/two-stage";
 import { authOptions } from "@/lib/auth";
@@ -144,6 +144,8 @@ export async function POST(req: Request) {
                 template: cfg.prompts?.analyze,
                 /* 【2026-11-08】用设置页那个超时，不再让后端固定 150 秒 */
                 timeoutMs: cfg.timeouts?.analyze,
+                /* 【2026-11-09】输出长度也取实例里配的那个，别再用 8192 兜着 */
+                maxTokens: getActiveOpenAIConfig()?.maxTokens,
             });
             const subjectCn = s1.subject || subjectChinese || '其他';
             analysisResult = {

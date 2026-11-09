@@ -29,7 +29,7 @@ import {
     MANAGE_TYPE_UNDECIDED_COLOR,
     needsDeepPrintNudge,
 } from "@/lib/manage-type";
-import { UserProfile } from "@/types/api";
+import { AppConfig, UserProfile } from "@/types/api";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { NotebookSelector } from "@/components/notebook-selector";
 import { CorrectionEditor, ParsedQuestionWithSubject } from "@/components/correction-editor";
@@ -660,11 +660,28 @@ export default function ErrorDetailPage() {
         }
         setIsReanalyzing(true);
         try {
-            const data = await apiClient.post<ParsedQuestion>("/api/analyze", {
-                imageBase64: item.originalImageUrl,
-                language,
-                notebookId: item.notebookId || undefined,
-            });
+            /**
+             * 【2026-11-09 空空】**这里原来没传 timeout —— 用的是 apiClient 默认的 60 秒。**
+             *
+             * 批量上传那条路传的是设置页的值（180/300 秒），所以同样的图、同样的接口、
+             * 同一个提示词，**批量能过，这里必挂** —— 差别只在这一行参数上。
+             *
+             * 推理模型分析一道高中题经常要 100 秒以上，60 秒连"想完"都等不到，
+             * 前端先 abort，界面上就只有"AI 分析失败"。
+             *
+             * 现场取一次设置（局域网几十毫秒）：改了设置立即生效，不用重开页面。
+             */
+            const cfg = await apiClient.get<AppConfig>("/api/settings").catch(() => null);
+            const aiTimeout = cfg?.timeouts?.analyze || 180000;
+            const data = await apiClient.post<ParsedQuestion>(
+                "/api/analyze",
+                {
+                    imageBase64: item.originalImageUrl,
+                    language,
+                    notebookId: item.notebookId || undefined,
+                },
+                { timeout: aiTimeout },
+            );
             setReanalyzeData(data);
         } catch (error) {
             console.error(error);

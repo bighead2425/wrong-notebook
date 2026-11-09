@@ -15,6 +15,22 @@ export interface OpenAIInstance {
     apiKey: string;
     baseUrl: string;
     model: string;
+    /**
+     * 【2026-11-09 空空】**这三项是 11-09 新加的，服务端必须认识它们。**
+     *
+     * 原来这里只有 5 个字段，而前端（`types/api.ts`）已经加了。
+     * 类型不一致的后果不是编译报错，而是**服务端读配置时"看不见"这些值**——
+     * 两段式那条路因此一直用 8192 兜着，设置页填 16384 等于白填。
+     */
+    maxTokens?: number;
+    reasoningEffort?: 'off' | 'low' | 'high' | 'max';
+    capabilities?: {
+        image: boolean;
+        reasoning: boolean;
+        thinkingOff: boolean;
+        effortLevels: string[];
+        maxOutput?: number;
+    };
 }
 
 export interface AppConfig {
