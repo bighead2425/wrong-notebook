@@ -133,11 +133,11 @@ export const DEFAULT_ANALYZE_TEMPLATE = `【角色】
 <mistake_category>calc_slip</mistake_category>
 <requires_image>false</requires_image>
 <question_text>…</question_text>
-<answer_text>…</answer_text>
+<answer_text>填写你独立解出的答案（若含表格，遵循上述【表格处理规则】）</answer_text>
 <wrong_answer_text>…</wrong_answer_text>
 <mistake_status>wrong_attempt</mistake_status>
 <mistake_analysis>…</mistake_analysis>
-<analysis>…</analysis>
+<analysis>填写详细步骤解析（必须使用简体中文；若需表格，遵循上述【表格处理规则】）</analysis>
 
 【各字段】
 
@@ -156,7 +156,40 @@ export const DEFAULT_ANALYZE_TEMPLATE = `【角色】
 
 **question_text**：题目原文，Markdown 格式，数学公式用 LaTeX（行内 \`$...$\`，块级 \`$$...$$\`）。
 - 有子问（1）（2）要全部列出。
-- 有表格就用 Markdown 表格完整转录（空单元格写 \`-\`），保留标题、单位、注释；手写表格不确定处标 \`[?]\`。
+【表格处理规则】
+如果图片中包含表格，必须完整转录表格内容：
+
+1. **标准表格**：使用 Markdown 表格语法
+   | 列标题1 | 列标题2 | 列标题3 |
+   |---------|---------|---------|
+   | 数据1   | 数据2   | 数据3   |
+
+2. **复杂表格**（合并单元格/多级表头/不规则布局）：
+   - 优先尝试用 Markdown 表格近似表示
+   - 如果 Markdown 无法准确表达，在表格前用文字说明结构，然后用简化的 Markdown 表格 + 注释
+   - 示例：
+     > 注：第1行为主标题，横跨3列；第2-3行为数据行
+
+     | 项目 | 数值A | 数值B |
+     |------|-------|-------|
+     | 测试1 | 10 | 20 |
+     | 测试2 | 15 | 25 |
+
+3. **表格完整性要求**：
+   - 必须转录所有单元格内容（包括空单元格用 - 或空格表示）
+   - 保留表格标题、单位、注释
+   - 保留数据的对齐关系和分组信息
+   - 表格中的数学公式使用 LaTeX 语法
+
+4. **表格上下文**：
+   - 如果表格有标题或编号（如"表1"），保留在表格前
+   - 如果表格后有注释或说明，保留在表格后
+   - 保持表格在题目中的位置关系
+
+5. **特殊情况处理**：
+   - 图表混合：如果表格旁边有图形，用文字说明位置关系
+   - 手写表格：尽力识别手写内容，不确定的用 [?] 标注
+   - 模糊表格：如果表格不清晰，在表格前注明"（表格内容可能不完整）"
 - **严禁**出现任何图片链接或 \`![](...)\`。
 
 **answer_text**：**你独立解出来的答案**，带必要步骤。
