@@ -6,6 +6,7 @@ import { safeParseParsedQuestion } from './schema';
 import { getMathTagsFromDB, getTagsFromDB, getTagTree } from './tag-service';
 import { SUBJECT_KEY_BY_NAME } from './tag-scope';
 import { splitKnowledgePoints } from './knowledge-split';
+import { buildThinkingParams } from './thinking-params';
 import { parseTagRefs } from './tag-ref';
 import { normalizeMistakeCategory } from '../mistake-category';
 import { createLogger } from '../logger';
@@ -114,28 +115,14 @@ export class OpenAIProvider implements AIService {
      *
      * 所以：**没探测过就一个都不带**（保守），探到了才按能力发。
      */
+    /**
+     * 【2026-11-09】**规则本身在 `thinking-params.ts`，这里只负责把实例配置喂进去。**
+     *
+     * 抽出去的原因：两段式那条路（`chatCompletions`）原来完全不带这些参数，
+     * 用户在设置里选「低」等于没选。规则只写一处，两条路才不会又走散。
+     */
     private thinkingParams(): Record<string, unknown> {
-        const cap = this.capabilities;
-        if (!cap || !cap.reasoning) return {};
-
-        /**
-         * ① **用户在设置里手选的优先。**
-         *    他说"小学题不用深想"，那就压到最低；将来上初中想开，也能调回来。
-         *    但**只发模型认的**——不认的参数会让请求直接 400。
-         */
-        const wanted = this.reasoningEffort;
-        if (wanted === 'off' && cap.thinkingOff) {
-            return { thinking: { type: 'disabled' } };
-        }
-        if (wanted && wanted !== 'off' && cap.effortLevels.includes(wanted)) {
-            return { reasoning_effort: wanted };
-        }
-
-        /* ② 没手选（或手选的档它不认）⇒ 按能力取最省的 */
-        if (cap.thinkingOff) return { thinking: { type: 'disabled' } };
-        if (cap.effortLevels.includes('low')) return { reasoning_effort: 'low' };
-        if (cap.effortLevels.length > 0) return { reasoning_effort: cap.effortLevels[0] };
-        return {};
+        return buildThinkingParams(this.capabilities, this.reasoningEffort);
     }
 
     private adaptMessagesForLongCat(messages: Array<{ role: string; content: any }>): Array<{ role: string; content: any }> {

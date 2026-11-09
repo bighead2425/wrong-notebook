@@ -14,7 +14,8 @@
  * 容错：429 退避重试（限流是"等一下"，不是失败）、空内容重试、超时。
  */
 
-import { getAppConfig } from '../config';
+import { getActiveOpenAIConfig, getAppConfig } from '../config';
+import { buildThinkingParams } from './thinking-params';
 import { prisma } from '../prisma';
 import { logger } from '../logger';
 import { buildCandidates, isStageScopeSubject } from '../tag-index';
@@ -78,6 +79,20 @@ async function chatCompletions(params: {
      * 第二段纯文字，正常 5–20 秒，给 90 秒。到点就 abort，走重试。
      */
     const { system, user, maxTokens = 8192, retries = 3, timeoutMs = 150000 } = params;
+    /**
+     * 【2026-11-09 空空】**两段式这条路原来完全不带思考参数。**
+     *
+     * 请求体只有 `{ model, messages, max_tokens }` —— 用户在设置里选「思考强度 = 低」、
+     * 以及测试连接探出来的"能关思考"，**在这条路上全部无效**。
+     * 而两段式正是当前默认走的那条（`twoStage.enabled`）。
+     *
+     * 后果实测过：mimo 分析一道小学题烧掉一万多 token 在 reasoning 上，
+     * 8192 被吃光、`content` 为空，界面上显示"失败"。
+     *
+     * 现在规则与 `OpenAIProvider` 共用一份（`thinking-params.ts`），两条路不会再走散。
+     */
+    const activeInst = getActiveOpenAIConfig();
+    let thinkingToSend = buildThinkingParams(activeInst?.capabilities, activeInst?.reasoningEffort);
     let lastErr = '';
 
     for (let attempt = 1; attempt <= retries; attempt++) {
@@ -92,6 +107,7 @@ async function chatCompletions(params: {
                         { role: 'user', content: user },
                     ],
                     max_tokens: maxTokens,
+                    ...thinkingToSend,
                 }),
                 signal: AbortSignal.timeout(timeoutMs),
             });
@@ -104,7 +120,22 @@ async function chatCompletions(params: {
                 }
                 throw new Error(lastErr);
             }
-            if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 200)}`);
+            if (!res.ok) {
+                const errText = (await res.text()).slice(0, 200);
+                /**
+                 * 【2026-11-09】**400 且我们带了思考参数 ⇒ 多半是这家不认。**
+                 *
+                 * 去掉参数重试一次，别让"想让它少想"反而把整个请求搞崩。
+                 * 这样即使没做过能力探测，用户选「低」也是安全的：
+                 * 认就用，不认就退回老样子。
+                 */
+                if (res.status === 400 && Object.keys(thinkingToSend).length > 0) {
+                    logger.warn({ errText }, '模型不认思考参数，去掉后重试');
+                    thinkingToSend = {};
+                    continue;
+                }
+                throw new Error(`${res.status} ${errText}`);
+            }
 
             const d = await res.json();
             const text = d.choices?.[0]?.message?.content ?? '';
