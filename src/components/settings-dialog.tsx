@@ -186,8 +186,15 @@ export function SettingsDialog({
         : /^(v|custom-)/.test(version)
             ? version
             : `v${version}`;
-    /** tag + 提交号：tag 是人填的、commit 不是；两个一起才判得出"审的是哪一版" */
-    const versionLabel = commit && baseLabel !== "unknown" ? `${baseLabel} · ${commit}` : baseLabel;
+    /**
+     * 【2026-11-10 空空】**界面只显示版本号**（`custom-v162` 这种）。
+     *
+     * 原来拼成 `custom-v162 · f455621`，那个提交号对人没用，只会把一行撑长。
+     * 但它对**排查**有用（判断 NAS 上跑的是哪个提交），所以放进 `title`——
+     * 鼠标悬停才显示，平时不占地方。
+     */
+    const versionLabel = baseLabel;
+    const versionTitle = commit && baseLabel !== "unknown" ? `${baseLabel} · ${commit}` : baseLabel;
 
     const fetchSettings = async () => {
         setLoading(true);
@@ -2028,8 +2035,8 @@ export function SettingsDialog({
                             </div>
 
                             <div className="flex items-center space-x-2 text-sm text-muted-foreground border px-4 py-2 rounded-full bg-background">
-                                <Info className="h-4 w-4" />
-                                <span>{t.settings?.about?.version || "Version"}: {versionLabel}</span>
+                                {/* 【2026-11-10 空空】只留版本号，不要"当前版本："前缀和那个圆圈 i */}
+                                <span title={versionTitle}>{versionLabel}</span>
                                 {/**
                                  * 【2026-11-01】**软件内手动更新**。
                                  *
@@ -2057,7 +2064,7 @@ export function SettingsDialog({
 
                             <div className="flex flex-col sm:flex-row flex-wrap justify-center gap-4 w-full sm:w-auto px-4 sm:px-0">
                                 <Button variant="outline" asChild className="gap-2 w-full sm:w-auto">
-                                    <a href="https://github.com/wttwins/wrong-notebook" target="_blank" rel="noopener noreferrer">
+                                    <a href="https://github.com/bighead2425/wrong-notebook" target="_blank" rel="noopener noreferrer">
                                         <Github className="h-4 w-4" />
                                         {t.settings?.about?.github || "GitHub Repository"}
                                         <ExternalLink className="h-3 w-3 ml-1 opacity-50" />
@@ -2065,7 +2072,7 @@ export function SettingsDialog({
                                 </Button>
 
                                 <Button variant="outline" asChild className="gap-2 w-full sm:w-auto">
-                                    <a href="https://github.com/wttwins/wrong-notebook/releases" target="_blank" rel="noopener noreferrer">
+                                    <a href="https://github.com/bighead2425/wrong-notebook/blob/main/README.md" target="_blank" rel="noopener noreferrer">
                                         <ScrollText className="h-4 w-4" />
                                         {t.settings?.about?.releaseNotes || "Release Notes"}
                                         <ExternalLink className="h-3 w-3 ml-1 opacity-50" />
@@ -2073,7 +2080,7 @@ export function SettingsDialog({
                                 </Button>
 
                                 <Button variant="outline" asChild className="gap-2 w-full sm:w-auto">
-                                    <a href="https://github.com/wttwins/wrong-notebook/issues" target="_blank" rel="noopener noreferrer">
+                                    <a href="https://github.com/wttwins/wrong-notebook" target="_blank" rel="noopener noreferrer">
                                         <MessageSquareText className="h-4 w-4" />
                                         {t.settings?.about?.feedback || "Feedback"}
                                         <ExternalLink className="h-3 w-3 ml-1 opacity-50" />
@@ -2082,7 +2089,7 @@ export function SettingsDialog({
                             </div>
 
                             <p className="text-xs text-muted-foreground mt-8">
-                                {t.settings?.about?.copyright || "© 2025 Wttwins. All rights reserved."}
+                                {t.settings?.about?.copyright || "© 2026 Victor. All rights reserved."}
                             </p>
                         </div>
                     </TabsContent>
