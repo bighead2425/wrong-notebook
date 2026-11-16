@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Save, RefreshCw, Loader2 } from "lucide-react";
+import { AlertTriangle, Save, RefreshCw, Loader2 } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { COUNTING_HINT_EN, COUNTING_HINT_ZH, isCountingQuestion } from "@/lib/question-trait";
 import { frontendLogger } from "@/lib/frontend-logger";
 import { MdEditor } from "@/components/md-editor";
 import { TagInput } from "@/components/tag-input";
@@ -255,6 +256,13 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
 
     return (
         <div className="space-y-6">
+            {/* 【2026-11-16】计数类题目：AI 的数字不可靠，保存前先提醒 */}
+            {isCountingQuestion(data.questionText) && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>{L(COUNTING_HINT_ZH, COUNTING_HINT_EN)}</span>
+                </div>
+            )}
             <div className="flex items-center justify-between">
                 <h2 className="text-2xl font-bold">{t.editor.title}</h2>
                 <div className="flex gap-2">

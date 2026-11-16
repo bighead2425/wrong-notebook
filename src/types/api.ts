@@ -225,6 +225,14 @@ export interface AppConfig {
         serverUrl?: string;
     };
     allowRegistration?: boolean;
+    /**
+     * 【2026-11-16 空空】**界面底色预设。**
+     *
+     * ⚠️ 这个字段在**两份 AppConfig** 里都要有：
+     *    `lib/config.ts`（服务端读配置）+ 这里（前端表单）。
+     *    只加一处会报 "Property 'appearance' does not exist"。
+     */
+    appearance?: { paper?: 'ivory' | 'white' | 'cool' | 'cream' };
     openai?: {
         instances?: OpenAIInstance[];
         activeInstanceId?: string;

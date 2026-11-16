@@ -6,7 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X, Sparkles, Loader2, Printer, ChevronLeft, ChevronRight, Unlink, ArrowUp, RotateCcw, Link2Off, Home, Library } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle, XCircle, RefreshCw, Trash2, Edit, Save, X, Sparkles, Loader2, Printer, ChevronLeft, ChevronRight, Unlink, ArrowUp, RotateCcw, Link2Off, Home, Library } from "lucide-react";
 import Link from "next/link";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { MdEditor } from "@/components/md-editor";
@@ -30,6 +30,7 @@ import {
     needsDeepPrintNudge,
 } from "@/lib/manage-type";
 import { AppConfig, UserProfile } from "@/types/api";
+import { COUNTING_HINT_EN, COUNTING_HINT_ZH, isCountingQuestion } from "@/lib/question-trait";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { NotebookSelector } from "@/components/notebook-selector";
 import { CorrectionEditor, ParsedQuestionWithSubject } from "@/components/correction-editor";
@@ -1943,6 +1944,19 @@ export default function ErrorDetailPage() {
                                 </div>
                             </CardHeader>
                             <CardContent className="space-y-3">
+                                {/**
+                                 * 【2026-11-16 空空】**计数类题目标黄。**
+                                 *
+                                 * 实测：方格纸数格子的题，三个模型都给 52 cm²，
+                                 * 像素级统计的真实值约 100 cm² —— 差近一倍，而且它们不知道。
+                                 * 这里不试图修正数字，只提醒"这个数别直接信"。
+                                 */}
+                                {isCountingQuestion(item.questionText) && (
+                                    <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                        <span>{L(COUNTING_HINT_ZH, COUNTING_HINT_EN)}</span>
+                                    </div>
+                                )}
                                 <MdEditor
                                     value={answerInput}
                                     onChange={setAnswerInput}

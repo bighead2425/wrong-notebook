@@ -100,6 +100,63 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
+/**
+ * 【2026-11-16 空空】**底色预设**——四套，每套三个值。
+ *
+ * 只换 `--background` 是不够的：卡片和背景会重新糊成一片。
+ * 所以每套同时定 `--background`（底）、`--muted`（浅色块）、`--border`（细线）。
+ *
+ * 放在 `.dark` 之前，是为了让**深色模式优先** —— 深色下不谈"纸色"。
+ * 切换靠 `<html data-paper="...">`，由客户端的 PaperThemeApplier 设置。
+ */
+[data-paper="ivory"] {
+  --background: oklch(0.975 0.007 85);
+  --muted: oklch(0.945 0.006 85);
+  --secondary: oklch(0.945 0.006 85);
+  --accent: oklch(0.945 0.006 85);
+  --border: oklch(0.926 0.005 85);
+  --input: oklch(0.926 0.005 85);
+  --sidebar: oklch(0.983 0.006 85);
+  --sidebar-accent: oklch(0.945 0.006 85);
+  --sidebar-border: oklch(0.926 0.005 85);
+}
+
+[data-paper="white"] {
+  --background: oklch(1 0 0);
+  --muted: oklch(0.968 0 0);
+  --secondary: oklch(0.968 0 0);
+  --accent: oklch(0.968 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.968 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+}
+
+[data-paper="cool"] {
+  --background: oklch(0.972 0.004 240);
+  --muted: oklch(0.942 0.006 240);
+  --secondary: oklch(0.942 0.006 240);
+  --accent: oklch(0.942 0.006 240);
+  --border: oklch(0.922 0.006 240);
+  --input: oklch(0.922 0.006 240);
+  --sidebar: oklch(0.982 0.004 240);
+  --sidebar-accent: oklch(0.942 0.006 240);
+  --sidebar-border: oklch(0.922 0.006 240);
+}
+
+[data-paper="cream"] {
+  --background: oklch(0.966 0.018 92);
+  --muted: oklch(0.936 0.02 92);
+  --secondary: oklch(0.936 0.02 92);
+  --accent: oklch(0.936 0.02 92);
+  --border: oklch(0.916 0.016 92);
+  --input: oklch(0.916 0.016 92);
+  --sidebar: oklch(0.976 0.016 92);
+  --sidebar-accent: oklch(0.936 0.02 92);
+  --sidebar-border: oklch(0.916 0.016 92);
+}
+
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);

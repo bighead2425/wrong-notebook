@@ -33,9 +33,19 @@ export interface OpenAIInstance {
     };
 }
 
+/**
+ * 【2026-11-16 空空】底色预设。
+ *
+ * 只换底色一个变量不行 —— 卡片、浅色块、边框都要跟着动，
+ * 否则"背景变了、卡片和背景又糊成一片"。每套给三个值。
+ */
+export type PaperTheme = 'ivory' | 'white' | 'cool' | 'cream';
+
 export interface AppConfig {
     aiProvider: 'gemini' | 'openai' | 'azure';
     allowRegistration?: boolean;
+    /** 界面底色预设，缺省 ivory（暖象牙） */
+    appearance?: { paper?: PaperTheme };
     openai?: {
         instances?: OpenAIInstance[];
         activeInstanceId?: string;

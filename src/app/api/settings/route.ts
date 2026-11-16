@@ -92,6 +92,14 @@ export async function POST(req: Request) {
                 print: rawBody?.print
                     ? { desktop: rawBody.print.desktop, mobile: rawBody.print.mobile }
                     : undefined,
+                /**
+                 * 【2026-11-16 空空】**底色是个人偏好，不是系统配置。**
+                 *
+                 * 它只影响"这台设备看起来什么颜色"，不涉及任何安全边界
+                 * （不像 `serverUrl` 那种会让服务端替用户去访问任意地址的字段）。
+                 * 所以普通用户也该能改。
+                 */
+                appearance: rawBody?.appearance,
             };
 
         // Don't save masked keys if they somehow get sent back (for Gemini)

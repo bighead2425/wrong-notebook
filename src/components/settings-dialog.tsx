@@ -25,6 +25,7 @@ import { useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { UserManagement } from "@/components/admin/user-management";
 import { apiClient } from "@/lib/api-client";
+import { applyPaperTheme } from "@/components/paper-theme";
 import { frontendLogger } from "@/lib/frontend-logger";
 import { AppConfig, UserProfile, UpdateUserProfileRequest, OpenAIInstance } from "@/types/api";
 import { ModelSelector } from "@/components/ui/model-selector";
@@ -903,6 +904,34 @@ export function SettingsDialog({
                                         <SelectItem value="en">English</SelectItem>
                                     </SelectContent>
                                 </Select>
+                            </div>
+
+                            {/* 【2026-11-16 空空】**界面底色**——四套预设，选完立即预览 */}
+                            <div className="space-y-2 pt-4 border-t">
+                                <Label>界面底色</Label>
+                                <Select
+                                    value={config.appearance?.paper || "ivory"}
+                                    onValueChange={(val) => {
+                                        applyPaperTheme(val);
+                                        setConfig((prev) => ({
+                                            ...prev,
+                                            appearance: { ...prev.appearance, paper: val as "ivory" | "white" | "cool" | "cream" },
+                                        }));
+                                    }}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="ivory">纸白 · 温暖（默认）</SelectItem>
+                                        <SelectItem value="white">纯白 · 干净</SelectItem>
+                                        <SelectItem value="cool">浅灰 · 冷静</SelectItem>
+                                        <SelectItem value="cream">米黄 · 护眼</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                <p className="text-xs text-muted-foreground">
+                                    选完立即预览；点下面的「保存」后长期生效。
+                                </p>
                             </div>
 
                             <div className="space-y-2 pt-4 border-t">
