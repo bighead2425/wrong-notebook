@@ -321,7 +321,7 @@ export default function DeepSuggestionsPage() {
     );
 
     return (
-        <main className="min-h-screen bg-background">
+        <main className="min-h-screen">
             <div className="container mx-auto max-w-7xl space-y-4 p-4 pb-20 md:p-8">
                 <div className="flex flex-wrap items-center gap-2">
                     <BackButton fallbackUrl="/" className="shrink-0" />

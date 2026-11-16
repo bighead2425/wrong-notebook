@@ -107,7 +107,7 @@ export default function ByTagPage() {
     };
 
     return (
-        <main className="min-h-screen bg-background">
+        <main className="min-h-screen">
             <div className="container mx-auto space-y-5 p-4 pb-20">
                 <div className="flex items-start gap-3">
                     {/**

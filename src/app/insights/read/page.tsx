@@ -180,7 +180,7 @@ export default function InsightReadPage() {
     };
 
     return (
-        <main className="min-h-screen bg-background">
+        <main className="min-h-screen">
             <div className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur">
                 <div className="mx-auto flex w-full max-w-[720px] items-center gap-1 px-3 py-2 md:px-6">
                     <Link href={backHref}>

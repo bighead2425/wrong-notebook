@@ -623,7 +623,7 @@ export default function InsightWritePage() {
         "relative inline-flex items-center gap-1 overflow-hidden rounded-lg border px-2.5 py-1 text-xs hover:bg-accent transition-colors";
 
     return (
-        <main className="min-h-screen bg-background">
+        <main className="min-h-screen">
             {/* ===== 顶栏：返回 / 撤销 / 管理 / 打印 ……… 暂存 / 保存 =====
                 他明说"此页不放标题"—— 这一页唯一的主角是那个编辑框。 */}
             <div className="border-b bg-background">

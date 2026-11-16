@@ -548,7 +548,7 @@ export default function ScanPage() {
 
     if (view === "card" && itemId) {
         return (
-            <main className="min-h-screen p-4 md:p-8 bg-background">
+            <main className="min-h-screen p-4 md:p-8">
                 <div className="max-w-3xl mx-auto space-y-5">
                     <h1 className="flex items-center gap-2 text-xl font-bold">
                         <ScanLine className="h-5 w-5" />
@@ -583,7 +583,7 @@ export default function ScanPage() {
         const scannedKind = parsePageCode(volumeCode)?.kind;
         const isBuild = scannedKind === "build";
         return (
-            <main className="min-h-screen bg-background p-4 md:p-6">
+            <main className="min-h-screen p-4 md:p-6">
                 <div className="mx-auto w-full max-w-6xl space-y-4">
                     <h1 className="flex items-center gap-2 text-xl font-bold">
                         <ScanLine className="h-5 w-5" />
@@ -620,7 +620,7 @@ export default function ScanPage() {
     // ===================== 层一：扫码 =====================
 
     return (
-        <main className="min-h-screen p-4 md:p-8 bg-background">
+        <main className="min-h-screen p-4 md:p-8">
             <div className="max-w-3xl mx-auto space-y-5">
                 <div className="flex items-start gap-4">
                     {/* 【2026-10-19 第 2 批】从详情页进来的（`?back=`）就回那道题，别再一律回主页 */}

@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { apiClient } from "@/lib/api-client";
+import { applyBackgroundEffects } from "@/components/background-scene";
 
 /**
  * 【2026-11-16 空空】**主题：浅色四色 + 深色。**
@@ -42,6 +43,13 @@ export const PAPER_THEMES: { id: PaperTheme; zh: string; en: string; swatch: str
 export interface Appearance {
     paper?: PaperTheme;
     mode?: ThemeMode;
+    /**
+     * 【2026-11-17】背景效果（纸纹 / 阳光呼吸 / 星点呼吸）。
+     *
+     * **默认关闭**：装饰对孩子是"可以看的东西"，不该每次打开都塞给她。
+     * 想开的人在长按面板里自己开。
+     */
+    effects?: boolean;
 }
 
 /** 只改底色（浅色的四种） */
@@ -61,10 +69,12 @@ export function applyAppearance(a?: Appearance | null) {
     if (typeof document === "undefined") return;
     const paper = a?.paper || "ivory";
     const mode = a?.mode || "light";
+    const effects = !!a?.effects;
     applyPaperTheme(paper);
     applyMode(mode);
+    applyBackgroundEffects(effects);
     try {
-        localStorage.setItem(LS_KEY, JSON.stringify({ paper, mode }));
+        localStorage.setItem(LS_KEY, JSON.stringify({ paper, mode, effects }));
     } catch {
         /* 隐私模式禁用存储：不影响功能，只是下次首屏会闪一下 */
     }
@@ -94,7 +104,7 @@ export function PaperThemeApplier() {
                  * 一刷新就被打回纸白，等于白选了。
                  */
                 const sv = cfg?.appearance;
-                if (sv && (sv.paper || sv.mode)) applyAppearance(sv);
+                if (sv && (sv.paper || sv.mode || typeof sv.effects === "boolean")) applyAppearance(sv);
             })
             .catch(() => {
                 /* 读不到就保持缓存/默认，不打扰用户 */

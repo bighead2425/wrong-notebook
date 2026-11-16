@@ -39,7 +39,7 @@ export default function BatchPage() {
     }, []);
 
     return (
-        <main className="min-h-screen bg-background">
+        <main className="min-h-screen">
             <div className="container mx-auto p-4 pb-20">
                 <BatchPipeline
                     language={language}

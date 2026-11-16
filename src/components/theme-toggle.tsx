@@ -10,6 +10,7 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api-client";
+import { Switch } from "@/components/ui/switch";
 import {
     PAPER_THEMES,
     applyAppearance,
@@ -56,6 +57,8 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
     const [open, setOpen] = useState(false);
     const [mode, setMode] = useState<ThemeMode>("light");
     const [paper, setPaper] = useState<PaperTheme>("ivory");
+    /** 背景效果（纸纹 / 阳光 / 星点）。默认关 —— 见 `paper-theme.tsx` 的说明。 */
+    const [effects, setEffects] = useState(false);
     const [mounted, setMounted] = useState(false);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -84,15 +87,22 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
         // eslint-disable-next-line react-hooks/set-state-in-effect -- 读的是插件写在 <html> 上的外部状态，无 state/props 可推
         setMode(document.documentElement.classList.contains("dark") ? "dark" : "light");
         setPaper((document.documentElement.dataset.paper as PaperTheme) || "ivory");
+        setEffects(document.documentElement.dataset.bg === "on");
         setMounted(true);
     }, []);
 
     /** 立即应用 + 存服务端。**先应用再存**：界面不等网络，失败也只是没存上。 */
     const applyAndSave = useCallback(
         (next: Appearance) => {
-            const merged: Appearance = { paper: next.paper ?? paper, mode: next.mode ?? mode };
+            const merged: Appearance = {
+                paper: next.paper ?? paper,
+                mode: next.mode ?? mode,
+                /* 注意用 `??` 而不是 `||`：`false` 是合法值（关掉效果），不能被当成空 */
+                effects: next.effects ?? effects,
+            };
             setPaper(merged.paper as PaperTheme);
             setMode(merged.mode as ThemeMode);
+            setEffects(!!merged.effects);
             applyAppearance(merged);
 
             setSaving(true);
@@ -108,7 +118,7 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
                 })
                 .finally(() => setSaving(false));
         },
-        [paper, mode]
+        [paper, mode, effects]
     );
 
     /** 短按：浅色 ⇄ 深色 */
@@ -289,6 +299,22 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
                                 深色
                             </button>
                         </div>
+                    </div>
+
+                    {/* —— 背景效果 —— */}
+                    <div className="flex items-start justify-between gap-3 border-t pt-3">
+                        <div className="space-y-0.5">
+                            <span className="text-sm font-medium">背景效果</span>
+                            <p className="text-xs leading-relaxed text-muted-foreground">
+                                浅色是纸纹与阳光，深色是极淡的星点。都很慢，几乎看不出在动。
+                            </p>
+                        </div>
+                        <Switch
+                            checked={effects}
+                            onCheckedChange={(v) => applyAndSave({ effects: v })}
+                            aria-label="背景效果开关"
+                            className="mt-0.5 shrink-0"
+                        />
                     </div>
 
                     {/* 保存失败才出现，平时不占位 */}

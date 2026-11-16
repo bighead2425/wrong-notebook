@@ -71,7 +71,7 @@ export default function RootLayout({
          */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var r=localStorage.getItem('wn:appearance');if(!r)return;var a=JSON.parse(r)||{};if(a.paper)document.documentElement.setAttribute('data-paper',a.paper);if(a.mode==='dark')document.documentElement.classList.add('dark');}catch(e){}})();`,
+            __html: `(function(){try{var r=localStorage.getItem('wn:appearance');if(!r)return;var a=JSON.parse(r)||{};if(a.paper)document.documentElement.setAttribute('data-paper',a.paper);if(a.mode==='dark')document.documentElement.classList.add('dark');if(a.effects)document.documentElement.setAttribute('data-bg','on');}catch(e){}})();`,
           }}
         />
       </head>

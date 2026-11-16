@@ -413,7 +413,7 @@ export default function NotebooksPage() {
     }
 
     return (
-        <main className="min-h-screen p-4 md:p-8 bg-background">
+        <main className="min-h-screen p-4 md:p-8">
             <div className="mx-auto max-w-7xl space-y-8">
                 <div className="flex items-center gap-4">
                     <BackButton fallbackUrl="/" />

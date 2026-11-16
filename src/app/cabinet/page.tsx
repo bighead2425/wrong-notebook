@@ -198,7 +198,7 @@ export default function CabinetPage() {
     }, []);
 
     return (
-        <main className="min-h-screen bg-background">
+        <main className="min-h-screen">
             <div className="container mx-auto max-w-6xl space-y-8 p-4 pb-20 md:p-8">
                 {/* ===== 头部 ===== */}
                 <div className="flex items-start gap-4">

@@ -167,7 +167,7 @@ export default function TrashPage() {
     const allSelected = items.length > 0 && selected.size === items.length;
 
     return (
-        <main className="min-h-screen p-4 md:p-8 bg-background">
+        <main className="min-h-screen p-4 md:p-8">
             <div className="max-w-5xl mx-auto space-y-6">
                 <div className="flex items-start gap-4">
                     {/* 【custom-v25】回「我的错题本」而不是回主页 —— 回收箱是从那儿进来的，

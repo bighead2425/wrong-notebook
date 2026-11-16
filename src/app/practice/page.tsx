@@ -357,7 +357,7 @@ function PracticeContent() {
 
 export default function PracticePage() {
     return (
-        <main className="min-h-screen p-8 bg-background">
+        <main className="min-h-screen p-8">
             <Suspense fallback={
                 <div className="flex justify-center p-8">
                     <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />

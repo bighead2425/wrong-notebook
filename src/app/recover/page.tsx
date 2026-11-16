@@ -1226,7 +1226,7 @@ export default function RecoverPage() {
         reviewCards.filter((c) => c.state.k === "saved").length;
 
     return (
-        <main className="min-h-screen bg-background p-4 md:p-8">
+        <main className="min-h-screen p-4 md:p-8">
             <div className="mx-auto max-w-3xl space-y-6">
                 <div className="flex items-start gap-4">
                     <BackButton fallbackUrl="/" />

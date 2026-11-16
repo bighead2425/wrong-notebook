@@ -483,7 +483,7 @@ export default function AddErrorPage() {
      */
     if (batchMode) {
         return (
-            <main className="min-h-screen bg-background">
+            <main className="min-h-screen">
                 <div className="container mx-auto p-4 pb-20">
                     {/* 【2026-10-10】带 `?linkTo=` 进来的：说明一句，免得他忘了自己在"关联"流程里 */}
                     {linkToId && (
@@ -516,7 +516,7 @@ export default function AddErrorPage() {
     }
 
     return (
-        <main className="min-h-screen bg-background">
+        <main className="min-h-screen">
             <ProgressFeedback
                 status={analysisStep}
                 progress={progress}

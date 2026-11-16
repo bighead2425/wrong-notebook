@@ -1065,7 +1065,7 @@ export default function InsightsPage() {
     }, [croppingImage]);
 
     return (
-        <main className="min-h-screen bg-background">
+        <main className="min-h-screen">
             {/* 顶栏 */}
             <div className="border-b bg-background">
                 <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center gap-2 px-4 py-3 md:px-8">

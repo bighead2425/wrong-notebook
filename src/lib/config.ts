@@ -45,7 +45,7 @@ export interface AppConfig {
     aiProvider: 'gemini' | 'openai' | 'azure';
     allowRegistration?: boolean;
     /** 界面底色预设，缺省 ivory（暖象牙） */
-    appearance?: { paper?: PaperTheme; mode?: 'light' | 'dark' };
+    appearance?: { paper?: PaperTheme; mode?: 'light' | 'dark'; effects?: boolean };
     openai?: {
         instances?: OpenAIInstance[];
         activeInstanceId?: string;
