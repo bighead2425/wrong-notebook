@@ -21,6 +21,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-subtle-foreground: var(--subtle-foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -60,7 +61,10 @@
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
+  /* 【2026-11-16】底色从纯白改成暖象牙：原来 background 和 card 都是 1 0 0，
+     页面和卡片一个色，只能靠边框区分 —— 这就是"看着平"的根源。
+     暖调取自纸的颜色，和"错题本"本身的气质一致。 */
+  --background: oklch(0.975 0.007 85);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
@@ -68,28 +72,31 @@
   --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.205 0 0);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
+  --secondary: oklch(0.945 0.006 85);
   --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
+  --muted: oklch(0.945 0.006 85);
+  /* 次要文字加深一档：原值在暖底上偏浅，长列表看着吃力 */
+  --muted-foreground: oklch(0.52 0 0);
+  --accent: oklch(0.945 0.006 85);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
+  --border: oklch(0.926 0.005 85);
+  --input: oklch(0.926 0.005 85);
   --ring: oklch(0.708 0 0);
+  /* 第三级文字：比 muted-foreground 更弱，只用于时间戳/编号这类"扫一眼就够"的信息 */
+  --subtle-foreground: oklch(0.68 0 0);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
+  --sidebar: oklch(0.983 0.006 85);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent: oklch(0.945 0.006 85);
   --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-border: oklch(0.926 0.005 85);
   --sidebar-ring: oklch(0.708 0 0);
 }
 
@@ -112,6 +119,7 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
+  --subtle-foreground: oklch(0.58 0 0);
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
@@ -199,6 +207,17 @@
 
 /* Print Styles for PDF Export */
 @media print {
+  /**
+   * 【2026-11-16】**打印一律白底，不受屏幕底色影响。**
+   *
+   * 屏幕底色改成了暖象牙（`0.972 0.007 85`），但纸要是白的 ——
+   * 否则每张错题卷都印一层浅黄底，既费墨又显脏。
+   * 这一条只覆盖 body，卡片本身在纸上本来就是白/透明。
+   */
+  body {
+    background: #fff !important;
+  }
+
   /* 国内市售 B5 = 182mm × 257mm（JIS B5）。
      注意：CSS 的 size: B5 是 ISO B5 = 176×250mm，比国产纸每边小 6mm，
      满页排版时会跑版，所以必须写明确毫米数，不能用 B5 简写。
