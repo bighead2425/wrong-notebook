@@ -2149,7 +2149,7 @@ function PrintPreviewContent() {
                         <>
                             {/* 还没组卷：卷号与页二维码都还没有 —— 说清楚"为什么纸上暂时没有码" */}
                             {!volume && (
-                                <div className="mb-4 rounded-lg border border-sky-500/40 bg-sky-50 p-3 text-sm text-blue-900 print:hidden">
+                                <div className="mb-4 rounded-lg border border-sky-500/40 bg-sky-50 p-3 text-sm text-sky-900 print:hidden">
                                     {L(
                                         "还没组卷：卷页眉上的二维码内容是「卷号-页码」，所以要扫得回来，得先把这份卷存下来。点上面「生成复练卷 / 生成积累卷」之后，卷号与页二维码就会出现。",
                                         "Not built yet — press “Build volume” to assign a volume number and page QR codes.",
@@ -2251,12 +2251,12 @@ function PrintPreviewContent() {
                                 </div>
                             )}
                             {imitateAvailable && !imitateTree && (
-                                <div className="mb-4 rounded-lg border border-sky-500/40 bg-sky-50 p-3 text-sm text-blue-900 print:hidden">
+                                <div className="mb-4 rounded-lg border border-sky-500/40 bg-sky-50 p-3 text-sm text-sky-900 print:hidden">
                                     {imitateLoading ? L("正在读关联题…", "Loading…") : imitateError || L("读不出关联题。", "Cannot load")}
                                 </div>
                             )}
                             {!volume && imitateTree && (
-                                <div className="mb-4 rounded-lg border border-sky-500/40 bg-sky-50 p-3 text-sm text-blue-900 print:hidden">
+                                <div className="mb-4 rounded-lg border border-sky-500/40 bg-sky-50 p-3 text-sm text-sky-900 print:hidden">
                                     {L(
                                         "还没组卷：卷页眉上的二维码内容是「卷号-页码」，所以要扫得回来，得先把这份卷存下来。点左上「生成模仿卷」之后，卷号与页二维码就会出现。",
                                         "Not built yet — press “Build volume” to assign a volume number and page QR codes.",

@@ -1289,7 +1289,7 @@ export default function ErrorDetailPage() {
                         <Button
                             size="sm"
                             variant={item.masteryLevel > 0 ? "default" : "default"}
-                            className={item.masteryLevel > 0 ? "bg-emerald-600 hover:bg-green-700 text-white" : ""}
+                            className={item.masteryLevel > 0 ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}
                             onClick={toggleMastery}
                         >
                             {item.masteryLevel > 0 ? (

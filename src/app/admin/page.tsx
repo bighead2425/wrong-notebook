@@ -33,7 +33,7 @@ function OverviewCards({ data, t }: { data: AdminDashboardData; t: any }) {
             value: data.overview.totalPracticeRecords,
             icon: PenTool,
             color: "text-emerald-600",
-            bgColor: "bg-emerald-50 dark:bg-green-950/30",
+            bgColor: "bg-emerald-50 dark:bg-emerald-950/30",
         },
         {
             title: t.admin?.dashboard?.totalNotebooks || "总错题本数",

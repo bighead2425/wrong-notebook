@@ -1409,7 +1409,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             {/* 【custom-v31】连拍转存的两个提示：进行中 / 已收工。
                 它们只在真有转存发生时才出现，平时不占版面。 */}
             {burstSaving && (
-                <div className="flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-blue-900">
+                <div className="flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     <span>
                         {(t.common.batch?.burstSaving || "正在转存到收件箱 {i}/{n} 张…")

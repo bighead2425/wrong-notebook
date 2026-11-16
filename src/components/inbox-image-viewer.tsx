@@ -284,7 +284,7 @@ export function InboxImageViewer({
                     aria-pressed={isChecked}
                     className={`h-9 w-[122px] shrink-0 px-2.5 inline-flex items-center justify-start gap-2 rounded-lg border text-sm transition-colors ${
                         isChecked
-                            ? "border-sky-500 bg-sky-500/10 text-blue-600"
+                            ? "border-sky-500 bg-sky-500/10 text-sky-600"
                             : "border-input bg-background text-muted-foreground hover:border-sky-500"
                     }`}
                     title={isChecked ? (s.viewerUnselect || "取消选中") : (s.viewerSelect || "选中")}

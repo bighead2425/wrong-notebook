@@ -641,7 +641,7 @@ export default function ScanPage() {
 
                 {/* 【2026-10-10】关联模式提示条：正在为某道题找关联题（他点的【关联别的题】→【打开扫码】） */}
                 {linkFromId && (
-                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-blue-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-blue-200">
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200">
                         <span className="flex items-center gap-2">
                             <Link2 className="h-4 w-4" />
                             {L(

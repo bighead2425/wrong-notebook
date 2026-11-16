@@ -166,9 +166,9 @@ function PracticeContent() {
                             <span className="text-sm font-medium text-muted-foreground">{t.practice.difficulty?.label || "Difficulty"}:</span>
                             <div className="flex flex-wrap gap-1">
                                 {[
-                                    { value: "easy", label: t.practice.difficulty?.easy || "Easy", color: "bg-emerald-100 text-emerald-700 hover:bg-green-200" },
+                                    { value: "easy", label: t.practice.difficulty?.easy || "Easy", color: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" },
                                     { value: "medium", label: t.practice.difficulty?.medium || "Medium", color: "bg-blue-100 text-blue-700 hover:bg-blue-200" },
-                                    { value: "hard", label: t.practice.difficulty?.hard || "Hard", color: "bg-orange-100 text-amber-600 hover:bg-orange-200" },
+                                    { value: "hard", label: t.practice.difficulty?.hard || "Hard", color: "bg-amber-100 text-amber-600 hover:bg-amber-200" },
                                     { value: "harder", label: t.practice.difficulty?.harder || "Challenge", color: "bg-red-100 text-red-600 hover:bg-red-200" }
                                 ].map((level) => (
                                     <button

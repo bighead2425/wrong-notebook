@@ -1814,7 +1814,7 @@ export function SettingsDialog({
                                                     size="sm"
                                                     onClick={handleExportAllData}
                                                     disabled={exporting}
-                                                    className="bg-orange-100 hover:bg-orange-200 text-amber-900 border-orange-300"
+                                                    className="bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300"
                                                 >
                                                     {exporting ? (
                                                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1866,7 +1866,7 @@ export function SettingsDialog({
                                                     size="sm"
                                                     onClick={handleImportData}
                                                     disabled={importing}
-                                                    className="bg-emerald-100 hover:bg-green-200 text-emerald-800 border-emerald-300"
+                                                    className="bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border-emerald-300"
                                                 >
                                                     {importing ? (
                                                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1882,7 +1882,7 @@ export function SettingsDialog({
                                                     size="sm"
                                                     onClick={handleImportAllData}
                                                     disabled={importing}
-                                                    className="bg-orange-100 hover:bg-orange-200 text-amber-900 border-orange-300"
+                                                    className="bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300"
                                                 >
                                                     {importing ? (
                                                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />

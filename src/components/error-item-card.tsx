@@ -263,7 +263,7 @@ export function ErrorItemCard({
                                 variant={mastered ? "default" : "secondary"}
                                 className={`${
                                     mastered
-                                        ? "bg-emerald-600 hover:bg-green-700"
+                                        ? "bg-emerald-600 hover:bg-emerald-700"
                                         : preMastered
                                           ? "bg-amber-500 text-white hover:bg-amber-600"
                                           : ""
