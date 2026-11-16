@@ -232,7 +232,7 @@ export interface AppConfig {
      *    `lib/config.ts`（服务端读配置）+ 这里（前端表单）。
      *    只加一处会报 "Property 'appearance' does not exist"。
      */
-    appearance?: { paper?: 'ivory' | 'white' | 'cool' | 'cream' };
+    appearance?: { paper?: 'ivory' | 'white' | 'cool' | 'cream'; mode?: 'light' | 'dark' };
     openai?: {
         instances?: OpenAIInstance[];
         activeInstanceId?: string;

@@ -55,6 +55,26 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        {/**
+         * 【2026-11-16 空空】**首屏防闪：在页面画出来之前贴上主题。**
+         *
+         * 主题存在服务端，读它要走一次 `/api/settings`。等 React 起来再贴，
+         * 深色用户每次刷新都会先看见**一屏纯白再变黑** —— 夜里这一下很扎眼。
+         *
+         * 这里读的是 `PaperThemeApplier` 写的 localStorage 缓存（只管首屏），
+         * 之后仍会拉服务端配置校正。所以缓存过期最多影响第一眼，不影响正确性。
+         *
+         * ⚠️ 这段必须是**同步内联**脚本，不能是 next/script 的 afterInteractive ——
+         *    那样就等 hydration 了，等于没防。
+         * ⚠️ 包了 try：隐私模式下 localStorage 会抛异常，不能让它挡住整页。
+         */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var r=localStorage.getItem('wn:appearance');if(!r)return;var a=JSON.parse(r)||{};if(a.paper)document.documentElement.setAttribute('data-paper',a.paper);if(a.mode==='dark')document.documentElement.classList.add('dark');}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         suppressHydrationWarning={true}

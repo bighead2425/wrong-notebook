@@ -157,39 +157,63 @@
   --sidebar-border: oklch(0.916 0.016 92);
 }
 
+/**
+ * 【2026-11-16 空空】**深色模式（暖调，跟着浅色的暖象牙走）**
+ *
+ * 为什么不用框架默认那一套（`oklch(0.145 0 0)` 纯灰纯黑）：
+ *
+ *   ① **纯黑太硬。** 夜里盯一块 `#0a0a0a` 配纯白字，对比度 21:1，
+ *      看十分钟眼睛就发酸。主流工具（Notion `#191919`、VS Code `#1e1e1e`）
+ *      都在 0.19~0.21 这个明度，不是 0.145。
+ *   ② **纯灰发冷。** 浅色是暖象牙（色相 85），切到纯灰会像换了个软件。
+ *      这里统一带一点 85 色相、彩度 0.004~0.008 —— 看不出黄，但"不冷"。
+ *   ③ **卡片必须比背景亮。** 和浅色同一个道理：`background` 0.195 / `card` 0.238，
+ *      差 0.043，卡片自己就浮起来，不靠边框。
+ *
+ * ⚠️ 本段**必须排在 `[data-paper="..."]` 之后**：两者特异性相同（都是 0,1,0），
+ *    靠书写顺序决胜负。排在后面 ⇒ 深色模式下四种浅色预设自动失效，不用写任何 JS 判断。
+ */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --subtle-foreground: oklch(0.58 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: oklch(0.195 0.005 85);
+  --foreground: oklch(0.935 0.006 85);
+  --card: oklch(0.238 0.006 85);
+  --card-foreground: oklch(0.935 0.006 85);
+  --popover: oklch(0.238 0.006 85);
+  --popover-foreground: oklch(0.935 0.006 85);
+  /* 主按钮在深色下反相：浅底深字（浅色模式是深底浅字） */
+  --primary: oklch(0.905 0.008 85);
+  --primary-foreground: oklch(0.205 0.006 85);
+  --secondary: oklch(0.278 0.007 85);
+  --secondary-foreground: oklch(0.935 0.006 85);
+  --muted: oklch(0.278 0.007 85);
+  --muted-foreground: oklch(0.715 0.007 85);
+  --accent: oklch(0.298 0.008 85);
+  --accent-foreground: oklch(0.945 0.006 85);
+  --destructive: oklch(0.704 0.17 25);
+  /* 边框用暖白低透明：硬编码 `rgba(255,255,255,..)` 会在暖底上偏蓝 */
+  --border: oklch(0.88 0.008 85 / 14%);
+  --input: oklch(0.88 0.008 85 / 18%);
+  --ring: oklch(0.62 0.01 85);
+  --subtle-foreground: oklch(0.58 0.007 85);
+  /* 图表：深底下要提亮，原来那批是给纯黑配的，太暗 */
+  --chart-1: oklch(0.62 0.20 264);
+  --chart-2: oklch(0.72 0.15 162);
+  --chart-3: oklch(0.78 0.16 70);
+  --chart-4: oklch(0.70 0.22 304);
+  --chart-5: oklch(0.70 0.21 16);
+  --sidebar: oklch(0.222 0.006 85);
+  --sidebar-foreground: oklch(0.935 0.006 85);
+  --sidebar-primary: oklch(0.62 0.20 264);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.298 0.008 85);
+  --sidebar-accent-foreground: oklch(0.945 0.006 85);
+  --sidebar-border: oklch(0.88 0.008 85 / 14%);
+  --sidebar-ring: oklch(0.62 0.01 85);
+}
+
+/* 深色下滚动条也跟主题走，否则一条亮条在暗界面上很扎眼 */
+.dark {
+  color-scheme: dark;
 }
 
 @layer base {
@@ -273,6 +297,30 @@
    */
   body {
     background: #fff !important;
+  }
+
+  /**
+   * 【2026-11-16 空空】**深色模式下打印，必须把配色拉回浅色。**
+   *
+   * 不处理的话：白纸 + `--foreground: oklch(0.935 ...)` 的亮色字 = **白纸白字**。
+   * 屏幕上看着完全正常，一打印整页空白 —— 这是最难自己发现的一类问题。
+   *
+   * 只重置"会上纸"的这几个变量，不动 `.dark` 的 class：
+   * class 还要留着，否则某些依赖它的布局会跟着变（打印预览的排版本就和它无关）。
+   */
+  .dark {
+    --background: #fff;
+    --foreground: #111;
+    --card: #fff;
+    --card-foreground: #111;
+    --popover: #fff;
+    --popover-foreground: #111;
+    --muted: #f4f4f4;
+    --muted-foreground: #555;
+    --border: #ddd;
+    --input: #ddd;
+    --subtle-foreground: #777;
+    color-scheme: light;
   }
 
   /* 国内市售 B5 = 182mm × 257mm（JIS B5）。
@@ -1375,4 +1423,173 @@
 .md-editor-src-toggle:hover {
   color: #374151;
   border-color: #d1d5db;
+}
+
+/* ============================================================
+ * 【2026-11-16 空空】**深色模式下的软色覆盖**
+ *
+ * 为什么需要这一段：项目里大量提示条/徽章是这么写的 ——
+ *
+ *     bg-amber-50 text-amber-900 border-amber-300     ← 亮黄底 + 深黄字
+ *
+ * 这套配色**只在白底上成立**。到了深色界面就变成"一整块发光的亮黄"，
+ * 比白底还刺眼 —— 因为亮色块在暗背景上是最跳的。
+ *
+ * 已经手写过 `dark:bg-amber-950/30` 的地方（19 处）不动；
+ * 这里只兜住**没适配的裸类**，一处 CSS 管住全站，不必改几十个 tsx。
+ *
+ * 规则：底色 = 该色相的低明度 + 半透明；文字 = 该色相的高明度（亮而不白）。
+ * 这样"提示条的语义"（黄=注意、红=危险、绿=正确）在深色下依然成立。
+ * ============================================================ */
+
+@media screen {
+/* —— 注意 / 警告（琥珀）—— */
+.dark .bg-amber-50,
+.dark .bg-amber-100 {
+  background-color: oklch(0.34 0.045 75 / 45%);
+}
+.dark .text-amber-900,
+.dark .text-amber-800,
+.dark .text-amber-700 {
+  color: oklch(0.86 0.10 85);
+}
+.dark .border-amber-300,
+.dark .border-amber-200 {
+  border-color: oklch(0.62 0.09 80 / 45%);
+}
+
+/* —— 正确 / 完成（绿）—— */
+.dark .bg-emerald-50,
+.dark .bg-emerald-100 {
+  background-color: oklch(0.32 0.04 165 / 45%);
+}
+.dark .text-emerald-900,
+.dark .text-emerald-800,
+.dark .text-emerald-700 {
+  color: oklch(0.84 0.11 165);
+}
+.dark .border-emerald-300,
+.dark .border-emerald-200 {
+  border-color: oklch(0.58 0.09 165 / 45%);
+}
+
+/* —— 危险 / 逾期（红）—— */
+.dark .bg-red-50,
+.dark .bg-red-100 {
+  background-color: oklch(0.32 0.05 25 / 45%);
+}
+.dark .text-red-900,
+.dark .text-red-800,
+.dark .text-red-700 {
+  color: oklch(0.82 0.11 25);
+}
+.dark .border-red-300,
+.dark .border-red-200 {
+  border-color: oklch(0.60 0.10 25 / 45%);
+}
+
+/* —— 信息（蓝）—— */
+.dark .bg-blue-50,
+.dark .bg-blue-100 {
+  background-color: oklch(0.32 0.045 255 / 45%);
+}
+.dark .text-blue-900,
+.dark .text-blue-800,
+.dark .text-blue-700 {
+  color: oklch(0.84 0.09 255);
+}
+.dark .border-blue-300,
+.dark .border-blue-200 {
+  border-color: oklch(0.60 0.09 255 / 45%);
+}
+
+/* —— 天蓝（用户指定的强调色，单独保留色相 230，不并进蓝）—— */
+.dark .bg-sky-50,
+.dark .bg-sky-100 {
+  background-color: oklch(0.33 0.05 230 / 45%);
+}
+.dark .text-sky-900,
+.dark .text-sky-800,
+.dark .text-sky-700 {
+  color: oklch(0.86 0.08 230);
+}
+.dark .border-sky-300,
+.dark .border-sky-200 {
+  border-color: oklch(0.62 0.08 230 / 45%);
+}
+
+/* —— 中性灰阶（早期写的硬编码，深色下会看不见或发灰）——
+ *
+ * 项目里还有几十处 `text-gray-700` / `bg-zinc-300` 这类早期写法，
+ * 它们是按"白底"配的：深字在深底上等于消失，浅底在深界面上等于发光。
+ *
+ * 逐个改 tsx 风险大（有些在二维码/图片区必须保持白），
+ * 所以这里按"类名→主题色"兜住，只影响深色模式，**浅色一个字都不变**。
+ */
+.dark .text-gray-700,
+.dark .text-gray-800,
+.dark .text-slate-900 {
+  color: oklch(0.86 0.006 85);
+}
+.dark .text-gray-600,
+.dark .text-gray-500,
+.dark .text-slate-500 {
+  color: oklch(0.72 0.006 85);
+}
+.dark .text-slate-400,
+.dark .text-slate-300,
+.dark .text-gray-300 {
+  color: oklch(0.60 0.006 85);
+}
+/* 选中态按钮：浅灰底 + 深字 → 深灰底 + 亮字 */
+.dark .bg-zinc-300,
+.dark .bg-gray-300 {
+  background-color: oklch(0.36 0.008 85) !important;
+}
+.dark .text-zinc-900 {
+  color: oklch(0.94 0.006 85) !important;
+}
+.dark .bg-zinc-100 {
+  background-color: oklch(0.30 0.007 85);
+}
+.dark .border-gray-300,
+.dark .border-gray-200 {
+  border-color: oklch(0.88 0.008 85 / 18%);
+}
+
+
+/* —— hover 变体（类名带冒号，上面那批选不到，得单独写）——
+ *
+ * `hover:bg-blue-200` 在浅色下是"悬停时稍微加深"，很自然；
+ * 到了深色界面，`-200` 是**一块高亮的亮蓝**，鼠标划过就像闪了一下。
+ * 这里统一压回"低明度 + 略高于静态底"。
+ */
+@media screen {
+  .dark .hover\:bg-amber-50:hover,
+  .dark .hover\:bg-amber-100:hover,
+  .dark .hover\:bg-amber-200:hover {
+    background-color: oklch(0.37 0.05 75 / 60%);
+  }
+  .dark .hover\:bg-emerald-50:hover,
+  .dark .hover\:bg-emerald-100:hover,
+  .dark .hover\:bg-emerald-200:hover {
+    background-color: oklch(0.35 0.045 165 / 60%);
+  }
+  .dark .hover\:bg-red-50:hover,
+  .dark .hover\:bg-red-100:hover,
+  .dark .hover\:bg-red-200:hover {
+    background-color: oklch(0.35 0.055 25 / 60%);
+  }
+  .dark .hover\:bg-blue-50:hover,
+  .dark .hover\:bg-blue-100:hover,
+  .dark .hover\:bg-blue-200:hover {
+    background-color: oklch(0.35 0.05 255 / 60%);
+  }
+  .dark .hover\:bg-sky-50:hover,
+  .dark .hover\:bg-sky-100:hover,
+  .dark .hover\:bg-sky-200:hover {
+    background-color: oklch(0.36 0.055 230 / 60%);
+  }
+}
+
 }

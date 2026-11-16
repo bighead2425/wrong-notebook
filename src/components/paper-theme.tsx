@@ -4,37 +4,102 @@ import { useEffect } from "react";
 import { apiClient } from "@/lib/api-client";
 
 /**
- * 【2026-11-16 空空】**把配置里的底色预设应用到 `<html>` 上。**
+ * 【2026-11-16 空空】**主题：浅色四色 + 深色。**
  *
- * 为什么不在服务端 layout 里直接写 `data-paper`：
- *   那会让整个 app 变成动态渲染（每次请求都读配置文件），得不偿失。
- *   这里用客户端读一次设置、设一个 attribute，代价是**选非默认色时首屏闪一下**。
+ * ## 两个维度，互不干扰
  *
- * 为什么不闪得明显：
- *   `:root` 的默认值就是 ivory（暖象牙），选 ivory 的人完全不闪；
- *   选其他色的，最坏情况是 0.1 秒的暖白，肉眼难察觉。
+ * | 维度 | 存在哪 | 取值 |
+ * |---|---|---|
+ * | `mode` | `<html class="dark">` | `light` / `dark` |
+ * | `paper` | `<html data-paper="...">` | `ivory` / `white` / `cool` / `cream` |
  *
- * 失败时静默：读不到设置就保持默认色，不影响任何功能。
+ * **深色时 paper 自动失效** —— 不是 JS 判断，而是 CSS 顺序：
+ * `[data-paper=...]` 与 `.dark` 特异性相同（都 0,1,0），`.dark` 写在后面。
+ * 所以切深色不需要清掉 paper 的值，切回浅色它还在原地。
+ *
+ * ## 为什么写 localStorage
+ *
+ * 配置存在服务端，读它要走一次 `/api/settings`。深色用户每次刷新会先看见
+ * **一屏纯白**再变黑——夜里这一下很刺眼。
+ *
+ * 所以：**localStorage 只作"首屏防闪"的缓存**，真实来源仍是服务端配置。
+ * 挂载后照样拉一次配置校正（可能你在别的设备上改过）。
  */
-const PAPER_ATTR = "paper";
 
+export type ThemeMode = "light" | "dark";
+export type PaperTheme = "ivory" | "white" | "cool" | "cream";
+
+const PAPER_ATTR = "paper";
+const LS_KEY = "wn:appearance";
+
+export const PAPER_THEMES: { id: PaperTheme; zh: string; en: string; swatch: string }[] = [
+    { id: "ivory", zh: "纸白", en: "Ivory", swatch: "oklch(0.975 0.007 85)" },
+    { id: "white", zh: "纯白", en: "White", swatch: "oklch(1 0 0)" },
+    { id: "cool", zh: "浅灰", en: "Cool grey", swatch: "oklch(0.972 0.004 240)" },
+    { id: "cream", zh: "米黄", en: "Cream", swatch: "oklch(0.966 0.018 92)" },
+];
+
+export interface Appearance {
+    paper?: PaperTheme;
+    mode?: ThemeMode;
+}
+
+/** 只改底色（浅色的四种） */
 export function applyPaperTheme(paper?: string | null) {
     if (typeof document === "undefined") return;
     document.documentElement.dataset[PAPER_ATTR] = paper || "ivory";
 }
 
+/** 只改明暗 */
+export function applyMode(mode?: string | null) {
+    if (typeof document === "undefined") return;
+    document.documentElement.classList.toggle("dark", mode === "dark");
+}
+
+/** 两个一起设，并写缓存（供首屏内联脚本读） */
+export function applyAppearance(a?: Appearance | null) {
+    if (typeof document === "undefined") return;
+    const paper = a?.paper || "ivory";
+    const mode = a?.mode || "light";
+    applyPaperTheme(paper);
+    applyMode(mode);
+    try {
+        localStorage.setItem(LS_KEY, JSON.stringify({ paper, mode }));
+    } catch {
+        /* 隐私模式禁用存储：不影响功能，只是下次首屏会闪一下 */
+    }
+}
+
 export function PaperThemeApplier() {
     useEffect(() => {
+        // ① 先用缓存立刻贴上（正常情况下内联脚本已经贴过，这里是兜底）
+        let cached: Appearance | null = null;
+        try {
+            const raw = localStorage.getItem(LS_KEY);
+            cached = raw ? (JSON.parse(raw) as Appearance) : null;
+        } catch {
+            cached = null;
+        }
+        if (cached) applyAppearance(cached);
+
+        // ② 再拉服务端配置校正（换设备改过的情况）
         let cancelled = false;
         apiClient
-            .get<{ appearance?: { paper?: string } }>("/api/settings")
+            .get<{ appearance?: Appearance }>("/api/settings")
             .then((cfg) => {
                 if (cancelled) return;
-                applyPaperTheme(cfg?.appearance?.paper);
+                /**
+                 * 只有当服务端**确实有值**时才覆盖缓存。
+                 * 否则：用户在本机选了米黄、还没保存成功，服务端仍是空 ⇒
+                 * 一刷新就被打回纸白，等于白选了。
+                 */
+                const sv = cfg?.appearance;
+                if (sv && (sv.paper || sv.mode)) applyAppearance(sv);
             })
             .catch(() => {
-                /* 读不到就用默认色，不打扰用户 */
+                /* 读不到就保持缓存/默认，不打扰用户 */
             });
+
         return () => {
             cancelled = true;
         };

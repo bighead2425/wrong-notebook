@@ -37,6 +37,7 @@ import {
     Copy,
 } from "lucide-react";
 import { SettingsDialog } from "@/components/settings-dialog";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { TaskBrief } from "@/components/home/task-brief";
 import { WrongAnswerStats } from "@/components/wrong-answer-stats";
 import { ReviewQueueMini } from "@/components/review-queue-mini";
@@ -552,6 +553,14 @@ function HomeContent() {
                     </select>
 
                     <span className="flex-1" />
+
+                    {/**
+                     * 【2026-11-16 空空】**明暗开关，右上角。**
+                     *
+                     * 放在 `flex-1` 之后 ⇒ 永远靠最右，不受左边按钮数量影响。
+                     * 短按切明暗、长按选纸色（详见 `theme-toggle.tsx`）。
+                     */}
+                    <ThemeToggle />
                 </div>
 
                 <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} hideTrigger />

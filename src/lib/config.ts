@@ -45,7 +45,7 @@ export interface AppConfig {
     aiProvider: 'gemini' | 'openai' | 'azure';
     allowRegistration?: boolean;
     /** 界面底色预设，缺省 ivory（暖象牙） */
-    appearance?: { paper?: PaperTheme };
+    appearance?: { paper?: PaperTheme; mode?: 'light' | 'dark' };
     openai?: {
         instances?: OpenAIInstance[];
         activeInstanceId?: string;
@@ -319,6 +319,16 @@ export function updateAppConfig(newConfig: Partial<AppConfig>) {
         /* 【2026-10-28】必须深合并：普通用户保存设置时只会回传 desktop/mobile，
            浅合并会把管理员填的 serverUrl 一起冲掉。 */
         print: { ...currentConfig.print, ...newConfig.print },
+        /**
+         * 【2026-11-16 空空】**必须深合并。**
+         *
+         * 主题有两个字段（`paper` 底色 / `mode` 明暗），而界面是**分开保存**的：
+         * 点颜色只发 `{paper}`、点月亮只发 `{mode}`。
+         *
+         * 浅合并会把整个对象换掉 —— 换深色时配的纸色没了，换纸色时深色没了。
+         * 和 `print` 是同一个坑（那里注释也写了）。
+         */
+        appearance: { ...currentConfig.appearance, ...newConfig.appearance },
     };
 
     try {

@@ -286,7 +286,7 @@ export function RestoreSettings() {
                     <button
                         type="button"
                         onClick={() => fileRef.current?.click()}
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-900 hover:bg-red-50"
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-red-300 bg-card px-3 py-2 text-sm text-red-900 hover:bg-red-50"
                     >
                         <Upload className="h-4 w-4" />
                         {t.settings?.restorePick || "Choose backup file"}（电脑上）
@@ -295,7 +295,7 @@ export function RestoreSettings() {
                     <button
                         type="button"
                         onClick={() => void loadLocalFiles()}
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 hover:bg-muted"
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground hover:bg-muted"
                     >
                         <FolderOpen className="h-4 w-4" />
                         {zh ? "从 NAS 的备份目录里选" : "Pick from NAS backup folder"}
@@ -325,7 +325,7 @@ export function RestoreSettings() {
                                             <button
                                                 type="button"
                                                 onClick={() => void pickLocal(f.name)}
-                                                className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-xs hover:bg-white"
+                                                className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-xs hover:bg-card"
                                             >
                                                 <span className="truncate text-gray-800">{f.name}</span>
                                                 <span className="ml-2 shrink-0 text-gray-500">
