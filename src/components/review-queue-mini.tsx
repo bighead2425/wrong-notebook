@@ -73,7 +73,7 @@ export function ReviewQueueMini() {
                     const count = s.levels.find((l) => l.urgency === meta.urgency)?.count ?? 0;
                     return (
                         <div key={meta.urgency} className="flex items-center gap-2">
-                            <span className="w-[92px] shrink-0 truncate text-[11px] text-muted-foreground">
+                            <span className="w-[92px] shrink-0 truncate text-xs text-muted-foreground">
                                 {zh ? meta.zh : meta.en}
                             </span>
                             <span className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
@@ -87,7 +87,7 @@ export function ReviewQueueMini() {
                                     }}
                                 />
                             </span>
-                            <span className="w-6 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">
+                            <span className="w-6 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
                                 {count}
                             </span>
                         </div>
@@ -98,7 +98,7 @@ export function ReviewQueueMini() {
             {/* 【2026-10-28】必须把差额说出来：五根条画的是**全部题的分布**，
                 标题那个数是"今天该练"。不解释的话，两个数对不上会让人以为算错了。 */}
             {s.notYetDue > 0 && (
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                     {zh
                         ? `以上是全部 ${s.total} 道的分布，其中另有 ${s.notYetDue} 道还没到期`
                         : `All ${s.total} questions by level — ${s.notYetDue} not due yet`}

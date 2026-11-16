@@ -114,7 +114,7 @@ export function EmojiPicker({ state, onSelect, onClose }: EmojiPickerProps) {
                 overscrollBehavior: 'contain',
             }}
         >
-            <div className="mb-1 flex items-center justify-between px-1 text-[11px] text-muted-foreground">
+            <div className="mb-1 flex items-center justify-between px-1 text-xs text-muted-foreground">
                 <span className="truncate">
                     {state.query ? `“${state.query}”` : '全部'}
                 </span>
@@ -147,7 +147,7 @@ export function EmojiPicker({ state, onSelect, onClose }: EmojiPickerProps) {
                             event.preventDefault();
                             onSelect(item);
                         }}
-                        className={`flex items-center justify-center rounded-md text-2xl leading-none transition-colors ${
+                        className={`flex items-center justify-center rounded-lg text-2xl leading-none transition-colors ${
                             index === activeIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/60'
                         }`}
                         style={{ height: `${CELL_PX - 4}px` }}

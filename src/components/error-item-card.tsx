@@ -263,7 +263,7 @@ export function ErrorItemCard({
                                 variant={mastered ? "default" : "secondary"}
                                 className={`${
                                     mastered
-                                        ? "bg-green-600 hover:bg-green-700"
+                                        ? "bg-emerald-600 hover:bg-green-700"
                                         : preMastered
                                           ? "bg-amber-500 text-white hover:bg-amber-600"
                                           : ""
@@ -404,7 +404,7 @@ export function ErrorItemCard({
                 用绝对定位而不是塞进标签流：标签会换行，`ml-auto` 在 flex-wrap 里靠不住。 */}
             <button
                 type="button"
-                className={`absolute bottom-2 right-3 text-[11px] font-semibold ${selectMode ? "cursor-default" : "cursor-pointer hover:underline"}`}
+                className={`absolute bottom-2 right-3 text-xs font-semibold ${selectMode ? "cursor-default" : "cursor-pointer hover:underline"}`}
                 style={{ color: manageTypeScreenColor(item.manageType) }}
                 title={L("点一下换类型：深挖 → 复练 → 未定", "Click to cycle: deep → review → undecided")}
                 onClick={selectMode ? undefined : onCycleManageType}
@@ -413,7 +413,7 @@ export function ErrorItemCard({
             </button>
 
             {/* 左下角：打印机图标（进深挖纸界面；**深挖未印时上色**）+ 两个打印次数 */}
-            <span className="absolute bottom-2 left-3 flex items-center gap-1 text-[11px]">
+            <span className="absolute bottom-2 left-3 flex items-center gap-1 text-xs">
                 <button
                     type="button"
                     className={`shrink-0 rounded p-0.5 ${selectMode ? "cursor-default" : "cursor-pointer hover:bg-muted"}`}

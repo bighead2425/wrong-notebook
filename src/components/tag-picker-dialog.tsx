@@ -539,7 +539,7 @@ export function TagPickerDialog({
 
                 {/* 【第 5 条】已选区：每个带一个叉，点叉等于取消这一项 */}
                 {multiple && picked.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 rounded-md border bg-muted/40 p-2">
+                    <div className="flex flex-wrap gap-1.5 rounded-lg border bg-muted/40 p-2">
                         <span className="text-xs text-muted-foreground">
                             {L(`已选 ${picked.length} 个：`, `${picked.length} selected: `)}
                         </span>
@@ -562,16 +562,16 @@ export function TagPickerDialog({
                     </div>
                 )}
 
-                <div className="max-h-[50vh] space-y-2 overflow-y-auto rounded-md border p-2">
+                <div className="max-h-[50vh] space-y-2 overflow-y-auto rounded-lg border p-2">
                     {SUBJECTS.map((s) => {
                         const key = `subject-${s.key}`;
                         const isOpen = expanded.has(key);
                         const tree = trees[s.key];
                         return (
-                            <div key={s.key} className="rounded-md border">
+                            <div key={s.key} className="rounded-lg border">
                                 <button
                                     type="button"
-                                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-2 text-left text-sm font-medium hover:bg-accent"
+                                    className="flex w-full items-center gap-1.5 rounded-lg px-2 py-2 text-left text-sm font-medium hover:bg-accent"
                                     onClick={() => {
                                         toggle(key);
                                         if (!isOpen && tree === undefined) void loadSubject(s.key);

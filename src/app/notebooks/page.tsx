@@ -419,7 +419,7 @@ export default function NotebooksPage() {
                     <BackButton fallbackUrl="/" />
                     {/* 那句"按科目分类管理你的错题"已按他的要求去掉（2026-09-28）——
                         标题本身已经说清了这是哪儿，少一行手机上少一次折行 */}
-                    <h1 className="flex-1 text-2xl sm:text-3xl font-bold tracking-tight min-w-0">
+                    <h1 className="flex-1 text-2xl sm:text-2xl font-bold tracking-tight min-w-0">
                         {t.notebooks?.title || "My Notebooks"}
                     </h1>
                     <div className="flex items-center gap-2 shrink-0">
@@ -477,7 +477,7 @@ export default function NotebooksPage() {
 
                 {/* 【第 7 条】选中"目标本"之后给一条明确的横幅：不然黄色边框代表什么全靠猜 */}
                 {mergeSource && (
-                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2">
                         <span className="text-sm flex items-center gap-2">
                             <Merge className="h-4 w-4" />
                             {L(
@@ -520,7 +520,7 @@ export default function NotebooksPage() {
                                 type="button"
                                 onClick={toggleArchived}
                                 aria-expanded={archivedExpanded}
-                                className="flex items-center gap-2 text-left rounded-md px-1 py-1 hover:bg-accent/50 transition-colors"
+                                className="flex items-center gap-2 text-left rounded-lg px-1 py-1 hover:bg-accent/50 transition-colors"
                             >
                                 <h2 className="text-lg font-semibold">{t.notebooks?.archived || "已归档"}</h2>
                                 {archivedExpanded

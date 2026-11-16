@@ -626,7 +626,7 @@ export default function ScanPage() {
                     {/* 【2026-10-19 第 2 批】从详情页进来的（`?back=`）就回那道题，别再一律回主页 */}
                     <BackButton fallbackUrl={backTo || "/"} />
                     <div className="flex-1 space-y-1">
-                        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
+                        <h1 className="text-2xl sm:text-2xl font-bold tracking-tight flex items-center gap-2">
                             <ScanLine className="h-6 w-6" />
                             {L("扫一扫", "Scan")}
                         </h1>
@@ -641,7 +641,7 @@ export default function ScanPage() {
 
                 {/* 【2026-10-10】关联模式提示条：正在为某道题找关联题（他点的【关联别的题】→【打开扫码】） */}
                 {linkFromId && (
-                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200">
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-blue-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-blue-200">
                         <span className="flex items-center gap-2">
                             <Link2 className="h-4 w-4" />
                             {L(
@@ -771,7 +771,7 @@ export default function ScanPage() {
                                     )}
                                 </DialogDescription>
                             </DialogHeader>
-                            <div className="rounded-md border p-3 text-sm">
+                            <div className="rounded-lg border p-3 text-sm">
                                 <div className="font-medium">{linkFound.no}</div>
                                 <p className="mt-1 text-xs text-muted-foreground">{linkFound.text}</p>
                             </div>

@@ -114,7 +114,7 @@ export function SheetZoom({
 
     return (
         <div ref={ref} className={className} onDoubleClick={onDoubleClick}>
-            <p className="mb-2 text-[11px] text-muted-foreground no-print">
+            <p className="mb-2 text-xs text-muted-foreground no-print">
                 {fit
                     ? L(
                           "当前：适应宽度（双击纸面空白处回到实际大小）",

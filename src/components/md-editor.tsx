@@ -995,7 +995,7 @@ export function MdEditor({
             {sourceMode ? (
                 <textarea
                     ref={sourceRef}
-                    className="md-editor-source w-full rounded-md border bg-background px-3 py-2 font-mono text-xs"
+                    className="md-editor-source w-full rounded-lg border bg-background px-3 py-2 font-mono text-xs"
                     style={{ minHeight: `${minHeightPx}px` }}
                     value={value}
                     placeholder={placeholder}
@@ -1008,7 +1008,7 @@ export function MdEditor({
                 <div
                     ref={containerRef}
                     data-md-editor
-                    className="md-editor rounded-md border bg-background px-3 py-2 text-sm"
+                    className="md-editor rounded-lg border bg-background px-3 py-2 text-sm"
                     style={{
                         minHeight: `${minHeightPx}px`,
                         /**

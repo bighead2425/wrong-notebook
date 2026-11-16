@@ -77,7 +77,7 @@ const DOUBLE_TAP_FACTOR = 2.5;
 
 /** 工具栏图标按钮的统一长相 */
 const iconBtn =
-    "h-9 w-9 shrink-0 inline-flex items-center justify-center rounded-md border bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50 disabled:hover:bg-background disabled:hover:text-muted-foreground";
+    "h-9 w-9 shrink-0 inline-flex items-center justify-center rounded-lg border bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50 disabled:hover:bg-background disabled:hover:text-muted-foreground";
 
 export function ImageLightbox({
     open,

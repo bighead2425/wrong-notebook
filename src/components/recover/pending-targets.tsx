@@ -174,7 +174,7 @@ export function PendingTargets({ onShoot, onPickFiles, onOpenInbox }: Props) {
                     {shownVolumes.map((v) => (
                         <li
                             key={v.volumeNo}
-                            className="flex flex-wrap items-center gap-2 rounded-md border bg-background px-3 py-2"
+                            className="flex flex-wrap items-center gap-2 rounded-lg border bg-background px-3 py-2"
                         >
                             {/**
                              * 【他追加的要求】**emoji + 卷号，卷号可点**。
@@ -226,7 +226,7 @@ export function PendingTargets({ onShoot, onPickFiles, onOpenInbox }: Props) {
                     {shownQuestions.map((q) => (
                         <li
                             key={q.no}
-                            className="flex flex-wrap items-center gap-2 rounded-md border bg-background px-3 py-2"
+                            className="flex flex-wrap items-center gap-2 rounded-lg border bg-background px-3 py-2"
                         >
                             {/**
                              * 【2026-10-20 第 3 条】**emoji + 题号，题号可点进详情页**。

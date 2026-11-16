@@ -936,7 +936,7 @@ export default function TagsPage() {
             <div className="flex items-center gap-4 mb-6">
                 <BackButton fallbackUrl="/" />
                 <div>
-                    <h1 className="text-3xl font-bold">{t.tags?.title || "Tag Management"}</h1>
+                    <h1 className="text-2xl font-bold">{t.tags?.title || "Tag Management"}</h1>
                     <p className="text-muted-foreground mt-1">
                         {t.tags?.subtitle || "View and manage knowledge point tags"}
                     </p>

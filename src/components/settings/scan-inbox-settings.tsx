@@ -146,10 +146,10 @@ export function ScanInboxSettings({ dirs, onDirChange }: ScanInboxSettingsProps)
             case "ok": {
                 const news = probe.files.filter((f) => !f.imported).length;
                 if (!probe.files.length) {
-                    return <span className="text-green-600">✓ {s.okEmpty || "可以访问 —— 文件夹是空的"}</span>;
+                    return <span className="text-emerald-600">✓ {s.okEmpty || "可以访问 —— 文件夹是空的"}</span>;
                 }
                 return (
-                    <span className="text-green-600">
+                    <span className="text-emerald-600">
                         ✓ {fill(s.okCount, "可以访问 —— 共 {n} 张照片，其中 {m} 张是新的", {
                             n: String(probe.files.length),
                             m: String(news),
@@ -209,7 +209,7 @@ export function ScanInboxSettings({ dirs, onDirChange }: ScanInboxSettingsProps)
             </div>
 
             {INBOX_KINDS.map((k) => probes[k]).some((p) => p && !p.configurable) ? (
-                <p className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800">
+                <p className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
                     {s.legacy || "当前容器是按老方式挂载的，这个路径没法在这里改。"}
                 </p>
             ) : (
@@ -236,7 +236,7 @@ export function ScanInboxSettings({ dirs, onDirChange }: ScanInboxSettingsProps)
                     {warnings.map((w, i) => (
                         <p
                             key={`${w.type}-${i}`}
-                            className="flex items-start gap-1.5 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800"
+                            className="flex items-start gap-1.5 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900"
                         >
                             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                             <span>
@@ -279,7 +279,7 @@ export function ScanInboxSettings({ dirs, onDirChange }: ScanInboxSettingsProps)
                             {f}
                         </button>
                     ))}
-                    <span className="text-[11px] text-muted-foreground">
+                    <span className="text-xs text-muted-foreground">
                         （填给「{labelOf(active)}」）
                     </span>
                 </div>

@@ -201,7 +201,7 @@ export default function InsightReadPage() {
                 {/* 筛选：学期 / 学科 / 搜索（与管理页同一套参数，只是学科这里单选） */}
                 <div className="mx-auto flex w-full max-w-[720px] flex-wrap items-center gap-2 px-3 pb-2 md:px-6">
                     <select
-                        className="h-8 rounded-md border bg-background px-2 text-xs"
+                        className="h-8 rounded-lg border bg-background px-2 text-xs"
                         value={grade}
                         onChange={(e) => setGrade(e.target.value)}
                         aria-label={L("年级学期", "Grade and term")}
@@ -214,7 +214,7 @@ export default function InsightReadPage() {
                         ))}
                     </select>
                     <select
-                        className="h-8 rounded-md border bg-background px-2 text-xs"
+                        className="h-8 rounded-lg border bg-background px-2 text-xs"
                         value={subject}
                         onChange={(e) => setSubject(e.target.value)}
                         aria-label={L("学科", "Subject")}
@@ -278,7 +278,7 @@ export default function InsightReadPage() {
                                     : "mt-10 border-t border-dashed border-[#5b9bd5]/60 pt-10"
                             }
                         >
-                            <div className="mb-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+                            <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
                                 <span>{dayLabel(r.dateKey)}</span>
                                 {r.subject && (
                                     <>

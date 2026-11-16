@@ -2256,7 +2256,7 @@ export function ImageCropper({
     //  渲染
     // ============================================================
     const btn = (active: boolean) =>
-        `h-8 px-3 text-xs rounded-md border transition-colors ${
+        `h-8 px-3 text-xs rounded-lg border transition-colors ${
             active
                 ? "bg-primary text-primary-foreground border-primary"
                 : "bg-background text-foreground border-input hover:bg-accent"

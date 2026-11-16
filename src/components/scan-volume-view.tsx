@@ -1037,7 +1037,7 @@ export function ScanVolumeView({
 
             {/* 写库失败提示：乐观更新已回滚，这里只告诉他一声音（下次操作会自动清掉） */}
             {saveError ? (
-                <div className="rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-300">
+                <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-300">
                     {saveError}
                 </div>
             ) : null}
@@ -1157,7 +1157,7 @@ export function ScanVolumeView({
                         </div>
                     </DialogHeader>
                     {/* `max-h` + `overflow-y-auto`：**框里滚**，不靠对话框长高 */}
-                    <div className="max-h-[62vh] overflow-y-auto rounded-md">
+                    <div className="max-h-[62vh] overflow-y-auto rounded-lg">
                         <MdEditor
                             value={answerDraft}
                             onChange={setAnswerDraft}
@@ -1193,7 +1193,7 @@ export function ScanVolumeView({
                             )}
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="max-h-[55vh] overflow-y-auto rounded-md">
+                    <div className="max-h-[55vh] overflow-y-auto rounded-lg">
                         <MdEditor
                             value={insightDraft}
                             onChange={setInsightDraft}
@@ -1214,7 +1214,7 @@ export function ScanVolumeView({
 
             <div
                 ref={scrollRef}
-                className="max-h-[78vh] overflow-auto rounded-md border bg-zinc-100 p-3 dark:bg-zinc-900"
+                className="max-h-[78vh] overflow-auto rounded-lg border bg-zinc-100 p-3 dark:bg-zinc-900"
                 onPointerDown={onPointerDown}
                 onPointerMove={onPointerMove}
                 onPointerUp={endDrag}

@@ -487,7 +487,7 @@ export default function AddErrorPage() {
                 <div className="container mx-auto p-4 pb-20">
                     {/* 【2026-10-10】带 `?linkTo=` 进来的：说明一句，免得他忘了自己在"关联"流程里 */}
                     {linkToId && (
-                        <div className="mb-3 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
+                        <div className="mb-3 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
                             {language === "zh"
                                 ? "这一批新增的题，保存时会自动挂到那道题下面。"
                                 : "Questions saved here will be attached to that question."}
@@ -561,7 +561,7 @@ export default function AddErrorPage() {
                         {/* 循环中的出口（蓝图：循环至某次保存后取消才结束）。
                             只要本页已经开抠就给出口，一道都没录成也能退出，不至于被卡在循环里。 */}
                         {loopMode && pageImageUrl && (
-                            <div className="flex flex-wrap items-center gap-3 p-3 rounded-lg border border-green-500/40 bg-green-500/5">
+                            <div className="flex flex-wrap items-center gap-3 p-3 rounded-lg border border-emerald-500/40 bg-emerald-500/5">
                                 {pageSavedCount > 0 && (
                                     <span className="text-sm font-medium">
                                         {t.common.cropper?.loopDoneCount

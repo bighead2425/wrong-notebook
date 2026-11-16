@@ -148,13 +148,13 @@ function PracticeContent() {
                 </Link>
             </div>
             <div className="text-center space-y-4">
-                <h1 className="text-3xl font-bold">{t.practice.title}</h1>
+                <h1 className="text-2xl font-bold">{t.practice.title}</h1>
                 <p className="text-muted-foreground">
                     {t.practice.subtitle}
                 </p>
 
                 {error && (
-                    <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded relative" role="alert">
+                    <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded relative" role="alert">
                         <strong className="font-bold">{t.common?.error || "Error"}: </strong>
                         <span className="block whitespace-pre-wrap"> {error}</span>
                     </div>
@@ -166,15 +166,15 @@ function PracticeContent() {
                             <span className="text-sm font-medium text-muted-foreground">{t.practice.difficulty?.label || "Difficulty"}:</span>
                             <div className="flex flex-wrap gap-1">
                                 {[
-                                    { value: "easy", label: t.practice.difficulty?.easy || "Easy", color: "bg-green-100 text-green-700 hover:bg-green-200" },
+                                    { value: "easy", label: t.practice.difficulty?.easy || "Easy", color: "bg-emerald-100 text-emerald-700 hover:bg-green-200" },
                                     { value: "medium", label: t.practice.difficulty?.medium || "Medium", color: "bg-blue-100 text-blue-700 hover:bg-blue-200" },
-                                    { value: "hard", label: t.practice.difficulty?.hard || "Hard", color: "bg-orange-100 text-orange-700 hover:bg-orange-200" },
-                                    { value: "harder", label: t.practice.difficulty?.harder || "Challenge", color: "bg-red-100 text-red-700 hover:bg-red-200" }
+                                    { value: "hard", label: t.practice.difficulty?.hard || "Hard", color: "bg-orange-100 text-amber-600 hover:bg-orange-200" },
+                                    { value: "harder", label: t.practice.difficulty?.harder || "Challenge", color: "bg-red-100 text-red-600 hover:bg-red-200" }
                                 ].map((level) => (
                                     <button
                                         key={level.value}
                                         onClick={() => setDifficulty(level.value as any)}
-                                        className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${difficulty === level.value
+                                        className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${difficulty === level.value
                                             ? level.color.replace("bg-", "bg-opacity-100 bg-").replace("text-", "ring-2 ring-offset-1 ring-")
                                             : "bg-transparent hover:bg-muted text-muted-foreground"
                                             } ${difficulty === level.value ? level.color : ''}`}
@@ -250,7 +250,7 @@ function PracticeContent() {
                     {/* Answer Input Section */}
                     <Card className="border-blue-200">
                         <CardHeader>
-                            <CardTitle className="text-blue-600">
+                            <CardTitle className="text-blue-700">
                                 {t.app.yourAnswer || "你的答案"}
                             </CardTitle>
                         </CardHeader>
@@ -286,17 +286,17 @@ function PracticeContent() {
                             </Button>
                         </div>
                     ) : (
-                        <Card className={isCorrect ? "border-green-500 bg-green-50" : "border-red-500 bg-red-50"}>
+                        <Card className={isCorrect ? "border-emerald-500 bg-emerald-50" : "border-red-500 bg-red-50"}>
                             <CardContent className="pt-6">
                                 <div className="flex items-center gap-3 mb-4">
                                     {isCorrect ? (
                                         <>
-                                            <CheckCircle className="h-8 w-8 text-green-600" />
+                                            <CheckCircle className="h-8 w-8 text-emerald-600" />
                                             <div>
-                                                <h3 className="text-xl font-bold text-green-600">
+                                                <h3 className="text-xl font-bold text-emerald-600">
                                                     {t.practice.correct || "回答正确！"}
                                                 </h3>
-                                                <p className="text-green-700">
+                                                <p className="text-emerald-700">
                                                     {t.practice.correctMessage || "太棒了，继续保持！"}
                                                 </p>
                                             </div>
@@ -308,7 +308,7 @@ function PracticeContent() {
                                                 <h3 className="text-xl font-bold text-red-600">
                                                     {t.practice.incorrect || "答案有误"}
                                                 </h3>
-                                                <p className="text-red-700">
+                                                <p className="text-red-600">
                                                     {t.practice.incorrectMessage || "再看看解析，加油！"}
                                                 </p>
                                             </div>
@@ -331,7 +331,7 @@ function PracticeContent() {
                         <div className="space-y-6 animate-in fade-in slide-in-from-top-2">
                             <Card className="bg-muted/50">
                                 <CardHeader>
-                                    <CardTitle className="text-green-600">{t.practice.correctAnswer}</CardTitle>
+                                    <CardTitle className="text-emerald-600">{t.practice.correctAnswer}</CardTitle>
                                 </CardHeader>
                                 <CardContent>
                                     <MarkdownRenderer content={question.answerText} className="font-bold" />

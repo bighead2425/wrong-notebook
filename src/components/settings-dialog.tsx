@@ -1393,7 +1393,7 @@ export function SettingsDialog({
 
                                         {/* 实例配置表单 */}
                                         {getSelectedInstance() && (
-                                            <div className="space-y-3 p-3 border rounded-md bg-background">
+                                            <div className="space-y-3 p-3 border rounded-lg bg-background">
                                                 <div className="space-y-2">
                                                     <Label>{t.settings?.ai?.instanceName || "Instance Name"} <span className="text-destructive">*</span></Label>
                                                     <Input
@@ -1464,7 +1464,7 @@ export function SettingsDialog({
                                                             onChange={(e) =>
                                                                 updateOpenAIInstance('maxTokens', Number(e.target.value))
                                                             }
-                                                            className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+                                                            className="w-full rounded-lg border bg-background px-2 py-1.5 text-sm"
                                                         >
                                                             <option value={4096}>4096（短解析）</option>
                                                             <option value={8192}>8192（默认）</option>
@@ -1473,7 +1473,7 @@ export function SettingsDialog({
                                                             <option value={65536}>65536（超长）</option>
                                                             <option value={131072}>131072（极大）</option>
                                                         </select>
-                                                        <p className="text-[10px] text-muted-foreground">
+                                                        <p className="text-xs text-muted-foreground">
                                                             {getSelectedInstance()?.capabilities?.maxOutput
                                                                 ? `这个模型上限约 ${getSelectedInstance()?.capabilities?.maxOutput}`
                                                                 : '点「测试连接」可探出模型上限'}
@@ -1489,7 +1489,7 @@ export function SettingsDialog({
                                                                     e.target.value || undefined,
                                                                 )
                                                             }
-                                                            className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+                                                            className="w-full rounded-lg border bg-background px-2 py-1.5 text-sm"
                                                         >
                                                             <option value="">自动（按探测结果）</option>
                                                             <option value="off">关闭（最快）</option>
@@ -1497,7 +1497,7 @@ export function SettingsDialog({
                                                             <option value="high">高</option>
                                                             <option value="max">最高</option>
                                                         </select>
-                                                        <p className="text-[10px] text-muted-foreground">
+                                                        <p className="text-xs text-muted-foreground">
                                                             小学的题建议「关闭」或「低」；初高中再调高
                                                         </p>
                                                     </div>
@@ -1640,18 +1640,18 @@ export function SettingsDialog({
 
                                     {/* 测试结果显示 */}
                                     {testResult && (
-                                        <div className={`p-3 rounded-md text-sm ${testResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                                        <div className={`p-3 rounded-lg text-sm ${testResult.success ? 'bg-emerald-50 border border-emerald-200' : 'bg-red-50 border border-red-200'}`}>
                                             <div className="flex items-center gap-2 font-medium mb-2">
                                                 {testResult.success ? (
                                                     <>
-                                                        <CheckCircle2 className="h-4 w-4 text-green-600" />
-                                                        <span className="text-green-700">{t.settings?.ai?.testSuccess || "连接成功"}</span>
-                                                        {testResult.modelInfo && <span className="text-green-600 text-xs">({testResult.modelInfo})</span>}
+                                                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                                                        <span className="text-emerald-700">{t.settings?.ai?.testSuccess || "连接成功"}</span>
+                                                        {testResult.modelInfo && <span className="text-emerald-600 text-xs">({testResult.modelInfo})</span>}
                                                     </>
                                                 ) : (
                                                     <>
                                                         <XCircle className="h-4 w-4 text-red-600" />
-                                                        <span className="text-red-700">{t.settings?.ai?.testFailed || "连接失败"}</span>
+                                                        <span className="text-red-600">{t.settings?.ai?.testFailed || "连接失败"}</span>
                                                     </>
                                                 )}
                                             </div>
@@ -1659,12 +1659,12 @@ export function SettingsDialog({
                                                 <div className="space-y-1 text-xs">
                                                     <div className="flex items-center gap-2">
                                                         <span className="text-muted-foreground">{t.settings?.ai?.textSupport || "文本生成"}:</span>
-                                                        <span className="text-green-600">✓ {t.settings?.ai?.supported || "支持"}</span>
+                                                        <span className="text-emerald-600">✓ {t.settings?.ai?.supported || "支持"}</span>
                                                     </div>
                                                     <div className="flex items-center gap-2">
                                                         <span className="text-muted-foreground">{t.settings?.ai?.visionSupport || "图像识别/多模态"}:</span>
                                                         {testResult.visionSupport ? (
-                                                            <span className="text-green-600">✓ {t.settings?.ai?.supported || "支持"}</span>
+                                                            <span className="text-emerald-600">✓ {t.settings?.ai?.supported || "支持"}</span>
                                                         ) : (
                                                             <span className="text-amber-600">✗ {
                                                                 testResult.visionError
@@ -1680,14 +1680,14 @@ export function SettingsDialog({
                                                                 {testResult.capabilities.reasoning ? (
                                                                     <span className="text-amber-600">会（回答前先想）</span>
                                                                 ) : (
-                                                                    <span className="text-green-600">不会（直接答）</span>
+                                                                    <span className="text-emerald-600">不会（直接答）</span>
                                                                 )}
                                                             </div>
                                                             {testResult.capabilities.reasoning && (
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="text-muted-foreground">能否关掉思考:</span>
                                                                     {testResult.capabilities.thinkingOff ? (
-                                                                        <span className="text-green-600">能（请求时自动关）</span>
+                                                                        <span className="text-emerald-600">能（请求时自动关）</span>
                                                                     ) : testResult.capabilities.effortLevels.length > 0 ? (
                                                                         <span className="text-amber-600">
                                                                             不能，但可限档：{testResult.capabilities.effortLevels.join(' / ')}
@@ -1698,12 +1698,12 @@ export function SettingsDialog({
                                                                     )}
                                                                 </div>
                                                             )}
-                                                            <p className="text-muted-foreground/60 text-[10px] pl-1">
+                                                            <p className="text-muted-foreground/60 text-xs pl-1">
                                                                 能力已写入本实例，点「保存」后生效
                                                             </p>
                                                         </>
                                                     )}
-                                                    <p className="text-muted-foreground/60 text-[10px] pl-1">* 由于网络问题，可能测试结果不准确</p>
+                                                    <p className="text-muted-foreground/60 text-xs pl-1">* 由于网络问题，可能测试结果不准确</p>
                                                 </div>
                                             )}
                                             {!testResult.success && testResult.textError && (
@@ -1722,7 +1722,7 @@ export function SettingsDialog({
                     {/* Prompts Tab */}
                     <TabsContent value="prompts" className="space-y-4 py-4">
                         {/* 【2026-11-01】两段式总开关 —— 默认开启；关掉 = 回到以前的单段 */}
-                        <div className="flex items-center justify-between gap-3 rounded-md border p-3">
+                        <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
                             <div className="space-y-1">
                                 <p className="text-sm font-medium">两段式分析（默认开启）</p>
                                 <p className="text-xs text-muted-foreground">
@@ -1733,7 +1733,7 @@ export function SettingsDialog({
                                 </p>
                             </div>
                             <select
-                                className="h-9 rounded-md border bg-background px-2 text-sm"
+                                className="h-9 rounded-lg border bg-background px-2 text-sm"
                                 value={config.twoStage?.enabled ? 'on' : 'off'}
                                 onChange={(e) => void updateTwoStage(e.target.value === 'on')}
                             >
@@ -1775,13 +1775,13 @@ export function SettingsDialog({
                                             <a
                                                 href="/api/export/snapshot"
                                                 download
-                                                className="inline-flex h-8 items-center justify-center rounded-md border border-emerald-300 bg-emerald-100 px-3 text-xs font-medium text-emerald-900 hover:bg-emerald-200"
+                                                className="inline-flex h-8 items-center justify-center rounded-lg border border-emerald-300 bg-emerald-100 px-3 text-xs font-medium text-emerald-900 hover:bg-emerald-200"
                                             >
                                                 <Download className="mr-2 h-4 w-4" />
                                                 {t.settings?.fullBackupButton || "Download Full Backup"}
                                             </a>
                                         </div>
-                                        <p className="text-xs text-emerald-800">
+                                        <p className="text-xs text-emerald-700">
                                             {t.settings?.fullBackupDesc || "Whole-database snapshot plus app config, packed as .tar.gz."}
                                         </p>
                                     </div>
@@ -1790,7 +1790,7 @@ export function SettingsDialog({
                                 {/* Export */}
                                 <div className="mb-4">
                                     <div className="flex items-center justify-between mb-2">
-                                        <span className="text-sm text-blue-800 font-medium">
+                                        <span className="text-sm text-blue-900 font-medium">
                                             {t.settings?.exportData || "Export Data"}
                                         </span>
                                         <div className="flex items-center gap-2">
@@ -1814,7 +1814,7 @@ export function SettingsDialog({
                                                     size="sm"
                                                     onClick={handleExportAllData}
                                                     disabled={exporting}
-                                                    className="bg-orange-100 hover:bg-orange-200 text-orange-900 border-orange-300"
+                                                    className="bg-orange-100 hover:bg-orange-200 text-amber-900 border-orange-300"
                                                 >
                                                     {exporting ? (
                                                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1834,7 +1834,7 @@ export function SettingsDialog({
                                 {/* Import */}
                                 <div>
                                     <div className="flex items-center justify-between mb-2">
-                                        <span className="text-sm text-blue-800 font-medium">
+                                        <span className="text-sm text-blue-900 font-medium">
                                             {t.settings?.importData || "Import Data"}
                                         </span>
                                         <div className="flex items-center gap-2">
@@ -1866,7 +1866,7 @@ export function SettingsDialog({
                                                     size="sm"
                                                     onClick={handleImportData}
                                                     disabled={importing}
-                                                    className="bg-green-100 hover:bg-green-200 text-green-900 border-green-300"
+                                                    className="bg-emerald-100 hover:bg-green-200 text-emerald-800 border-emerald-300"
                                                 >
                                                     {importing ? (
                                                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1882,7 +1882,7 @@ export function SettingsDialog({
                                                     size="sm"
                                                     onClick={handleImportAllData}
                                                     disabled={importing}
-                                                    className="bg-orange-100 hover:bg-orange-200 text-orange-900 border-orange-300"
+                                                    className="bg-orange-100 hover:bg-orange-200 text-amber-900 border-orange-300"
                                                 >
                                                     {importing ? (
                                                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1932,7 +1932,7 @@ export function SettingsDialog({
                                             )}
                                         </Button>
                                     </div>
-                                    <p className="text-xs text-blue-800 mt-2 font-medium">
+                                    <p className="text-xs text-blue-900 mt-2 font-medium">
                                         {t.settings?.migrateTagsDesc || 'Re-populates standard tags from file'}
                                     </p>
                                 </div>
@@ -1941,7 +1941,7 @@ export function SettingsDialog({
                             {/* Clear Practice Data */}
                             <div className="p-4 border border-red-200 rounded-lg bg-red-50">
                                 <div className="flex items-center justify-between">
-                                    <span className="text-sm text-red-700 font-medium">
+                                    <span className="text-sm text-red-600 font-medium">
                                         {t.settings?.clearData || "Clear Practice Data"}
                                     </span>
                                     <Button
@@ -1965,7 +1965,7 @@ export function SettingsDialog({
                             {/* Clear Error Data */}
                             <div className="p-4 border border-red-200 rounded-lg bg-red-50">
                                 <div className="flex items-center justify-between">
-                                    <span className="text-sm text-red-700 font-medium">
+                                    <span className="text-sm text-red-600 font-medium">
                                         {t.settings?.clearErrorData || "Clear Error Data"}
                                     </span>
                                     <Button
@@ -2012,7 +2012,7 @@ export function SettingsDialog({
                                                 )}
                                             </Button>
                                         </div>
-                                        <p className="text-xs text-red-800 mt-2 font-medium">
+                                        <p className="text-xs text-red-600 mt-2 font-medium">
                                             {t.settings?.systemResetDesc || 'Resets the system to factory state. Deletes ALL data.'}
                                         </p>
                                     </div>

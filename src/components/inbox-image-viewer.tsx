@@ -76,7 +76,7 @@ export interface InboxImageViewerProps {
 
 /** 工具栏图标按钮的统一长相（与 ImageLightbox 里那套一致） */
 const iconBtn =
-    "h-9 w-9 shrink-0 inline-flex items-center justify-center rounded-md border bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50 disabled:hover:bg-background disabled:hover:text-muted-foreground";
+    "h-9 w-9 shrink-0 inline-flex items-center justify-center rounded-lg border bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50 disabled:hover:bg-background disabled:hover:text-muted-foreground";
 
 const divider = <span className="w-px h-5 bg-border mx-1" />;
 
@@ -282,9 +282,9 @@ export function InboxImageViewer({
                     type="button"
                     onClick={() => onToggleSelect(name)}
                     aria-pressed={isChecked}
-                    className={`h-9 w-[122px] shrink-0 px-2.5 inline-flex items-center justify-start gap-2 rounded-md border text-sm transition-colors ${
+                    className={`h-9 w-[122px] shrink-0 px-2.5 inline-flex items-center justify-start gap-2 rounded-lg border text-sm transition-colors ${
                         isChecked
-                            ? "border-sky-500 bg-sky-500/10 text-sky-600"
+                            ? "border-sky-500 bg-sky-500/10 text-blue-600"
                             : "border-input bg-background text-muted-foreground hover:border-sky-500"
                     }`}
                     title={isChecked ? (s.viewerUnselect || "取消选中") : (s.viewerSelect || "选中")}
@@ -325,7 +325,7 @@ export function InboxImageViewer({
                         title={isQueued
                             ? (s.viewerQueuedHint || "这张已经进了待处理队列，状态改不了了")
                             : (s.viewerStatusHint || "点一下，在「新照片」和「已录入」之间切换")}
-                        className={`h-9 min-w-[68px] px-3 shrink-0 inline-flex items-center justify-center gap-1.5 rounded-md border text-sm transition-colors disabled:opacity-70 ${
+                        className={`h-9 min-w-[68px] px-3 shrink-0 inline-flex items-center justify-center gap-1.5 rounded-lg border text-sm transition-colors disabled:opacity-70 ${
                             isQueued
                                 ? "bg-teal-600 border-teal-600 text-white"
                                 : cur.imported

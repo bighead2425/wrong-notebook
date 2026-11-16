@@ -60,9 +60,9 @@ export default function AdminUserDetailPage() {
     }
 
     const masteryItems = [
-        { key: "new", label: t.admin?.dashboard?.masteryNew || "未掌握", count: data.masteryDistribution.new, icon: AlertCircle, color: "text-red-500" },
+        { key: "new", label: t.admin?.dashboard?.masteryNew || "未掌握", count: data.masteryDistribution.new, icon: AlertCircle, color: "text-red-600" },
         { key: "reviewing", label: t.admin?.dashboard?.masteryReviewing || "复习中", count: data.masteryDistribution.reviewing, icon: Clock, color: "text-yellow-500" },
-        { key: "mastered", label: t.admin?.dashboard?.masteryMastered || "已掌握", count: data.masteryDistribution.mastered, icon: CheckCircle, color: "text-green-500" },
+        { key: "mastered", label: t.admin?.dashboard?.masteryMastered || "已掌握", count: data.masteryDistribution.mastered, icon: CheckCircle, color: "text-emerald-600" },
     ]
     const totalMastery = data.masteryDistribution.new + data.masteryDistribution.reviewing + data.masteryDistribution.mastered
 
@@ -102,14 +102,14 @@ export default function AdminUserDetailPage() {
                 </Card>
                 <Card className="border-0 shadow-sm">
                     <CardContent className="p-4 text-center">
-                        <BookOpen className="h-5 w-5 text-red-500 mx-auto mb-1" />
+                        <BookOpen className="h-5 w-5 text-red-600 mx-auto mb-1" />
                         <div className="text-2xl font-bold">{data.errorCount}</div>
                         <div className="text-xs text-muted-foreground">{t.admin?.dashboard?.errors || "错题"}</div>
                     </CardContent>
                 </Card>
                 <Card className="border-0 shadow-sm">
                     <CardContent className="p-4 text-center">
-                        <PenTool className="h-5 w-5 text-green-500 mx-auto mb-1" />
+                        <PenTool className="h-5 w-5 text-emerald-600 mx-auto mb-1" />
                         <div className="text-2xl font-bold">{data.practiceCount}</div>
                         <div className="text-xs text-muted-foreground">{t.admin?.dashboard?.practice || "练习"}</div>
                     </CardContent>
@@ -155,7 +155,7 @@ export default function AdminUserDetailPage() {
                 <Card className="border-0 shadow-sm">
                     <CardHeader className="pb-2">
                         <CardTitle className="text-base flex items-center gap-2">
-                            <CheckCircle className="h-4 w-4 text-green-500" />
+                            <CheckCircle className="h-4 w-4 text-emerald-600" />
                             {t.admin?.dashboard?.masteryDistribution || "掌握度分布"}
                         </CardTitle>
                     </CardHeader>
@@ -218,7 +218,7 @@ export default function AdminUserDetailPage() {
             <Card className="border-0 shadow-sm">
                 <CardHeader className="pb-2">
                     <CardTitle className="text-base flex items-center gap-2">
-                        <Eye className="h-4 w-4 text-orange-500" />
+                        <Eye className="h-4 w-4 text-amber-600" />
                         {t.admin?.dashboard?.recentErrors || "最近录入的错题"}
                     </CardTitle>
                 </CardHeader>

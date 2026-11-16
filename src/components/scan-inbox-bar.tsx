@@ -422,7 +422,7 @@ export function ScanInboxBar({
          */
         const unreachable = listing.status === "unreachable";
         return (
-            <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+            <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
                 <p className="font-medium">
                     {sub ? `${si?.title || "转存文件夹"}（${sub}）` : (si?.title || "转存文件夹")}
                 </p>
@@ -435,7 +435,7 @@ export function ScanInboxBar({
                             : (si?.readError?.replace("{reason}", listing.reason || "") ||
                               `读不到这个文件夹：${listing.reason || "原因未知"}`)}
                 </p>
-                <p className="text-amber-700/80 dark:text-amber-300/80">
+                <p className="text-amber-600/80 dark:text-amber-300/80">
                     {unreachable
                         ? (si?.loadErrorHint ||
                           "多半是登录过期或网络一时不通 —— 刷新页面重试一次；不用去 NAS 上建文件夹。")
@@ -769,7 +769,7 @@ export function ScanInboxBar({
                 {/* 【2026-10-21】PDF 中转区 —— 只在 scan2pdf 目录出现 */}
                 {allowPdf && pdfs.length > 0 && (
                     <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-2 dark:border-sky-900 dark:bg-sky-950/20">
-                        <p className="mb-1.5 text-xs font-medium text-sky-900 dark:text-sky-200">
+                        <p className="mb-1.5 text-xs font-medium text-blue-900 dark:text-blue-200">
                             这个文件夹里还有 {pdfs.length} 个 PDF。点「转成图片」后，它会按页拆开，
                             出现在下面的列表里，再勾选导入。
                         </p>
@@ -780,10 +780,10 @@ export function ScanInboxBar({
                                     <button
                                         type="button"
                                         onClick={() => window.open(fileUrl(pf.name), "_blank", "noopener")}
-                                        className="flex min-w-0 flex-1 items-center gap-1.5 text-left hover:text-sky-700"
+                                        className="flex min-w-0 flex-1 items-center gap-1.5 text-left hover:text-blue-700"
                                         title="点开预览"
                                     >
-                                        <FileText className="h-3.5 w-3.5 shrink-0 text-sky-600" />
+                                        <FileText className="h-3.5 w-3.5 shrink-0 text-blue-600" />
                                         <span className="truncate font-mono underline decoration-dotted">{pf.name}</span>
                                     </button>
                                     <Button
@@ -835,7 +835,7 @@ export function ScanInboxBar({
                         type="button"
                         disabled={disabled || newFiles.length === 0}
                         onClick={() => doImport(newFiles.map(f => f.name))}
-                        className="h-11 text-sm px-4 flex items-center justify-center gap-2 rounded-md border border-dashed border-primary/60 font-medium text-primary shadow-sm transition-all hover:bg-primary/5 hover:shadow-md disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:shadow-sm"
+                        className="h-11 text-sm px-4 flex items-center justify-center gap-2 rounded-lg border border-dashed border-primary/60 font-medium text-primary shadow-sm transition-all hover:bg-primary/5 hover:shadow-md disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:shadow-sm"
                     >
                         {working
                             ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
@@ -854,13 +854,13 @@ export function ScanInboxBar({
                         type="button"
                         disabled={disabled}
                         onClick={() => { load(); setOpen(true); }}
-                        className="h-11 text-sm flex items-center justify-center gap-2 rounded-md border bg-background px-4 font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/50 hover:bg-accent/40 hover:text-foreground hover:shadow-md disabled:opacity-50"
+                        className="h-11 text-sm flex items-center justify-center gap-2 rounded-lg border bg-background px-4 font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/50 hover:bg-accent/40 hover:text-foreground hover:shadow-md disabled:opacity-50"
                     >
                         <FolderOpen className="h-4 w-4 shrink-0" />
                         <span className="truncate">{(s.open || "打开收件箱（{n}）").replace("{n}", String(files.length))}</span>
                     </button>
                 </div>
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                     {s.hint || "手机 App（夸克扫描王等）分享进来的、以及在本页直接传上来的照片，都会落进这个文件夹"}
                 </p>
             </div>
@@ -899,7 +899,7 @@ export function ScanInboxBar({
                             {s.uploadHint || "手机上打开相册、电脑上打开文件夹，可一次多选"}
                         </span>
                         {uploadedNote && !uploading && (
-                            <span className={`text-xs ${uploadedNote.bad ? "text-amber-600" : "text-green-600"}`}>
+                            <span className={`text-xs ${uploadedNote.bad ? "text-amber-600" : "text-emerald-600"}`}>
                                 {uploadedNote.bad
                                     ? (s.uploadPartial || "已传入 {ok} 张，{bad} 张没传上去")
                                         .replace("{ok}", String(uploadedNote.ok))
@@ -1059,23 +1059,23 @@ export function ScanInboxBar({
                                                 <Check className="h-3 w-3" />
                                             </button>
                                             {inQueue.has(f.name) ? (
-                                                <span className="absolute bottom-1 left-1 bg-teal-600 text-white text-[10px] rounded px-1">
+                                                <span className="absolute bottom-1 left-1 bg-teal-600 text-white text-xs rounded px-1">
                                                     {s.badgeQueued || "已在队列"}
                                                 </span>
                                             ) : f.imported ? (
-                                                <span className="absolute bottom-1 left-1 bg-gray-700 text-white text-[10px] rounded px-1">
+                                                <span className="absolute bottom-1 left-1 bg-gray-700 text-white text-xs rounded px-1">
                                                     {s.badgeImported || "已导入"}
                                                 </span>
                                             ) : (
-                                                <span className="absolute bottom-1 left-1 bg-sky-600 text-white text-[10px] rounded px-1">
+                                                <span className="absolute bottom-1 left-1 bg-sky-600 text-white text-xs rounded px-1">
                                                     {s.badgeNew || "新"}
                                                 </span>
                                             )}
                                         </div>
-                                        <p className="text-[10px] text-muted-foreground truncate px-0.5" title={f.name}>
+                                        <p className="text-xs text-muted-foreground truncate px-0.5" title={f.name}>
                                             {f.name}
                                         </p>
-                                        <p className="text-[10px] text-muted-foreground px-0.5">{humanSize(f.size)}</p>
+                                        <p className="text-xs text-muted-foreground px-0.5">{humanSize(f.size)}</p>
                                     </div>
                                 );
                             })}
@@ -1085,7 +1085,7 @@ export function ScanInboxBar({
                     {/* 【2026-10-09 第 6 条】拼完存回收件箱后的交代：把文件名给出来，
                         好让人在下面那一格里找到它（新文件会自动带上「新」角标）。 */}
                     {stitchedNote && (
-                        <p className="text-xs text-green-600">
+                        <p className="text-xs text-emerald-600">
                             {(s.stitchSaved || "已拼好，并存回收件箱（文件名以「拼接_」开头）")}
                             {" "}
                             <span className="font-medium break-all">{stitchedNote}</span>

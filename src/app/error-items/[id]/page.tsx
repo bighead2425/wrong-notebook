@@ -1281,7 +1281,7 @@ export default function ErrorDetailPage() {
                             {exportState === "doing" ? "导出中…" : "Ob"}
                         </Button>
                         {exportState === "ok" && (
-                            <span className="self-center text-green-600 text-sm">已导出</span>
+                            <span className="self-center text-emerald-600 text-sm">已导出</span>
                         )}
                         {exportState === "err" && (
                             <span className="self-center text-red-600 text-sm">导出失败</span>
@@ -1289,7 +1289,7 @@ export default function ErrorDetailPage() {
                         <Button
                             size="sm"
                             variant={item.masteryLevel > 0 ? "default" : "default"}
-                            className={item.masteryLevel > 0 ? "bg-green-600 hover:bg-green-700 text-white" : ""}
+                            className={item.masteryLevel > 0 ? "bg-emerald-600 hover:bg-green-700 text-white" : ""}
                             onClick={toggleMastery}
                         >
                             {item.masteryLevel > 0 ? (
@@ -1308,7 +1308,7 @@ export default function ErrorDetailPage() {
                             variant="ghost"
                             size="sm"
                             onClick={deleteItem}
-                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                            className="text-red-600 hover:text-red-600 hover:bg-red-50"
                         >
                             <Trash2 className="mr-2 h-4 w-4" />
                             {t.detail.delete || "Delete"}
@@ -1516,7 +1516,7 @@ export default function ErrorDetailPage() {
                                     )}
                                     {item.tagStatus === 'failed' && (
                                         <div className="flex flex-wrap items-center gap-2">
-                                            <p className="text-xs text-amber-700">
+                                            <p className="text-xs text-amber-600">
                                                 标签没能自动归位。可以直接在上面手动选，或者再试一次。
                                             </p>
                                             <Button
@@ -1905,7 +1905,7 @@ export default function ErrorDetailPage() {
                                     minHeightPx={140}
                                     dirty={dirtyInsight}
                                 />
-                                <p className="text-[11px] leading-tight text-muted-foreground">
+                                <p className="text-xs leading-tight text-muted-foreground">
                                     {insight
                                         ? L(
                                               "已送进日积月累库。改完点【直送】覆盖那一条（编号不变）；AI 写的部分是斜体批注，她的原话在前面。",
@@ -2068,7 +2068,7 @@ export default function ErrorDetailPage() {
                                     <CardTitle className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-lg">
                                         <span className="flex items-center gap-2">
                                             <span
-                                                className="inline-block h-3 w-3 rounded-[3px]"
+                                                className="inline-block h-3 w-3 rounded-sm"
                                                 style={{
                                                     backgroundColor:
                                                         linkRoleColor(item.link.role) || undefined,
@@ -2119,7 +2119,7 @@ export default function ErrorDetailPage() {
                                 <CardContent className="space-y-4">
                                     {/* 操作结果就显示在这儿 —— 不弹窗（界面本身已经变了，弹窗纯属多一步） */}
                                     {linkNote && (
-                                        <p className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
+                                        <p className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
                                             {linkNote}
                                         </p>
                                     )}

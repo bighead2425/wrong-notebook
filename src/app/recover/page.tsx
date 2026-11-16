@@ -1231,7 +1231,7 @@ export default function RecoverPage() {
                 <div className="flex items-start gap-4">
                     <BackButton fallbackUrl="/" />
                     <div className="flex-1 space-y-1">
-                        <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight sm:text-3xl">
+                        <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight sm:text-2xl">
                             <ScanText className="h-6 w-6" />
                             {L("回录分析", "Recover")}
                         </h1>
@@ -1316,7 +1316,7 @@ export default function RecoverPage() {
                     />
 
                     {shotNotice && (
-                        <p className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                        <p className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
                             {shotNotice}
                         </p>
                     )}
@@ -1557,7 +1557,7 @@ export default function RecoverPage() {
 
                                         {card.state.k === "blocked" && (
                                             <div className="space-y-2">
-                                                <p className="rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                                                <p className="rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
                                                     {blockedText(card.state)}
                                                 </p>
                                                 <div className="flex flex-wrap items-center gap-2">
@@ -1748,7 +1748,7 @@ export default function RecoverPage() {
 
                                         {card.state.k === "blocked" && (
                                             <div className="space-y-2">
-                                                <p className="rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                                                <p className="rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
                                                     {reviewBlockedText(card.state)}
                                                 </p>
                                                 <div className="flex flex-wrap items-center gap-2">

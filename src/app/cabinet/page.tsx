@@ -204,7 +204,7 @@ export default function CabinetPage() {
                 <div className="flex items-start gap-4">
                     <BackButton fallbackUrl="/" />
                     <div className="flex-1 space-y-1">
-                        <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight sm:text-3xl">
+                        <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight sm:text-2xl">
                             <Landmark className="h-7 w-7" />
                             {L("总理内阁", "Cabinet")}
                         </h1>
@@ -300,7 +300,7 @@ export default function CabinetPage() {
                                                 .slice(0, 8)
                                                 .map((k) => {
                                                     const body = (
-                                                        <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 hover:bg-accent/50 transition-colors">
+                                                        <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 hover:bg-accent/50 transition-colors">
                                                             <div className="min-w-0">
                                                                 <p className="text-sm font-medium truncate">
                                                                     {k.name}

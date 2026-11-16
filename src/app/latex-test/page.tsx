@@ -29,7 +29,7 @@ export default function LatexTestPage() {
 
     return (
         <div className="container mx-auto p-8 max-w-4xl">
-            <h1 className="text-3xl font-bold mb-6">LaTeX 渲染测试</h1>
+            <h1 className="text-2xl font-bold mb-6">LaTeX 渲染测试</h1>
 
             <div className="space-y-6">
                 {testCases.map((test, index) => (

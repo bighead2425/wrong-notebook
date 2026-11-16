@@ -87,7 +87,7 @@ export function ReviewQueueStats() {
                         <CardTitle className="text-sm font-medium">{L("今天该练", "Due today")}</CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <div className="text-3xl font-bold tabular-nums">{data.dueToday}</div>
+                        <div className="text-2xl font-bold tabular-nums">{data.dueToday}</div>
                         <p className="mt-1 text-xs text-muted-foreground">
                             {L("还没练过 + 最近错的", "Never practiced + recently missed")}
                         </p>
@@ -99,7 +99,7 @@ export function ReviewQueueStats() {
                     </CardHeader>
                     <CardContent>
                         <div
-                            className="text-3xl font-bold tabular-nums"
+                            className="text-2xl font-bold tabular-nums"
                             style={{ color: data.overdue > 0 ? "#dc2626" : undefined }}
                         >
                             {data.overdue}
@@ -114,7 +114,7 @@ export function ReviewQueueStats() {
                         <CardTitle className="text-sm font-medium">{L("已经稳住", "Settled")}</CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <div className="text-3xl font-bold tabular-nums">{data.retired}</div>
+                        <div className="text-2xl font-bold tabular-nums">{data.retired}</div>
                         <p className="mt-1 text-xs text-muted-foreground">
                             {L(`连对三次以上，不再排进复练（共 ${data.total} 道）`, `Right 3+ times, no longer scheduled (of ${data.total})`)}
                         </p>
@@ -273,17 +273,17 @@ export function ReviewQueueStats() {
                         {heat.map((d) => (
                             <div
                                 key={d.date}
-                                className="size-3 rounded-[2px]"
+                                className="size-3 rounded-sm"
                                 style={{ background: heatColor(d.count) }}
                                 title={`${d.date} · ${d.count}`}
                             />
                         ))}
                     </div>
 
-                    <div className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground">
+                    <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
                         <span>{L("少", "less")}</span>
                         {[0, 2, 6, 12, 20].map((n) => (
-                            <span key={n} className="size-3 rounded-[2px]" style={{ background: heatColor(n) }} />
+                            <span key={n} className="size-3 rounded-sm" style={{ background: heatColor(n) }} />
                         ))}
                         <span>{L("多", "more")}</span>
                     </div>

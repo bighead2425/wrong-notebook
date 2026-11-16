@@ -1361,7 +1361,7 @@ export default function ReviewVolumesPage() {
                                     <div className="relative flex-1">
                                         <Search className="absolute left-2 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
                                         <input
-                                            className="w-full rounded-md border bg-background pl-7 pr-2 py-1.5 text-sm"
+                                            className="w-full rounded-lg border bg-background pl-7 pr-2 py-1.5 text-sm"
                                             /* 他 2026-10-11："不设为即时检索，改为输入后回车进行检索" */
                                             placeholder={L("搜卷号 / 名字 / 年级学期，回车检索", "Search, press Enter")}
                                             value={queryDraft}
@@ -1390,7 +1390,7 @@ export default function ReviewVolumesPage() {
                                           ② 原来那个「复练」改成「模仿」。
                                         ⇒ 这一页现在**只管复练卷与模仿卷**（积累纸单独走它自己那条路）。
                                     */}
-                                    <div className="flex items-center gap-1 bg-muted/50 rounded-md p-0.5 w-fit">
+                                    <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-0.5 w-fit">
                                         {(["review", "imitate"] as const).map((k) => (
                                             <button
                                                 key={k}
@@ -1408,7 +1408,7 @@ export default function ReviewVolumesPage() {
                                     </div>
                                     {/* 年级/学期（小一上 … 高三下）+ 学科（9 科 + 其他）两个筛选，可叠加 */}
                                     <select
-                                        className="rounded-md border bg-background px-2 py-1 text-xs max-w-[110px]"
+                                        className="rounded-lg border bg-background px-2 py-1 text-xs max-w-[110px]"
                                         value={gradeTermFilter}
                                         onChange={(e) => setGradeTermFilter(e.target.value)}
                                         title={L("按年级/学期筛", "Filter by term")}
@@ -1421,7 +1421,7 @@ export default function ReviewVolumesPage() {
                                         ))}
                                     </select>
                                     <select
-                                        className="rounded-md border bg-background px-2 py-1 text-xs max-w-[100px]"
+                                        className="rounded-lg border bg-background px-2 py-1 text-xs max-w-[100px]"
                                         value={subjectFilter}
                                         onChange={(e) => setSubjectFilter(e.target.value)}
                                         title={L("按学科筛", "Filter by subject")}
@@ -1438,7 +1438,7 @@ export default function ReviewVolumesPage() {
                                         这里显示"正在只看含这道题的卷"，并给一个 × 撤掉筛选
                                         （否则他会被"怎么只有两份卷"困住）。 */}
                                     {hasItemFilter ? (
-                                        <span className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 text-xs">
+                                        <span className="inline-flex items-center gap-1 rounded-lg border border-primary/40 bg-primary/10 px-2 py-0.5 text-xs">
                                             {L("只看含这道题的卷", "Only volumes with this question")}
                                             <button
                                                 type="button"
@@ -1466,7 +1466,7 @@ export default function ReviewVolumesPage() {
                                 )}
                                 {listError && <p className="text-xs text-red-600">{listError}</p>}
                                 {!listLoading && !listError && visibleVolumes.length === 0 && (
-                                    <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
+                                    <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
                                         {/* 【2026-10-17】带"只看含这道题"的筛选时，空列表的**说法要不一样** ——
                                             否则他会以为"这道题一份卷都没进过"，
                                             而真相可能是"这一档（复练/模仿）没有，另一档有"。 */}
@@ -1502,11 +1502,11 @@ export default function ReviewVolumesPage() {
                                 {/* 【2026-10-05 他要求】卷会越攒越多，左栏会一直长下去 ——
                                     装进一个**自带滚动条**的框里（他建议"能显示 7-8 个卡片的量"）。
                                     写法**照抄日积月累页左栏那套**（`max-h-[62vh] overflow-y-auto
-                                    rounded-md border p-2`）—— 他明确说那个设计很好，那就别另发明一套，
+                                    rounded-lg border p-2`）—— 他明确说那个设计很好，那就别另发明一套，
                                     两页左栏看起来、用起来都一样。 */}
                                 <div
                                     ref={listScrollRef}
-                                    className="max-h-[62vh] space-y-1 overflow-y-auto rounded-md border p-2"
+                                    className="max-h-[62vh] space-y-1 overflow-y-auto rounded-lg border p-2"
                                 >
                                     {visibleVolumes.map((v) => {
                                         const active = v.id === selectedId;
@@ -1515,7 +1515,7 @@ export default function ReviewVolumesPage() {
                                                 key={v.id}
                                                 type="button"
                                                 onClick={() => handleOpenVolume(v.id)}
-                                                className="w-full text-left rounded-md border px-2 py-1.5 transition-colors"
+                                                className="w-full text-left rounded-lg border px-2 py-1.5 transition-colors"
                                                 style={{
                                                     borderColor: active ? "var(--primary)" : "var(--border)",
                                                     background: active ? "var(--accent)" : "transparent",
@@ -1528,14 +1528,14 @@ export default function ReviewVolumesPage() {
                                                     <>
                                                         <div className="flex items-center gap-2">
                                                             <span className="text-sm font-semibold truncate">{v.title}</span>
-                                                            <span className="text-[10px] px-1 rounded border whitespace-nowrap">
+                                                            <span className="text-xs px-1 rounded border whitespace-nowrap">
                                                                 {L(
                                                                     VOLUME_KIND_LABEL[v.kind],
                                                                     VOLUME_KIND_LABEL_EN[v.kind],
                                                                 )}
                                                             </span>
                                                         </div>
-                                                        <div className="text-[11px] text-muted-foreground truncate">
+                                                        <div className="text-xs text-muted-foreground truncate">
                                                             {v.volumeNo} · {v.itemCount} {L("题", "q")} · {v.pageCount}{" "}
                                                             {L("页", "p")}
                                                         </div>
@@ -1546,23 +1546,23 @@ export default function ReviewVolumesPage() {
                                                             <span className="text-sm font-semibold whitespace-nowrap">
                                                                 {v.volumeNo}
                                                             </span>
-                                                            <span className="text-[10px] px-1 rounded border whitespace-nowrap">
+                                                            <span className="text-xs px-1 rounded border whitespace-nowrap">
                                                                 {L(
                                                                     VOLUME_KIND_LABEL[v.kind],
                                                                     VOLUME_KIND_LABEL_EN[v.kind],
                                                                 )}
                                                             </span>
                                                         </div>
-                                                        <div className="text-[11px] text-muted-foreground">
+                                                        <div className="text-xs text-muted-foreground">
                                                             {v.itemCount} {L("题", "q")} · {v.pageCount} {L("页", "p")}
                                                         </div>
                                                     </>
                                                 )}
-                                                <div className="text-[11px] text-muted-foreground">
+                                                <div className="text-xs text-muted-foreground">
                                                     {v.gradeSemester ? `${v.gradeSemester} · ` : ""}
                                                     {(v.subjectKeys || []).map((k) => subjectLabel(k)).join("、")}
                                                 </div>
-                                                <div className="text-[11px] text-muted-foreground">
+                                                <div className="text-xs text-muted-foreground">
                                                     {formatTime(v.createdAt)}
                                                 </div>
                                             </button>
@@ -1577,7 +1577,7 @@ export default function ReviewVolumesPage() {
                                                 type="button"
                                                 onClick={() => void loadMoreVolumes()}
                                                 disabled={listLoadingMore}
-                                                className="w-full rounded-md border border-dashed px-2 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground disabled:opacity-60"
+                                                className="w-full rounded-lg border border-dashed px-2 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground disabled:opacity-60"
                                             >
                                                 {listLoadingMore
                                                     ? L("加载中…", "Loading…")
@@ -1586,7 +1586,7 @@ export default function ReviewVolumesPage() {
                                         </div>
                                     )}
                                     {!nextCursor && volumes.length > VOLUME_PAGE_SIZE && (
-                                        <p className="py-1 text-center text-[11px] text-muted-foreground">
+                                        <p className="py-1 text-center text-xs text-muted-foreground">
                                             {L("已经到底了", "That's all")}
                                         </p>
                                     )}
@@ -1721,7 +1721,7 @@ export default function ReviewVolumesPage() {
                         >
                             <div className="print-sheet">
                                 {!selectedId && (
-                                    <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground no-print">
+                                    <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground no-print">
                                         {L("左边点一份卷，这里就能看到它的纸面。", "Pick a volume on the left.")}
                                     </div>
                                 )}
@@ -1815,7 +1815,7 @@ export default function ReviewVolumesPage() {
                                         {editingTitle ? (
                                             <span className="flex items-center gap-1">
                                                 <input
-                                                    className="rounded-md border bg-background px-2 py-1 text-sm w-56"
+                                                    className="rounded-lg border bg-background px-2 py-1 text-sm w-56"
                                                     placeholder={L("比如：第五单元 复练", "e.g. Unit 5 review")}
                                                     value={titleDraft}
                                                     onChange={(e) => setTitleDraft(e.target.value)}
@@ -1881,7 +1881,7 @@ export default function ReviewVolumesPage() {
                                 {/* 安全阀：页内锁定之后没人替你分页了，撑爆必须点名。
                                     ⚠️ 复练卷算的是"整栏"，模仿卷算的是**右栏那半页**（`overfullForKind`）。 */}
                                 {overfullForKind.length > 0 && (
-                                    <div className="mb-3 rounded-md border border-red-500/50 bg-red-50 p-2 text-xs text-red-800 no-print">
+                                    <div className="mb-3 rounded-lg border border-red-500/50 bg-red-50 p-2 text-xs text-red-600 no-print">
                                         {L(
                                             `第 ${overfullForKind.join("、")} 页装不下了（页内锁定后题不会自动挪到下一页）—— 请把这几页里的留白行数或题图调小，然后才能「更新组卷」。`,
                                             `Page(s) ${overfullForKind.join(", ")} overflow — reduce spacing or figure size first.`,

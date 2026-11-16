@@ -214,12 +214,12 @@ function TaskCard({
                 {samples.length > 0 && (
                     <div className="flex flex-wrap gap-1">
                         {samples.map((s) => (
-                            <span key={s} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">
+                            <span key={s} className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
                                 {s}
                             </span>
                         ))}
                         {count > samples.length && (
-                            <span className="px-1 text-[11px] text-muted-foreground">
+                            <span className="px-1 text-xs text-muted-foreground">
                                 +{count - samples.length}
                             </span>
                         )}

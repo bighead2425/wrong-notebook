@@ -1036,7 +1036,7 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
                             {/* 【2026-09-29】他要的「清除」：蓝色文字，摆在「取消」左边，一点全不选 */}
                             <button
                                 type="button"
-                                className="text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline disabled:text-muted-foreground disabled:no-underline disabled:cursor-default"
+                                className="text-sm font-medium text-blue-700 hover:text-blue-700 hover:underline disabled:text-muted-foreground disabled:no-underline disabled:cursor-default"
                                 onClick={clearSelection}
                                 disabled={selectedIds.size === 0}
                             >
@@ -1109,7 +1109,7 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
                             </Button>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-2 rounded-md border p-2 min-h-[44px]">
+                        <div className="flex flex-wrap items-center gap-2 rounded-lg border p-2 min-h-[44px]">
                             {batchPicked.map((t) => (
                                 <Badge key={t.id} variant="secondary" className="flex items-center gap-1">
                                     {t.name}
@@ -1183,7 +1183,7 @@ export function ErrorList({ notebookId, tagId, includeChildren, subjectName, onC
                                     key={it.id}
                                     type="button"
                                     onClick={() => setLinkRootId(it.id)}
-                                    className={`flex w-full items-start gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                                    className={`flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
                                         active ? "border-primary bg-primary/5" : "hover:bg-muted"
                                     }`}
                                 >

@@ -18,7 +18,7 @@ export default function StatsPage() {
             <div className="flex items-center gap-4 mb-6">
                 <BackButton fallbackUrl="/" />
                 <div>
-                    <h1 className="text-3xl font-bold flex items-center gap-2">
+                    <h1 className="text-2xl font-bold flex items-center gap-2">
                         <BarChart3 className="h-8 w-8" />
                         {t.stats?.headerTitle || "Statistics Center"}
                     </h1>

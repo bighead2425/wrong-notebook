@@ -1727,7 +1727,7 @@ function PrintPreviewContent() {
                     <div className="space-y-3">
 
                             <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-                                <div className="flex items-center gap-1 bg-muted/50 rounded-md p-1">
+                                <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-1">
                                     {/*
                                         纸型标签（他 2026-10-10 定的）：
                                           · **去掉「积累纸 T3」** —— 它单独走「日积月累 → 积累纸·打印」那条路，
@@ -1791,13 +1791,13 @@ function PrintPreviewContent() {
                                 {/* 深挖纸的留白与图片宽度由版面自己定，不给滑块 ——
                                     一律按 P9 的尺寸算，免得手一滑把"装得下"调坏了 */}
                                 {!isDeep && !isVolume && !isImitate && (
-                                    <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-md">
+                                    <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-lg">
                                         <span className="whitespace-nowrap">{L("留白高度", "Space")}: {spaceMM}mm</span>
                                         <input type="range" min={15} max={80} step={5} value={spaceMM} onChange={(e) => setSpaceMM(Number(e.target.value))} className="w-16 sm:w-20" />
                                     </div>
                                 )}
                                 {!isDeep && !isVolume && !isImitate && (
-                                    <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-md">
+                                    <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-lg">
                                         <span className="whitespace-nowrap">{L("图片宽度", "Image")}: {imageScale}%</span>
                                         <input type="range" min={30} max={100} value={imageScale} onChange={(e) => setImageScale(Number(e.target.value))} className="w-16 sm:w-20" />
                                     </div>
@@ -1817,7 +1817,7 @@ function PrintPreviewContent() {
                                 组卷那颗按钮 2026-10-12 已搬到右栏（见 `<main>` 顶部那个工具条）。 */}
                             {isVolume && (
                                 <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-                                    <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-md">
+                                    <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-lg">
                                         <span className="whitespace-nowrap">
                                             {L("整体留白", "Default space")}: {blankDefault} {L("行", "lines")}
                                         </span>
@@ -1841,7 +1841,7 @@ function PrintPreviewContent() {
                                         <p className="text-xs text-muted-foreground">{L("正在读关联题…", "Loading…")}</p>
                                     )}
                                     {!imitateAvailable && (
-                                        <div className="rounded-md border border-amber-500/40 bg-amber-50 p-2 text-xs text-amber-900">
+                                        <div className="rounded-lg border border-amber-500/40 bg-amber-50 p-2 text-xs text-amber-900">
                                             {L(
                                                 "模仿纸要有「主题 + 附题」才做得出来：请只选**一道**已经是主题（或附题）的题。",
                                                 "Imitate sheets need a main question with attached questions.",
@@ -1849,21 +1849,21 @@ function PrintPreviewContent() {
                                         </div>
                                     )}
                                     {imitateError && (
-                                        <div className="rounded-md border border-amber-500/40 bg-amber-50 p-2 text-xs text-amber-900">
+                                        <div className="rounded-lg border border-amber-500/40 bg-amber-50 p-2 text-xs text-amber-900">
                                             {imitateError}
                                         </div>
                                     )}
 
                                     {imitateTree && (
                                         <>
-                                            <div className="rounded-md border bg-muted/40 px-2 py-1.5 text-xs sm:text-sm">
+                                            <div className="rounded-lg border bg-muted/40 px-2 py-1.5 text-xs sm:text-sm">
                                                 <div className="font-medium">
                                                     {L("主题", "Main")}：{imitateTree.theme.source || imitateTree.theme.id}
                                                 </div>
                                                 <p className="mt-0.5 line-clamp-2 text-muted-foreground">
                                                     {(imitateTree.theme.questionText || imitateTree.theme.ocrText || "").slice(0, 60)}
                                                 </p>
-                                                <p className="mt-1 text-[11px] text-muted-foreground">
+                                                <p className="mt-1 text-xs text-muted-foreground">
                                                     {L(
                                                         "左栏印这道题的题干 / 题图 / 遮挡线 / 参考答案 / 解析（模仿纸是唯一印答案的纸）。",
                                                         "Left column prints this question's stem, figure, cut line, answer and explanation.",
@@ -1893,7 +1893,7 @@ function PrintPreviewContent() {
                                                 </Button>
                                             </div>
 
-                                            <div className="max-h-[38vh] space-y-1 overflow-y-auto rounded-md border p-1.5">
+                                            <div className="max-h-[38vh] space-y-1 overflow-y-auto rounded-lg border p-1.5">
                                                 {imitateTree.children.length === 0 && (
                                                     <p className="px-1 py-2 text-xs text-muted-foreground">
                                                         {L("这道主题名下还没有附题。", "No attached questions yet.")}
@@ -1946,7 +1946,7 @@ function PrintPreviewContent() {
                                                                     {c.source || c.id}
                                                                 </span>
                                                                 {mastered && (
-                                                                    <span className="ml-1.5 rounded bg-emerald-500/15 px-1 py-0.5 text-[10px] text-emerald-700">
+                                                                    <span className="ml-1.5 rounded bg-emerald-500/15 px-1 py-0.5 text-xs text-emerald-700">
                                                                         {L("已掌握", "mastered")}
                                                                     </span>
                                                                 )}
@@ -1962,7 +1962,7 @@ function PrintPreviewContent() {
                                             {/* 【2026-10-12 他要求】「生成模仿纸」那颗按钮**搬到右栏**去了
                                                 （与复练纸那一处同一条改动）。这一行只留"附题留白"的加减。 */}
                                             <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-                                                <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-md">
+                                                <div className="flex items-center gap-2 text-xs sm:text-sm bg-muted/50 px-2 sm:px-3 py-1 rounded-lg">
                                                     <span className="whitespace-nowrap">
                                                         {L("附题留白", "Space")}: {blankDefault} {L("行", "lines")}
                                                     </span>
@@ -2013,7 +2013,7 @@ function PrintPreviewContent() {
                                 )}
                             </p>
 
-                            <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+                            <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                     <div className="text-sm font-medium">
                                         {L("选择题目", "Select")} ({selectedItems.length}/{items.length})
@@ -2072,7 +2072,7 @@ function PrintPreviewContent() {
                         ⚠️ `no-print`：它是操作，不是纸上的内容。 */}
                     {(isVolume || isImitate) && (
                         <div className="no-print mx-auto w-full max-w-[1600px] px-4 md:px-8">
-                            <div className="flex flex-wrap items-center gap-2 rounded-md border bg-background/95 px-3 py-2 shadow-sm">
+                            <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-background/95 px-3 py-2 shadow-sm">
                                 <Button
                                     size="sm"
                                     onClick={volume && !volumeSelectionChanged ? updateVolume : createVolume}
@@ -2100,7 +2100,7 @@ function PrintPreviewContent() {
                                     </span>
                                 )}
                                 {volumeStale && (
-                                    <span className="text-xs text-amber-700">
+                                    <span className="text-xs text-amber-600">
                                         {volumeSelectionChanged
                                             ? isImitate
                                                 ? L("收的附题变过了 —— 点「新生成模仿卷」会得到新卷号。", "Selection changed — build as a new volume.")
@@ -2149,7 +2149,7 @@ function PrintPreviewContent() {
                         <>
                             {/* 还没组卷：卷号与页二维码都还没有 —— 说清楚"为什么纸上暂时没有码" */}
                             {!volume && (
-                                <div className="mb-4 rounded-md border border-sky-500/40 bg-sky-50 p-3 text-sm text-sky-900 print:hidden">
+                                <div className="mb-4 rounded-lg border border-sky-500/40 bg-sky-50 p-3 text-sm text-blue-900 print:hidden">
                                     {L(
                                         "还没组卷：卷页眉上的二维码内容是「卷号-页码」，所以要扫得回来，得先把这份卷存下来。点上面「生成复练卷 / 生成积累卷」之后，卷号与页二维码就会出现。",
                                         "Not built yet — press “Build volume” to assign a volume number and page QR codes.",
@@ -2157,7 +2157,7 @@ function PrintPreviewContent() {
                                 </div>
                             )}
                             {volumeStale && (
-                                <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
+                                <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
                                     {volumeSelectionChanged
                                         ? L(
                                               `选题变过了，纸上现在是**新的**排版，而库里的还是 ${volume?.volumeNo ?? ""}。上纸之前请点一次「新生成复练卷」（会得到新卷号，旧卷原样留着）。`,
@@ -2172,7 +2172,7 @@ function PrintPreviewContent() {
                             {/* 组卷体检：题图疑似框歪 —— 排版本轮已经"永不裁图"，
                                 但框本身歪只能靠重录，必须让他看见 */}
                             {suspiciousFigureItems.length > 0 && (
-                                <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
+                                <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
                                     {L(
                                         `有 ${suspiciousFigureItems.length} 道题的题图可能没框好（框太大/太小/只框到边）：${suspiciousFigureItems
                                             .map((i) => i.source || i.id)
@@ -2183,7 +2183,7 @@ function PrintPreviewContent() {
                             )}
                             {/* 装不下的题（题干太长）：明确提示改用深挖纸 —— 不静默丢题 */}
                             {reviewLayout && reviewLayout.overflow.length > 0 && (
-                                <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
+                                <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
                                     {L(
                                         `有 ${reviewLayout.overflow.length} 道题太长，一栏都装不下：${reviewLayout.overflow
                                             .map((o) => reviewItemByKey[o.key]?.source || o.key)
@@ -2243,7 +2243,7 @@ function PrintPreviewContent() {
                     ) : isImitate ? (
                         <>
                             {!imitateAvailable && (
-                                <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
+                                <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
                                     {L(
                                         "模仿纸要有「主题 + 附题」才做得出来：请只选**一道**已经是主题（或附题）的题（在错题本页多选「建立关联」之后，题卡左上角会有角标）。",
                                         "Imitate sheets need a main question with attached questions.",
@@ -2251,12 +2251,12 @@ function PrintPreviewContent() {
                                 </div>
                             )}
                             {imitateAvailable && !imitateTree && (
-                                <div className="mb-4 rounded-md border border-sky-500/40 bg-sky-50 p-3 text-sm text-sky-900 print:hidden">
+                                <div className="mb-4 rounded-lg border border-sky-500/40 bg-sky-50 p-3 text-sm text-blue-900 print:hidden">
                                     {imitateLoading ? L("正在读关联题…", "Loading…") : imitateError || L("读不出关联题。", "Cannot load")}
                                 </div>
                             )}
                             {!volume && imitateTree && (
-                                <div className="mb-4 rounded-md border border-sky-500/40 bg-sky-50 p-3 text-sm text-sky-900 print:hidden">
+                                <div className="mb-4 rounded-lg border border-sky-500/40 bg-sky-50 p-3 text-sm text-blue-900 print:hidden">
                                     {L(
                                         "还没组卷：卷页眉上的二维码内容是「卷号-页码」，所以要扫得回来，得先把这份卷存下来。点左上「生成模仿卷」之后，卷号与页二维码就会出现。",
                                         "Not built yet — press “Build volume” to assign a volume number and page QR codes.",
@@ -2264,7 +2264,7 @@ function PrintPreviewContent() {
                                 </div>
                             )}
                             {volumeStale && (
-                                <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
+                                <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
                                     {volumeSelectionChanged
                                         ? L(
                                               `收的附题变过了，纸上现在是**新的**排版，而库里的还是 ${volume?.volumeNo ?? ""}。上纸之前请点一次「新生成模仿卷」。`,
@@ -2279,7 +2279,7 @@ function PrintPreviewContent() {
                             {/* 半页都装不下的附题：明确提示改用深挖纸 —— **不静默丢题**
                                 （原来这条在左栏，2026-10-12 生成按钮搬过来时一并挪到纸面上方）。 */}
                             {imitateLayout && imitateLayout.overflowRight.length > 0 && (
-                                <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
+                                <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
                                     {L(
                                         `有 ${imitateLayout.overflowRight.length} 道附题太长，半页都装不下：${imitateLayout.overflowRight
                                             .map((o) => imitateItemByKey[o.key]?.source || o.key)
@@ -2291,7 +2291,7 @@ function PrintPreviewContent() {
                             {/* 主题里有一段比一整栏还高 ⇒ 纸上看不全。
                                 **绝不静默少印**：说清是哪一段、怎么改（空一行 / 加个【小标题】就行）。 */}
                             {imitateLayout && imitateLayout.overflowLeft.length > 0 && (
-                                <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
+                                <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
                                     {L(
                                         `主题里有 ${imitateLayout.overflowLeft.length} 段太长，一整栏都放不下（${imitateLayout.overflowLeft
                                             .map((o) => {

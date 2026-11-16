@@ -168,7 +168,7 @@ export function TagUsageStats({ stats }: { stats: TagStats[] }) {
                     value={q}
                     onChange={(e) => setQ(e.target.value)}
                     placeholder={L("搜标签名…", "Search tag…")}
-                    className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+                    className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
                 />
                 <p className="text-xs text-muted-foreground">
                     {L(
@@ -193,7 +193,7 @@ export function TagUsageStats({ stats }: { stats: TagStats[] }) {
                         {g.items.map((s, i) => {
                             const row = (
                                 <div className="flex items-center gap-2.5 px-3 py-1.5">
-                                    <span className="w-5 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">
+                                    <span className="w-5 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
                                         {i + 1}
                                     </span>
                                     <span

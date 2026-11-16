@@ -954,7 +954,7 @@ export default function InsightsPage() {
         return (
             <div
                 key={r.id}
-                className={`flex w-full items-start gap-2 rounded-md border px-2.5 py-2 transition-colors ${
+                className={`flex w-full items-start gap-2 rounded-lg border px-2.5 py-2 transition-colors ${
                     active ? 'border-primary bg-accent/60' : 'hover:bg-accent/30'
                 }`}
             >
@@ -991,17 +991,17 @@ export default function InsightsPage() {
                         {/* 【2026-10-13】暂存条一眼认出来 ——
                             他："在管理页中用标识标出等待后续整理（或删除）" */}
                         {r.status === 'draft' && (
-                            <Badge variant="secondary" className="px-1 py-0 text-[10px]">
+                            <Badge variant="secondary" className="px-1 py-0 text-xs">
                                 {L('待整理', 'Draft')}
                             </Badge>
                         )}
                         {r.errorItemNo && (
-                            <Badge variant="outline" className="px-1 py-0 text-[10px]">
+                            <Badge variant="outline" className="px-1 py-0 text-xs">
                                 {L('题', 'Q')} {r.errorItemNo}
                             </Badge>
                         )}
                     </div>
-                    <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
                         <span>{r.gradeSemester || L('未设年级', 'no grade')}</span>
                         <span>·</span>
                         <span>{subjectLabel(r.subject)}</span>
@@ -1214,7 +1214,7 @@ export default function InsightsPage() {
                         {/* 【2026-10-01】勾选工具条：**勾完了才出现**（平时不占地方）。
                             "哪几条印在一张纸上"在这儿决定；点【送入】就去打印页排纸。 */}
                         {picked.size > 0 && (
-                            <div className="flex items-center gap-2 rounded-md border border-primary/40 bg-accent/50 px-2 py-1.5 text-xs">
+                            <div className="flex items-center gap-2 rounded-lg border border-primary/40 bg-accent/50 px-2 py-1.5 text-xs">
                                 <span className="font-medium">
                                     {L(`已勾 ${picked.size} 条`, `${picked.size} picked`)}
                                 </span>
@@ -1250,7 +1250,7 @@ export default function InsightsPage() {
 
                         <div
                             ref={listScrollRef}
-                            className="max-h-[45vh] space-y-1.5 overflow-y-auto rounded-md border p-2 md:max-h-[62vh]"
+                            className="max-h-[45vh] space-y-1.5 overflow-y-auto rounded-lg border p-2 md:max-h-[62vh]"
                         >
                             {loading && (
                                 <p className="px-2 py-6 text-center text-sm text-muted-foreground">
@@ -1297,7 +1297,7 @@ export default function InsightsPage() {
                                 return (
                                     <div
                                         key={`g:${entry.key}`}
-                                        className="rounded-md border border-dashed border-amber-400 bg-amber-50/70 p-1.5 dark:border-amber-500/60 dark:bg-amber-500/10"
+                                        className="rounded-lg border border-dashed border-amber-400 bg-amber-50/70 p-1.5 dark:border-amber-500/60 dark:bg-amber-500/10"
                                     >
                                         {/**
                                          * 【2026-10-19 真真】**这里必须显示每组的实际词头**。
@@ -1312,7 +1312,7 @@ export default function InsightsPage() {
                                          *    不是当前这条、也不是归一化后的 key（key 去掉了标点，是拿来比较的）。
                                          * ⚠️ 有一条看门测试（`insight-group-label-guard`）钉着这一行，别改回去。
                                          */}
-                                        <div className="flex items-center gap-1.5 px-1 pb-1 text-[10px] text-muted-foreground">
+                                        <div className="flex items-center gap-1.5 px-1 pb-1 text-xs text-muted-foreground">
                                             <input
                                                 type="checkbox"
                                                 className="shrink-0"
@@ -1344,7 +1344,7 @@ export default function InsightsPage() {
                                         type="button"
                                         onClick={() => void loadMoreInsights()}
                                         disabled={loadingMore}
-                                        className="w-full rounded-md border border-dashed px-2 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground disabled:opacity-60"
+                                        className="w-full rounded-lg border border-dashed px-2 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground disabled:opacity-60"
                                     >
                                         {loadingMore
                                             ? L('加载中…', 'Loading…')
@@ -1353,7 +1353,7 @@ export default function InsightsPage() {
                                 </div>
                             )}
                             {!nextCursor && rows.length > INSIGHT_PAGE_SIZE && (
-                                <p className="py-1 text-center text-[11px] text-muted-foreground">
+                                <p className="py-1 text-center text-xs text-muted-foreground">
                                     {L('已经到底了', "That's all")}
                                 </p>
                             )}
@@ -1364,7 +1364,7 @@ export default function InsightsPage() {
                     {/* ===== 右栏：编辑区 ===== */}
                     <section className="min-w-0" {...rightSwipe}>
                         {!current ? (
-                            <div className="rounded-md border border-dashed px-6 py-16 text-center text-sm text-muted-foreground">
+                            <div className="rounded-lg border border-dashed px-6 py-16 text-center text-sm text-muted-foreground">
                                 {L('左边选一条，或者右上角新建。', 'Pick one on the left, or create a new entry.')}
                             </div>
                         ) : (
@@ -1495,7 +1495,7 @@ export default function InsightsPage() {
                                        一条**没被改动**的草稿同样需要能定稿，否则他得先随便改一个字才能定稿。
                                     颜色沿用录入页"暂存"的琥珀色，一眼认得出是同一件事。 */}
                                 {current.status === 'draft' && (
-                                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2">
+                                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2">
                                         <span className="text-xs">
                                             {L(
                                                 '这是暂存条（待整理）：定稿后才会进「打印」和「内阁」。',
@@ -1549,7 +1549,7 @@ export default function InsightsPage() {
                                  *    不弹 alert：扫码是连续动作，弹窗会打断。
                                  */}
                                 {(undoRaw !== null || relationNotice) && (
-                                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-1.5 text-sm">
+                                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-1.5 text-sm">
                                         <span className="min-w-0 flex-1 text-muted-foreground">
                                             {relationNotice ||
                                                 L(
@@ -1730,7 +1730,7 @@ export default function InsightsPage() {
                                             )}
                                         </div>
                                     ) : (
-                                        <div className="rounded-md border border-dashed px-4 py-5 text-sm text-muted-foreground">
+                                        <div className="rounded-lg border border-dashed px-4 py-5 text-sm text-muted-foreground">
                                             {current.errorItemNo
                                                 ? L(
                                                       `按题号 ${current.errorItemNo} 没找到活题（可能已彻底删除）`,
@@ -1759,7 +1759,7 @@ export default function InsightsPage() {
                                         </div>
                                         <ul className="space-y-1.5">
                                             {linkedEntries.map((e) => (
-                                                <li key={e.id} className="rounded-md border px-3 py-2 text-sm">
+                                                <li key={e.id} className="rounded-lg border px-3 py-2 text-sm">
                                                     <div className="flex items-center gap-2">
                                                         {/**
                                                          * 【2026-10-19 空空第 3 条】点编号 ⇒ **就地弹框**看全文。

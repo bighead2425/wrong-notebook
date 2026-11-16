@@ -778,7 +778,7 @@ export function StitchComposer({
             </div>
 
             {notice && (
-                <p className="border-b border-amber-300 bg-amber-50 px-3 py-1.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                <p className="border-b border-amber-300 bg-amber-50 px-3 py-1.5 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
                     {notice}
                 </p>
             )}
@@ -817,7 +817,7 @@ export function StitchComposer({
                                 <span className="text-xs font-medium">
                                     {L(`第 ${i + 1} 张`, `Image ${i + 1}`)}
                                 </span>
-                                <span className="text-[11px] text-muted-foreground">
+                                <span className="text-xs text-muted-foreground">
                                     {shot.width}×{shot.height}
                                 </span>
                                 <div className="ml-auto flex items-center gap-1">
@@ -922,7 +922,7 @@ export function StitchComposer({
                                             alt={f.name}
                                             className="h-24 w-full bg-muted object-cover"
                                         />
-                                        <span className="block truncate px-1 py-0.5 text-[11px] text-muted-foreground">
+                                        <span className="block truncate px-1 py-0.5 text-xs text-muted-foreground">
                                             {knownNames.includes(f.name) ? L("（已用过）", "(used)") + " " : ""}
                                             {f.name}
                                         </span>

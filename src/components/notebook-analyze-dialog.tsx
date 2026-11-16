@@ -128,17 +128,17 @@ export function NotebookAnalyzeDialog({
                                 value={content}
                                 onChange={(e) => setContent(e.target.value)}
                                 rows={12}
-                                className="w-full rounded-md border bg-background p-3 font-mono text-xs leading-relaxed resize-y"
+                                className="w-full rounded-lg border bg-background p-3 font-mono text-xs leading-relaxed resize-y"
                             />
 
                             {error && (
-                                <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                                <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                                     {error}
                                 </div>
                             )}
 
                             {result && (
-                                <div className="rounded-md border bg-muted/30 p-4">
+                                <div className="rounded-lg border bg-muted/30 p-4">
                                     <div className="text-sm font-semibold mb-2">
                                         {L("分析结果", "Analysis")}
                                     </div>

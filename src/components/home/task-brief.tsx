@@ -71,9 +71,9 @@ export function TaskBrief() {
                  * 【2026-10-20 第 3 条】这里显示的是**全部类目数**（= 任务台的卡片数），
                  * 不再是"有事的类目数" —— 两个数字必须是同一个，否则他会再问一次。
                  */}
-                {data && <span className="text-[11px] text-muted-foreground">{TASK_ORDER.length} 类</span>}
+                {data && <span className="text-xs text-muted-foreground">{TASK_ORDER.length} 类</span>}
                 <span className="flex-1" />
-                <Link href="/cabinet" className="text-[11px] text-muted-foreground hover:text-foreground">
+                <Link href="/cabinet" className="text-xs text-muted-foreground hover:text-foreground">
                     {L("内阁", "Cabinet")} ›
                 </Link>
             </div>
@@ -126,7 +126,7 @@ export function TaskBrief() {
                     /* 【2026-10-20 美化】空状态给个很淡的勾 —— 否则那一块读起来像"没加载出来" */
                     <div className="flex flex-col items-center gap-1.5 pt-2 text-center">
                         <CheckCircle2 aria-hidden className="h-6 w-6 text-muted-foreground opacity-20" />
-                        <p className="text-[11px] text-muted-foreground">
+                        <p className="text-xs text-muted-foreground">
                             {L("今天没有待办。想练就练两道。", "Nothing due today.")}
                         </p>
                     </div>

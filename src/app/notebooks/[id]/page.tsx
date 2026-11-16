@@ -133,7 +133,7 @@ export default function NotebookDetailPage() {
                     <BackButton fallbackUrl="/notebooks" className="shrink-0" />
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight truncate">{notebook.displayName}</h1>
+                            <h1 className="text-2xl sm:text-2xl font-bold tracking-tight truncate">{notebook.displayName}</h1>
                             <Button
                                 variant="ghost"
                                 size="icon-sm"
@@ -245,7 +245,7 @@ export default function NotebookDetailPage() {
                 </div>
 
                 {notebook.archiveStatus === "archived" && (
-                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2">
                         <span className="text-sm">
                             {t.notebooks?.archivedBanner || "这本已归档：里面的题不在主库出现，但仍然可以打开查看。"}
                         </span>

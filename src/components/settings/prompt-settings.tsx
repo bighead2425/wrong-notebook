@@ -55,11 +55,11 @@ function VariableInfo({ name, description }: VariableInfoProps) {
  */
 function WarningBox({ caution, warning }: { caution: string; warning: string }) {
     return (
-        <div className="bg-amber-50 border border-amber-200 rounded-md p-3 flex items-start gap-3 text-amber-900 text-sm mb-4">
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-3 text-amber-900 text-sm mb-4">
             <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
             <div className="space-y-1">
                 <p className="font-medium">{caution}</p>
-                <p className="text-amber-800/90 text-xs">{warning}</p>
+                <p className="text-amber-900/90 text-xs">{warning}</p>
             </div>
         </div>
     );
@@ -198,7 +198,7 @@ export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
                 <select
                     value={kind}
                     onChange={(e) => setKind(e.target.value as PromptKind)}
-                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 >
                     {KINDS.map((k) => (
                         <option key={k} value={k}>{labelOf(k)}</option>
@@ -222,7 +222,7 @@ export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
 
                 {/* 只有日积月累这份有"纸面格式"的硬要求 —— 它会真的印到纸上 */}
                 {kind === 'insights' && (
-                    <div className="rounded-md border bg-background p-3 text-xs text-muted-foreground leading-relaxed">
+                    <div className="rounded-lg border bg-background p-3 text-xs text-muted-foreground leading-relaxed">
                         输出必须符合纸面格式：第一行 #### + emoji + 不超过 12 个汉字的概括；正文不超过 120 字；
                         AI 的补充写成 &gt; *AI: …*（没有就不写）。
                         <br />
@@ -231,7 +231,7 @@ export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
                     </div>
                 )}
 
-                <div className="space-y-2 border rounded-md p-3 bg-background">
+                <div className="space-y-2 border rounded-lg p-3 bg-background">
                     <h4 className="text-xs font-medium flex items-center gap-1.5 mb-2">
                         <Info className="h-3.5 w-3.5" />
                         {t.settings?.prompts?.variables || "Available Variables"}

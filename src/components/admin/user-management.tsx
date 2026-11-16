@@ -154,9 +154,9 @@ export function UserManagement() {
                                     disabled={user.id === (session?.user as any).id}
                                 >
                                     {user.isActive ? (
-                                        <Ban className="h-4 w-4 text-orange-500" />
+                                        <Ban className="h-4 w-4 text-amber-600" />
                                     ) : (
-                                        <CheckCircle className="h-4 w-4 text-green-500" />
+                                        <CheckCircle className="h-4 w-4 text-emerald-600" />
                                     )}
                                 </Button>
                                 <Button
@@ -223,9 +223,9 @@ export function UserManagement() {
                                         title={user.isActive ? t.admin.disable : t.admin.enable}
                                     >
                                         {user.isActive ? (
-                                            <Ban className="h-4 w-4 text-orange-500" />
+                                            <Ban className="h-4 w-4 text-amber-600" />
                                         ) : (
-                                            <CheckCircle className="h-4 w-4 text-green-500" />
+                                            <CheckCircle className="h-4 w-4 text-emerald-600" />
                                         )}
                                     </Button>
                                     <Button

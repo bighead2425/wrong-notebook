@@ -244,7 +244,7 @@ export function UploadZone({ onImageSelect, isAnalyzing, onManualInput, compact 
                 <span className="text-base font-medium">
                     {isAnalyzing ? t.app.analyzing : language === "zh" ? "拍摄习题" : "Photograph"}
                 </span>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                     {language === "zh" ? "点击拍照 · 电脑上可以拖一张进来" : "Tap to shoot · or drop a photo"}
                 </span>
             </div>

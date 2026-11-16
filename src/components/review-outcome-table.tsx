@@ -272,13 +272,13 @@ export function ReviewOutcomeTable({
                 >
                     {busy ? L("记录中…", "Saving…") : L("记录", "Record")}
                 </Button>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                     {L(`来源：${source === "detail_page" ? "本页录入" : "单题扫描录入"}`, `Source: ${source}`)}
                 </span>
             </div>
 
             {disabled && (
-                <p className="text-[11px] text-amber-700">
+                <p className="text-xs text-amber-600">
                     {L("这道题已掌握 ⇒ 录不了。要先取消已掌握才能继续录。", "Mastered — unmark it first to record.")}
                 </p>
             )}

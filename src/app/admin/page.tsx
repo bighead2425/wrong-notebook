@@ -25,15 +25,15 @@ function OverviewCards({ data, t }: { data: AdminDashboardData; t: any }) {
             title: t.admin?.dashboard?.totalErrors || "总错题数",
             value: data.overview.totalErrorItems,
             icon: BookOpen,
-            color: "text-red-500",
+            color: "text-red-600",
             bgColor: "bg-red-50 dark:bg-red-950/30",
         },
         {
             title: t.admin?.dashboard?.totalPractice || "总练习数",
             value: data.overview.totalPracticeRecords,
             icon: PenTool,
-            color: "text-green-500",
-            bgColor: "bg-green-50 dark:bg-green-950/30",
+            color: "text-emerald-600",
+            bgColor: "bg-emerald-50 dark:bg-green-950/30",
         },
         {
             title: t.admin?.dashboard?.totalNotebooks || "总错题本数",
@@ -70,7 +70,7 @@ function DailyTrendChart({ data, t }: { data: AdminDashboardData; t: any }) {
         <Card className="border-0 shadow-sm">
             <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
-                    <TrendingUp className="h-4 w-4 text-orange-500" />
+                    <TrendingUp className="h-4 w-4 text-amber-600" />
                     {t.admin?.dashboard?.recentTrend || "最近 7 天录入趋势"}
                 </CardTitle>
             </CardHeader>
@@ -102,7 +102,7 @@ function DailyTrendChart({ data, t }: { data: AdminDashboardData; t: any }) {
 function SubjectDistributionChart({ data, t }: { data: AdminDashboardData; t: any }) {
     const total = data.subjectDistribution.reduce((sum, s) => sum + s.count, 0)
     const colors = [
-        "bg-blue-500", "bg-green-500", "bg-orange-500", "bg-purple-500",
+        "bg-blue-500", "bg-emerald-500", "bg-orange-500", "bg-purple-500",
         "bg-red-500", "bg-cyan-500", "bg-yellow-500", "bg-pink-500", "bg-indigo-500",
     ]
 
@@ -148,16 +148,16 @@ function SubjectDistributionChart({ data, t }: { data: AdminDashboardData; t: an
 function MasteryDistributionCard({ data, t }: { data: AdminDashboardData; t: any }) {
     const total = data.masteryDistribution.new + data.masteryDistribution.reviewing + data.masteryDistribution.mastered
     const items = [
-        { key: "new", label: t.admin?.dashboard?.masteryNew || "未掌握", count: data.masteryDistribution.new, icon: AlertCircle, color: "text-red-500", bg: "bg-red-500" },
+        { key: "new", label: t.admin?.dashboard?.masteryNew || "未掌握", count: data.masteryDistribution.new, icon: AlertCircle, color: "text-red-600", bg: "bg-red-500" },
         { key: "reviewing", label: t.admin?.dashboard?.masteryReviewing || "复习中", count: data.masteryDistribution.reviewing, icon: Clock, color: "text-yellow-500", bg: "bg-yellow-500" },
-        { key: "mastered", label: t.admin?.dashboard?.masteryMastered || "已掌握", count: data.masteryDistribution.mastered, icon: CheckCircle, color: "text-green-500", bg: "bg-green-500" },
+        { key: "mastered", label: t.admin?.dashboard?.masteryMastered || "已掌握", count: data.masteryDistribution.mastered, icon: CheckCircle, color: "text-emerald-600", bg: "bg-emerald-500" },
     ]
 
     return (
         <Card className="border-0 shadow-sm">
             <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
-                    <CheckCircle className="h-4 w-4 text-green-500" />
+                    <CheckCircle className="h-4 w-4 text-emerald-600" />
                     {t.admin?.dashboard?.masteryDistribution || "掌握度分布"}
                 </CardTitle>
             </CardHeader>
@@ -291,11 +291,11 @@ function UserTable({ users, onViewDetail }: { users: AdminUserStats[]; onViewDet
                                         <div className="text-xs text-muted-foreground">{t.admin?.dashboard?.notebooks || "错题本"}</div>
                                     </div>
                                     <div>
-                                        <div className="text-lg font-bold text-red-500">{user.errorCount}</div>
+                                        <div className="text-lg font-bold text-red-600">{user.errorCount}</div>
                                         <div className="text-xs text-muted-foreground">{t.admin?.dashboard?.errors || "错题"}</div>
                                     </div>
                                     <div>
-                                        <div className="text-lg font-bold text-green-500">{user.practiceCount}</div>
+                                        <div className="text-lg font-bold text-emerald-600">{user.practiceCount}</div>
                                         <div className="text-xs text-muted-foreground">{t.admin?.dashboard?.practice || "练习"}</div>
                                     </div>
                                 </div>

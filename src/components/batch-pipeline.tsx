@@ -1409,14 +1409,14 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
             {/* 【custom-v31】连拍转存的两个提示：进行中 / 已收工。
                 它们只在真有转存发生时才出现，平时不占版面。 */}
             {burstSaving && (
-                <div className="flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+                <div className="flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-blue-900">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     <span>
                         {(t.common.batch?.burstSaving || "正在转存到收件箱 {i}/{n} 张…")
                             .replace("{i}", String(burstSaving.done))
                             .replace("{n}", String(burstSaving.total))}
                     </span>
-                    <span className="text-sky-700/70">
+                    <span className="text-blue-700/70">
                         {t.common.batch?.burstSavingHint || "（可以继续拍，转存在后台排队进行）"}
                     </span>
                 </div>
@@ -1426,7 +1426,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                     className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
                         burstNotice.failed
                             ? "border-amber-200 bg-amber-50 text-amber-900"
-                            : "border-green-200 bg-green-50 text-green-900"
+                            : "border-emerald-200 bg-emerald-50 text-emerald-800"
                     }`}
                 >
                     <Inbox className="h-3.5 w-3.5 mt-0.5 shrink-0" />
@@ -1473,7 +1473,7 @@ export function BatchPipeline({ language, aiTimeout, defaultNotebookId, onExit, 
                         <span className="text-muted-foreground">
                             {t.common.batch?.pendingCount ? t.common.batch.pendingCount.replace("{n}", String(pendingItems.length)) : `待处理 ${pendingItems.length}`}
                         </span>
-                        <span className="text-green-600">
+                        <span className="text-emerald-600">
                             {t.common.batch?.processedCount ? t.common.batch.processedCount.replace("{n}", String(processedItems.length)) : `已预处理 ${processedItems.length}`}
                         </span>
                         <span className="text-xs text-amber-600">
@@ -1757,17 +1757,17 @@ function FolderGrid({
                                 <Trash2 className="h-3 w-3" />
                             </button>
                             {it.status === "ready" && (
-                                <span className="absolute bottom-1 left-1 bg-blue-600 text-white text-[10px] rounded px-1">
+                                <span className="absolute bottom-1 left-1 bg-blue-600 text-white text-xs rounded px-1">
                                     待录
                                 </span>
                             )}
                             {it.status === "saved" && (
-                                <span className="absolute bottom-1 left-1 bg-green-600 text-white text-[10px] rounded px-1 flex items-center gap-0.5">
+                                <span className="absolute bottom-1 left-1 bg-emerald-600 text-white text-xs rounded px-1 flex items-center gap-0.5">
                                     <Check className="h-2.5 w-2.5" />已录
                                 </span>
                             )}
                             {it.status === "error" && (
-                                <span className={`absolute bottom-1 ${onSave ? "left-8" : "left-1"} bg-destructive text-white text-[10px] rounded px-1`}>
+                                <span className={`absolute bottom-1 ${onSave ? "left-8" : "left-1"} bg-destructive text-white text-xs rounded px-1`}>
                                     AI 失败
                                 </span>
                             )}
@@ -1778,7 +1778,7 @@ function FolderGrid({
                                 左下角腾出来给拼接按钮，互不打架。 */}
                             {dimmed && it.status === "pending" && (
                                 <span
-                                    className="pointer-events-none absolute left-1/2 top-1/2 flex h-9 w-9 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-green-600/90 text-white shadow-md ring-2 ring-white/70"
+                                    className="pointer-events-none absolute left-1/2 top-1/2 flex h-9 w-9 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-emerald-600/90 text-white shadow-md ring-2 ring-white/70"
                                     title="已处理（原图仍在待处理，可再加工）"
                                 >
                                     <Check className="h-5 w-5" strokeWidth={3} />
@@ -1808,7 +1808,7 @@ function FolderGrid({
 
                         {/* 【custom-v28】失败原因写在这张图的下面 */}
                         {it.status === "error" && it.error && (
-                            <p className="text-[10px] leading-tight text-destructive break-words px-0.5">
+                            <p className="text-xs leading-tight text-destructive break-words px-0.5">
                                 {humanizeAiError(it.error)}
                             </p>
                         )}

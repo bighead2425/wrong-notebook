@@ -219,7 +219,7 @@ export function RestoreSettings() {
     };
 
     const dangerBox =
-        "rounded-lg border border-red-300 bg-red-50 p-3 text-xs text-red-800";
+        "rounded-lg border border-red-300 bg-red-50 p-3 text-xs text-red-600";
 
     // 上次恢复的结果，拼成一句话（成没成、什么时候、旧库还在不在）
     const lastLine = (() => {
@@ -250,19 +250,19 @@ export function RestoreSettings() {
     return (
         <div className="space-y-3 pt-4 border-t border-red-200">
             <div className="flex items-center gap-2">
-                <RotateCcw className="h-4 w-4 text-red-700" />
+                <RotateCcw className="h-4 w-4 text-red-600" />
                 <h4 className="text-sm font-bold text-red-900">
                     {t.settings?.restoreTitle || "Restore from Backup"}
                 </h4>
             </div>
-            <p className="text-xs text-red-800">{t.settings?.restoreDanger || "This overwrites all current data. There is no undo."}</p>
+            <p className="text-xs text-red-600">{t.settings?.restoreDanger || "This overwrites all current data. There is no undo."}</p>
 
             {lastLine && (
                 <div
-                    className={`rounded-md border px-2 py-1.5 text-xs ${
+                    className={`rounded-lg border px-2 py-1.5 text-xs ${
                         lastLine.failed
-                            ? "border-red-300 bg-red-50 text-red-800"
-                            : "border-emerald-300 bg-emerald-50 text-emerald-800"
+                            ? "border-red-300 bg-red-50 text-red-600"
+                            : "border-emerald-300 bg-emerald-50 text-emerald-700"
                     }`}
                 >
                     {lastLine.text}
@@ -286,7 +286,7 @@ export function RestoreSettings() {
                     <button
                         type="button"
                         onClick={() => fileRef.current?.click()}
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-red-300 bg-white px-3 py-2 text-sm text-red-900 hover:bg-red-50"
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-900 hover:bg-red-50"
                     >
                         <Upload className="h-4 w-4" />
                         {t.settings?.restorePick || "Choose backup file"}（电脑上）
@@ -295,14 +295,14 @@ export function RestoreSettings() {
                     <button
                         type="button"
                         onClick={() => void loadLocalFiles()}
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 hover:bg-gray-50"
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 hover:bg-muted"
                     >
                         <FolderOpen className="h-4 w-4" />
                         {zh ? "从 NAS 的备份目录里选" : "Pick from NAS backup folder"}
                     </button>
 
                     {localOpen && (
-                        <div className="rounded-md border border-gray-200 bg-gray-50 p-2">
+                        <div className="rounded-lg border border-gray-200 bg-muted p-2">
                             {localLoading ? (
                                 <div className="flex items-center gap-2 text-xs text-gray-600">
                                     <Loader2 className="h-3 w-3 animate-spin" />
@@ -342,7 +342,7 @@ export function RestoreSettings() {
             )}
 
             {(phase === "uploading" || phase === "applying") && (
-                <div className="flex items-center gap-2 rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-700">
+                <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-xs text-gray-700">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     {phase === "uploading"
                         ? `${t.settings?.restoreUploading || "Checking the package…"} ${source}`
@@ -353,7 +353,7 @@ export function RestoreSettings() {
             )}
 
             {phase === "restarting" && (
-                <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                     {t.settings?.restoreRestarting ||
                         "Restarting… the page comes back by itself in about 30 seconds."}
                 </div>
@@ -362,7 +362,7 @@ export function RestoreSettings() {
             {/* 报告 + 确认 */}
             {phase === "review" && plan && (
                 <div className="space-y-3">
-                    <div className="rounded-md border border-gray-200 p-3">
+                    <div className="rounded-lg border border-gray-200 p-3">
                         <div className="mb-2 flex items-baseline justify-between">
                             <span className="text-xs font-medium text-gray-700">
                                 {t.settings?.restoreReport || "What's in this backup"}
@@ -395,7 +395,7 @@ export function RestoreSettings() {
                                     return (
                                         <tr
                                             key={key}
-                                            className={changed ? "font-medium text-red-700" : "text-gray-700"}
+                                            className={changed ? "font-medium text-red-600" : "text-gray-700"}
                                         >
                                             <td className="py-0.5">{zh ? labelZh : en}</td>
                                             <td className="py-0.5 text-right tabular-nums">{now}</td>
@@ -447,7 +447,7 @@ export function RestoreSettings() {
                             value={confirmText}
                             onChange={(e) => setConfirmText(e.target.value)}
                             placeholder={RESTORE_CONFIRM_WORD}
-                            className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                            className="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
                         />
                     </div>
 
@@ -456,7 +456,7 @@ export function RestoreSettings() {
                             type="button"
                             onClick={() => void doRestore()}
                             disabled={confirmText.trim() !== RESTORE_CONFIRM_WORD}
-                            className="inline-flex flex-1 items-center justify-center gap-2 rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+                            className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-gray-300"
                         >
                             <RotateCcw className="h-4 w-4" />
                             {t.settings?.restoreApply || "Restore now"}
@@ -464,7 +464,7 @@ export function RestoreSettings() {
                         <button
                             type="button"
                             onClick={reset}
-                            className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                            className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-muted"
                         >
                             {t.settings?.restoreCancel || "Choose another file"}
                         </button>

@@ -331,7 +331,7 @@ export function InsightScanView({
 
             <div
                 ref={scrollRef}
-                className="max-h-[78vh] overflow-auto rounded-md border bg-zinc-100 p-3 dark:bg-zinc-900"
+                className="max-h-[78vh] overflow-auto rounded-lg border bg-zinc-100 p-3 dark:bg-zinc-900"
                 onPointerDown={onPointerDown}
                 onPointerMove={onPointerMove}
                 onPointerUp={endDrag}

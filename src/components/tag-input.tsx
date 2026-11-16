@@ -207,7 +207,7 @@ export function TagInput({
             {showSuggestions && suggestions.length > 0 && (
                 <div
                     ref={suggestionsRef}
-                    className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-md max-h-72 overflow-y-auto"
+                    className="absolute z-50 w-full mt-1 bg-popover border rounded-lg shadow-md max-h-72 overflow-y-auto"
                 >
                     {/* 没打字时这是"标签库全表"，说一句，免得他以为是筛选结果 */}
                     {!input.trim() && (

@@ -243,7 +243,7 @@ export function DatePickerCalendar({
                 </div>
 
                 {/* 星期表头（吸顶） */}
-                <div className="grid grid-cols-7 gap-1 px-3 pt-2 pb-1 text-center text-[11px] text-muted-foreground sticky top-0 bg-background z-10">
+                <div className="grid grid-cols-7 gap-1 px-3 pt-2 pb-1 text-center text-xs text-muted-foreground sticky top-0 bg-background z-10">
                     {['日', '一', '二', '三', '四', '五', '六'].map((w) => (
                         <span key={w}>{w}</span>
                     ))}
@@ -288,7 +288,7 @@ export function DatePickerCalendar({
                                                     ? L(`${d.key}（${counts[d.key]} 道）`, `${d.key} (${counts[d.key]})`)
                                                     : d.key
                                             }
-                                            className="h-9 rounded text-[13px] tabular-nums relative select-none"
+                                            className="h-9 rounded text-sm tabular-nums relative select-none"
                                             style={{
                                                 background: bg,
                                                 color: fg,
@@ -309,7 +309,7 @@ export function DatePickerCalendar({
                 </div>
 
                 <div className="flex items-center justify-between gap-2 border-t px-3 py-2">
-                    <span className="text-[11px] leading-tight text-muted-foreground">
+                    <span className="text-xs leading-tight text-muted-foreground">
                         {L(
                             "点：有记录的日子（变绿）· 双击：起止两端（蓝，可拖）· 再双击蓝点先取消",
                             "Click a recorded day (green) · double-click for a range (blue, draggable)",

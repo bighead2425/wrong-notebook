@@ -620,7 +620,7 @@ export default function InsightWritePage() {
      *       表现就是"点了一下没反应"—— 比留个三角更糟。
      */
     const tagClass =
-        "relative inline-flex items-center gap-1 overflow-hidden rounded-md border px-2.5 py-1 text-xs hover:bg-accent transition-colors";
+        "relative inline-flex items-center gap-1 overflow-hidden rounded-lg border px-2.5 py-1 text-xs hover:bg-accent transition-colors";
 
     return (
         <main className="min-h-screen bg-background">
@@ -787,7 +787,7 @@ export default function InsightWritePage() {
 
                 {/* ===== 配图缩略图：有图才出现（没图时不占版面）===== */}
                 {photo && (
-                    <div className="flex items-center gap-2 rounded-md border bg-muted/30 p-2">
+                    <div className="flex items-center gap-2 rounded-lg border bg-muted/30 p-2">
                         <button
                             type="button"
                             onClick={() => setIsViewerOpen(true)}
@@ -829,7 +829,7 @@ export default function InsightWritePage() {
 
                 {/* ===== 【2026-10-19 第 4 条】已链接的东西（有才出现）===== */}
                 {(linkedItem || linkedInsights.length > 0) && (
-                    <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 p-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 p-2 text-xs">
                         <span className="flex items-center gap-1 text-muted-foreground">
                             <Link2 className="h-3.5 w-3.5" />
                             {L("这条链到了", "Linked to")}
@@ -882,7 +882,7 @@ export default function InsightWritePage() {
 
                 {(notice || error) && (
                     <div
-                        className={`flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-1.5 text-sm ${error
+                        className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-1.5 text-sm ${error
                             ? "border-destructive/50 text-destructive"
                             : "border-emerald-500/40 bg-emerald-500/10"
                             }`}

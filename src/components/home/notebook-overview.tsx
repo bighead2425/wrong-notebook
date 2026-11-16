@@ -61,7 +61,7 @@ function StatTile({ label, value, hint }: { label: string; value: number | strin
         <div className="rounded-lg border bg-card p-3">
             <div className="text-xs text-muted-foreground">{label}</div>
             <div className="mt-0.5 text-xl font-bold tabular-nums">{value}</div>
-            {hint && <div className="mt-0.5 text-[11px] text-muted-foreground">{hint}</div>}
+            {hint && <div className="mt-0.5 text-xs text-muted-foreground">{hint}</div>}
         </div>
     );
 }
@@ -147,7 +147,7 @@ export function NotebookOverview() {
                                                 {nb.count} {L("题", "items")}
                                             </span>
                                         </CardHeader>
-                                        <CardContent className="flex flex-wrap gap-x-3 gap-y-1 pb-3 text-[11px] text-muted-foreground">
+                                        <CardContent className="flex flex-wrap gap-x-3 gap-y-1 pb-3 text-xs text-muted-foreground">
                                             <span>
                                                 {L("深挖", "Deep")} {nb.byManageType.deep}
                                             </span>

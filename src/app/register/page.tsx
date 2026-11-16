@@ -82,7 +82,7 @@ export default function RegisterPage() {
     // 加载中状态
     if (allowRegistration === null) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+            <div className="min-h-screen flex items-center justify-center bg-muted p-4">
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
         );
@@ -91,7 +91,7 @@ export default function RegisterPage() {
     // 注册已禁用
     if (allowRegistration === false) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+            <div className="min-h-screen flex items-center justify-center bg-muted p-4">
                 <Card className="w-full max-w-md">
                     <CardHeader>
                         <CardTitle className="text-2xl text-center">
@@ -117,7 +117,7 @@ export default function RegisterPage() {
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+        <div className="min-h-screen flex items-center justify-center bg-muted p-4">
             <Card className="w-full max-w-md">
                 <CardHeader>
                     <CardTitle className="text-2xl text-center">
@@ -221,7 +221,7 @@ export default function RegisterPage() {
                             <select
                                 id="educationStage"
                                 name="educationStage"
-                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                className="flex h-10 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                                 value={educationStage}
                                 onChange={(e) => setEducationStage(e.target.value)}
                                 required
@@ -250,7 +250,7 @@ export default function RegisterPage() {
                             />
                         </div>
                         {error && (
-                            <div className="text-red-500 text-sm text-center">{error}</div>
+                            <div className="text-red-600 text-sm text-center">{error}</div>
                         )}
                         <Button type="submit" className="w-full" disabled={loading}>
                             {loading

@@ -174,7 +174,7 @@ export default function TrashPage() {
                         回去正好看一眼刚才删掉的题；主页键右上角另有。 */}
                     <BackButton fallbackUrl="/notebooks" />
                     <div className="flex-1 space-y-1">
-                        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
+                        <h1 className="text-2xl sm:text-2xl font-bold tracking-tight">
                             {L("回收箱", "Trash")}
                         </h1>
                         <p className="text-muted-foreground text-sm sm:text-base">

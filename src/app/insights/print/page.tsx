@@ -326,7 +326,7 @@ function PrintWorkspace({ volId }: { volId: string }) {
 
             {notice && (
                 <div className="no-print px-3 pt-2 md:px-8">
-                    <div className="mx-auto max-w-[1600px] rounded-md border bg-background px-3 py-1.5 text-sm">
+                    <div className="mx-auto max-w-[1600px] rounded-lg border bg-background px-3 py-1.5 text-sm">
                         {notice}
                     </div>
                 </div>
@@ -342,7 +342,7 @@ function PrintWorkspace({ volId }: { volId: string }) {
                        塞注释进去会破坏 JSX 结构（本行上一版就是这么坏的）。 */}
                 {listOpen && (
                     <aside className="no-print w-full shrink-0 lg:w-[300px]" {...leftSwipe}>
-                        <div className="flex max-h-[76vh] flex-col gap-2 overflow-y-auto rounded-md border bg-background p-2">
+                        <div className="flex max-h-[76vh] flex-col gap-2 overflow-y-auto rounded-lg border bg-background p-2">
                             {loading ? (
                                 <div className="flex items-center justify-center py-10 text-muted-foreground">
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -361,7 +361,7 @@ function PrintWorkspace({ volId }: { volId: string }) {
                                     return (
                                         <div
                                             key={v.id}
-                                            className={`flex cursor-pointer items-start gap-2 rounded-md border px-2.5 py-2 transition-colors ${
+                                            className={`flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-2 transition-colors ${
                                                 active ? 'border-primary bg-accent/60' : 'hover:bg-accent/30'
                                             }`}
                                             onClick={() => openSheet(v.id)}
@@ -369,11 +369,11 @@ function PrintWorkspace({ volId }: { volId: string }) {
                                             <div className="min-w-0 flex-1">
                                                 <div className="font-mono text-xs font-semibold">{v.volumeNo}</div>
                                                 {v.title && (
-                                                    <div className="truncate text-[11px] text-muted-foreground">
+                                                    <div className="truncate text-xs text-muted-foreground">
                                                         {v.title}
                                                     </div>
                                                 )}
-                                                <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted-foreground">
+                                                <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
                                                     <span>{L(`${v.itemCount} 条`, `${v.itemCount}`)}</span>
                                                     <span>·</span>
                                                     <span>{L(`${v.pageCount} 页`, `${v.pageCount}p`)}</span>
@@ -1065,7 +1065,7 @@ function VolumePaper({
                 {editingTitle ? (
                     <span className="flex items-center gap-1">
                         <input
-                            className="w-44 rounded-md border bg-background px-2 py-1 text-sm"
+                            className="w-44 rounded-lg border bg-background px-2 py-1 text-sm"
                             placeholder={L('比如：五年级上 期末温故', 'e.g. Term review')}
                             value={titleDraft}
                             onChange={(e) => setTitleDraft(e.target.value)}
@@ -1103,7 +1103,7 @@ function VolumePaper({
                 <span className="flex-1" />
 
                 {/* ── 排版三件套之一：留白行数（顺序与图大小在纸上每一条的身上） ── */}
-                <span className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs">
+                <span className="flex items-center gap-1 rounded-lg border px-2 py-1 text-xs">
                     <span className="text-muted-foreground">{L('留白', 'Blank')}</span>
                     <button type="button" title={L('少一行', 'Less')} onClick={() => bumpBlank(-1)} className="px-1">
                         −
@@ -1147,7 +1147,7 @@ function VolumePaper({
 
             {notice && (
                 <div className="no-print px-3 pt-2 md:px-8">
-                    <div className="mx-auto max-w-[1600px] rounded-md border bg-background px-3 py-1.5 text-sm">
+                    <div className="mx-auto max-w-[1600px] rounded-lg border bg-background px-3 py-1.5 text-sm">
                         {notice}
                     </div>
                 </div>
