@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api-client";
 import { Switch } from "@/components/ui/switch";
+import { BG_DURATIONS, BG_SCALES } from "@/components/background-scene";
 import {
     PAPER_THEMES,
     applyAppearance,
@@ -59,6 +60,11 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
     const [paper, setPaper] = useState<PaperTheme>("ivory");
     /** 背景效果（纸纹 / 阳光 / 星点）。默认关 —— 见 `paper-theme.tsx` 的说明。 */
     const [effects, setEffects] = useState(false);
+    /** 两根滑条的档位索引（0..4）。默认最慢、最小。 */
+    const [speedIdx, setSpeedIdx] = useState(BG_DURATIONS.length - 1);
+    const [sizeIdx, setSizeIdx] = useState(0);
+    /** 滑块是连续拖动的，保存要防抖，否则一次拖动会发十几个请求 */
+    const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [mounted, setMounted] = useState(false);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -88,38 +94,69 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
         setMode(document.documentElement.classList.contains("dark") ? "dark" : "light");
         setPaper((document.documentElement.dataset.paper as PaperTheme) || "ivory");
         setEffects(document.documentElement.dataset.bg === "on");
+        /* 从 CSS 变量反推档位：`--bg-dur` 是 "20s"，parseInt 正好得 20 */
+        const cs = getComputedStyle(document.documentElement);
+        const dur = parseInt(cs.getPropertyValue("--bg-dur"), 10);
+        const sc = parseFloat(cs.getPropertyValue("--bg-scale"));
+        const di = BG_DURATIONS.indexOf((Number.isFinite(dur) ? dur : 20) as (typeof BG_DURATIONS)[number]);
+        const si = BG_SCALES.indexOf((Number.isFinite(sc) ? sc : 1) as (typeof BG_SCALES)[number]);
+        setSpeedIdx(di >= 0 ? di : BG_DURATIONS.length - 1);
+        setSizeIdx(si >= 0 ? si : 0);
         setMounted(true);
     }, []);
 
     /** 立即应用 + 存服务端。**先应用再存**：界面不等网络，失败也只是没存上。 */
     const applyAndSave = useCallback(
-        (next: Appearance) => {
+        (next: Appearance, debounce = false) => {
             const merged: Appearance = {
                 paper: next.paper ?? paper,
                 mode: next.mode ?? mode,
                 /* 注意用 `??` 而不是 `||`：`false` 是合法值（关掉效果），不能被当成空 */
                 effects: next.effects ?? effects,
+                effectDuration: next.effectDuration ?? BG_DURATIONS[speedIdx],
+                effectScale: next.effectScale ?? BG_SCALES[sizeIdx],
             };
             setPaper(merged.paper as PaperTheme);
             setMode(merged.mode as ThemeMode);
             setEffects(!!merged.effects);
+            /* **先应用**：拖动滑块时界面要跟手，不能等网络 */
             applyAppearance(merged);
 
-            setSaving(true);
-            setError(null);
-            apiClient
-                .post("/api/settings", { appearance: next })
-                .catch(() => {
-                    /**
-                     * 失败只说一句，不回滚界面 —— 回滚会让"点下去又弹回来"，更让人困惑。
-                     * 下次刷新会回到服务端存的旧值，那时候才发现没存上。
-                     */
-                    setError("保存失败，换个网络再选一次");
-                })
-                .finally(() => setSaving(false));
+            const send = () => {
+                setSaving(true);
+                setError(null);
+                apiClient
+                    .post("/api/settings", { appearance: next })
+                    .catch(() => {
+                        /**
+                         * 失败只说一句，不回滚界面 —— 回滚会让"点下去又弹回来"，更让人困惑。
+                         * 下次刷新会回到服务端存的旧值，那时候才发现没存上。
+                         */
+                        setError("保存失败，换个网络再选一次");
+                    })
+                    .finally(() => setSaving(false));
+            };
+
+            if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+            /* 滑块连续拖动：停下 450ms 再存，否则一次拖动会打十几次接口 */
+            if (debounce) saveTimerRef.current = setTimeout(send, 450);
+            else send();
         },
-        [paper, mode, effects]
+        [paper, mode, effects, speedIdx, sizeIdx]
     );
+
+    /**
+     * 卸载时清掉待发的计时器。
+     *
+     * 不补发：正常情况下关掉弹窗**不会卸载**这个组件（Dialog 只是隐藏），
+     * 450ms 后照常发出。真正卸载 = 离开页面，那时补发也多半会被浏览器中断，
+     * 而视觉上已经应用过了，下次打开会以服务端值为准 —— 不会造成"看着变了其实没变"的困惑。
+     */
+    useEffect(() => {
+        return () => {
+            if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        };
+    }, []);
 
     /** 短按：浅色 ⇄ 深色 */
     const toggleMode = useCallback(() => {
@@ -316,6 +353,68 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
                             className="mt-0.5 shrink-0"
                         />
                     </div>
+
+                    {/* —— 两个可调项（只在开着的时候出现）—— */}
+                    {effects && (
+                        <div className="space-y-3 rounded-lg bg-muted/50 px-3 py-2.5">
+                            <div className="space-y-1">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-xs font-medium">呼吸节奏</span>
+                                    <span className="text-xs tabular-nums text-muted-foreground">
+                                        {BG_DURATIONS[speedIdx]} 秒
+                                    </span>
+                                </div>
+                                <input
+                                    type="range"
+                                    min={0}
+                                    max={BG_DURATIONS.length - 1}
+                                    step={1}
+                                    value={speedIdx}
+                                    onChange={(e) => {
+                                        const i = Number(e.target.value);
+                                        setSpeedIdx(i);
+                                        /* 拖动中不发请求，停下 450ms 再存 */
+                                        applyAndSave({ effectDuration: BG_DURATIONS[i] }, true);
+                                    }}
+                                    className="w-full cursor-pointer"
+                                    style={{ accentColor: "var(--primary)" }}
+                                    aria-label="呼吸节奏：越快越靠左"
+                                />
+                                <div className="flex justify-between text-xs text-subtle-foreground">
+                                    <span>快</span>
+                                    <span>慢</span>
+                                </div>
+                            </div>
+
+                            <div className="space-y-1">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-xs font-medium">大小</span>
+                                    <span className="text-xs tabular-nums text-muted-foreground">
+                                        {BG_SCALES[sizeIdx]}×
+                                    </span>
+                                </div>
+                                <input
+                                    type="range"
+                                    min={0}
+                                    max={BG_SCALES.length - 1}
+                                    step={1}
+                                    value={sizeIdx}
+                                    onChange={(e) => {
+                                        const i = Number(e.target.value);
+                                        setSizeIdx(i);
+                                        applyAndSave({ effectScale: BG_SCALES[i] }, true);
+                                    }}
+                                    className="w-full cursor-pointer"
+                                    style={{ accentColor: "var(--primary)" }}
+                                    aria-label="光与星的大小"
+                                />
+                                <div className="flex justify-between text-xs text-subtle-foreground">
+                                    <span>小</span>
+                                    <span>大</span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* 保存失败才出现，平时不占位 */}
                     {(saving || error) && (

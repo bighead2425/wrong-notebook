@@ -45,7 +45,15 @@ export interface AppConfig {
     aiProvider: 'gemini' | 'openai' | 'azure';
     allowRegistration?: boolean;
     /** 界面底色预设，缺省 ivory（暖象牙） */
-    appearance?: { paper?: PaperTheme; mode?: 'light' | 'dark'; effects?: boolean };
+    appearance?: {
+        paper?: PaperTheme;
+        mode?: 'light' | 'dark';
+        effects?: boolean;
+        /** 呼吸节奏（秒）：4 / 8 / 12 / 16 / 20 */
+        effectDuration?: number;
+        /** 光与星的大小倍数：1 / 1.5 / 2 / 3 / 4 */
+        effectScale?: number;
+    };
     openai?: {
         instances?: OpenAIInstance[];
         activeInstanceId?: string;

@@ -27,11 +27,30 @@ import { useEffect } from "react";
 const BG_ATTR = "bg";
 const PAUSE_ATTR = "bg-paused";
 
-/** 开/关背景效果（供长按面板调用） */
-export function applyBackgroundEffects(on?: boolean) {
+/** 时长五档（秒）。20 秒最慢，4 秒最快 —— 再快就开始抓眼睛了。 */
+export const BG_DURATIONS = [4, 8, 12, 16, 20] as const;
+
+/**
+ * 大小五档。
+ *
+ * 界面上的数字就是"相对当前"的倍数：1× / 1.5× / 2× / 3× / 4×。
+ * 实际落成两个变量：
+ *   · 星星按原倍率放大（点本来就小，4× 才 11px 的光斑）
+ *   · 暖光压缩到 1~2.5×（它本来就占大半屏，真放 4 倍会糊成一片橙色）
+ */
+export const BG_SCALES = [1, 1.5, 2, 3, 4] as const;
+
+/** 开/关背景效果，并写入两根滑条的值（供长按面板调用） */
+export function applyBackgroundEffects(on?: boolean, duration?: number, scale?: number) {
     if (typeof document === "undefined") return;
-    if (on) document.documentElement.dataset[BG_ATTR] = "on";
-    else delete document.documentElement.dataset[BG_ATTR];
+    const root = document.documentElement;
+    if (on) {
+        root.dataset[BG_ATTR] = "on";
+        root.style.setProperty("--bg-dur", `${duration ?? 20}s`);
+        root.style.setProperty("--bg-scale", String(scale ?? 1));
+    } else {
+        delete root.dataset[BG_ATTR];
+    }
 }
 
 export function BackgroundScene() {
