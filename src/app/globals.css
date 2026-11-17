@@ -1724,14 +1724,16 @@ html[data-bg="on"].dark .bg-moon {
 .tree-a {
   right: -14vw;
   top: -8vh;
-  width: calc(82vw * var(--tree-scale));
+  /* 手机上按屏宽算、宽屏上按屏高算 —— 只写 82vw 的话，
+     1440 宽的显示器上这棵树会有 1180px 宽，占掉半个屏幕。 */
+  width: calc(min(78vw, 88vh) * var(--tree-scale));
   aspect-ratio: 3 / 4;
 }
 
 .tree-b {
   right: -26vw;
   top: 16vh;
-  width: calc(58vw * var(--tree-scale));
+  width: calc(min(56vw, 62vh) * var(--tree-scale));
   aspect-ratio: 1 / 1;
   /* 第二组慢 45%，两组不会同步，看起来才像"风一直在吹" */
   animation-duration: calc(var(--tree-dur) * 1.45);

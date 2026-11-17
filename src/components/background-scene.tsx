@@ -14,20 +14,136 @@ import { useEffect } from "react";
  * | 主元素 | **树影**（比背景暗） | **星点**（比背景亮） |
  * | 辅元素 | 纸纹 | 弯月 |
  *
- * ## 为什么树影只在左边
+ * ## 树影的柔边：三层叠色，不用 blur
  *
- * 左右各一棵对称着摆，看起来像装饰边框，不像"窗外"。真实的光影总是偏一侧的。
- * 所以两组都从左边伸进来，一上一下，允许重叠。
+ * 逆向 openhanako 的结论很有意思：它的"树影"**是一段 40 秒的 MP4 视频**
+ * （`mix-blend-mode: multiply` + `opacity .28`），柔度来自拍摄时的光学失焦 ——
+ * 也就是说它不是画出来的，是拍出来的。
  *
- * ## 性能
+ * 我们没有实拍素材，只能用矢量仿。仿的关键在边缘：
+ * **同一组路径画三遍，越外圈越粗越淡**（1.9 倍宽 / 32% 不透明 → 1 倍宽 / 100%）。
+ * 三层叠起来，远处看是一条柔边，近看是三层 —— 但不用 `filter: blur()`，
+ * 那才是真正的逐帧计算。
  *
- * 树影摆动只动 `transform: rotate()`，星点只动 `opacity` ——
- * 两者都是合成层动画，不触发逐帧重算。
- * **树影的柔边不用 `filter: blur()`**（那才会逐帧算），靠形状细 + 整体透明度低。
+ * ## 参数来自逆向
+ *
+ * 叶片 24×8 纺锤形（单侧 3 条贝塞尔，两端收尖）、分叉 3 级、
+ * 粗细按 0.55 等比递减、叶子沿枝两侧交错 ≈ 成簇。
  */
 
 const BG_ATTR = "bg";
 const PAUSE_ATTR = "bg-paused";
+
+/** 树影颜色。暖褐，不是黑 —— 影子用纯黑在米色纸上会显脏。 */
+const TREE_INK = "#57473A";
+
+/** 三层柔边的参数：外层最粗最淡，内层原样最实 */
+const SOFT_LAYERS = [
+    { mul: 1.9, opacity: 0.32 },
+    { mul: 1.35, opacity: 0.62 },
+    { mul: 1, opacity: 1 },
+] as const;
+
+interface Branch {
+    d: string;
+    w: number;
+}
+/** [x, y, 旋转角度, 缩放] */
+type Leaf = [number, number, number, number?];
+
+/**
+ * 第一组树的形状（viewBox 300×400）。
+ *
+ * 根在**右上角** (292,6)，主干一路向左下伸到 (96,356)。
+ * 三级分叉：主干 → 一级枝（A~E）→ 二级枝（A1/B1/C1/D1）。
+ */
+const TREE_A_BRANCHES: Branch[] = [
+    { d: "M292 6 C 258 58 224 110 194 168", w: 5.6 },
+    { d: "M194 168 C 164 226 128 294 96 356", w: 4.4 },
+    { d: "M250 52 C 220 40 194 24 170 6", w: 2.4 },
+    { d: "M194 24 C 182 14 172 8 158 2", w: 1.2 },
+    { d: "M220 96 C 186 96 158 108 134 126", w: 2.3 },
+    { d: "M158 108 C 146 122 136 136 128 152", w: 1.3 },
+    { d: "M194 168 C 158 172 130 184 104 204", w: 2.2 },
+    { d: "M130 184 C 112 176 96 170 80 166", w: 1.2 },
+    { d: "M162 232 C 190 244 212 260 230 280", w: 2 },
+    { d: "M212 260 C 228 268 244 280 256 294", w: 1.2 },
+    { d: "M126 306 C 100 312 74 320 50 332", w: 1.8 },
+    { d: "M96 356 C 84 362 74 368 64 376", w: 1.2 },
+];
+
+const TREE_A_LEAVES: Leaf[] = [
+    [240, 44, -52, 1],
+    [226, 36, -38, 0.9],
+    [210, 26, -58, 1.1],
+    [196, 16, -34, 0.85],
+    [186, 20, -48, 0.9],
+    [172, 10, -30, 0.8],
+    [206, 98, -12, 1],
+    [190, 102, -28, 0.9],
+    [174, 108, -6, 1.05],
+    [158, 116, -22, 0.85],
+    [150, 124, 44, 0.85],
+    [140, 136, 52, 0.8],
+    [132, 148, 38, 0.75],
+    [180, 170, 18, 1],
+    [164, 176, 6, 0.95],
+    [148, 182, 26, 0.9],
+    [132, 190, 10, 0.85],
+    [116, 180, -24, 0.8],
+    [100, 172, -38, 0.75],
+    [86, 168, -16, 0.7],
+    [180, 240, 32, 0.95],
+    [196, 250, 22, 1],
+    [212, 262, 38, 0.9],
+    [226, 272, 28, 0.85],
+    [240, 282, 40, 0.75],
+    [252, 290, 30, 0.7],
+    [112, 308, 16, 0.9],
+    [96, 314, 28, 0.85],
+    [80, 320, 12, 0.8],
+    [66, 326, 24, 0.75],
+    [88, 358, 36, 0.8],
+    [72, 368, 20, 0.75],
+    [258, 72, -20, 0.9],
+    [238, 124, -8, 0.85],
+    [206, 144, 14, 0.8],
+    [176, 204, 28, 0.85],
+];
+
+/** 第二组（viewBox 300×300）：更小、更稀，拉出层次 */
+const TREE_B_BRANCHES: Branch[] = [
+    { d: "M292 8 C 254 52 216 96 184 140", w: 4.6 },
+    { d: "M184 140 C 152 184 122 234 98 286", w: 3.6 },
+    { d: "M252 50 C 224 38 200 22 178 4", w: 2 },
+    { d: "M214 90 C 180 92 152 104 128 122", w: 1.9 },
+    { d: "M184 140 C 150 146 124 158 100 178", w: 1.8 },
+    { d: "M152 196 C 178 208 198 222 214 240", w: 1.6 },
+    { d: "M98 286 C 74 292 52 300 32 310", w: 1.4 },
+];
+
+const TREE_B_LEAVES: Leaf[] = [
+    [240, 44, -48, 0.85],
+    [222, 32, -34, 0.8],
+    [204, 22, -56, 0.75],
+    [196, 96, -14, 0.8],
+    [178, 102, -30, 0.75],
+    [160, 112, -6, 0.8],
+    [148, 126, 42, 0.7],
+    [138, 140, 50, 0.65],
+    [168, 148, 16, 0.8],
+    [148, 158, 26, 0.75],
+    [128, 168, 10, 0.7],
+    [110, 174, -22, 0.65],
+    [172, 208, 30, 0.75],
+    [190, 220, 22, 0.7],
+    [206, 232, 36, 0.65],
+    [118, 272, 18, 0.7],
+    [98, 282, 26, 0.65],
+    [78, 290, 12, 0.6],
+    [60, 300, 24, 0.55],
+    [230, 70, -22, 0.7],
+];
 
 /** 树影大小五档 */
 export const TREE_SCALES = [0.7, 0.9, 1.2, 1.5, 1.85] as const;
@@ -49,8 +165,7 @@ export const STAR_SPEEDS = [4, 8, 12, 16, 20] as const;
  * 月亮颜色五档：皎白 → 血月。
  *
  * 血月不只是换色相，**明度一路压下去**（0.97 → 0.62）：
- * 真正的血月是"暗下来的红"，如果只改色相不降明度，会变成一盏橙色小灯，
- * 比白月亮还抢眼。
+ * 真正的血月是"暗下来的红"，只改色相不降明度会变成一盏橙色小灯，比白月亮还抢眼。
  */
 export const MOON_COLORS = [
     { zh: "皎白", value: "oklch(0.97 0.012 95)" },
@@ -108,6 +223,58 @@ export function applyBackgroundEffects(s?: Partial<EffectSettings>) {
     set("--moon-color", MOON_COLORS[v.moonTint]?.value ?? MOON_COLORS[0].value);
 }
 
+/**
+ * 一棵树的轮廓：枝条画三层（伪柔边），叶子画一层。
+ *
+ * 叶子为什么不也三层：叶子本身只有 24×8，再往外加粗只会糊成一团，
+ * 而且数量翻三倍会让 DOM 节点从 ~80 涨到 ~200。柔边的收益主要在**枝条**上。
+ */
+function TreeSilhouette({
+    className,
+    viewBox,
+    branches,
+    leaves,
+    leafId,
+}: {
+    className: string;
+    viewBox: string;
+    branches: Branch[];
+    leaves: Leaf[];
+    leafId: string;
+}) {
+    return (
+        <svg className={className} viewBox={viewBox} fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                {/* 纺锤形叶片：24×8，两端收尖，单侧 3 条贝塞尔 */}
+                <path id={leafId} d="M-12 0 C-6 -4 6 -4 12 0 C6 4 -6 4 -12 0 Z" />
+            </defs>
+
+            {SOFT_LAYERS.map((layer) => (
+                <g
+                    key={layer.mul}
+                    stroke={TREE_INK}
+                    strokeLinecap="round"
+                    opacity={layer.opacity}
+                >
+                    {branches.map((b, i) => (
+                        <path key={i} d={b.d} strokeWidth={b.w * layer.mul} />
+                    ))}
+                </g>
+            ))}
+
+            <g fill={TREE_INK}>
+                {leaves.map(([x, y, a, s], i) => (
+                    <use
+                        key={i}
+                        href={`#${leafId}`}
+                        transform={`translate(${x} ${y}) rotate(${a}) scale(${s ?? 1})`}
+                    />
+                ))}
+            </g>
+        </svg>
+    );
+}
+
 export function BackgroundScene() {
     useEffect(() => {
         const sync = () => {
@@ -122,69 +289,21 @@ export function BackgroundScene() {
     return (
         /* aria-hidden：纯装饰，读屏软件不该念它 */
         <div className="bg-scene" aria-hidden="true">
-            {/*
-             * 树影：两组，都在左边，一上一下，允许重叠。
-             * SVG 的根画在左下角，配合 CSS 的 `transform-origin: 0% 100%`
-             * 就是"以树根为轴摆动"。
-             */}
-            {/*
-             * 树影：两组，根部都在**右上角**，枝叶向左下伸展。
-             * 两组一上一下、允许重叠，周期差 45%（同步摆动看着像机器）。
-             * SVG 的根画在右上，配合 CSS 的 `transform-origin: 100% 0%`，
-             * 摆动起来就是"从枝头挂下来"的感觉。
-             */}
             <div className="bg-tree">
-                <svg className="tree tree-a" viewBox="0 0 300 400" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <g stroke="#6E6659" strokeLinecap="round">
-                        {/* 主干：右上 → 左下 */}
-                        <path d="M296 6 C 258 56 218 108 184 162 C 150 216 116 280 90 344" strokeWidth="4.6" />
-                        <path d="M246 66 C 214 54 188 38 166 16" strokeWidth="2.1" />
-                        <path d="M208 124 C 168 114 138 96 110 72" strokeWidth="2" />
-                        <path d="M168 190 C 132 200 104 218 80 246" strokeWidth="1.7" />
-                        <path d="M130 264 C 158 282 180 302 198 330" strokeWidth="1.5" />
-                        <path d="M90 344 C 58 356 34 372 14 390" strokeWidth="1.3" />
-                    </g>
-                    <g fill="#6E6659">
-                        <ellipse cx="166" cy="16" rx="7.6" ry="2.7" transform="rotate(-34 166 16)" />
-                        <ellipse cx="178" cy="24" rx="6.6" ry="2.4" transform="rotate(-16 178 24)" />
-                        <ellipse cx="152" cy="26" rx="6" ry="2.2" transform="rotate(-48 152 26)" />
-                        <ellipse cx="110" cy="72" rx="7.6" ry="2.7" transform="rotate(-24 110 72)" />
-                        <ellipse cx="122" cy="64" rx="6.6" ry="2.4" transform="rotate(-6 122 64)" />
-                        <ellipse cx="96" cy="82" rx="6" ry="2.2" transform="rotate(-42 96 82)" />
-                        <ellipse cx="80" cy="246" rx="7.4" ry="2.6" transform="rotate(28 80 246)" />
-                        <ellipse cx="92" cy="238" rx="6.4" ry="2.3" transform="rotate(10 92 238)" />
-                        <ellipse cx="198" cy="330" rx="7" ry="2.5" transform="rotate(34 198 330)" />
-                        <ellipse cx="186" cy="338" rx="6" ry="2.2" transform="rotate(16 186 338)" />
-                        <ellipse cx="14" cy="390" rx="7.2" ry="2.6" transform="rotate(30 14 390)" />
-                        <ellipse cx="28" cy="380" rx="6.2" ry="2.3" transform="rotate(12 28 380)" />
-                        <ellipse cx="184" cy="162" rx="6.8" ry="2.5" transform="rotate(-58 184 162)" />
-                        <ellipse cx="196" cy="150" rx="5.8" ry="2.1" transform="rotate(-70 196 150)" />
-                        <ellipse cx="230" cy="92" rx="6.4" ry="2.3" transform="rotate(-38 230 92)" />
-                        <ellipse cx="152" cy="212" rx="6" ry="2.2" transform="rotate(-72 152 212)" />
-                    </g>
-                </svg>
-
-                <svg className="tree tree-b" viewBox="0 0 300 300" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <g stroke="#6E6659" strokeLinecap="round">
-                        <path d="M292 8 C 252 48 212 92 178 138 C 146 182 116 232 92 284" strokeWidth="3.6" />
-                        <path d="M236 66 C 204 56 178 42 156 22" strokeWidth="1.8" />
-                        <path d="M188 124 C 152 132 126 148 104 172" strokeWidth="1.7" />
-                        <path d="M142 196 C 168 214 188 232 204 254" strokeWidth="1.5" />
-                        <path d="M92 284 C 62 296 40 310 20 326" strokeWidth="1.3" />
-                    </g>
-                    <g fill="#6E6659">
-                        <ellipse cx="156" cy="22" rx="7" ry="2.5" transform="rotate(-32 156 22)" />
-                        <ellipse cx="168" cy="30" rx="6" ry="2.2" transform="rotate(-14 168 30)" />
-                        <ellipse cx="104" cy="172" rx="7" ry="2.5" transform="rotate(18 104 172)" />
-                        <ellipse cx="116" cy="164" rx="6" ry="2.2" transform="rotate(2 116 164)" />
-                        <ellipse cx="204" cy="254" rx="6.8" ry="2.4" transform="rotate(28 204 254)" />
-                        <ellipse cx="192" cy="262" rx="5.8" ry="2.1" transform="rotate(12 192 262)" />
-                        <ellipse cx="20" cy="326" rx="7" ry="2.5" transform="rotate(26 20 326)" />
-                        <ellipse cx="34" cy="316" rx="6" ry="2.2" transform="rotate(10 34 316)" />
-                        <ellipse cx="152" cy="168" rx="6.2" ry="2.2" transform="rotate(-64 152 168)" />
-                        <ellipse cx="214" cy="96" rx="6.4" ry="2.3" transform="rotate(-40 214 96)" />
-                    </g>
-                </svg>
+                <TreeSilhouette
+                    className="tree tree-a"
+                    viewBox="0 0 300 400"
+                    branches={TREE_A_BRANCHES}
+                    leaves={TREE_A_LEAVES}
+                    leafId="tree-a-leaf"
+                />
+                <TreeSilhouette
+                    className="tree tree-b"
+                    viewBox="0 0 300 300"
+                    branches={TREE_B_BRANCHES}
+                    leaves={TREE_B_LEAVES}
+                    leafId="tree-b-leaf"
+                />
             </div>
 
             <div className="bg-grain" />
@@ -197,15 +316,8 @@ export function BackgroundScene() {
             {/*
              * 弯月：**缺口朝左**（蛾眉月，傍晚可见的那种朝向）。
              *
-             * 为什么用 SVG 而不是 CSS 的 inset box-shadow：
-             * box-shadow 只能给一个纯色月牙，没有明暗过渡、没有光晕，
-             * 看起来就像一张纸片贴在屏幕上。
-             *
-             * 这里三层叠起来：
-             *   ① 月晕：径向渐变，从 30% 透明度柔到全透明
-             *   ② 月牙本体：`--moon-color` 填充，用 mask 从整圆里挖掉偏左的圆
-             *   ③ 球面明暗：线性渐变叠在月牙上（左上亮、右下暗），让它看起来是"球"不是"片"
-             *
+             * 三层：月晕（径向渐变）→ 月牙本体（遮罩挖出）→ 球面明暗（线性渐变）。
+             * 第三层是关键 —— 没有它，月亮就是一个纯色形状，像纸片贴在屏幕上。
              * 全是静态渐变，绘制一次即缓存，不参与逐帧计算。
              */}
             <div className="bg-moon">
@@ -228,8 +340,20 @@ export function BackgroundScene() {
                         </mask>
                     </defs>
                     <circle cx="50" cy="50" r="50" fill="url(#bg-moon-halo)" />
-                    <circle cx="50" cy="50" r="30" fill="var(--moon-color)" mask="url(#bg-moon-crescent)" />
-                    <circle cx="50" cy="50" r="30" fill="url(#bg-moon-sheen)" mask="url(#bg-moon-crescent)" />
+                    <circle
+                        cx="50"
+                        cy="50"
+                        r="30"
+                        fill="var(--moon-color)"
+                        mask="url(#bg-moon-crescent)"
+                    />
+                    <circle
+                        cx="50"
+                        cy="50"
+                        r="30"
+                        fill="url(#bg-moon-sheen)"
+                        mask="url(#bg-moon-crescent)"
+                    />
                 </svg>
             </div>
         </div>
