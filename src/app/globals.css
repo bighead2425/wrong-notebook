@@ -1703,7 +1703,8 @@ html[data-bg="on"].dark .bg-moon {
 /* —— 树影 ——
  *
  * 两组都在**左边**（不做左右对称，对称反而假）。
- * 摆动以根部为轴：`transform-origin: 0% 100%` 对应 SVG 左下角的树干起点。
+ * 摆动以根部为轴：`transform-origin: 100% 0%` 对应 SVG 右上角的树干起点。
+ * 枝叶从右上角垂下、往左下伸 —— 和深色的月亮在同一个角，视觉上是一套东西。
  *
  * 幅度只有 ±1° —— 大了会变成"晃"，小了会像静止。
  */
@@ -1715,22 +1716,22 @@ html[data-bg="on"].dark .bg-moon {
 .tree {
   position: absolute;
   opacity: var(--tree-opacity);
-  transform-origin: 0% 100%;
+  transform-origin: 100% 0%;
   animation: bg-tree-sway var(--tree-dur) ease-in-out infinite;
   will-change: transform;
 }
 
 .tree-a {
-  left: -8vw;
-  top: -6vh;
-  width: calc(62vw * var(--tree-scale));
+  right: -14vw;
+  top: -8vh;
+  width: calc(82vw * var(--tree-scale));
   aspect-ratio: 3 / 4;
 }
 
 .tree-b {
-  left: -14vw;
-  bottom: -14vh;
-  width: calc(46vw * var(--tree-scale));
+  right: -26vw;
+  top: 16vh;
+  width: calc(58vw * var(--tree-scale));
   aspect-ratio: 1 / 1;
   /* 第二组慢 45%，两组不会同步，看起来才像"风一直在吹" */
   animation-duration: calc(var(--tree-dur) * 1.45);
@@ -1829,24 +1830,31 @@ html[data-bg="on"].dark .bg-moon {
  * **缺口朝左**（亮面在右）：这是蛾眉月，农历初三到初五傍晚西方天空
  * 真实可见的朝向。另一种"缺口朝右"是残月，要熬到黎明前才看得到。
  *
- * 画法：一个圆 + `inset` 负向 box-shadow。阴影从右边缘向内推，
- * 剩下的亮部就是月牙 —— **不用两张圆做遮罩，也不用 blur**。
+ * 月亮用内联 SVG 画：**月晕（radialGradient）+ 球面明暗（linearGradient）+ 遮罩出月牙**。
+ * 全部是静态渐变，绘制一次就缓存，不参与逐帧计算。
  *
  * 颜色由 `--moon-color` 控制（皎白 → 淡黄 → 暖金 → 浅橙 → 血月）。
  */
 .bg-moon {
-  --moon-size: 9vmin;
+  --moon-size: 22vmin;
   position: absolute;
-  left: 6%;
-  top: 8%;
+  right: 6%;
+  top: 6%;
   width: var(--moon-size);
   height: var(--moon-size);
-  min-width: 34px;
-  min-height: 34px;
-  border-radius: 50%;
-  box-shadow: inset calc(-0.32 * var(--moon-size)) 0 0 0 var(--moon-color);
-  opacity: 0.5;
-  transform: rotate(-12deg);
+  min-width: 84px;
+  min-height: 84px;
+  max-width: 132px;
+  max-height: 132px;
+  opacity: 0.85;
+}
+
+/* 月亮本体改成 SVG 画（见 background-scene.tsx）：一层月晕 + 一层球面明暗。
+   纯 CSS 的 inset box-shadow 只有一个纯色月牙，没有过渡，看着像贴纸。 */
+.bg-moon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 /* —— 页面切到后台时暂停 —— */

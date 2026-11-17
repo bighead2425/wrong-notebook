@@ -127,53 +127,62 @@ export function BackgroundScene() {
              * SVG 的根画在左下角，配合 CSS 的 `transform-origin: 0% 100%`
              * 就是"以树根为轴摆动"。
              */}
+            {/*
+             * 树影：两组，根部都在**右上角**，枝叶向左下伸展。
+             * 两组一上一下、允许重叠，周期差 45%（同步摆动看着像机器）。
+             * SVG 的根画在右上，配合 CSS 的 `transform-origin: 100% 0%`，
+             * 摆动起来就是"从枝头挂下来"的感觉。
+             */}
             <div className="bg-tree">
                 <svg className="tree tree-a" viewBox="0 0 300 400" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <g stroke="#6E6659" strokeLinecap="round">
-                        <path d="M8 396 C 40 330 70 282 110 212 C 140 158 166 112 182 58" strokeWidth="4.4" />
-                        <path d="M46 332 C 32 300 18 278 4 260" strokeWidth="1.9" />
-                        <path d="M96 236 C 124 216 148 204 170 196" strokeWidth="1.9" />
-                        <path d="M140 154 C 124 126 104 104 86 84" strokeWidth="1.5" />
-                        <path d="M168 104 C 190 94 212 84 234 74" strokeWidth="1.3" />
-                        <path d="M124 190 C 118 166 116 148 118 128" strokeWidth="1.1" />
+                        {/* 主干：右上 → 左下 */}
+                        <path d="M296 6 C 258 56 218 108 184 162 C 150 216 116 280 90 344" strokeWidth="4.6" />
+                        <path d="M246 66 C 214 54 188 38 166 16" strokeWidth="2.1" />
+                        <path d="M208 124 C 168 114 138 96 110 72" strokeWidth="2" />
+                        <path d="M168 190 C 132 200 104 218 80 246" strokeWidth="1.7" />
+                        <path d="M130 264 C 158 282 180 302 198 330" strokeWidth="1.5" />
+                        <path d="M90 344 C 58 356 34 372 14 390" strokeWidth="1.3" />
                     </g>
                     <g fill="#6E6659">
-                        <ellipse cx="4" cy="260" rx="7.5" ry="2.6" transform="rotate(-32 4 260)" />
-                        <ellipse cx="16" cy="250" rx="6.5" ry="2.3" transform="rotate(-16 16 250)" />
-                        <ellipse cx="170" cy="196" rx="7.5" ry="2.6" transform="rotate(-12 170 196)" />
-                        <ellipse cx="183" cy="189" rx="6.5" ry="2.4" transform="rotate(8 183 189)" />
-                        <ellipse cx="157" cy="204" rx="6" ry="2.2" transform="rotate(-36 157 204)" />
-                        <ellipse cx="86" cy="84" rx="7.5" ry="2.6" transform="rotate(-46 86 84)" />
-                        <ellipse cx="99" cy="77" rx="6.5" ry="2.4" transform="rotate(-28 99 77)" />
-                        <ellipse cx="234" cy="74" rx="7" ry="2.5" transform="rotate(-8 234 74)" />
-                        <ellipse cx="221" cy="82" rx="6" ry="2.2" transform="rotate(24 221 82)" />
-                        <ellipse cx="182" cy="58" rx="7.5" ry="2.6" transform="rotate(-20 182 58)" />
-                        <ellipse cx="197" cy="52" rx="6.5" ry="2.4" transform="rotate(6 197 52)" />
-                        <ellipse cx="169" cy="64" rx="6" ry="2.2" transform="rotate(-42 169 64)" />
-                        <ellipse cx="70" cy="286" rx="6.5" ry="2.4" transform="rotate(28 70 286)" />
-                        <ellipse cx="60" cy="301" rx="6" ry="2.2" transform="rotate(12 60 301)" />
-                        <ellipse cx="118" cy="128" rx="6.5" ry="2.4" transform="rotate(-64 118 128)" />
+                        <ellipse cx="166" cy="16" rx="7.6" ry="2.7" transform="rotate(-34 166 16)" />
+                        <ellipse cx="178" cy="24" rx="6.6" ry="2.4" transform="rotate(-16 178 24)" />
+                        <ellipse cx="152" cy="26" rx="6" ry="2.2" transform="rotate(-48 152 26)" />
+                        <ellipse cx="110" cy="72" rx="7.6" ry="2.7" transform="rotate(-24 110 72)" />
+                        <ellipse cx="122" cy="64" rx="6.6" ry="2.4" transform="rotate(-6 122 64)" />
+                        <ellipse cx="96" cy="82" rx="6" ry="2.2" transform="rotate(-42 96 82)" />
+                        <ellipse cx="80" cy="246" rx="7.4" ry="2.6" transform="rotate(28 80 246)" />
+                        <ellipse cx="92" cy="238" rx="6.4" ry="2.3" transform="rotate(10 92 238)" />
+                        <ellipse cx="198" cy="330" rx="7" ry="2.5" transform="rotate(34 198 330)" />
+                        <ellipse cx="186" cy="338" rx="6" ry="2.2" transform="rotate(16 186 338)" />
+                        <ellipse cx="14" cy="390" rx="7.2" ry="2.6" transform="rotate(30 14 390)" />
+                        <ellipse cx="28" cy="380" rx="6.2" ry="2.3" transform="rotate(12 28 380)" />
+                        <ellipse cx="184" cy="162" rx="6.8" ry="2.5" transform="rotate(-58 184 162)" />
+                        <ellipse cx="196" cy="150" rx="5.8" ry="2.1" transform="rotate(-70 196 150)" />
+                        <ellipse cx="230" cy="92" rx="6.4" ry="2.3" transform="rotate(-38 230 92)" />
+                        <ellipse cx="152" cy="212" rx="6" ry="2.2" transform="rotate(-72 152 212)" />
                     </g>
                 </svg>
 
                 <svg className="tree tree-b" viewBox="0 0 300 300" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <g stroke="#6E6659" strokeLinecap="round">
-                        <path d="M6 296 C 42 250 78 212 118 172 C 148 142 174 116 196 90" strokeWidth="3.6" />
-                        <path d="M52 252 C 30 236 12 220 2 206" strokeWidth="1.6" />
-                        <path d="M104 186 C 130 172 152 164 176 158" strokeWidth="1.6" />
-                        <path d="M150 140 C 140 116 128 98 114 80" strokeWidth="1.3" />
+                        <path d="M292 8 C 252 48 212 92 178 138 C 146 182 116 232 92 284" strokeWidth="3.6" />
+                        <path d="M236 66 C 204 56 178 42 156 22" strokeWidth="1.8" />
+                        <path d="M188 124 C 152 132 126 148 104 172" strokeWidth="1.7" />
+                        <path d="M142 196 C 168 214 188 232 204 254" strokeWidth="1.5" />
+                        <path d="M92 284 C 62 296 40 310 20 326" strokeWidth="1.3" />
                     </g>
                     <g fill="#6E6659">
-                        <ellipse cx="2" cy="206" rx="7" ry="2.5" transform="rotate(-40 2 206)" />
-                        <ellipse cx="14" cy="198" rx="6" ry="2.2" transform="rotate(-22 14 198)" />
-                        <ellipse cx="176" cy="158" rx="7" ry="2.5" transform="rotate(-8 176 158)" />
-                        <ellipse cx="188" cy="152" rx="6" ry="2.2" transform="rotate(10 188 152)" />
-                        <ellipse cx="164" cy="164" rx="5.8" ry="2.1" transform="rotate(-30 164 164)" />
-                        <ellipse cx="114" cy="80" rx="7" ry="2.5" transform="rotate(-52 114 80)" />
-                        <ellipse cx="126" cy="74" rx="6" ry="2.2" transform="rotate(-34 126 74)" />
-                        <ellipse cx="196" cy="90" rx="7" ry="2.5" transform="rotate(-16 196 90)" />
-                        <ellipse cx="208" cy="84" rx="6" ry="2.2" transform="rotate(4 208 84)" />
-                        <ellipse cx="72" cy="224" rx="6" ry="2.2" transform="rotate(26 72 224)" />
+                        <ellipse cx="156" cy="22" rx="7" ry="2.5" transform="rotate(-32 156 22)" />
+                        <ellipse cx="168" cy="30" rx="6" ry="2.2" transform="rotate(-14 168 30)" />
+                        <ellipse cx="104" cy="172" rx="7" ry="2.5" transform="rotate(18 104 172)" />
+                        <ellipse cx="116" cy="164" rx="6" ry="2.2" transform="rotate(2 116 164)" />
+                        <ellipse cx="204" cy="254" rx="6.8" ry="2.4" transform="rotate(28 204 254)" />
+                        <ellipse cx="192" cy="262" rx="5.8" ry="2.1" transform="rotate(12 192 262)" />
+                        <ellipse cx="20" cy="326" rx="7" ry="2.5" transform="rotate(26 20 326)" />
+                        <ellipse cx="34" cy="316" rx="6" ry="2.2" transform="rotate(10 34 316)" />
+                        <ellipse cx="152" cy="168" rx="6.2" ry="2.2" transform="rotate(-64 152 168)" />
+                        <ellipse cx="214" cy="96" rx="6.4" ry="2.3" transform="rotate(-40 214 96)" />
                     </g>
                 </svg>
             </div>
@@ -185,8 +194,44 @@ export function BackgroundScene() {
                 <div className="bg-stars bg-stars-b" />
             </div>
 
-            {/* 弯月：缺口朝左（蛾眉月，傍晚可见的那种朝向） */}
-            <div className="bg-moon" />
+            {/*
+             * 弯月：**缺口朝左**（蛾眉月，傍晚可见的那种朝向）。
+             *
+             * 为什么用 SVG 而不是 CSS 的 inset box-shadow：
+             * box-shadow 只能给一个纯色月牙，没有明暗过渡、没有光晕，
+             * 看起来就像一张纸片贴在屏幕上。
+             *
+             * 这里三层叠起来：
+             *   ① 月晕：径向渐变，从 30% 透明度柔到全透明
+             *   ② 月牙本体：`--moon-color` 填充，用 mask 从整圆里挖掉偏左的圆
+             *   ③ 球面明暗：线性渐变叠在月牙上（左上亮、右下暗），让它看起来是"球"不是"片"
+             *
+             * 全是静态渐变，绘制一次即缓存，不参与逐帧计算。
+             */}
+            <div className="bg-moon">
+                <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                    <defs>
+                        <radialGradient id="bg-moon-halo">
+                            <stop offset="0%" stopColor="var(--moon-color)" stopOpacity="0.3" />
+                            <stop offset="34%" stopColor="var(--moon-color)" stopOpacity="0.13" />
+                            <stop offset="62%" stopColor="var(--moon-color)" stopOpacity="0.045" />
+                            <stop offset="100%" stopColor="var(--moon-color)" stopOpacity="0" />
+                        </radialGradient>
+                        <linearGradient id="bg-moon-sheen" x1="0.15" y1="0.08" x2="0.9" y2="0.95">
+                            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.5" />
+                            <stop offset="42%" stopColor="#ffffff" stopOpacity="0.1" />
+                            <stop offset="100%" stopColor="#000000" stopOpacity="0.24" />
+                        </linearGradient>
+                        <mask id="bg-moon-crescent">
+                            <circle cx="50" cy="50" r="30" fill="#ffffff" />
+                            <circle cx="34" cy="50" r="29.4" fill="#000000" />
+                        </mask>
+                    </defs>
+                    <circle cx="50" cy="50" r="50" fill="url(#bg-moon-halo)" />
+                    <circle cx="50" cy="50" r="30" fill="var(--moon-color)" mask="url(#bg-moon-crescent)" />
+                    <circle cx="50" cy="50" r="30" fill="url(#bg-moon-sheen)" mask="url(#bg-moon-crescent)" />
+                </svg>
+            </div>
         </div>
     );
 }
