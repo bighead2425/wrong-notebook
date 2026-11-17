@@ -1671,6 +1671,7 @@ html[data-bg="on"] .bg-scene {
 .bg-tree,
 .bg-grain,
 .bg-stars-wrap,
+.bg-hero-stars,
 .bg-moon {
   display: none;
 }
@@ -1683,6 +1684,7 @@ html[data-bg="on"]:not(.dark) .bg-grain {
 
 /* 深色：星点 + 弯月 */
 html[data-bg="on"].dark .bg-stars-wrap,
+html[data-bg="on"].dark .bg-hero-stars,
 html[data-bg="on"].dark .bg-moon {
   display: block;
 }
@@ -1825,6 +1827,30 @@ html[data-bg="on"].dark .bg-moon {
   45% {
     opacity: 0.28;
   }
+}
+
+/* —— 主角星 ——
+ *
+ * 背景那两层 `radial-gradient` 是"星尘"：均匀、微小、看不出个体。
+ * 真正让夜空有层次的是这十几颗**各有各的样子**的星：
+ *
+ *   · 大小 3~9px（不是同一个尺寸）
+ *   · 颜色四种：银白 / 灰白 / 暗黄 / 微蓝
+ *   · 形状两种：圆点、45° 旋转的小菱形
+ *   · **只有一半带光晕** —— 全都发光就变成了萤火虫
+ *
+ * 这些是静态元素，只让父层 `opacity` 呼吸，不参与逐帧计算。
+ */
+.bg-hero-stars {
+  position: absolute;
+  inset: 0;
+  opacity: var(--star-bright);
+}
+
+.hero-star {
+  position: absolute;
+  display: block;
+  will-change: opacity;
 }
 
 /* —— 弯月 ——
