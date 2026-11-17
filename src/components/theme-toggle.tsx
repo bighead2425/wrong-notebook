@@ -5,13 +5,21 @@ import { Check, Moon, Sun } from "lucide-react";
 import {
     Dialog,
     DialogContent,
-    DialogDescription,
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api-client";
 import { Switch } from "@/components/ui/switch";
-import { BG_DURATIONS, BG_SCALES } from "@/components/background-scene";
+import {
+    GRAIN_OPACITIES,
+    MOON_COLORS,
+    STAR_BRIGHTS,
+    STAR_SCALES,
+    STAR_SPEEDS,
+    TREE_OPACITIES,
+    TREE_SCALES,
+    TREE_SPEEDS,
+} from "@/components/background-scene";
 import {
     PAPER_THEMES,
     applyAppearance,
@@ -58,11 +66,24 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
     const [open, setOpen] = useState(false);
     const [mode, setMode] = useState<ThemeMode>("light");
     const [paper, setPaper] = useState<PaperTheme>("ivory");
-    /** 背景效果（纸纹 / 阳光 / 星点）。默认关 —— 见 `paper-theme.tsx` 的说明。 */
+    /** 背景效果（树影 / 纸纹 / 星点 / 弯月）。默认关 —— 见 `paper-theme.tsx` 的说明。 */
     const [effects, setEffects] = useState(false);
-    /** 两根滑条的档位索引（0..4）。默认最慢、最小。 */
-    const [speedIdx, setSpeedIdx] = useState(BG_DURATIONS.length - 1);
-    const [sizeIdx, setSizeIdx] = useState(0);
+    /**
+     * 八根滑条的档位索引（每根 0..4），按模式分成两套：
+     *   浅色 → treeScale / treeOpacity / treeSpeed / grain
+     *   深色 → starScale / starBright / starSpeed / moon
+     * 两套都存着，切回另一种模式时还是原来的值。
+     */
+    const [fx, setFx] = useState({
+        treeScale: 2,
+        treeOpacity: 2,
+        treeSpeed: 2,
+        grain: 2,
+        starScale: 0,
+        starBright: 2,
+        starSpeed: 4,
+        moon: 0,
+    });
     /** 滑块是连续拖动的，保存要防抖，否则一次拖动会发十几个请求 */
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [mounted, setMounted] = useState(false);
@@ -94,14 +115,22 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
         setMode(document.documentElement.classList.contains("dark") ? "dark" : "light");
         setPaper((document.documentElement.dataset.paper as PaperTheme) || "ivory");
         setEffects(document.documentElement.dataset.bg === "on");
-        /* 从 CSS 变量反推档位：`--bg-dur` 是 "20s"，parseInt 正好得 20 */
+        /* 从 CSS 变量反推档位（`--tree-dur` 是 "20s"，parseFloat 正好得 20） */
         const cs = getComputedStyle(document.documentElement);
-        const dur = parseInt(cs.getPropertyValue("--bg-dur"), 10);
-        const sc = parseFloat(cs.getPropertyValue("--bg-scale"));
-        const di = BG_DURATIONS.indexOf((Number.isFinite(dur) ? dur : 20) as (typeof BG_DURATIONS)[number]);
-        const si = BG_SCALES.indexOf((Number.isFinite(sc) ? sc : 1) as (typeof BG_SCALES)[number]);
-        setSpeedIdx(di >= 0 ? di : BG_DURATIONS.length - 1);
-        setSizeIdx(si >= 0 ? si : 0);
+        const num = (k: string, def: number) => {
+            const v = parseFloat(cs.getPropertyValue(k));
+            return Number.isFinite(v) ? v : def;
+        };
+        setFx({
+            treeScale: nearest(TREE_SCALES, num("--tree-scale", 1)),
+            treeOpacity: nearest(TREE_OPACITIES, num("--tree-opacity", 0.11)),
+            treeSpeed: nearest(TREE_SPEEDS, num("--tree-dur", 20)),
+            grain: nearest(GRAIN_OPACITIES, num("--grain-opacity", 0.07)),
+            starScale: nearest(STAR_SCALES, num("--star-scale", 1)),
+            starBright: nearest(STAR_BRIGHTS, num("--star-bright", 0.9)),
+            starSpeed: nearest(STAR_SPEEDS, num("--star-dur", 20)),
+            moon: 0,
+        });
         setMounted(true);
     }, []);
 
@@ -113,8 +142,14 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
                 mode: next.mode ?? mode,
                 /* 注意用 `??` 而不是 `||`：`false` 是合法值（关掉效果），不能被当成空 */
                 effects: next.effects ?? effects,
-                effectDuration: next.effectDuration ?? BG_DURATIONS[speedIdx],
-                effectScale: next.effectScale ?? BG_SCALES[sizeIdx],
+                treeScale: next.treeScale ?? TREE_SCALES[fx.treeScale],
+                treeOpacity: next.treeOpacity ?? TREE_OPACITIES[fx.treeOpacity],
+                treeSpeed: next.treeSpeed ?? TREE_SPEEDS[fx.treeSpeed],
+                grainOpacity: next.grainOpacity ?? GRAIN_OPACITIES[fx.grain],
+                starScale: next.starScale ?? STAR_SCALES[fx.starScale],
+                starBright: next.starBright ?? STAR_BRIGHTS[fx.starBright],
+                starSpeed: next.starSpeed ?? STAR_SPEEDS[fx.starSpeed],
+                moonTint: next.moonTint ?? fx.moon,
             };
             setPaper(merged.paper as PaperTheme);
             setMode(merged.mode as ThemeMode);
@@ -142,7 +177,7 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
             if (debounce) saveTimerRef.current = setTimeout(send, 450);
             else send();
         },
-        [paper, mode, effects, speedIdx, sizeIdx]
+        [paper, mode, effects, fx]
     );
 
     /**
@@ -247,12 +282,9 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
             </button>
 
             <Dialog open={open} onOpenChange={setOpen}>
-                <DialogContent className="max-w-sm">
+                <DialogContent className="max-h-[85vh] max-w-sm overflow-y-auto" aria-describedby={undefined}>
                     <DialogHeader>
                         <DialogTitle>界面主题</DialogTitle>
-                        <DialogDescription>
-                            点选立即生效，不用保存。
-                        </DialogDescription>
                     </DialogHeader>
 
                     {/* —— 纸色（四种）—— */}
@@ -354,65 +386,116 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
                         />
                     </div>
 
-                    {/* —— 两个可调项（只在开着的时候出现）—— */}
+                    {/*
+                     * 四根滑条，**只显示当前模式那一套**：
+                     * 浅色下星星无效、深色下树影无效，八根一起摆只会让面板又长又分不清。
+                     * 两套参数都存着，切回来还在。
+                     */}
                     {effects && (
                         <div className="space-y-3 rounded-lg bg-muted/50 px-3 py-2.5">
-                            <div className="space-y-1">
-                                <div className="flex items-center justify-between">
-                                    <span className="text-xs font-medium">呼吸节奏</span>
-                                    <span className="text-xs tabular-nums text-muted-foreground">
-                                        {BG_DURATIONS[speedIdx]} 秒
-                                    </span>
-                                </div>
-                                <input
-                                    type="range"
-                                    min={0}
-                                    max={BG_DURATIONS.length - 1}
-                                    step={1}
-                                    value={speedIdx}
-                                    onChange={(e) => {
-                                        const i = Number(e.target.value);
-                                        setSpeedIdx(i);
-                                        /* 拖动中不发请求，停下 450ms 再存 */
-                                        applyAndSave({ effectDuration: BG_DURATIONS[i] }, true);
-                                    }}
-                                    className="w-full cursor-pointer"
-                                    style={{ accentColor: "var(--primary)" }}
-                                    aria-label="呼吸节奏：越快越靠左"
-                                />
-                                <div className="flex justify-between text-xs text-subtle-foreground">
-                                    <span>快</span>
-                                    <span>慢</span>
-                                </div>
-                            </div>
-
-                            <div className="space-y-1">
-                                <div className="flex items-center justify-between">
-                                    <span className="text-xs font-medium">大小</span>
-                                    <span className="text-xs tabular-nums text-muted-foreground">
-                                        {BG_SCALES[sizeIdx]}×
-                                    </span>
-                                </div>
-                                <input
-                                    type="range"
-                                    min={0}
-                                    max={BG_SCALES.length - 1}
-                                    step={1}
-                                    value={sizeIdx}
-                                    onChange={(e) => {
-                                        const i = Number(e.target.value);
-                                        setSizeIdx(i);
-                                        applyAndSave({ effectScale: BG_SCALES[i] }, true);
-                                    }}
-                                    className="w-full cursor-pointer"
-                                    style={{ accentColor: "var(--primary)" }}
-                                    aria-label="光与星的大小"
-                                />
-                                <div className="flex justify-between text-xs text-subtle-foreground">
-                                    <span>小</span>
-                                    <span>大</span>
-                                </div>
-                            </div>
+                            {!isDark ? (
+                                <>
+                                    <SliderRow
+                                        label="树影大小"
+                                        valueText={`${TREE_SCALES[fx.treeScale]}×`}
+                                        value={fx.treeScale}
+                                        max={TREE_SCALES.length - 1}
+                                        left="小"
+                                        right="大"
+                                        onChange={(i) => {
+                                            setFx((p) => ({ ...p, treeScale: i }));
+                                            applyAndSave({ treeScale: TREE_SCALES[i] }, true);
+                                        }}
+                                    />
+                                    <SliderRow
+                                        label="树影浓淡"
+                                        valueText={`${Math.round(TREE_OPACITIES[fx.treeOpacity] * 100)}%`}
+                                        value={fx.treeOpacity}
+                                        max={TREE_OPACITIES.length - 1}
+                                        left="淡"
+                                        right="浓"
+                                        onChange={(i) => {
+                                            setFx((p) => ({ ...p, treeOpacity: i }));
+                                            applyAndSave({ treeOpacity: TREE_OPACITIES[i] }, true);
+                                        }}
+                                    />
+                                    <SliderRow
+                                        label="摆动快慢"
+                                        valueText={`${TREE_SPEEDS[fx.treeSpeed]} 秒`}
+                                        value={fx.treeSpeed}
+                                        max={TREE_SPEEDS.length - 1}
+                                        left="快"
+                                        right="慢"
+                                        onChange={(i) => {
+                                            setFx((p) => ({ ...p, treeSpeed: i }));
+                                            applyAndSave({ treeSpeed: TREE_SPEEDS[i] }, true);
+                                        }}
+                                    />
+                                    <SliderRow
+                                        label="纸纹深浅"
+                                        valueText={`${Math.round(GRAIN_OPACITIES[fx.grain] * 100)}%`}
+                                        value={fx.grain}
+                                        max={GRAIN_OPACITIES.length - 1}
+                                        left="浅"
+                                        right="深"
+                                        onChange={(i) => {
+                                            setFx((p) => ({ ...p, grain: i }));
+                                            applyAndSave({ grainOpacity: GRAIN_OPACITIES[i] }, true);
+                                        }}
+                                    />
+                                </>
+                            ) : (
+                                <>
+                                    <SliderRow
+                                        label="星星大小"
+                                        valueText={`${STAR_SCALES[fx.starScale]}×`}
+                                        value={fx.starScale}
+                                        max={STAR_SCALES.length - 1}
+                                        left="小"
+                                        right="大"
+                                        onChange={(i) => {
+                                            setFx((p) => ({ ...p, starScale: i }));
+                                            applyAndSave({ starScale: STAR_SCALES[i] }, true);
+                                        }}
+                                    />
+                                    <SliderRow
+                                        label="星光亮度"
+                                        valueText={`${STAR_BRIGHTS[fx.starBright]}×`}
+                                        value={fx.starBright}
+                                        max={STAR_BRIGHTS.length - 1}
+                                        left="暗"
+                                        right="亮"
+                                        onChange={(i) => {
+                                            setFx((p) => ({ ...p, starBright: i }));
+                                            applyAndSave({ starBright: STAR_BRIGHTS[i] }, true);
+                                        }}
+                                    />
+                                    <SliderRow
+                                        label="呼吸快慢"
+                                        valueText={`${STAR_SPEEDS[fx.starSpeed]} 秒`}
+                                        value={fx.starSpeed}
+                                        max={STAR_SPEEDS.length - 1}
+                                        left="快"
+                                        right="慢"
+                                        onChange={(i) => {
+                                            setFx((p) => ({ ...p, starSpeed: i }));
+                                            applyAndSave({ starSpeed: STAR_SPEEDS[i] }, true);
+                                        }}
+                                    />
+                                    <SliderRow
+                                        label="月亮颜色"
+                                        valueText={MOON_COLORS[fx.moon].zh}
+                                        value={fx.moon}
+                                        max={MOON_COLORS.length - 1}
+                                        left="白"
+                                        right="红"
+                                        onChange={(i) => {
+                                            setFx((p) => ({ ...p, moon: i }));
+                                            applyAndSave({ moonTint: i }, true);
+                                        }}
+                                    />
+                                </>
+                            )}
                         </div>
                     )}
 
@@ -422,12 +505,70 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
                             {error || "保存中…"}
                         </p>
                     )}
-
-                    <p className="text-xs text-muted-foreground">
-                        长按右上角的圆圈随时打开这里。
-                    </p>
                 </DialogContent>
             </Dialog>
         </>
+    );
+}
+
+/** 找最接近的档位索引（CSS 变量是连续值，要落回五档之一） */
+function nearest(values: readonly number[], v: number) {
+    let best = 0;
+    let diff = Infinity;
+    values.forEach((x, i) => {
+        const d = Math.abs(x - v);
+        if (d < diff) {
+            diff = d;
+            best = i;
+        }
+    });
+    return best;
+}
+
+/**
+ * 一行滑条。
+ *
+ * 「快/慢」「小/大」这些字**放在滑条两端**，不另起一行 ——
+ * 单独一行占地方，而且和滑条离得远，看不出谁修饰谁。
+ */
+function SliderRow({
+    label,
+    valueText,
+    value,
+    max,
+    left,
+    right,
+    onChange,
+}: {
+    label: string;
+    valueText: string;
+    value: number;
+    max: number;
+    left: string;
+    right: string;
+    onChange: (i: number) => void;
+}) {
+    return (
+        <div className="space-y-1">
+            <div className="flex items-center justify-between">
+                <span className="text-xs font-medium">{label}</span>
+                <span className="text-xs tabular-nums text-muted-foreground">{valueText}</span>
+            </div>
+            <div className="flex items-center gap-2">
+                <span className="shrink-0 text-xs text-subtle-foreground">{left}</span>
+                <input
+                    type="range"
+                    min={0}
+                    max={max}
+                    step={1}
+                    value={value}
+                    onChange={(e) => onChange(Number(e.target.value))}
+                    className="h-1 flex-1 cursor-pointer"
+                    style={{ accentColor: "var(--primary)" }}
+                    aria-label={label}
+                />
+                <span className="shrink-0 text-xs text-subtle-foreground">{right}</span>
+            </div>
+        </div>
     );
 }

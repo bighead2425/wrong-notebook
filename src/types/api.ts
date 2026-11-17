@@ -236,8 +236,16 @@ export interface AppConfig {
         paper?: 'ivory' | 'white' | 'cool' | 'cream';
         mode?: 'light' | 'dark';
         effects?: boolean;
-        effectDuration?: number;
-        effectScale?: number;
+        /* 浅色：树影 3 项 + 纸纹 1 项 */
+        treeScale?: number;
+        treeOpacity?: number;
+        treeSpeed?: number;
+        grainOpacity?: number;
+        /* 深色：星点 3 项 + 月亮 1 项（月亮存档位，不存色值） */
+        starScale?: number;
+        starBright?: number;
+        starSpeed?: number;
+        moonTint?: number;
     };
     openai?: {
         instances?: OpenAIInstance[];

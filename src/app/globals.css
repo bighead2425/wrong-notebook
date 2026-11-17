@@ -1615,30 +1615,42 @@
 }
 
 /* ============================================================
- * 【2026-11-17 空空】**背景效果：纸纹 / 阳光呼吸 / 星点呼吸**
+ * 【2026-11-17 空空】**背景效果：浅色树影 + 纸纹，深色星点 + 弯月**
  *
  * ## 一条铁律：只动 `opacity` 和 `transform`
  *
- * 这两个属性走**合成层**——浏览器先把这一层画成一张图，之后只是把图叠上去、
- * 调透明度、缩放。GPU 做的是"贴图"，**不是每帧重算像素**，功耗接近静态页面。
+ * 这两个属性走**合成层**——先把这一层画成一张图，之后只是贴上去、调透明度、
+ * 旋转。GPU 做的是"贴图"而不是每帧重算像素，功耗接近静态页面。
  *
- * 真正贵的是 `filter` / `backdrop-filter`（每帧算模糊）和 `background-position`
- * （每帧重绘）。想加新效果先过这一关：**能不能只用透明度和位移表达？**
+ * 真正贵的是 `filter` / `backdrop-filter`（每帧算模糊）、`background-position`
+ * （每帧重绘）。**树影的柔边不用模糊做**，靠"形状本身画得细 + 整体透明度低"。
  *
- * ## 两个可调项（长按面板里的两根滑条）
+ * ## 亮环境用暗元素，暗环境用亮元素
  *
- * | 变量 | 含义 | 取值 |
+ * 浅色底上再加亮的东西等于白做（对比度上不去）。所以：
+ *   · 浅色 → **树影**（比背景暗）
+ *   · 深色 → **星点**（比背景亮）
+ *
+ * ## 变量（全部由长按面板的四根滑条控制）
+ *
+ * | 变量 | 浅色 | 深色 |
  * |---|---|---|
- * | `--bg-dur` | 一次呼吸的时长 | 4s / 8s / 12s / 16s / 20s |
- * | `--bg-scale` | 光与星的大小 | 1 / 1.5 / 2 / 3 / 4 |
- *
- * 两层对同一个 `--bg-scale` 的响应不同：星星 1→4 倍，暖光压缩到 1→2.5 倍
- * （暖光本来就占大半屏，真放大 4 倍会直接糊成一片橙色）。
+ * | `--bg-dur` | 摆动周期 | 呼吸周期 |
+ * | `--tree-scale` / `--tree-opacity` | 树影大小 / 浓淡 | — |
+ * | `--grain-opacity` | 纸纹深浅 | — |
+ * | `--star-scale` / `--star-bright` | — | 星星半径 / 亮度 |
+ * | `--moon-color` | — | 月亮颜色（皎白→血月） |
  * ============================================================ */
 
 :root {
-  --bg-dur: 20s;
-  --bg-scale: 1;
+  --tree-dur: 20s;
+  --star-dur: 20s;
+  --tree-scale: 1;
+  --tree-opacity: 0.1;
+  --grain-opacity: 0.06;
+  --star-scale: 1;
+  --star-bright: 1;
+  --moon-color: oklch(0.96 0.012 95);
 }
 
 .bg-scene {
@@ -1649,7 +1661,6 @@
   overflow: hidden;
   /* 底线：不写这个，背景会吃掉所有点击 */
   pointer-events: none;
-  /* 背景层不该被读屏软件念出来 */
   user-select: none;
 }
 
@@ -1657,185 +1668,198 @@ html[data-bg="on"] .bg-scene {
   display: block;
 }
 
-.bg-sun,
+.bg-tree,
 .bg-grain,
-.bg-stars {
+.bg-stars-wrap,
+.bg-moon {
   display: none;
 }
 
-/* 浅色：阳光 + 纸纹 */
-html[data-bg="on"]:not(.dark) .bg-sun,
+/* 浅色：树影 + 纸纹 */
+html[data-bg="on"]:not(.dark) .bg-tree,
 html[data-bg="on"]:not(.dark) .bg-grain {
   display: block;
 }
 
-/* 深色：星点（纸纹在深色下看不见，不加） */
-html[data-bg="on"].dark .bg-stars {
+/* 深色：星点 + 弯月 */
+html[data-bg="on"].dark .bg-stars-wrap,
+html[data-bg="on"].dark .bg-moon {
   display: block;
 }
 
 /* —— 纸纹：一张静态噪点，画一次，永不重绘 ——
  *
- * 【2026-11-17 修正】**从 2.5% 提到 5.5%。**
- * 2.5% 在暖象牙上是 ±1 个色阶，肉眼完全看不出来 —— 实测反馈"看不到"。
- * 5.5% 才是"摸得出纸的颗粒"但不脏的量；再往上就会像屏幕上落了灰。
+ * 不透明度由滑条控制（默认 6%）。低于 3% 基本看不出，高于 12% 会像落了灰。
  */
 .bg-grain {
   position: absolute;
   inset: 0;
-  opacity: 0.055;
+  opacity: var(--grain-opacity);
   background-repeat: repeat;
   background-size: 180px 180px;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='180' height='180' filter='url(%23n)'/></svg>");
 }
 
-/* —— 阳光呼吸 ——
+/* —— 树影 ——
  *
- * 【2026-11-17 修正】**原来几乎看不见，原因算得出来。**
+ * 两组都在**左边**（不做左右对称，对称反而假）。
+ * 摆动以根部为轴：`transform-origin: 0% 100%` 对应 SVG 左下角的树干起点。
  *
- * 旧值：颜色 `oklch(0.93 ...)` 叠在背景 `oklch(0.975 ...)` 上，只差 **0.045 明度**；
- * 再乘渐变自身 alpha 0.30、再乘动画 opacity 0.45 ——
- * 最终明度差 = 0.045 × 0.30 × 0.45 ≈ **0.006（0.6%）**。这一点差异人眼分辨不出来。
- *
- * 现在：颜色压到 0.90（更暖更亮）、中心 alpha 提到 0.55、opacity 0.5~1。
- * 有效差约 **3%~4%** —— 能看到"那块暖一点"，但不至于变成一块黄。
- *
- * **渐变的柔边本身就是光晕**，不需要额外加模糊（那才是逐帧计算的）。
+ * 幅度只有 ±1° —— 大了会变成"晃"，小了会像静止。
  */
-.bg-sun {
+.bg-tree {
   position: absolute;
-  top: -32vmax;
-  right: -26vmax;
-  width: 88vmax;
-  height: 88vmax;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle at 50% 50%,
-    oklch(0.90 0.088 72 / 55%) 0%,
-    oklch(0.93 0.062 78 / 30%) 34%,
-    oklch(0.96 0.03 84 / 10%) 54%,
-    transparent 74%
-  );
-  /* 动画只动 opacity —— transform 要留给缩放，两者不能抢同一个属性 */
-  animation: bg-sun-breathe var(--bg-dur) ease-in-out infinite;
-  transform: scale(calc(1 + (var(--bg-scale) - 1) * 0.5));
-  transform-origin: 50% 50%;
-  will-change: opacity;
+  inset: 0;
 }
 
-@keyframes bg-sun-breathe {
+.tree {
+  position: absolute;
+  opacity: var(--tree-opacity);
+  transform-origin: 0% 100%;
+  animation: bg-tree-sway var(--tree-dur) ease-in-out infinite;
+  will-change: transform;
+}
+
+.tree-a {
+  left: -8vw;
+  top: -6vh;
+  width: calc(62vw * var(--tree-scale));
+  aspect-ratio: 3 / 4;
+}
+
+.tree-b {
+  left: -14vw;
+  bottom: -14vh;
+  width: calc(46vw * var(--tree-scale));
+  aspect-ratio: 1 / 1;
+  /* 第二组慢 45%，两组不会同步，看起来才像"风一直在吹" */
+  animation-duration: calc(var(--tree-dur) * 1.45);
+  animation-direction: reverse;
+}
+
+@keyframes bg-tree-sway {
   0%,
   100% {
-    opacity: 0.5;
+    transform: rotate(-0.9deg);
   }
   50% {
-    opacity: 1;
+    transform: rotate(1.1deg);
   }
 }
 
 /* —— 星点呼吸 ——
  *
- * 两层星图，各自一套周期（基准 ×1.05 / ×1.35），错开之后整体看起来
- * 是"这一片亮一点、那一片暗一点"，而不是整屏一起闪。
+ * **大小和密度是分开的**：`--star-scale` 只改每颗星的半径，间距不动。
+ * （之前用 `transform: scale()` 放大整层，间距跟着放大，
+ *   同样的屏幕里星星数量就掉到几分之一 —— 调到最大只剩三四颗。）
  *
- * 【2026-11-17 修正】**加了光晕，而且不是即时演算。**
- * 每个点从"1.2px 实心"改成"2.8px 柔边"：中心 95%、35% 处 40%、边缘透明。
- * 这是 `radial-gradient` 的静态渐变，随背景图一起**只绘制一次**，
- * 和 `filter: blur()`（每帧重算模糊）是两回事。
- *
- * **仍然不做"闪烁"**：闪烁是最强的注意力信号，孩子会盯着等下一次亮。
- * 这里只有慢速明暗漂移，最高透明度 0.55。
+ * `--star-bright` 挂在父层上做整体亮度，子层各自做呼吸，两者相乘。
  */
+.bg-stars-wrap {
+  position: absolute;
+  inset: 0;
+  opacity: var(--star-bright);
+}
+
 .bg-stars {
   position: absolute;
-  inset: -30%;
+  inset: 0;
   background-repeat: repeat;
-  /* 放大后边缘会露白，所以 inset 先扩出去 30% */
-  transform: scale(var(--bg-scale));
-  transform-origin: 50% 50%;
   will-change: opacity;
 }
 
 .bg-stars-a {
-  background-size: 620px 620px;
+  background-size: 520px 520px;
   background-image:
-    radial-gradient(2.8px 2.8px at 8% 14%, oklch(0.99 0.01 85 / 95%) 0%, oklch(0.99 0.01 85 / 38%) 36%, transparent 100%),
-    radial-gradient(2.4px 2.4px at 23% 47%, oklch(0.97 0.01 85 / 75%) 0%, oklch(0.97 0.01 85 / 28%) 36%, transparent 100%),
-    radial-gradient(3.2px 3.2px at 37% 21%, oklch(0.99 0.01 85 / 90%) 0%, oklch(0.99 0.01 85 / 34%) 36%, transparent 100%),
-    radial-gradient(2.2px 2.2px at 46% 68%, oklch(0.96 0.01 85 / 62%) 0%, oklch(0.96 0.01 85 / 24%) 36%, transparent 100%),
-    radial-gradient(2.8px 2.8px at 58% 33%, oklch(0.99 0.01 85 / 88%) 0%, oklch(0.99 0.01 85 / 34%) 36%, transparent 100%),
-    radial-gradient(2.2px 2.2px at 67% 79%, oklch(0.96 0.01 85 / 58%) 0%, oklch(0.96 0.01 85 / 22%) 36%, transparent 100%),
-    radial-gradient(3px 3px at 74% 12%, oklch(0.98 0.01 85 / 80%) 0%, oklch(0.98 0.01 85 / 30%) 36%, transparent 100%),
-    radial-gradient(2.4px 2.4px at 83% 56%, oklch(0.97 0.01 85 / 70%) 0%, oklch(0.97 0.01 85 / 26%) 36%, transparent 100%),
-    radial-gradient(3.2px 3.2px at 91% 27%, oklch(0.99 0.01 85 / 85%) 0%, oklch(0.99 0.01 85 / 32%) 36%, transparent 100%),
-    radial-gradient(2.2px 2.2px at 15% 88%, oklch(0.96 0.01 85 / 55%) 0%, oklch(0.96 0.01 85 / 20%) 36%, transparent 100%),
-    radial-gradient(2.8px 2.8px at 52% 91%, oklch(0.98 0.01 85 / 76%) 0%, oklch(0.98 0.01 85 / 28%) 36%, transparent 100%),
-    radial-gradient(2.2px 2.2px at 96% 72%, oklch(0.96 0.01 85 / 58%) 0%, oklch(0.96 0.01 85 / 22%) 36%, transparent 100%);
-  animation: bg-stars-breathe-a calc(var(--bg-dur) * 1.05) ease-in-out infinite;
+    radial-gradient(calc(2.6px * var(--star-scale)) calc(2.6px * var(--star-scale)) at 8% 14%, oklch(0.99 0.01 85 / 95%) 0%, oklch(0.99 0.01 85 / 38%) 36%, transparent 100%),
+    radial-gradient(calc(2.2px * var(--star-scale)) calc(2.2px * var(--star-scale)) at 19% 41%, oklch(0.97 0.01 85 / 70%) 0%, oklch(0.97 0.01 85 / 26%) 36%, transparent 100%),
+    radial-gradient(calc(2.9px * var(--star-scale)) calc(2.9px * var(--star-scale)) at 31% 19%, oklch(0.99 0.01 85 / 88%) 0%, oklch(0.99 0.01 85 / 34%) 36%, transparent 100%),
+    radial-gradient(calc(2px * var(--star-scale)) calc(2px * var(--star-scale)) at 42% 63%, oklch(0.96 0.01 85 / 58%) 0%, oklch(0.96 0.01 85 / 22%) 36%, transparent 100%),
+    radial-gradient(calc(2.5px * var(--star-scale)) calc(2.5px * var(--star-scale)) at 54% 30%, oklch(0.99 0.01 85 / 82%) 0%, oklch(0.99 0.01 85 / 32%) 36%, transparent 100%),
+    radial-gradient(calc(2px * var(--star-scale)) calc(2px * var(--star-scale)) at 63% 76%, oklch(0.96 0.01 85 / 55%) 0%, oklch(0.96 0.01 85 / 20%) 36%, transparent 100%),
+    radial-gradient(calc(2.8px * var(--star-scale)) calc(2.8px * var(--star-scale)) at 71% 12%, oklch(0.98 0.01 85 / 78%) 0%, oklch(0.98 0.01 85 / 30%) 36%, transparent 100%),
+    radial-gradient(calc(2.2px * var(--star-scale)) calc(2.2px * var(--star-scale)) at 79% 52%, oklch(0.97 0.01 85 / 66%) 0%, oklch(0.97 0.01 85 / 24%) 36%, transparent 100%),
+    radial-gradient(calc(2.9px * var(--star-scale)) calc(2.9px * var(--star-scale)) at 88% 25%, oklch(0.99 0.01 85 / 84%) 0%, oklch(0.99 0.01 85 / 32%) 36%, transparent 100%),
+    radial-gradient(calc(2px * var(--star-scale)) calc(2px * var(--star-scale)) at 12% 84%, oklch(0.96 0.01 85 / 52%) 0%, oklch(0.96 0.01 85 / 20%) 36%, transparent 100%),
+    radial-gradient(calc(2.5px * var(--star-scale)) calc(2.5px * var(--star-scale)) at 47% 90%, oklch(0.98 0.01 85 / 72%) 0%, oklch(0.98 0.01 85 / 26%) 36%, transparent 100%),
+    radial-gradient(calc(2px * var(--star-scale)) calc(2px * var(--star-scale)) at 94% 70%, oklch(0.96 0.01 85 / 56%) 0%, oklch(0.96 0.01 85 / 20%) 36%, transparent 100%),
+    radial-gradient(calc(2.4px * var(--star-scale)) calc(2.4px * var(--star-scale)) at 26% 56%, oklch(0.97 0.01 85 / 62%) 0%, oklch(0.97 0.01 85 / 22%) 36%, transparent 100%),
+    radial-gradient(calc(2.1px * var(--star-scale)) calc(2.1px * var(--star-scale)) at 58% 47%, oklch(0.96 0.01 85 / 50%) 0%, oklch(0.96 0.01 85 / 18%) 36%, transparent 100%);
+  animation: bg-stars-breathe-a calc(var(--star-dur) * 1.05) ease-in-out infinite;
 }
 
 .bg-stars-b {
-  background-size: 480px 480px;
+  background-size: 400px 400px;
   background-image:
-    radial-gradient(2.4px 2.4px at 11% 31%, oklch(0.97 0.01 85 / 65%) 0%, oklch(0.97 0.01 85 / 24%) 36%, transparent 100%),
-    radial-gradient(3px 3px at 28% 74%, oklch(0.99 0.01 85 / 80%) 0%, oklch(0.99 0.01 85 / 30%) 36%, transparent 100%),
-    radial-gradient(2.2px 2.2px at 41% 9%, oklch(0.96 0.01 85 / 52%) 0%, oklch(0.96 0.01 85 / 20%) 36%, transparent 100%),
-    radial-gradient(2.8px 2.8px at 63% 52%, oklch(0.98 0.01 85 / 72%) 0%, oklch(0.98 0.01 85 / 28%) 36%, transparent 100%),
-    radial-gradient(2.2px 2.2px at 71% 86%, oklch(0.96 0.01 85 / 48%) 0%, oklch(0.96 0.01 85 / 18%) 36%, transparent 100%),
-    radial-gradient(3.2px 3.2px at 87% 64%, oklch(0.99 0.01 85 / 70%) 0%, oklch(0.99 0.01 85 / 26%) 36%, transparent 100%),
-    radial-gradient(2.2px 2.2px at 94% 18%, oklch(0.97 0.01 85 / 58%) 0%, oklch(0.97 0.01 85 / 22%) 36%, transparent 100%),
-    radial-gradient(2.6px 2.6px at 34% 40%, oklch(0.98 0.01 85 / 64%) 0%, oklch(0.98 0.01 85 / 24%) 36%, transparent 100%);
-  animation: bg-stars-breathe-b calc(var(--bg-dur) * 1.35) ease-in-out infinite;
+    radial-gradient(calc(2.2px * var(--star-scale)) calc(2.2px * var(--star-scale)) at 14% 29%, oklch(0.97 0.01 85 / 60%) 0%, oklch(0.97 0.01 85 / 22%) 36%, transparent 100%),
+    radial-gradient(calc(2.6px * var(--star-scale)) calc(2.6px * var(--star-scale)) at 29% 67%, oklch(0.99 0.01 85 / 76%) 0%, oklch(0.99 0.01 85 / 28%) 36%, transparent 100%),
+    radial-gradient(calc(2px * var(--star-scale)) calc(2px * var(--star-scale)) at 44% 11%, oklch(0.96 0.01 85 / 48%) 0%, oklch(0.96 0.01 85 / 18%) 36%, transparent 100%),
+    radial-gradient(calc(2.4px * var(--star-scale)) calc(2.4px * var(--star-scale)) at 61% 44%, oklch(0.98 0.01 85 / 68%) 0%, oklch(0.98 0.01 85 / 24%) 36%, transparent 100%),
+    radial-gradient(calc(2px * var(--star-scale)) calc(2px * var(--star-scale)) at 73% 81%, oklch(0.96 0.01 85 / 44%) 0%, oklch(0.96 0.01 85 / 16%) 36%, transparent 100%),
+    radial-gradient(calc(2.7px * var(--star-scale)) calc(2.7px * var(--star-scale)) at 85% 58%, oklch(0.99 0.01 85 / 66%) 0%, oklch(0.99 0.01 85 / 24%) 36%, transparent 100%),
+    radial-gradient(calc(2px * var(--star-scale)) calc(2px * var(--star-scale)) at 92% 16%, oklch(0.97 0.01 85 / 54%) 0%, oklch(0.97 0.01 85 / 20%) 36%, transparent 100%),
+    radial-gradient(calc(2.3px * var(--star-scale)) calc(2.3px * var(--star-scale)) at 35% 88%, oklch(0.98 0.01 85 / 58%) 0%, oklch(0.98 0.01 85 / 22%) 36%, transparent 100%),
+    radial-gradient(calc(2.5px * var(--star-scale)) calc(2.5px * var(--star-scale)) at 8% 62%, oklch(0.97 0.01 85 / 62%) 0%, oklch(0.97 0.01 85 / 22%) 36%, transparent 100%),
+    radial-gradient(calc(2px * var(--star-scale)) calc(2px * var(--star-scale)) at 52% 24%, oklch(0.96 0.01 85 / 46%) 0%, oklch(0.96 0.01 85 / 16%) 36%, transparent 100%);
+  animation: bg-stars-breathe-b calc(var(--star-dur) * 1.35) ease-in-out infinite;
 }
 
 @keyframes bg-stars-breathe-a {
   0%,
   100% {
-    opacity: 0.3;
+    opacity: 0.34;
   }
   50% {
-    opacity: 0.58;
+    opacity: 0.62;
   }
 }
 
 @keyframes bg-stars-breathe-b {
   0%,
   100% {
-    opacity: 0.52;
+    opacity: 0.56;
   }
   45% {
-    opacity: 0.26;
+    opacity: 0.28;
   }
 }
 
-/* —— 页面切到后台时暂停 ——
+/* —— 弯月 ——
  *
- * 浏览器大多会自己节流，但节流不等于停。显式暂停一下，
- * 手机锁屏/切应用时不再白耗电。由 `background-scene.tsx` 挂 `data-bg-paused`。
+ * **缺口朝左**（亮面在右）：这是蛾眉月，农历初三到初五傍晚西方天空
+ * 真实可见的朝向。另一种"缺口朝右"是残月，要熬到黎明前才看得到。
+ *
+ * 画法：一个圆 + `inset` 负向 box-shadow。阴影从右边缘向内推，
+ * 剩下的亮部就是月牙 —— **不用两张圆做遮罩，也不用 blur**。
+ *
+ * 颜色由 `--moon-color` 控制（皎白 → 淡黄 → 暖金 → 浅橙 → 血月）。
  */
-html[data-bg-paused="1"] .bg-sun,
+.bg-moon {
+  --moon-size: 9vmin;
+  position: absolute;
+  left: 6%;
+  top: 8%;
+  width: var(--moon-size);
+  height: var(--moon-size);
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: 50%;
+  box-shadow: inset calc(-0.32 * var(--moon-size)) 0 0 0 var(--moon-color);
+  opacity: 0.5;
+  transform: rotate(-12deg);
+}
+
+/* —— 页面切到后台时暂停 —— */
+html[data-bg-paused="1"] .tree,
 html[data-bg-paused="1"] .bg-stars {
   animation-play-state: paused;
 }
 
-/* —— 系统要求"减少动态效果" ⇒ 完全静止 ——
- *
- * iOS / Android / Windows 都有这个开关（有人晕动症，有人只是为了省电）。
- * 纸纹是静态的，留着无害；动画一律停掉，只保留静态那一帧。
- */
+/* —— 系统要求"减少动态效果" ⇒ 完全静止 —— */
 @media (prefers-reduced-motion: reduce) {
-  .bg-sun,
+  .tree,
   .bg-stars {
     animation: none !important;
-  }
-  .bg-sun {
-    opacity: 0.7;
-  }
-  .bg-stars-a {
-    opacity: 0.45;
-  }
-  .bg-stars-b {
-    opacity: 0.4;
   }
 }
 

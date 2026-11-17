@@ -50,10 +50,16 @@ export interface Appearance {
      * 想开的人在长按面板里自己开。
      */
     effects?: boolean;
-    /** 一次呼吸的时长（秒）：4 / 8 / 12 / 16 / 20 */
-    effectDuration?: number;
-    /** 光与星的大小倍数：1 / 1.5 / 2 / 3 / 4 */
-    effectScale?: number;
+    /* —— 浅色：树影 3 项 + 纸纹 1 项 —— */
+    treeScale?: number;
+    treeOpacity?: number;
+    treeSpeed?: number;
+    grainOpacity?: number;
+    /* —— 深色：星点 3 项 + 月亮 1 项 —— */
+    starScale?: number;
+    starBright?: number;
+    starSpeed?: number;
+    moonTint?: number;
 }
 
 /** 只改底色（浅色的四种） */
@@ -74,13 +80,40 @@ export function applyAppearance(a?: Appearance | null) {
     const paper = a?.paper || "ivory";
     const mode = a?.mode || "light";
     const effects = !!a?.effects;
-    const effectDuration = a?.effectDuration ?? 20;
-    const effectScale = a?.effectScale ?? 1;
     applyPaperTheme(paper);
     applyMode(mode);
-    applyBackgroundEffects(effects, effectDuration, effectScale);
+    /**
+     * 背景效果和主题放在同一个对象里：它们都只影响"这台设备看起来什么样"，
+     * 而且用户在同一个面板里调，拆成两份配置只会增加漂移的机会。
+     */
+    applyBackgroundEffects({
+        on: effects,
+        treeScale: a?.treeScale,
+        treeOpacity: a?.treeOpacity,
+        treeSpeed: a?.treeSpeed,
+        grainOpacity: a?.grainOpacity,
+        starScale: a?.starScale,
+        starBright: a?.starBright,
+        starSpeed: a?.starSpeed,
+        moonTint: a?.moonTint,
+    });
     try {
-        localStorage.setItem(LS_KEY, JSON.stringify({ paper, mode, effects, effectDuration, effectScale }));
+        localStorage.setItem(
+            LS_KEY,
+            JSON.stringify({
+                paper,
+                mode,
+                effects,
+                treeScale: a?.treeScale,
+                treeOpacity: a?.treeOpacity,
+                treeSpeed: a?.treeSpeed,
+                grainOpacity: a?.grainOpacity,
+                starScale: a?.starScale,
+                starBright: a?.starBright,
+                starSpeed: a?.starSpeed,
+                moonTint: a?.moonTint,
+            })
+        );
     } catch {
         /* 隐私模式禁用存储：不影响功能，只是下次首屏会闪一下 */
     }

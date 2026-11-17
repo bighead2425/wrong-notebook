@@ -49,10 +49,16 @@ export interface AppConfig {
         paper?: PaperTheme;
         mode?: 'light' | 'dark';
         effects?: boolean;
-        /** 呼吸节奏（秒）：4 / 8 / 12 / 16 / 20 */
-        effectDuration?: number;
-        /** 光与星的大小倍数：1 / 1.5 / 2 / 3 / 4 */
-        effectScale?: number;
+        /* 浅色：树影 3 项 + 纸纹 1 项 */
+        treeScale?: number;
+        treeOpacity?: number;
+        treeSpeed?: number;
+        grainOpacity?: number;
+        /* 深色：星点 3 项 + 月亮 1 项（月亮存档位，不存色值） */
+        starScale?: number;
+        starBright?: number;
+        starSpeed?: number;
+        moonTint?: number;
     };
     openai?: {
         instances?: OpenAIInstance[];
