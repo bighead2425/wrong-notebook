@@ -1622,8 +1622,9 @@
  * 这两个属性走**合成层**——先把这一层画成一张图，之后只是贴上去、调透明度、
  * 旋转。GPU 做的是"贴图"而不是每帧重算像素，功耗接近静态页面。
  *
- * 真正贵的是 `filter` / `backdrop-filter`（每帧算模糊）、`background-position`
- * （每帧重绘）。**树影的柔边不用模糊做**，靠"形状本身画得细 + 整体透明度低"。
+ * 真正贵的是"逐帧变化的内容上挂 filter"（每帧重算模糊）、`background-position`
+ * （每帧重绘）。树影的模糊落在**静态的枝叶几何**上，浏览器缓存成位图后只做
+ * transform 旋转 —— 模糊只在首帧算一次。详见 background-scene.tsx 顶部说明。
  *
  * ## 亮环境用暗元素，暗环境用亮元素
  *
@@ -1713,6 +1714,24 @@ html[data-bg="on"].dark .bg-moon {
 .bg-tree {
   position: absolute;
   inset: 0;
+}
+
+/* 参考图底部那道横向柔影：像失焦的桌面/墙角边缘 —— 上白下灰，过渡很柔。
+   挂在 .bg-tree 里，所以只在浅色模式出现；静态渐变，渲染一次就缓存。 */
+.bg-horizon {
+  position: absolute;
+  left: -10%;
+  right: -10%;
+  bottom: 9%;
+  height: 24%;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    transparent 34%,
+    rgba(120, 115, 108, 0.07) 60%,
+    rgba(120, 115, 108, 0.09) 100%
+  );
+  filter: blur(14px);
 }
 
 .tree {
@@ -1832,12 +1851,12 @@ html[data-bg="on"].dark .bg-moon {
 /* —— 主角星 ——
  *
  * 背景那两层 `radial-gradient` 是"星尘"：均匀、微小、看不出个体。
- * 真正让夜空有层次的是这十几颗**各有各的样子**的星：
+ * 真正让夜空有层次的是这十几颗主角星。试过彩色菱形、圆形光晕、SVG 十字芒，
+ * 都不自然（像贴纸/萤火虫）。最终统一成**暖白小圆点**，靠大小与明暗出层次：
  *
- *   · 大小 3~9px（不是同一个尺寸）
- *   · 颜色四种：银白 / 灰白 / 暗黄 / 微蓝
- *   · 形状两种：圆点、45° 旋转的小菱形
- *   · **只有一半带光晕** —— 全都发光就变成了萤火虫
+ *   · 直径约 2~4px（不是同一个尺寸）
+ *   · 单一暖白，明暗几档
+ *   · 没有菱形、没有光晕、没有十字芒
  *
  * 这些是静态元素，只让父层 `opacity` 呼吸，不参与逐帧计算。
  */
@@ -1850,7 +1869,8 @@ html[data-bg="on"].dark .bg-moon {
 .hero-star {
   position: absolute;
   display: block;
-  will-change: opacity;
+  /* left/top 给的是星点圆心，往回挪半个身位才对齐 */
+  transform: translate(-50%, -50%);
 }
 
 /* —— 弯月 ——
@@ -1864,17 +1884,19 @@ html[data-bg="on"].dark .bg-moon {
  * 颜色由 `--moon-color` 控制（皎白 → 淡黄 → 暖金 → 浅橙 → 血月）。
  */
 .bg-moon {
-  --moon-size: 22vmin;
+  /* 上一版 22vmin / 132px 太大，像贴了张月牙纸片。缩小到 16vmin / 96px，
+     配更细的月牙（挖空圆 cx=37）才像天上那弯月。 */
+  --moon-size: 16vmin;
   position: absolute;
-  right: 6%;
-  top: 6%;
+  right: 7%;
+  top: 7%;
   width: var(--moon-size);
   height: var(--moon-size);
-  min-width: 84px;
-  min-height: 84px;
-  max-width: 132px;
-  max-height: 132px;
-  opacity: 0.85;
+  min-width: 60px;
+  min-height: 60px;
+  max-width: 96px;
+  max-height: 96px;
+  opacity: 0.9;
 }
 
 /* 月亮本体改成 SVG 画（见 background-scene.tsx）：一层月晕 + 一层球面明暗。
