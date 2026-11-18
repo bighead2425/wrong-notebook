@@ -1647,7 +1647,9 @@
   --tree-dur: 20s;
   --star-dur: 20s;
   --tree-scale: 1;
-  --tree-opacity: 0.1;
+  /* 0.55 是**配着当前模糊半径**、用灰度分位对齐参考图标定出来的：
+     0.1 那档乘上模糊摊薄后约 2%，物理上看不见（v171~v173 三版"树影消失"的根因）。 */
+  --tree-opacity: 0.55;
   --grain-opacity: 0.06;
   --star-scale: 1;
   --star-bright: 1;

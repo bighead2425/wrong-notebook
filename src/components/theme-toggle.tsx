@@ -123,7 +123,7 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
         };
         setFx({
             treeScale: nearest(TREE_SCALES, num("--tree-scale", 1)),
-            treeOpacity: nearest(TREE_OPACITIES, num("--tree-opacity", 0.11)),
+            treeOpacity: nearest(TREE_OPACITIES, num("--tree-opacity", 0.55)),
             treeSpeed: nearest(TREE_SPEEDS, num("--tree-dur", 20)),
             grain: nearest(GRAIN_OPACITIES, num("--grain-opacity", 0.07)),
             starScale: nearest(STAR_SCALES, num("--star-scale", 1)),
@@ -375,7 +375,7 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
                         <div className="space-y-0.5">
                             <span className="text-sm font-medium">背景效果</span>
                             <p className="text-xs leading-relaxed text-muted-foreground">
-                                浅色是纸纹与阳光，深色是极淡的星点。都很慢，几乎看不出在动。
+                                浅色是树影与纸纹，深色是极淡的星点。都很慢，几乎看不出在动。
                             </p>
                         </div>
                         <Switch

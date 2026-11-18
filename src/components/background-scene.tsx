@@ -25,6 +25,16 @@ import { useEffect } from "react";
  *    而最浓的一层恰恰画在 x 216~302；屏内只剩最虚最淡的远枝，乘上 10% 浓淡 = 隐身。
  *    **教训：预览是完整画布，真机有裁切 —— 构图必须落在可视窗口内**（每棵树的
  *    可视窗口写在了 TREE_A / TREE_B 的注释里）。
+ * 7. **v173 还是看不见 —— 真正的病根是"浓度天花板"**：
+ *    旧浓淡刻度最大只有 20%，而 6~9 的高斯模糊会把一片叶子摊薄到约 27%，
+ *    再乘每叶随机透明度（下限 0.35），单叶实际只剩约 2% 深度差 ⇒ **物理上不可见**。
+ *    我之前的预览用的是 50% 不透明度（真实值的 5 倍），于是"预览好看、真机隐身"，
+ *    连修两版都在错误的位置上打转。
+ *    **教训：预览必须用真实参数。预览骗人，等于没预览。**
+ *    修正：浓淡刻度重定为 0.24~0.8（默认 0.5）、每叶下限提到 0.55、虚焦收一档
+ *    （5.2/6.4/7.8），旧存档按档位序号自动迁移（`normalizeTreeOpacity`）。
+ *    参数是用数值模拟（几何+模糊按真实参数跑一遍，量灰度分位）对齐参考图定的，
+ *    **不再靠肉眼估**。
  *
  * 一句话：**真枝叶 + 自由姿态 + 簇生疏密 + 冷灰 + 重虚焦**。
  *
@@ -42,7 +52,7 @@ import { useEffect } from "react";
  * | 叶一簇簇、疏密随机、不成排 | 种子随机数抖动每片叶的间距/偏移/角度/大小/浓淡 |
  * | 叶姿态四面八方、不强制垂头 | 切线角 ±(18°~70°) 自由取角 |
  * | 冷调灰、不是暖褐 | 三层冷灰 #A2A4AB / #878B94 / #5F646E |
- * | 边缘完全融掉 | 每根枝一个 `feGaussianBlur`，远 9.5 → 近 6 |
+ * | 边缘完全融掉 | 每根枝一个 `feGaussianBlur`，远 6.1 → 近 3.9（还要留住叶形，别糊成团） |
  * | 画面底部一道横向柔影 | `.bg-horizon`（CSS 线性渐变 + 模糊） |
  *
  * ## 亮环境用暗元素，暗环境用亮元素
@@ -173,9 +183,11 @@ function buildTree(twigs: Twig[], leafScale = 1): { paths: Branch[]; leaves: Lea
             const ny = (dx / len) * side;
             /* 自由姿态：切线角 ±(18°~70°)，不再强制朝下 */
             const ang = (Math.atan2(dy, dx) * 180) / Math.PI + side * (18 + rand() * 52);
-            /* 大小与浓淡都随机：远处叶小而淡、近处大而浓的错觉就是从这来的 */
+            /* 大小与浓淡都随机：远处叶小而淡、近处大而浓的错觉就是从这来的。
+               浓淡下限不能太低：0.35 那版乘上整体浓淡 + 模糊后等于看不见，
+               0.55~1.0 既保留层次，又保证每片叶都真的"有墨"。 */
             const scale = (0.55 + rand() * 0.75) * leafScale;
-            const o = 0.35 + rand() * 0.6;
+            const o = 0.55 + rand() * 0.45;
             leaves.push([x + nx * off, y + ny * off, ang, scale, o]);
         }
     }
@@ -210,44 +222,44 @@ const TREE_A: BuiltLayer[] = buildLayers([
     /* —— 近枝：浓密叶团（可视区右半，核心 x≈160~240）—— */
     {
         color: TREE_INK_NEAR,
-        blur: 6,
+        blur: 3.9,
         ink: 1,
         leafScale: 1.15,
         twigs: [
             { p0: [238, -8], p1: [228, 42], p2: [210, 92], p3: [192, 150], w: 4.6, leaves: 0 },
             { p0: [192, 150], p1: [180, 200], p2: [168, 250], p3: [162, 300], w: 2.8, leaves: 0 },
-            { p0: [226, 44], p1: [220, 98], p2: [214, 152], p3: [210, 208], w: 2.2, leaves: 22 },
-            { p0: [204, 122], p1: [194, 172], p2: [186, 226], p3: [182, 278], w: 2.4, leaves: 24 },
-            { p0: [244, 10], p1: [242, 60], p2: [240, 110], p3: [240, 160], w: 2, leaves: 20 },
-            { p0: [178, 190], p1: [166, 238], p2: [158, 288], p3: [154, 336], w: 1.9, leaves: 20 },
+            { p0: [226, 44], p1: [220, 98], p2: [214, 152], p3: [210, 208], w: 2.2, leaves: 13 },
+            { p0: [204, 122], p1: [194, 172], p2: [186, 226], p3: [182, 278], w: 2.4, leaves: 14 },
+            { p0: [244, 10], p1: [242, 60], p2: [240, 110], p3: [240, 160], w: 2, leaves: 12 },
+            { p0: [178, 190], p1: [166, 238], p2: [158, 288], p3: [154, 336], w: 1.9, leaves: 12 },
         ],
     },
     /* —— 中枝：向左下斜坠 —— */
     {
         color: TREE_INK,
-        blur: 7.5,
-        ink: 0.85,
+        blur: 4.9,
+        ink: 0.9,
         leafScale: 0.9,
         twigs: [
             { p0: [196, -6], p1: [178, 36], p2: [150, 80], p3: [120, 128], w: 3.4, leaves: 0 },
             { p0: [120, 128], p1: [98, 164], p2: [78, 204], p3: [64, 246], w: 2, leaves: 0 },
-            { p0: [154, 70], p1: [134, 116], p2: [116, 166], p3: [106, 216], w: 2, leaves: 22 },
-            { p0: [124, 140], p1: [104, 182], p2: [88, 228], p3: [80, 272], w: 1.7, leaves: 20 },
-            { p0: [184, 20], p1: [174, 64], p2: [168, 112], p3: [168, 158], w: 1.8, leaves: 18 },
+            { p0: [154, 70], p1: [134, 116], p2: [116, 166], p3: [106, 216], w: 2, leaves: 10 },
+            { p0: [124, 140], p1: [104, 182], p2: [88, 228], p3: [80, 272], w: 1.7, leaves: 9 },
+            { p0: [184, 20], p1: [174, 64], p2: [168, 112], p3: [168, 158], w: 1.8, leaves: 8 },
         ],
     },
     /* —— 远枝：稀疏长枝伸向画面左缘，最虚最淡 —— */
     {
         color: TREE_INK_FAR,
-        blur: 9,
-        ink: 0.55,
+        blur: 6.1,
+        ink: 0.6,
         leafScale: 0.7,
         twigs: [
             { p0: [136, -8], p1: [116, 30], p2: [88, 72], p3: [58, 116], w: 2.4, leaves: 0 },
             { p0: [58, 116], p1: [36, 158], p2: [18, 204], p3: [4, 248], w: 1.5, leaves: 0 },
-            { p0: [64, 120], p1: [44, 158], p2: [28, 200], p3: [16, 244], w: 1.3, leaves: 16 },
-            { p0: [100, 70], p1: [78, 108], p2: [58, 150], p3: [42, 192], w: 1.2, leaves: 15 },
-            { p0: [28, 180], p1: [14, 218], p2: [6, 258], p3: [2, 296], w: 1.1, leaves: 13 },
+            { p0: [64, 120], p1: [44, 158], p2: [28, 200], p3: [16, 244], w: 1.3, leaves: 7 },
+            { p0: [100, 70], p1: [78, 108], p2: [58, 150], p3: [42, 192], w: 1.2, leaves: 6 },
+            { p0: [28, 180], p1: [14, 218], p2: [6, 258], p3: [2, 296], w: 1.1, leaves: 5 },
         ],
     },
 ]);
@@ -260,37 +272,37 @@ const TREE_A: BuiltLayer[] = buildLayers([
 const TREE_B: BuiltLayer[] = buildLayers([
     {
         color: TREE_INK_NEAR,
-        blur: 6.2,
+        blur: 4.1,
         ink: 0.95,
         leafScale: 1.1,
         twigs: [
             { p0: [178, -6], p1: [168, 36], p2: [154, 80], p3: [138, 126], w: 3.6, leaves: 0 },
             { p0: [138, 126], p1: [124, 172], p2: [112, 218], p3: [104, 262], w: 2.2, leaves: 0 },
-            { p0: [162, 60], p1: [152, 108], p2: [144, 158], p3: [140, 206], w: 2, leaves: 18 },
-            { p0: [130, 150], p1: [118, 196], p2: [108, 242], p3: [102, 286], w: 1.7, leaves: 16 },
+            { p0: [162, 60], p1: [152, 108], p2: [144, 158], p3: [140, 206], w: 2, leaves: 11 },
+            { p0: [130, 150], p1: [118, 196], p2: [108, 242], p3: [102, 286], w: 1.7, leaves: 10 },
         ],
     },
     {
         color: TREE_INK,
-        blur: 7.6,
-        ink: 0.8,
+        blur: 5.1,
+        ink: 0.9,
         leafScale: 0.88,
         twigs: [
             { p0: [140, -4], p1: [122, 32], p2: [96, 72], p3: [68, 114], w: 2.6, leaves: 0 },
-            { p0: [68, 114], p1: [44, 152], p2: [24, 192], p3: [10, 228], w: 1.5, leaves: 14 },
-            { p0: [96, 80], p1: [76, 120], p2: [60, 162], p3: [50, 200], w: 1.4, leaves: 14 },
+            { p0: [68, 114], p1: [44, 152], p2: [24, 192], p3: [10, 228], w: 1.5, leaves: 7 },
+            { p0: [96, 80], p1: [76, 120], p2: [60, 162], p3: [50, 200], w: 1.4, leaves: 7 },
         ],
     },
     {
         color: TREE_INK_FAR,
-        blur: 10,
-        ink: 0.5,
+        blur: 6.3,
+        ink: 0.6,
         leafScale: 0.68,
         twigs: [
             { p0: [90, 0], p1: [72, 34], p2: [48, 70], p3: [26, 106], w: 1.8, leaves: 0 },
             { p0: [26, 106], p1: [8, 142], p2: [2, 170], p3: [10, 198], w: 1.2, leaves: 0 },
-            { p0: [30, 104], p1: [14, 138], p2: [2, 168], p3: [2, 196], w: 1.1, leaves: 12 },
-            { p0: [52, 86], p1: [36, 116], p2: [22, 144], p3: [14, 170], w: 1, leaves: 11 },
+            { p0: [30, 104], p1: [14, 138], p2: [2, 168], p3: [2, 196], w: 1.1, leaves: 5 },
+            { p0: [52, 86], p1: [36, 116], p2: [22, 144], p3: [14, 170], w: 1, leaves: 4 },
         ],
     },
 ]);
@@ -303,7 +315,7 @@ const TREE_B: BuiltLayer[] = buildLayers([
  * 构图照参考图：近枝聚在右上、远枝伸向左下，虚焦 + 浓淡 + 叶片自身透明度
  * 三层叠加，共同造出"离镜头越远越虚越淡"的景深。
  */
-const LEAF_PATH = "M-8 0 C-3.5 -2.3 2.5 -2 8 0 C2.5 2 -3.5 2.3 -8 0 Z";
+const LEAF_PATH = "M-9.6 0 C-4.2 -2.7 3 -2.4 9.6 0 C3 2.4 -4.2 2.7 -9.6 0 Z";
 
 function TreeSilhouette({
     className,
@@ -321,7 +333,7 @@ function TreeSilhouette({
     return (
         <svg className={className} viewBox={viewBox} fill="none" xmlns="http://www.w3.org/2000/svg">
             <defs>
-                {/* 叶片：狭长小叶，长 16、宽约 4，两端收尖 —— 参考图是这种小叶，不是大桐叶 */}
+                {/* 叶片：狭长小叶，长 19、宽约 5，两端收尖 —— 参考图是这种小叶，不是大桐叶 */}
                 <path id={leafId} d={LEAF_PATH} />
                 {/* 每层一个滤镜，半径随景深变化；filter 区域放大，否则模糊会被裁掉一圈 */}
                 {layers.map((layer, li) => (
@@ -391,8 +403,21 @@ const HERO_STARS: HeroStar[] = [
 
 /** 树影大小五档 */
 export const TREE_SCALES = [0.7, 0.9, 1.2, 1.5, 1.85] as const;
-/** 树影浓淡五档 */
-export const TREE_OPACITIES = [0.05, 0.08, 0.11, 0.15, 0.2] as const;
+/**
+ * 树影浓淡五档。
+ *
+ * ⚠️ **这套数值是按"模糊之后的实际观感"定的，不是纸上算的。**
+ * 旧刻度 [0.05…0.2] 配 6~9 的高斯模糊，一片叶子在屏幕上只剩约 2% 的深度差，
+ * 整簇叠起来 5% —— v171~v173 三版"部署后看不见树影"的真正原因：
+ * 不是被遮挡，是**浓度天花板本身在可见阈值以下**。
+ *
+ * 现在的账（用数值模拟对齐了参考图的灰度分位，p5≈0.75 / p10≈0.81，参考图 0.75 / 0.81）：
+ * 0.55 × 叶片自身 0.55~1.0 × 层浓淡 0.6~1.0，再乘模糊摊薄 ⇒ 单叶约 12%、叶团叠加 20%
+ * —— 淡淡的影子，但**看得见**，而且叶子分得开（每枝只留 8~14 片，不再叠成一片糊）。
+ */
+export const TREE_OPACITIES = [0.28, 0.4, 0.55, 0.7, 0.85] as const;
+/** 旧刻度（≤0.2）。仅用于把老存档的值迁到新刻度，见 `normalizeTreeOpacity`。 */
+const LEGACY_TREE_OPACITIES = [0.05, 0.08, 0.11, 0.15, 0.2] as const;
 /** 摆动周期（秒），索引 0 最快 */
 export const TREE_SPEEDS = [8, 14, 20, 26, 32] as const;
 /** 纸纹深浅五档 */
@@ -435,7 +460,7 @@ export interface EffectSettings {
 export const EFFECT_DEFAULTS: EffectSettings = {
     on: false,
     treeScale: 1,
-    treeOpacity: 0.1,
+    treeOpacity: 0.55,
     treeSpeed: 20,
     grainOpacity: 0.06,
     starScale: 1,
@@ -444,11 +469,47 @@ export const EFFECT_DEFAULTS: EffectSettings = {
     moonTint: 0,
 };
 
+/**
+ * 老存档迁移：v173 及以前的滑条存的是 0.05~0.2（旧刻度，配现在的模糊等于隐身）。
+ * 按**档位序号**映射到新刻度 —— 他原来选"第 3 档"，迁移后还是第 3 档，只是这档
+ * 现在真的看得见。新刻度的最小值 0.24 > 0.2，所以不会误判：>0.2 一律当成新值。
+ */
+function normalizeTreeOpacity(v?: number): number {
+    if (typeof v !== "number" || !Number.isFinite(v)) return EFFECT_DEFAULTS.treeOpacity;
+    if (v > 0.2 + 1e-6) return v;
+    let best = 0;
+    let diff = Infinity;
+    LEGACY_TREE_OPACITIES.forEach((o, i) => {
+        const d = Math.abs(o - v);
+        if (d < diff) {
+            diff = d;
+            best = i;
+        }
+    });
+    return TREE_OPACITIES[best];
+}
+
 /** 开/关背景效果，并写入全部可调项（供长按面板调用） */
 export function applyBackgroundEffects(s?: Partial<EffectSettings>) {
     if (typeof document === "undefined") return;
     const root = document.documentElement;
-    const v = { ...EFFECT_DEFAULTS, ...s };
+    /**
+     * 逐项兜底，**不要写 `{ ...EFFECT_DEFAULTS, ...s }`** ——
+     * 展开会把 `undefined` 也盖进默认值里，于是 CSS 变量被写成字符串 "undefined"，
+     * `calc(... * var(--tree-scale))` 整条失效，树连宽度都没有（静默消失）。
+     * 老存档 / 缺字段的配置都会踩到这个坑。
+     */
+    const v: EffectSettings = {
+        on: s?.on ?? EFFECT_DEFAULTS.on,
+        treeScale: s?.treeScale ?? EFFECT_DEFAULTS.treeScale,
+        treeOpacity: s?.treeOpacity ?? EFFECT_DEFAULTS.treeOpacity,
+        treeSpeed: s?.treeSpeed ?? EFFECT_DEFAULTS.treeSpeed,
+        grainOpacity: s?.grainOpacity ?? EFFECT_DEFAULTS.grainOpacity,
+        starScale: s?.starScale ?? EFFECT_DEFAULTS.starScale,
+        starBright: s?.starBright ?? EFFECT_DEFAULTS.starBright,
+        starSpeed: s?.starSpeed ?? EFFECT_DEFAULTS.starSpeed,
+        moonTint: s?.moonTint ?? EFFECT_DEFAULTS.moonTint,
+    };
 
     if (!v.on) {
         delete root.dataset[BG_ATTR];
@@ -457,7 +518,7 @@ export function applyBackgroundEffects(s?: Partial<EffectSettings>) {
     root.dataset[BG_ATTR] = "on";
     const set = (k: string, val: string) => root.style.setProperty(k, val);
     set("--tree-scale", String(v.treeScale));
-    set("--tree-opacity", String(v.treeOpacity));
+    set("--tree-opacity", String(normalizeTreeOpacity(v.treeOpacity)));
     set("--tree-dur", `${v.treeSpeed}s`);
     set("--grain-opacity", String(v.grainOpacity));
     set("--star-scale", String(v.starScale));
