@@ -9,7 +9,7 @@ import { formatInsightCode, nextInsightSeq } from "@/lib/insight-code";
 import { writePhoto, setPhotoPrintIncluded } from "@/lib/insight-photo";
 import { decodeCursor, encodeCursor } from "@/lib/list-cursor";
 // 【2026-10-19 如如】词头：正文第一行的归一化结果（主附积累的落库依据）
-import { headwordOfContent } from "@/lib/insight-headword";
+import { extractHeadword, headwordKey, headwordOfContent } from "@/lib/insight-headword";
 // 【2026-10-16】关联题的字段清单（唯一出处；默认不含题图）—— 见该文件头的性能说明
 import { LIST_ITEM_SCALARS } from "@/lib/constants/error-item-list-fields";
 
@@ -130,6 +130,14 @@ export async function GET(req: Request) {
                 OR: [
                     { code: { contains: q } },
                     { content: { contains: q } },
+                    /**
+                     * 【2026-11-19】词头列也参与搜索（归一化后 contains）。
+                     * 为什么：错题详情页「同词头」小字跳过来带 `?word=<词头>`，
+                     * 要的是"这个词的**整组**都出来"。组员的词头显示写法可能带标点/emoji
+                     * 差异（归一化键相同、原文不同），只搜 content 会漏；
+                     * 词头列是写入端 `headwordOfContent` 统一落库的归一化键，**精确可靠**。
+                     */
+                    { headword: { contains: headwordKey(q) } },
                 ],
             });
         }
@@ -216,7 +224,28 @@ export async function GET(req: Request) {
         }
         const insights = page.map((r) => ({ ...r, printed: printedIds.has(r.id) }));
 
-        return NextResponse.json({ insights, questions, nextCursor, headwordCounts });
+        /**
+         * 【2026-11-19】错题详情页「同词头还有 N 条」小字的数据源。
+         * 只在 `?errorItemNo=` 模式下算 —— 那是一题一条的模式，page[0] 就是它。
+         * 词头列是归一化键（写入端统一落库），count 零误判；没有词头（摘抄/感受）
+         * 或没有同词头的，返回 null，前端就不显示那行小字。
+         * ⚠️ `word` 给的是**显示写法**（取她自己的原文，同 `groupByHeadword` 的规矩），
+         *    键只在搜索时归一化，不外露。
+         */
+        let headwordInfo: { word: string; others: number } | null = null;
+        if (errorItemNo && insights[0]?.headword) {
+            const others = await prisma.insight.count({
+                where: { userId: user.id, headword: insights[0].headword, id: { not: insights[0].id } },
+            });
+            if (others > 0) {
+                headwordInfo = {
+                    word: extractHeadword(insights[0].content) ?? insights[0].headword,
+                    others,
+                };
+            }
+        }
+
+        return NextResponse.json({ insights, questions, nextCursor, headwordCounts, headwordInfo });
     } catch (error) {
         logger.error({ error }, 'Error listing insights');
         return internalError("Failed to list insights");

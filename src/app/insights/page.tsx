@@ -666,6 +666,26 @@ export default function InsightsPage() {
     }, [openByCode]);
 
     /**
+     * 【2026-11-19】错题详情页「同词头」小字跳过来带 `?word=<词头>` ⇒ 填进搜索框。
+     *
+     * 为什么用搜索框而不是新增"词头过滤"状态：管理页本来就把同词头排成一组
+     * （`buildHeadwordList`），搜索命中整组后它们自动挨在一起 —— 现有的两样东西
+     * （搜索框 + 分组渲染）拼起来就是"看这个词的全部积累"，不需要第三样。
+     * API 那边 `q` 也匹配词头列（按归一化键），组员不会因显示写法带标点而漏掉。
+     * 搜索框里看得见这个词，清空即回全量 —— 不加"清除词头"之类的专属 UI。
+     *
+     * ⚠️ 与 `pick` 无冲突：`openByCode` 按编号单独取回并插到最前，不受搜索过滤影响。
+     * ⚠️ 和 `noleft`/`back` 同一条路线：`window.location.search` 只在挂载后读一次，
+     *    不碰 `useSearchParams`（会把页面拖进 Suspense 边界，本项目正为此炸过构建）。
+     */
+    useEffect(() => {
+        const w = new URLSearchParams(window.location.search).get('word');
+        if (w) setQuery(w);
+        // 只在挂载时跑一次：这段读的是地址栏这个外部状态，无 state/props 可推
+        // （同上方 noleft/back 的写法；不碰 useSearchParams，见那边的说明）
+    }, []);
+
+    /**
      * 【2026-10-13】保存这一条 —— 抽出来是为了让「保存」与「定稿」走**同一条 PATCH**。
      *
      * ⚠️ 之所以必须抽：这两者的差别**只有一个 `status`**。要是各写一遍，

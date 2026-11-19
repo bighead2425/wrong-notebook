@@ -891,6 +891,11 @@ export default function ErrorDetailPage() {
 
     /** 库里那一栏对应的条目（按**题号**关联、一题一条；null = 还没送过库） */
     const [insight, setInsight] = useState<{ id: string; code: string; content: string | null } | null>(null);
+    /**
+     * 【2026-11-19】同词头信息（服务端按归一化键精确 count，只加不改回执）。
+     * null = 这条没有词头、或词典里没有同词头的其他条 ⇒ 不显示那行小字。
+     */
+    const [headwordInfo, setHeadwordInfo] = useState<{ word: string; others: number } | null>(null);
     const [insightInput, setInsightInput] = useState("");
     const [insightBusy, setInsightBusy] = useState<"ai" | "direct" | null>(null);
     const dirtyInsight = insightInput !== (insight?.content ?? "");
@@ -899,12 +904,16 @@ export default function ErrorDetailPage() {
         const no = item?.source;
         if (!no) {
             setInsight(null);
+            setHeadwordInfo(null);
             setInsightInput("");
             return;
         }
         let alive = true;
         apiClient
-            .get<{ insights: Array<{ id: string; code: string; content: string | null }> }>(
+            .get<{
+                insights: Array<{ id: string; code: string; content: string | null }>;
+                headwordInfo?: { word: string; others: number } | null;
+            }>(
                 `/api/insights?errorItemNo=${encodeURIComponent(no)}`,
             )
             .then((res) => {
@@ -912,6 +921,7 @@ export default function ErrorDetailPage() {
                 const row = res.insights?.[0] ?? null;
                 setInsight(row ? { id: row.id, code: row.code, content: row.content } : null);
                 setInsightInput(row?.content ?? "");
+                setHeadwordInfo(res.headwordInfo ?? null);
             })
             .catch((error) => console.error(error));
         return () => {
@@ -1921,15 +1931,27 @@ export default function ErrorDetailPage() {
                                     他原话"点击后去的是日积月累页，并没有显示出这道题关联的
                                     日积月累内容。这个关联还不紧密" ⇒ 到了那边要**直接选中那一条**，
                                     而不是丢在一长串清单里让人自己找。 */}
+                                {/* 【2026-11-19】词典里有同词头的其他条时，链接同时带上 `?word=<词头>`：
+                                    那边会把词头填进搜索框、整组一起显示出来（组员按归一化键搜索，
+                                    不会漏）；`back=` 让返回键回到这道题 —— 看完回来，不迷路。 */}
                                 <Link
                                     href={
                                         insight
-                                            ? `/insights?pick=${encodeURIComponent(insight.code)}`
+                                            ? `/insights?pick=${encodeURIComponent(insight.code)}${
+                                                  headwordInfo
+                                                      ? `&word=${encodeURIComponent(headwordInfo.word)}&back=/error-items/${params.id}`
+                                                      : ""
+                                              }`
                                             : "/insights"
                                     }
                                     className="inline-block text-xs text-primary hover:underline"
                                 >
-                                    {L("去日积月累页看全文 / 配图 →", "Open the takeaways page →")}
+                                    {insight && headwordInfo
+                                        ? L(
+                                              `去词典看「${headwordInfo.word}」的全部 ${headwordInfo.others + 1} 条积累 →`,
+                                              `See all ${headwordInfo.others + 1} entries for this word →`,
+                                          )
+                                        : L("去日积月累页看全文 / 配图 →", "Open the takeaways page →")}
                                 </Link>
                             </CardContent>
                         </Card>
