@@ -1,5 +1,4 @@
 import { ParsedQuestion } from "@/lib/ai/types";
-import type { PaperConfig } from "@/lib/paper";
 
 // 通用分页响应类型
 export interface PaginatedResponse<T> {
@@ -190,115 +189,18 @@ export interface UpdateUserProfileRequest {
     password?: string;
 }
 
-export interface OpenAIInstance {
-    id: string;           // 唯一标识 (UUID)
-    name: string;         // 用户自定义名称
-    apiKey: string;
-    baseUrl: string;
-    model: string;
-    /**
-     * 【2026-11-09 空空】**最大输出长度（token）。**
-     * 超过模型硬上限会直接 400，所以设置页会按探测到的 `capabilities.maxOutput` 收窄。
-     */
-    maxTokens?: number;
-    /** 思考强度。留空 = 按探测结果自动取最省的 */
-    reasoningEffort?: 'off' | 'low' | 'high' | 'max';
-    /** 探测出来的能力（测试连接时写入） */
-    capabilities?: {
-        image: boolean;
-        reasoning: boolean;
-        thinkingOff: boolean;
-        effortLevels: string[];
-        maxOutput?: number;
-    };
-}
-
-export interface AppConfig {
-    aiProvider: 'gemini' | 'openai' | 'azure';
-    /**
-     * 【2026-10-28 打印出口】电脑 / 手机分别走哪个出口。
-     * 缺项由 `lib/print-route.ts` 给默认值（电脑本地、手机共享），老配置不需要迁移。
-     */
-    print?: {
-        desktop?: 'local' | 'shared' | 'ask';
-        mobile?: 'local' | 'shared' | 'ask';
-        serverUrl?: string;
-    };
-    allowRegistration?: boolean;
-    /**
-     * 【2026-11-16 空空】**界面底色预设。**
-     *
-     * ⚠️ 这个字段在**两份 AppConfig** 里都要有：
-     *    `lib/config.ts`（服务端读配置）+ 这里（前端表单）。
-     *    只加一处会报 "Property 'appearance' does not exist"。
-     */
-    appearance?: {
-        paper?: 'ivory' | 'white' | 'cool' | 'cream';
-        mode?: 'light' | 'dark';
-        effects?: boolean;
-        /* 浅色：树影 3 项 + 纸纹 1 项 */
-        treeScale?: number;
-        treeOpacity?: number;
-        treeSpeed?: number;
-        grainOpacity?: number;
-        /* 深色：星点 3 项 + 月亮 1 项（月亮存档位，不存色值） */
-        starScale?: number;
-        starBright?: number;
-        starSpeed?: number;
-        moonTint?: number;
-    };
-    openai?: {
-        instances?: OpenAIInstance[];
-        activeInstanceId?: string;
-    };
-    gemini?: {
-        apiKey?: string;
-        baseUrl?: string;
-        model?: string;
-    };
-    azure?: {
-        apiKey?: string;
-        endpoint?: string;       // Azure 资源端点 (https://xxx.openai.azure.com)
-        deploymentName?: string; // 部署名称
-        apiVersion?: string;     // API 版本 (如 2024-02-15-preview)
-        model?: string;          // 显示用模型名 (如 gpt-4o)
-    };
-    prompts?: {
-        analyze?: string;
-        similar?: string;
-        /** 【2026-10-18】日积月累整理提示词（空 = 用默认模板） */
-        insights?: string;
-        /** 【2026-11-01 两段式】第二段（在候选里挑）的提示词（空 = 用默认模板） */
-        stage2?: string;
-    };
-    timeouts?: {
-        analyze?: number; // 毫秒
-    };
-    /** 【2026-11-01 两段式】总开关；关着 = 走原来的单段逻辑 */
-    /** 【2026-11-01】两段式：默认开启（关掉 = 回到以前的单段，一次出标签） */
-    twoStage?: {
-        enabled?: boolean;
-        maxRetries?: number;
-    };
-    /**
-     * 【custom-v30】扫描收件箱：根目录由 Docker 挂载决定，这里只存根下的相对子路径
-     *
-     * 【2026-10-24 空空】三种用途各一个目录：录错题 / 回录分析 / PDF 中转。
-     * 混在一个目录里，三条流水线会互相看见对方的照片。
-     * `subPath` 是老字段，只归「录错题」这一槽，读取时兼容、不必迁移。
-     */
-    scanInbox?: {
-        subPath?: string;
-        /** 录错题 */
-        wrong?: string;
-        /** 回录分析 */
-        recover?: string;
-        /** PDF 中转 */
-        pdf?: string;
-    };
-    /** 【2026-10-24 幅面】四种纸各用多大；缺项一律按 B5 */
-    paper?: PaperConfig;
-}
+/**
+ * 【2026-11-19】AppConfig / OpenAIInstance **只在 `lib/config.ts` 定义一份**，这里只做转发。
+ *
+ * 为什么收掉这份副本：同一份档案存两个抽屉，全靠"人记得同步"——
+ * `appearance`（11-16）和 `maxTokens`（11-09）都为它**两边各改一遍、漏一边 CI 报红**。
+ * 现在服务端那一份是真身（`getAppConfig`/`updateAppConfig` 都用它），
+ * 前端从 `types/api` 拿的只是同一张档案的引用。
+ *
+ * ⚠️ 必须用 `export type`（而不是 `export { ... } from`）：类型转发编译后整行擦除，
+ * 不会把 `lib/config.ts` 里那个碰 `fs` 的运行时代码打进前端包。
+ */
+export type { AppConfig, OpenAIInstance } from "@/lib/config";
 
 
 export interface AnalyticsData {
