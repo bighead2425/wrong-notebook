@@ -137,7 +137,7 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
         setFx({
             treeScale: nearest(TREE_SCALES, cached?.treeScale ?? 1),
             treeOpacity: nearest(TREE_OPACITIES, cached?.treeOpacity ?? 0.55),
-            treeSpeed: nearest(TREE_SPEEDS, cached?.treeSpeed ?? 20),
+            treeSpeed: nearest(TREE_SPEEDS, cached?.treeSpeed ?? 8),
             grain: nearest(GRAIN_OPACITIES, cached?.grainOpacity ?? 0.06),
             starScale: nearest(STAR_SCALES, cached?.starScale ?? 1),
             starBright: nearest(STAR_BRIGHTS, cached?.starBright ?? 1),

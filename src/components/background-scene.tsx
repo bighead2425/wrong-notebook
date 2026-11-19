@@ -62,19 +62,20 @@ const STAR_INK = "#F2EDE2";
 
 /**
  * 【2026-11-20 第 8 轮】树影素材：空空参考图 → 亮度差提取 → 透明 PNG（608×975），
- * 按**枝叶形状切成三块**——羽化互补切缝（缝宽 70 素材单位 ≈ 页面 300px，
- * 两块在缝里此消彼长、总量恒等于 1，数学上验证过 max|Σ−1|≈1e-7 ⇒ 接缝不可见）。
+ * 按**枝叶形状切成三块**——羽化互补切缝（第 9 轮羽化加宽到 110 素材单位
+ * ≈ 页面 430px，配合摆幅放大：相邻块最大瞬时错位 ≤4°，位移 ~90px，仍在
+ * 羽化带内 ⇒ 接缝不可见；两块在缝里此消彼长、总量恒等于 1）。
  *
- * 每块独立摆动：绕自己的顶部支点（"枝出画的地方"），周期 20s/26s/32s 错开
+ * 每块独立摆动：绕自己的顶部支点（"枝出画的地方"），周期 3s/3.45s/4.2s 错开
  * —— 空空设计的**分层摆动**：丛内也有相对运动，比"两丛整体摇"更活。
  *
  * left/width 是相对整幅树宽的百分比（切割脚本量出）；dur 是 --tree-dur 的倍率；
  * from/to 是各自的摆幅（deg），经内联 CSS 变量传给 keyframes。
  */
 const TREE_PIECES = [
-    { src: "/tree/shadow-left.png", left: 0, width: 92.76, dur: 1.35, from: -0.5, to: 0.6 },
-    { src: "/tree/shadow-mid.png", left: 0, width: 100, dur: 1.15, from: 0.6, to: -0.7 },
-    { src: "/tree/shadow-right.png", left: 23.52, width: 76.48, dur: 1, from: -0.9, to: 1.1 },
+    { src: "/tree/shadow-left.png", left: 0, width: 100, dur: 1.35, from: -2.0, to: 2.2 },
+    { src: "/tree/shadow-mid.png", left: 0, width: 100, dur: 1.15, from: 1.6, to: -1.8 },
+    { src: "/tree/shadow-right.png", left: 0, width: 100, dur: 1, from: -2.4, to: 2.6 },
 ] as const;
 
 /**
@@ -130,8 +131,12 @@ export const TREE_SCALES = [0.7, 0.9, 1.2, 1.5, 1.85] as const;
 export const TREE_OPACITIES = [0.28, 0.4, 0.55, 0.7, 0.85] as const;
 /** 旧刻度（≤0.2）。仅用于把老存档的值迁到新刻度，见 `normalizeTreeOpacity`。 */
 const LEGACY_TREE_OPACITIES = [0.05, 0.08, 0.11, 0.15, 0.2] as const;
-/** 摆动周期（秒），索引 0 最快 */
-export const TREE_SPEEDS = [8, 14, 20, 26, 32] as const;
+/** 摆动周期（秒），索引 0 最快。
+ *  【2026-11-20 第 9 轮】旧档 8~32s 配 ±1° 摆幅，角速度小到肉眼不可见（空空：
+ *  "最快也看不出来"）。重定：最快 3s + 摆幅放大到 ±2~2.6°（枝梢横移约 80px），
+ *  快档明确可见；慢档仍有"微风"的安静感。摆幅放大后羽化带同步加宽
+ *  （70→110）重切素材，接缝错位仍藏在羽化带里。 */
+export const TREE_SPEEDS = [3, 5, 8, 13, 20] as const;
 /** 纸纹深浅五档 */
 export const GRAIN_OPACITIES = [0.03, 0.05, 0.07, 0.1, 0.13] as const;
 
@@ -173,7 +178,7 @@ export const EFFECT_DEFAULTS: EffectSettings = {
     on: false,
     treeScale: 1,
     treeOpacity: 0.55,
-    treeSpeed: 20,
+    treeSpeed: 8,
     grainOpacity: 0.06,
     starScale: 1,
     starBright: 1,
