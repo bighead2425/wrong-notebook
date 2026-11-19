@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { withBack } from "@/lib/back";
 import Link from "next/link";
 import { UploadZone } from "@/components/upload-zone";
 import { CorrectionEditor } from "@/components/correction-editor";
@@ -433,7 +434,9 @@ export default function AddErrorPage() {
              *    而且对话框得自己弹出来（`?practice=1` 就是那个开关，与 `/scan?practice=1` 同一条路）。
              */
             if (linkToId) {
-                router.push(`/error-items/${linkToId}?practice=1`);
+                /* 【2026-11-19 路由审计 P3】带来源：返回键回到本录入页（接着录下一道），
+                   不走兜底回主页。错题详情页自己认 ?back=（切题时还会原样带过去）。 */
+                router.push(withBack(`/error-items/${linkToId}?practice=1`));
             } else {
                 router.push(`/notebooks/${notebookId}`);
             }

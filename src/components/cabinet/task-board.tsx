@@ -18,6 +18,7 @@
  */
 
 import Link from "next/link";
+import { withBack } from "@/lib/back";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -231,7 +232,14 @@ function TaskCard({
                         {empty ? L("暂时没有这一项", "Nothing here right now") : ""}
                     </div>
                 ) : (
-                    <Link href={href}>
+                    /**
+                     * 【2026-11-19 路由审计 P1】任务卡深链必须带来源（`withBack`）——
+                     * 这块任务板是 /cabinet 和 /tasks 共用的，`withBack` 取**当前页**，
+                     * 两边各自回各自的来源。否则"任务台 → 去组复练卷 → 返回"回的是主页，
+                     * 「办完一件回来办下一件」的工作流每次都断。
+                     * ⚠️ taskHref 返回的路径自带 query（ids/nos），`withBack` 会用 & 续接。
+                     */
+                    <Link href={withBack(href)}>
                         <Button size="sm" className="w-full sm:w-auto">
                             {cta}
                             <ArrowRight className="ml-1.5 h-4 w-4" />

@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/dialog";
 import { ArrowLeft, Camera, ExternalLink, Link2, Loader2, Plus } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import { withBack } from "@/lib/back";
 import { useLanguage } from "@/contexts/LanguageContext";
 import type { ErrorItem } from "@/types/api";
 import { ErrorItemCard } from "@/components/error-item-card";
@@ -297,7 +298,8 @@ export function ScanItemPanel({
                     }}
                     onTrash={trash}
                     onDeepDivePrint={() => {
-                        router.push(`/print-preview?ids=${item.id}&mode=deep`);
+                        /* 【2026-11-19 路由审计 P2】带来源：返回键回扫码页（scan 页认 ?back=） */
+                        router.push(withBack(`/print-preview?ids=${item.id}&mode=deep`));
                     }}
                 />
             </div>

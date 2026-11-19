@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, Loader2 } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import { withBack } from "@/lib/back";
 import { useLanguage } from "@/contexts/LanguageContext";
 import {
     QUEUE_LEVELS_META,
@@ -58,7 +59,7 @@ export function ReviewQueueMini() {
             <div className="flex items-baseline justify-between gap-2">
                 <div className="text-sm font-medium">{queueHeadline(s, zh)}</div>
                 <Link
-                    href="/stats"
+                    href={withBack("/stats")}
                     className="inline-flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground"
                 >
                     {zh ? "看明细" : "Details"}

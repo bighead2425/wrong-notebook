@@ -3,6 +3,7 @@
 import { useState, Suspense, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { withBack } from "@/lib/back";
 import { UploadZone } from "@/components/upload-zone";
 import { CorrectionEditor } from "@/components/correction-editor";
 import { ImageCropper, type CropRegionsPayload } from "@/components/image-cropper";
@@ -727,7 +728,7 @@ function HomeContent() {
                                 { zh: "复练纸库", en: "Review sheet", Icon: Layers, href: "/review-volumes?kind=review" },
                                 { zh: "模仿纸库", en: "Imitate sheet", Icon: Copy, href: "/review-volumes?kind=imitate" },
                                 { zh: "积累管理", en: "Notes · manage", Icon: NotebookPen, href: "/insights" },
-                                { zh: "积累打印", en: "Notes · print", Icon: Printer, href: "/insights/print" },
+                                { zh: "积累打印", en: "Notes · print", Icon: Printer, href: withBack("/insights/print") },
                                 { zh: "回录分析", en: "Recover", Icon: ScanText, href: "/recover" },
                                 { zh: "举一反三", en: "Similar", Icon: Sparkles, href: "/scan?practice=1" },
                                 { zh: "当前任务", en: "Tasks", Icon: ListChecks, href: "/tasks" },

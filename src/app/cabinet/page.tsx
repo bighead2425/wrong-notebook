@@ -32,6 +32,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { withBack } from "@/lib/back";
 import { WrongAnswerStats } from "@/components/wrong-answer-stats";
 import { TaskBoard, TaskBoardHeading } from "@/components/cabinet/task-board";
 import type { CabinetTasks } from "@/lib/cabinet-targets";
@@ -229,7 +230,8 @@ export default function CabinetPage() {
                             {t.app?.tags || "标签管理"}
                         </Button>
                     </Link>
-                    <Link href="/stats">
+                    {/* 【2026-11-19 路由审计 P4】带来源：返回键回内阁，不回主页 */}
+                    <Link href={withBack("/stats")}>
                         <Button variant="outline" size="sm" className="h-8">
                             <BarChart3 className="mr-1.5 h-3.5 w-3.5" />
                             {t.app?.stats || "统计中心"}

@@ -190,7 +190,7 @@ export default function InsightReadPage() {
                     </Link>
                     <h1 className="text-sm font-medium">{L("日积月累", "Notes")}</h1>
                     <span className="flex-1" />
-                    <Link href="/insights/write">
+                    <Link href={withBack("/insights/write")}>
                         <Button variant="ghost" size="sm" title={L("写一条", "Write")}>
                             <PenLine className="h-4 w-4 sm:mr-1.5" />
                             <span className="hidden sm:inline">{L("写一条", "Write")}</span>
@@ -253,7 +253,7 @@ export default function InsightReadPage() {
                                 : L("还没有记下的东西。", "Nothing written down yet.")}
                         </p>
                         {!query && !grade && !subject && (
-                            <Link href="/insights/write" className="mt-3 inline-block">
+                            <Link href={withBack("/insights/write")} className="mt-3 inline-block">
                                 <Button size="sm">
                                     <PenLine className="mr-1.5 h-4 w-4" />
                                     {L("去写第一条", "Write the first one")}

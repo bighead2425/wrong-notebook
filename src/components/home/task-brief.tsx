@@ -30,6 +30,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, CheckCircle2, Loader2 } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import { withBack } from "@/lib/back";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { dayKey } from "@/lib/calendar-grid";
 import { TASK_ORDER, taskHref, type CabinetTasks } from "@/lib/cabinet-targets";
@@ -73,7 +74,7 @@ export function TaskBrief() {
                  */}
                 {data && <span className="text-xs text-muted-foreground">{TASK_ORDER.length} 类</span>}
                 <span className="flex-1" />
-                <Link href="/cabinet" className="text-xs text-muted-foreground hover:text-foreground">
+                <Link href={withBack("/cabinet")} className="text-xs text-muted-foreground hover:text-foreground">
                     {L("内阁", "Cabinet")} ›
                 </Link>
             </div>

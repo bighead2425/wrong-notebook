@@ -25,6 +25,7 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { apiClient } from "@/lib/api-client";
+import { withBack } from "@/lib/back";
 import { dayKey } from "@/lib/calendar-grid";
 import { BookOpen, Loader2 } from "lucide-react";
 
@@ -101,7 +102,7 @@ export function NotebookOverview() {
                     {L("当前错题本", "Notebooks")}
                 </h2>
                 <span className="flex-1" />
-                <Link href="/cabinet" className="text-xs text-muted-foreground underline hover:text-foreground">
+                <Link href={withBack("/cabinet")} className="text-xs text-muted-foreground underline hover:text-foreground">
                     {L("看构成", "Composition")}
                 </Link>
             </div>

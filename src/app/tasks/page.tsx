@@ -22,6 +22,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { BackButton } from "@/components/ui/back-button";
+import { withBack } from "@/lib/back";
 import { Button } from "@/components/ui/button";
 import { TaskBoard, TaskBoardHeading } from "@/components/cabinet/task-board";
 import type { CabinetTasks } from "@/lib/cabinet-targets";
@@ -68,7 +69,8 @@ export default function TasksPage() {
                         {L("今天该做什么，按顺序排好", "What to do today, in order")}
                     </span>
                     <span className="flex-1" />
-                    <Link href="/cabinet">
+                    {/* 【2026-11-19 路由审计 P4】带来源：返回键回任务页 */}
+                    <Link href={withBack("/cabinet")}>
                         <Button variant="outline" size="sm">
                             <LayoutDashboard className="h-4 w-4 sm:mr-1.5" />
                             <span className="hidden sm:inline">{L("内阁", "Cabinet")}</span>
