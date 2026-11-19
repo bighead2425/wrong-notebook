@@ -21,8 +21,10 @@ import {
     TREE_SPEEDS,
 } from "@/components/background-scene";
 import {
+    APPEARANCE_SYNCED_EVENT,
     PAPER_THEMES,
     applyAppearance,
+    readAppearanceCache,
     type Appearance,
     type PaperTheme,
     type ThemeMode,
@@ -111,27 +113,61 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
      * 同样绕不开的点，它们也走 mounted + effect 这条路。
      */
     useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- 读的是插件写在 <html> 上的外部状态，无 state/props 可推
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- 读的是插件写在 <html> 上的外部状态（首屏内联脚本贴的），无 state/props 可推
         setMode(document.documentElement.classList.contains("dark") ? "dark" : "light");
         setPaper((document.documentElement.dataset.paper as PaperTheme) || "ivory");
         setEffects(document.documentElement.dataset.bg === "on");
-        /* 从 CSS 变量反推档位（`--tree-dur` 是 "20s"，parseFloat 正好得 20） */
-        const cs = getComputedStyle(document.documentElement);
-        const num = (k: string, def: number) => {
-            const v = parseFloat(cs.getPropertyValue(k));
-            return Number.isFinite(v) ? v : def;
-        };
+
+        /**
+         * 【2026-11-19 修复】滑条初值改从 **localStorage 缓存**读，不再读 CSS 变量。
+         *
+         * 为什么：内联首屏脚本只贴 paper/mode/data-bg，效果类变量（树影/星星/月亮）
+         * 要等 `PaperThemeApplier` 的 effect 才写，而 React **子先父后** ——
+         * 本组件挂载时变量还没写，读到的全是 :root 默认值；`moon` 更是写死 0 档。
+         * 后果：刷新后随便动一下（哪怕只是切一次深浅色），面板就把这套默认值
+         * 当成"当前设置"组装提交 —— **保存过的月亮色被掰回皎白、调过的档位被打回默认**
+         * （空空 2026-11-19 报的"月亮偶尔变皎白 / 保存没实效 / 跨终端不同"就是它）。
+         *
+         * 缓存是同步可读的、且由 `applyAppearance` 在每次应用时刷新 —— 里面就是
+         * 上一次会话保存的真值。CSS 变量读数只作缓存缺失时的兜底。
+         */
+        const cached = readAppearanceCache();
+        const clampMoon = (v: unknown) =>
+            typeof v === "number" && v >= 0 && v <= MOON_COLORS.length - 1 ? Math.round(v) : 0;
         setFx({
-            treeScale: nearest(TREE_SCALES, num("--tree-scale", 1)),
-            treeOpacity: nearest(TREE_OPACITIES, num("--tree-opacity", 0.55)),
-            treeSpeed: nearest(TREE_SPEEDS, num("--tree-dur", 20)),
-            grain: nearest(GRAIN_OPACITIES, num("--grain-opacity", 0.07)),
-            starScale: nearest(STAR_SCALES, num("--star-scale", 1)),
-            starBright: nearest(STAR_BRIGHTS, num("--star-bright", 0.9)),
-            starSpeed: nearest(STAR_SPEEDS, num("--star-dur", 20)),
-            moon: 0,
+            treeScale: nearest(TREE_SCALES, cached?.treeScale ?? 1),
+            treeOpacity: nearest(TREE_OPACITIES, cached?.treeOpacity ?? 0.55),
+            treeSpeed: nearest(TREE_SPEEDS, cached?.treeSpeed ?? 20),
+            grain: nearest(GRAIN_OPACITIES, cached?.grainOpacity ?? 0.06),
+            starScale: nearest(STAR_SCALES, cached?.starScale ?? 1),
+            starBright: nearest(STAR_BRIGHTS, cached?.starBright ?? 1),
+            starSpeed: nearest(STAR_SPEEDS, cached?.starSpeed ?? 20),
+            moon: clampMoon(cached?.moonTint),
         });
+
+        /**
+         * 服务端同步完（可能带着另一台终端改过的值）⇒ 滑条跟进真值。
+         * 不对齐的话：面板停在本地缓存的旧值，下次一动滑条就把旧值写回服务端
+         * —— 跨终端"互相覆盖"的来源。
+         */
+        const onSynced = (e: Event) => {
+            const a = (e as CustomEvent<Appearance>).detail;
+            if (!a) return;
+            setFx((prev) => ({
+                treeScale: typeof a.treeScale === "number" ? nearest(TREE_SCALES, a.treeScale) : prev.treeScale,
+                treeOpacity: typeof a.treeOpacity === "number" ? nearest(TREE_OPACITIES, a.treeOpacity) : prev.treeOpacity,
+                treeSpeed: typeof a.treeSpeed === "number" ? nearest(TREE_SPEEDS, a.treeSpeed) : prev.treeSpeed,
+                grain: typeof a.grainOpacity === "number" ? nearest(GRAIN_OPACITIES, a.grainOpacity) : prev.grain,
+                starScale: typeof a.starScale === "number" ? nearest(STAR_SCALES, a.starScale) : prev.starScale,
+                starBright: typeof a.starBright === "number" ? nearest(STAR_BRIGHTS, a.starBright) : prev.starBright,
+                starSpeed: typeof a.starSpeed === "number" ? nearest(STAR_SPEEDS, a.starSpeed) : prev.starSpeed,
+                moon: typeof a.moonTint === "number" ? clampMoon(a.moonTint) : prev.moon,
+            }));
+        };
+        window.addEventListener(APPEARANCE_SYNCED_EVENT, onSynced);
         setMounted(true);
+        /* 挂载时读一次外部状态、挂一次监听 —— 不随列表/筛选变化 */
+        return () => window.removeEventListener(APPEARANCE_SYNCED_EVENT, onSynced);
     }, []);
 
     /** 立即应用 + 存服务端。**先应用再存**：界面不等网络，失败也只是没存上。 */
@@ -160,8 +196,15 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
             const send = () => {
                 setSaving(true);
                 setError(null);
+                /**
+                 * 【2026-11-19 修复】POST **merged**（完整外观），不再只发 `next`（改动的那一项）。
+                 * 为什么：服务端虽是浅合并、部分字段不会冲掉别的，但"只发改动项"意味着
+                 * 服务端永远不知道面板眼里**其余项的当前值** —— 一旦本地状态与服务端有出入
+                 * （另一台终端改过、或历史版本写坏过），出入就永远留在那里，
+                 * 两台终端各存各的 ⇒ 跨终端"背景效果不一样"。发完整值，保存即对齐。
+                 */
                 apiClient
-                    .post("/api/settings", { appearance: next })
+                    .post("/api/settings", { appearance: merged })
                     .catch(() => {
                         /**
                          * 失败只说一句，不回滚界面 —— 回滚会让"点下去又弹回来"，更让人困惑。

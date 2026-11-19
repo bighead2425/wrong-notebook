@@ -33,6 +33,33 @@ export type PaperTheme = "ivory" | "white" | "cool" | "cream";
 const PAPER_ATTR = "paper";
 const LS_KEY = "wn:appearance";
 
+/**
+ * 【2026-11-19】服务端同步完成后广播的事件名。
+ * 谁需要"服务端的真实值"（比如长按面板把滑条对齐到真值），监听这个。
+ * 为什么要广播：面板和本组件**谁先挂载不定**（React 子先父后），面板挂载时
+ * 读 localStorage 缓存只能拿到"上一次会话"的值；服务端同步完再喊一嗓子，
+ * 各处才能对齐到真值。
+ */
+export const APPEARANCE_SYNCED_EVENT = "wn:appearance-synced";
+
+/**
+ * 读 localStorage 里的外观缓存（同步、可能抛异常——隐私模式禁存储）。
+ *
+ * 【2026-11-19】为什么导出它：长按面板挂载时需要把八根滑条对齐到**保存过的值**，
+ * 而此前它去读 CSS 变量 —— 内联首屏脚本只贴 paper/mode/data-bg 三个，
+ * 效果类变量（树影/星星/月亮）要等本组件的 effect 才写，且 React 子先父后，
+ * **面板读到的一直是 ：root 默认值** ⇒ 刷新后随便动一下，保存过的档位被默认值覆盖
+ * （月亮因此总被掰回皎白）。缓存是同步可读的，正好补这个洞。
+ */
+export function readAppearanceCache(): Appearance | null {
+    try {
+        const raw = localStorage.getItem(LS_KEY);
+        return raw ? (JSON.parse(raw) as Appearance) : null;
+    } catch {
+        return null;
+    }
+}
+
 export const PAPER_THEMES: { id: PaperTheme; zh: string; en: string; swatch: string }[] = [
     { id: "ivory", zh: "纸白", en: "Ivory", swatch: "oklch(0.975 0.007 85)" },
     { id: "white", zh: "纯白", en: "White", swatch: "oklch(1 0 0)" },
@@ -143,7 +170,15 @@ export function PaperThemeApplier() {
                  * 一刷新就被打回纸白，等于白选了。
                  */
                 const sv = cfg?.appearance;
-                if (sv && (sv.paper || sv.mode || typeof sv.effects === "boolean")) applyAppearance(sv);
+                if (sv && (sv.paper || sv.mode || typeof sv.effects === "boolean")) {
+                    applyAppearance(sv);
+                    /**
+                     * 【2026-11-19】广播服务端真值：长按面板的滑条要跟它对齐
+                     * （否则另一台终端改过的档位，这台的面板还停在本地缓存的旧值，
+                     *  下次一动滑条就把旧值写回去 —— 跨终端"互相覆盖"的来源）。
+                     */
+                    window.dispatchEvent(new CustomEvent<Appearance>(APPEARANCE_SYNCED_EVENT, { detail: sv }));
+                }
             })
             .catch(() => {
                 /* 读不到就保持缓存/默认，不打扰用户 */
