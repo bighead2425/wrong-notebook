@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, type CSSProperties } from "react";
 
 /**
  * 【2026-11-17 空空】**背景效果层 · 虚焦枝叶版。**
@@ -35,25 +35,20 @@ import { useEffect } from "react";
  *    （5.2/6.4/7.8），旧存档按档位序号自动迁移（`normalizeTreeOpacity`）。
  *    参数是用数值模拟（几何+模糊按真实参数跑一遍，量灰度分位）对齐参考图定的，
  *    **不再靠肉眼估**。
+ * 8. **2026-11-20 第 8 轮：不画了——照片素材分层摆动**：
+ *    五轮手绘迭代后空空仍不满意（"像晾着的死蛇"），问"能不能完全复刻参考图"。
+ *    答：不画了，**把参考图本身提取成影子素材**（亮度差→alpha，逐行背景估计
+ *    自动剔除渐晕与桌面影）。这正是 openhanako 的路线（它用实拍视频）。
+ *    空空再设计：一幅图按枝叶形状**切成三块**，各自摆动、频率错开——
+ *    分层摆动让丛内也有相对运动。手绘几何全部退役（本文件只留星点与月亮）。
  *
- * 一句话：**真枝叶 + 自由姿态 + 簇生疏密 + 冷灰 + 重虚焦**。
+ * 一句话：**照片素材 + 分层摆动 + 滑条语义照旧**。
  *
- * ## 为什么现在敢用 feGaussianBlur
+ * ## 摆动机制（空空设计的"分层摆"）
  *
- * 旧注释说"三层叠色，不用 blur"，针对的是**逐帧重画的线条**（每帧重算模糊，费）。
- * 现在枝叶几何是静态的，每层各套一个模糊滤镜，浏览器缓存成位图，动画只整张轻轻旋转
- * （`transform`）—— 模糊只在首帧算一次。真正要躲的是"动画内容上挂 filter"，
- * 不是 filter 本身。
- *
- * ## 参考图特征，逐一对应
- *
- * | 参考图 | 本版实现 |
- * |---|---|
- * | 叶一簇簇、疏密随机、不成排 | 种子随机数抖动每片叶的间距/偏移/角度/大小/浓淡 |
- * | 叶姿态四面八方、不强制垂头 | 切线角 ±(18°~70°) 自由取角 |
- * | 冷调灰、不是暖褐 | 三层冷灰 #A2A4AB / #878B94 / #5F646E |
- * | 边缘完全融掉 | 每根枝一个 `feGaussianBlur`，远 6.1 → 近 3.9（还要留住叶形，别糊成团） |
- * | 画面底部一道横向柔影 | `.bg-horizon`（CSS 线性渐变 + 模糊） |
+ * 三块碎片各自绕顶部支点（枝出画处）小幅旋转（±1° 内），周期 20s/26s/32s 错开；
+ * 切缝羽化互补（缝宽 70 ≈ 页面 300px，两块在缝里此消彼长、总量恒等于 1）⇒ 接缝不可见。
+ * 只有 transform 在动，浏览器整层缓存（合成层铁律依旧成立）。
  *
  * ## 亮环境用暗元素，暗环境用亮元素
  * 浅色底上叠亮的东西对比度上不去。所以浅色放树影（比背景暗），深色放星点（比背景亮）。
@@ -62,308 +57,25 @@ import { useEffect } from "react";
 const BG_ATTR = "bg";
 const PAUSE_ATTR = "bg-paused";
 
-/** 树影三色：**冷调灰**（参考图是冷灰，旧版暖褐灰偏黄、违和的来源之一）。
- *  远层最浅、近层最深，色相一致只推明度 —— 叠起来才是同一片树的远近，不是三种树。 */
-const TREE_INK_FAR = "#A2A4AB";
-const TREE_INK = "#878B94";
-const TREE_INK_NEAR = "#5F646E";
 /** 星点色：单一暖白 —— 彩色菱形是"贴纸感"的来源，已去掉。 */
 const STAR_INK = "#F2EDE2";
 
-type Pt = [number, number];
-/** [x, y, 旋转角, 缩放?, 自身浓淡?] —— 每片叶的浓淡独立，远近层次才自然 */
-type Leaf = [number, number, number, number?, number?];
-
-interface Branch {
-    d: string;
-    w: number;
-}
-
-interface Twig {
-    p0: Pt;
-    p1: Pt;
-    p2: Pt;
-    p3: Pt;
-    w: number;
-    /** 这条枝上挂几片叶。0 = 光杆（主干） */
-    leaves: number;
-}
-
 /**
- * 一根独立生长的枝（不是某根枝的复制品）。三根叠起来 = 一片有纵深的树：
- *   · 左枝：缓垂、冷浅灰、最虚最淡
- *   · 中枝：斜坠、中性暖灰、中等
- *   · 右枝：垂直下坠、深褐灰、最实最浓
- * 每根的 twigs / blur / ink / leafScale / color 全都不同。
- */
-interface TreeLayer {
-    twigs: Twig[];
-    /** 高斯模糊半径，越大越虚 */
-    blur: number;
-    /** 浓淡倍率（0~1），乘在整棵树 opacity 之上 */
-    ink: number;
-    /** 叶片大小倍率，远小近大 */
-    leafScale: number;
-    /** 这一根枝自己的颜色 —— 三根不同色，不是同一色改透明度 */
-    color: string;
-}
-
-/** 构建结果：路径 + 叶子，再加这一层的渲染参数 */
-interface BuiltLayer {
-    paths: Branch[];
-    leaves: Leaf[];
-    blur: number;
-    ink: number;
-    color: string;
-}
-
-function cubicAt(p0: Pt, p1: Pt, p2: Pt, p3: Pt, t: number): Pt {
-    const m = 1 - t;
-    const a = m * m * m;
-    const b = 3 * m * m * t;
-    const c = 3 * m * t * t;
-    const d = t * t * t;
-    return [a * p0[0] + b * p1[0] + c * p2[0] + d * p3[0], a * p0[1] + b * p1[1] + c * p2[1] + d * p3[1]];
-}
-
-function tangentAt(p0: Pt, p1: Pt, p2: Pt, p3: Pt, t: number): Pt {
-    const m = 1 - t;
-    return [
-        3 * m * m * (p1[0] - p0[0]) + 6 * m * t * (p2[0] - p1[0]) + 3 * t * t * (p3[0] - p2[0]),
-        3 * m * m * (p1[1] - p0[1]) + 6 * m * t * (p2[1] - p1[1]) + 3 * t * t * (p3[1] - p2[1]),
-    ];
-}
-
-/**
- * 种子随机数（mulberry32）：同一种子永远吐出同一串数。
- * 必须用它而不是 Math.random() —— SSR 和客户端要画出**同一棵树**，
- * 否则每次水合叶子都跳一次位置。
- */
-function rng(seed: number) {
-    return () => {
-        seed |= 0;
-        seed = (seed + 0x6d2b79f5) | 0;
-        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-}
-
-/**
- * 枝条定义 → 「路径 + 叶子」。
+ * 【2026-11-20 第 8 轮】树影素材：空空参考图 → 亮度差提取 → 透明 PNG（608×975），
+ * 按**枝叶形状切成三块**——羽化互补切缝（缝宽 70 素材单位 ≈ 页面 300px，
+ * 两块在缝里此消彼长、总量恒等于 1，数学上验证过 max|Σ−1|≈1e-7 ⇒ 接缝不可见）。
  *
- * 这一版的叶子是**自然簇生**的（对照参考图改的三处）：
- *   · 位置：沿枝取点后加随机抖动 —— 一簇一簇、有疏有密，不再像梳子等距排列；
- *   · 角度：切线角 ±(18°~70°) **自由取角**，不再强制"朝下"——
- *     参考图里的叶子四面八方都有，强制垂头反而假；
- *   · 浓淡：每片叶带 0.35~0.95 的独立透明度，叠出"有的叶子离镜头近、有的远"。
- */
-function buildTree(twigs: Twig[], leafScale = 1): { paths: Branch[]; leaves: Leaf[] } {
-    const paths: Branch[] = [];
-    const leaves: Leaf[] = [];
-    /* 种子从首根枝的坐标派生：几何不变则画不变，几何一改整棵树自然重排 */
-    const rand = rng((twigs[0]?.p0[0] ?? 7) * 1013 + twigs.length * 137 + leafScale * 1000);
-
-    for (const tw of twigs) {
-        paths.push({
-            d: `M${tw.p0[0]} ${tw.p0[1]} C ${tw.p1[0]} ${tw.p1[1]} ${tw.p2[0]} ${tw.p2[1]} ${tw.p3[0]} ${tw.p3[1]}`,
-            w: tw.w,
-        });
-        const n = tw.leaves;
-        for (let i = 0; i < n; i++) {
-            /* 均匀底 + 随机抖动：底保证覆盖全枝，抖动让间距忽大忽小（簇生感） */
-            const t = n === 1 ? 0.5 : Math.min(0.99, 0.05 + 0.94 * (i / (n - 1)) + (rand() - 0.5) * (0.9 / n));
-            const [x, y] = cubicAt(tw.p0, tw.p1, tw.p2, tw.p3, t);
-            const [dx, dy] = tangentAt(tw.p0, tw.p1, tw.p2, tw.p3, t);
-            const len = Math.hypot(dx, dy) || 1;
-            /* 左右与离枝距离都随机：有的叶贴枝、有的离得远，虚焦后更像一团叶 */
-            const side = rand() < 0.5 ? 1 : -1;
-            const off = 2 + rand() * 5.5;
-            const nx = (-dy / len) * side;
-            const ny = (dx / len) * side;
-            /* 自由姿态：切线角 ±(18°~70°)，不再强制朝下 */
-            const ang = (Math.atan2(dy, dx) * 180) / Math.PI + side * (18 + rand() * 52);
-            /* 大小与浓淡都随机：远处叶小而淡、近处大而浓的错觉就是从这来的。
-               浓淡下限不能太低：0.35 那版乘上整体浓淡 + 模糊后等于看不见，
-               0.55~1.0 既保留层次，又保证每片叶都真的"有墨"。 */
-            const scale = (0.55 + rand() * 0.75) * leafScale;
-            const o = 0.55 + rand() * 0.45;
-            leaves.push([x + nx * off, y + ny * off, ang, scale, o]);
-        }
-    }
-
-    return { paths, leaves };
-}
-
-/** 把一组层定义构建成可直接渲染的层（几何 + 参数） */
-function buildLayers(layers: TreeLayer[]): BuiltLayer[] {
-    return layers.map((l) => ({
-        ...buildTree(l.twigs, l.leafScale),
-        blur: l.blur,
-        ink: l.ink,
-        color: l.color,
-    }));
-}
-
-/**
- * 一棵树 = 三根**不同的枝**叠在一起，不是一根枝复制三遍改颜色（那是重影）。
+ * 每块独立摆动：绕自己的顶部支点（"枝出画的地方"），周期 20s/26s/32s 错开
+ * —— 空空设计的**分层摆动**：丛内也有相对运动，比"两丛整体摇"更活。
  *
- * 构图照参考图摆：**浓密叶团挂在可视区右半，一根稀疏长枝斜伸向左下**，
- * 越往左下越虚越淡、叶越小 —— 虚焦加浓淡，共同造出"镜头离叶团近、离长枝远"。
- *
- * ⚠️ 坐标必须落在 **可视窗口** 内：.tree-a 右移出屏 14vw，树宽约 min(78vw,88vh)，
- * 1920 宽的屏上只有 viewBox x < 215 在屏内 —— 浓叶团敢画在 x > 215 就整块悬在
- * 屏幕外，部署后"什么都看不见"（v172 踩过：预览完整、真机被裁）。
- *   · 近枝（冷深灰）：叶团核心 x≈160~240，枝粗叶密，虚得最少
- *   · 中枝（冷中灰）：从上方进入、向左下斜坠，中等
- *   · 远枝（冷浅灰）：细长一根，一直伸到画面左缘（x≈5~60），叶稀疏微小，虚得最狠
+ * left/width 是相对整幅树宽的百分比（切割脚本量出）；dur 是 --tree-dur 的倍率；
+ * from/to 是各自的摆幅（deg），经内联 CSS 变量传给 keyframes。
  */
-const TREE_A: BuiltLayer[] = buildLayers([
-    /* —— 近枝：浓密叶团（可视区右半，核心 x≈160~240）—— */
-    {
-        color: TREE_INK_NEAR,
-        blur: 3.9,
-        ink: 1,
-        leafScale: 1.15,
-        twigs: [
-            { p0: [238, -8], p1: [228, 42], p2: [210, 92], p3: [192, 150], w: 4.6, leaves: 0 },
-            { p0: [192, 150], p1: [180, 200], p2: [168, 250], p3: [162, 300], w: 2.8, leaves: 0 },
-            { p0: [226, 44], p1: [220, 98], p2: [214, 152], p3: [210, 208], w: 2.2, leaves: 13 },
-            { p0: [204, 122], p1: [194, 172], p2: [186, 226], p3: [182, 278], w: 2.4, leaves: 14 },
-            { p0: [244, 10], p1: [242, 60], p2: [240, 110], p3: [240, 160], w: 2, leaves: 12 },
-            { p0: [178, 190], p1: [166, 238], p2: [158, 288], p3: [154, 336], w: 1.9, leaves: 12 },
-        ],
-    },
-    /* —— 中枝：向左下斜坠 —— */
-    {
-        color: TREE_INK,
-        blur: 4.9,
-        ink: 0.9,
-        leafScale: 0.9,
-        twigs: [
-            { p0: [196, -6], p1: [178, 36], p2: [150, 80], p3: [120, 128], w: 3.4, leaves: 0 },
-            { p0: [120, 128], p1: [98, 164], p2: [78, 204], p3: [64, 246], w: 2, leaves: 0 },
-            { p0: [154, 70], p1: [134, 116], p2: [116, 166], p3: [106, 216], w: 2, leaves: 10 },
-            { p0: [124, 140], p1: [104, 182], p2: [88, 228], p3: [80, 272], w: 1.7, leaves: 9 },
-            { p0: [184, 20], p1: [174, 64], p2: [168, 112], p3: [168, 158], w: 1.8, leaves: 8 },
-        ],
-    },
-    /* —— 远枝：稀疏长枝伸向画面左缘，最虚最淡 —— */
-    {
-        color: TREE_INK_FAR,
-        blur: 6.1,
-        ink: 0.6,
-        leafScale: 0.7,
-        twigs: [
-            { p0: [136, -8], p1: [116, 30], p2: [88, 72], p3: [58, 116], w: 2.4, leaves: 0 },
-            { p0: [58, 116], p1: [36, 158], p2: [18, 204], p3: [4, 248], w: 1.5, leaves: 0 },
-            { p0: [64, 120], p1: [44, 158], p2: [28, 200], p3: [16, 244], w: 1.3, leaves: 7 },
-            { p0: [100, 70], p1: [78, 108], p2: [58, 150], p3: [42, 192], w: 1.2, leaves: 6 },
-            { p0: [28, 180], p1: [14, 218], p2: [6, 258], p3: [2, 296], w: 1.1, leaves: 5 },
-        ],
-    },
-]);
-
-/**
- * 第二棵树：错在第一棵左下，更稀更小。
- * ⚠️ 同样的可视窗口问题：.tree-b 宽约 56vw、右移出屏 26vw，1920 屏上
- * 只有 viewBox x < 160 在屏内 —— 枝叶必须画在 x 10~180 这一带。
- */
-const TREE_B: BuiltLayer[] = buildLayers([
-    {
-        color: TREE_INK_NEAR,
-        blur: 4.1,
-        ink: 0.95,
-        leafScale: 1.1,
-        twigs: [
-            { p0: [178, -6], p1: [168, 36], p2: [154, 80], p3: [138, 126], w: 3.6, leaves: 0 },
-            { p0: [138, 126], p1: [124, 172], p2: [112, 218], p3: [104, 262], w: 2.2, leaves: 0 },
-            { p0: [162, 60], p1: [152, 108], p2: [144, 158], p3: [140, 206], w: 2, leaves: 11 },
-            { p0: [130, 150], p1: [118, 196], p2: [108, 242], p3: [102, 286], w: 1.7, leaves: 10 },
-        ],
-    },
-    {
-        color: TREE_INK,
-        blur: 5.1,
-        ink: 0.9,
-        leafScale: 0.88,
-        twigs: [
-            { p0: [140, -4], p1: [122, 32], p2: [96, 72], p3: [68, 114], w: 2.6, leaves: 0 },
-            { p0: [68, 114], p1: [44, 152], p2: [24, 192], p3: [10, 228], w: 1.5, leaves: 7 },
-            { p0: [96, 80], p1: [76, 120], p2: [60, 162], p3: [50, 200], w: 1.4, leaves: 7 },
-        ],
-    },
-    {
-        color: TREE_INK_FAR,
-        blur: 6.3,
-        ink: 0.6,
-        leafScale: 0.68,
-        twigs: [
-            { p0: [90, 0], p1: [72, 34], p2: [48, 70], p3: [26, 106], w: 1.8, leaves: 0 },
-            { p0: [26, 106], p1: [8, 142], p2: [2, 170], p3: [10, 198], w: 1.2, leaves: 0 },
-            { p0: [30, 104], p1: [14, 138], p2: [2, 168], p3: [2, 196], w: 1.1, leaves: 5 },
-            { p0: [52, 86], p1: [36, 116], p2: [22, 144], p3: [14, 170], w: 1, leaves: 4 },
-        ],
-    },
-]);
-
-/**
- * 一片"由三根不同的枝叠成的树影"：每根本来就长得不一样，各有自己的滤镜、浓淡和颜色。
- *
- * 关键：模糊放在**包裹每根枝叶的父 group** 上，枝条和叶子一起虚 ——
- * 如果只虚叶子、枝条还清晰，就会退回"清晰枝条上挂模糊团"的怪样子。
- * 构图照参考图：近枝聚在右上、远枝伸向左下，虚焦 + 浓淡 + 叶片自身透明度
- * 三层叠加，共同造出"离镜头越远越虚越淡"的景深。
- */
-const LEAF_PATH = "M-9.6 0 C-4.2 -2.7 3 -2.4 9.6 0 C3 2.4 -4.2 2.7 -9.6 0 Z";
-
-function TreeSilhouette({
-    className,
-    viewBox,
-    layers,
-    leafId,
-    uid,
-}: {
-    className: string;
-    viewBox: string;
-    layers: BuiltLayer[];
-    leafId: string;
-    uid: string;
-}) {
-    return (
-        <svg className={className} viewBox={viewBox} fill="none" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-                {/* 叶片：狭长小叶，长 19、宽约 5，两端收尖 —— 参考图是这种小叶，不是大桐叶 */}
-                <path id={leafId} d={LEAF_PATH} />
-                {/* 每层一个滤镜，半径随景深变化；filter 区域放大，否则模糊会被裁掉一圈 */}
-                {layers.map((layer, li) => (
-                    <filter key={li} id={`${uid}-blur-${li}`} x="-40%" y="-40%" width="180%" height="180%">
-                        <feGaussianBlur stdDeviation={layer.blur} />
-                    </filter>
-                ))}
-            </defs>
-            {layers.map((layer, li) => (
-                <g key={li} filter={`url(#${uid}-blur-${li})`} opacity={layer.ink}>
-                    <g stroke={layer.color} strokeLinecap="round" fill="none">
-                        {layer.paths.map((b, i) => (
-                            <path key={i} d={b.d} strokeWidth={b.w} />
-                        ))}
-                    </g>
-                    <g fill={layer.color}>
-                        {layer.leaves.map(([x, y, a, s, o], i) => (
-                            <use
-                                key={i}
-                                href={`#${leafId}`}
-                                opacity={o ?? 0.8}
-                                transform={`translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${a.toFixed(1)}) scale(${s ?? 1})`}
-                            />
-                        ))}
-                    </g>
-                </g>
-            ))}
-        </svg>
-    );
-}
+const TREE_PIECES = [
+    { src: "/tree/shadow-left.png", left: 0, width: 92.76, dur: 1.35, from: -0.5, to: 0.6 },
+    { src: "/tree/shadow-mid.png", left: 0, width: 100, dur: 1.15, from: 0.6, to: -0.7 },
+    { src: "/tree/shadow-right.png", left: 23.52, width: 76.48, dur: 1, from: -0.9, to: 1.1 },
+] as const;
 
 /**
  * 主角星：十几颗大小不一的暖白小点。
@@ -542,20 +254,27 @@ export function BackgroundScene() {
         /* aria-hidden：纯装饰，读屏软件不该念它 */
         <div className="bg-scene" aria-hidden="true">
             <div className="bg-tree">
-                <TreeSilhouette
-                    className="tree tree-a"
-                    viewBox="0 0 300 400"
-                    layers={TREE_A}
-                    leafId="tree-a-leaf"
-                    uid="tree-a"
-                />
-                <TreeSilhouette
-                    className="tree tree-b"
-                    viewBox="0 0 300 300"
-                    layers={TREE_B}
-                    leafId="tree-b-leaf"
-                    uid="tree-b"
-                />
+                {/* 三块碎片各自摆动（空空的分层摆动设计）；left/width/摆幅/时长见 TREE_PIECES */}
+                <div className="tree-photo">
+                    {TREE_PIECES.map((p) => (
+                        <img
+                            key={p.src}
+                            src={p.src}
+                            alt=""
+                            draggable={false}
+                            className="tree-piece"
+                            style={
+                                {
+                                    left: `${p.left}%`,
+                                    width: `${p.width}%`,
+                                    animationDuration: `calc(var(--tree-dur) * ${p.dur})`,
+                                    "--from": `${p.from}deg`,
+                                    "--to": `${p.to}deg`,
+                                } as CSSProperties
+                            }
+                        />
+                    ))}
+                </div>
                 {/* 参考图底部那道横向柔影：像虚焦的桌面边缘 */}
                 <div className="bg-horizon" />
             </div>

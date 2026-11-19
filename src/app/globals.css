@@ -1705,13 +1705,14 @@ html[data-bg="on"].dark .bg-moon {
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='180' height='180' filter='url(%23n)'/></svg>");
 }
 
-/* —— 树影 ——
+/* —— 树影（2026-11-20 第 8 轮：照片素材分层摆动）——
  *
- * 两组都在**左边**（不做左右对称，对称反而假）。
- * 摆动以根部为轴：`transform-origin: 100% 0%` 对应 SVG 右上角的树干起点。
- * 枝叶从右上角垂下、往左下伸 —— 和深色的月亮在同一个角，视觉上是一套东西。
- *
- * 幅度只有 ±1° —— 大了会变成"晃"，小了会像静止。
+ * 形状来源：空空提供的实拍参考图，按亮度差提取成透明素材（比手绘自然）；
+ * 一幅图按枝叶形状切成**三块**——羽化互补切缝（缝宽 70，页面上约 300px，
+ * 两块在缝里此消彼长、总量恒等于 1，接缝不可见）。
+ * 每块绕自己的顶部支点小幅旋转（±1° 内）、周期错开——
+ * 空空设计的"分层摆动"机制：丛内也有相对运动，比"两丛整体摇"更活。
+ * 素材与切割脚本存档在共享区（_tree_replica.py / _cut_tree.py）。
  */
 .bg-tree {
   position: absolute;
@@ -1736,40 +1737,35 @@ html[data-bg="on"].dark .bg-moon {
   filter: blur(14px);
 }
 
-.tree {
+/* 整幅树的摆位与缩放：三块碎片都在这个盒子里按百分比定位。
+   手机上按屏宽算、宽屏上按屏高算（同旧规矩）；纵横比 = 素材 608×975。 */
+.tree-photo {
   position: absolute;
-  opacity: var(--tree-opacity);
-  transform-origin: 100% 0%;
-  animation: bg-tree-sway var(--tree-dur) ease-in-out infinite;
-  will-change: transform;
-}
-
-.tree-a {
   right: -14vw;
   top: -8vh;
-  /* 手机上按屏宽算、宽屏上按屏高算 —— 只写 82vw 的话，
-     1440 宽的显示器上这棵树会有 1180px 宽，占掉半个屏幕。 */
   width: calc(min(78vw, 88vh) * var(--tree-scale));
-  aspect-ratio: 3 / 4;
+  aspect-ratio: 608 / 975;
+  opacity: var(--tree-opacity);
 }
 
-.tree-b {
-  right: -26vw;
-  top: 16vh;
-  width: calc(min(56vw, 62vh) * var(--tree-scale));
-  aspect-ratio: 1 / 1;
-  /* 第二组慢 45%，两组不会同步，看起来才像"风一直在吹" */
-  animation-duration: calc(var(--tree-dur) * 1.45);
-  animation-direction: reverse;
+/* 单块碎片：left/width 与摆幅（--from/--to）、时长倍率由组件内联。
+   transform-origin 在图块顶部中点 = "枝出画的地方"。
+   alternate 来回摆，只有 transform 在动（合成层铁律）。 */
+.tree-piece {
+  position: absolute;
+  top: 0;
+  height: auto;
+  will-change: transform;
+  transform-origin: 50% 0%;
+  animation: bg-tree-piece var(--tree-dur) ease-in-out infinite alternate;
 }
 
-@keyframes bg-tree-sway {
-  0%,
-  100% {
-    transform: rotate(-0.9deg);
+@keyframes bg-tree-piece {
+  from {
+    transform: rotate(var(--from, -0.6deg));
   }
-  50% {
-    transform: rotate(1.1deg);
+  to {
+    transform: rotate(var(--to, 0.6deg));
   }
 }
 
@@ -1917,7 +1913,7 @@ html[data-bg-paused="1"] .bg-stars {
 
 /* —— 系统要求"减少动态效果" ⇒ 完全静止 —— */
 @media (prefers-reduced-motion: reduce) {
-  .tree,
+  .tree-piece,
   .bg-stars {
     animation: none !important;
   }
